@@ -1,0 +1,3 @@
+[workspace]
+members = ["colver-core", "colver-py"]
+resolver = "2"
