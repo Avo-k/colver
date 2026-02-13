@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/colver.png" alt="Colver logo" width="200">
+</p>
+
 # Colver
 
 Fast Belote Contree game environment for reinforcement learning. Rust core with Python bindings.
