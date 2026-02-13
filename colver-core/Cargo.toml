@@ -24,3 +24,7 @@ path = "src/tests/mcts_demo.rs"
 [[bin]]
 name = "ismcts_demo"
 path = "src/tests/ismcts_demo.rs"
+
+[[bin]]
+name = "smart_ismcts_demo"
+path = "src/tests/smart_ismcts_demo.rs"

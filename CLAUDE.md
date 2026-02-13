@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Check compilation (both crates)
 cargo check
 
-# Run all core tests (74 tests)
+# Run all core tests (93 tests)
 cargo test -p colver-core
 
 # Run a single test
@@ -23,6 +23,9 @@ cargo run -p colver-core --bin bench --release
 # Run MCTS vs random demo (default 100 games, ~8ms/game)
 cargo run -p colver-core --bin mcts_demo --release
 cargo run -p colver-core --bin mcts_demo --release -- 20  # custom game count
+
+# Run Smart IS-MCTS demo (vs random + vs naive IS-MCTS)
+cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
 
 # Build and install Python bindings
 cd colver-py && maturin develop --release
@@ -74,6 +77,16 @@ Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node
 **API:** `MctsSearch::search(&mut self, state, config, rng) -> u8` returns best action. `search_with_stats(...)` returns `SearchResult` with visit counts. `mcts_search(state, config, rng)` is a convenience one-shot wrapper.
 
 **Algorithm:** Selection (UCB1 descent) → Expansion (enumerate legal actions as edges, create child node) → Simulation (`rollout_random`) → Backpropagation. Rewards scaled by `1/2000` to keep exploitation term in [0,1]. Best action = most-visited root child.
+
+### Smart IS-MCTS Agent (`smart_ismcts.rs` + `card_beliefs.rs`, feature `rand`)
+
+Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 32]; 4]` weight matrix) that is updated after every action using hard constraints (voids, trump ceiling, played cards) and soft inference (bidding signals, play patterns). At search time, `determinize_weighted()` samples opponent hands biased by these beliefs, then standard MCTS runs on each determinized world. See [SMART_ISMCTS.md](SMART_ISMCTS.md) for detailed design.
+
+**API:** `SmartIsMctsSearch::new()`, `init_deal(state, observer, use_soft)`, `record_action(state_before, player, action)`, `search(state, config, rng) -> u8`. Each player needs its own instance; both must observe all actions.
+
+### Naive IS-MCTS Agent (`naive_ismcts.rs`, feature `rand`)
+
+Ensemble determinization without beliefs. Samples D determinized worlds (uniform, respecting void constraints only), runs standard MCTS on each, aggregates root visit counts. Simpler but less informed than Smart IS-MCTS.
 
 ### Performance-Critical Path
 
