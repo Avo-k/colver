@@ -437,7 +437,7 @@ impl BidParams {
     pub fn balanced() -> Self {
         BidParams {
             name: "balanced",
-            thresholds: [10, 13, 17, 21, 25, u16::MAX],
+            thresholds: [10, 13, 17, 20, 25, u16::MAX],
             opening_cap: 12,  // 120
             overcall_cap: 12, // 120
             response_cap: 13, // 130
@@ -499,8 +499,8 @@ impl BidParams {
             BidParams { name: "lo90", thresholds: [10, 12, 17, 21, 25, u16::MAX], ..b },
             // 5: 90-threshold +2
             BidParams { name: "hi90", thresholds: [10, 15, 17, 21, 25, u16::MAX], ..b },
-            // 6: 110-threshold -1
-            BidParams { name: "lo110", thresholds: [10, 13, 17, 20, 25, u16::MAX], ..b },
+            // 6: 110-threshold +1 (old balanced value)
+            BidParams { name: "hi110", thresholds: [10, 13, 17, 21, 25, u16::MAX], ..b },
             // 7: lower open+over cap to 110
             BidParams { name: "cap_110", opening_cap: 11, overcall_cap: 11, ..b },
             // 8: raise open+over cap to 130
@@ -728,7 +728,7 @@ fn balanced_bid_value(score: u16) -> u8 {
         8 // 80
     } else if score < 17 {
         9 // 90
-    } else if score < 21 {
+    } else if score < 20 {
         10 // 100
     } else if score < 25 {
         11 // 110
@@ -738,8 +738,9 @@ fn balanced_bid_value(score: u16) -> u8 {
 }
 
 /// Tournament-tuned balanced bidder. Quality gate + score→value mapping (10→80, 13→90,
-/// 17→100, 21→110, 25→120). Caps: opening 120, overcall 120, response 130.
-/// Won round-robin tournament with 62% overall win rate vs 5 other strategies.
+/// 17→100, 20→110, 25→120). Caps: opening 120, overcall 120, response 130.
+/// Won round-robin tournament with 62% overall win rate vs 5 other strategies,
+/// then fine-tuned (110-threshold 21→20) to 52.6% in 12-strategy fine-tune tournament.
 pub fn improved_bid(state: &GameState) -> u8 {
     debug_assert_eq!(state.phase, Phase::Bidding);
 
