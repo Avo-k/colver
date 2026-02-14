@@ -123,9 +123,34 @@ SmartIsMctsConfig {
 
 Total search budget = `determinizations * iterations_per_det`. Default is 20 x 50 = 1000 iterations per decision.
 
+## Bidding Strategy (`bid_eval.rs`)
+
+Smart IS-MCTS is paired with `smart_bid`, a convention-based bidding strategy that uses J/9 signaling — the same conventions human Contrée players use. This creates a natural synergy: the bidding leaks information that the belief model can exploit.
+
+### Convention Summary
+
+- **Opening**: J+9 → 80-100 (scaled by hand strength). J XOR 9 + 3 trumps → 80 (signals missing honor to partner). 2+ aces → 80 ("aux as").
+- **Partner response**: On partner's 80, respond 90 if holding the missing J/9 honor. On partner's 90+ (meaning they have J+9), PASS — don't escalate.
+- **Overcall**: J+9 in a different suit with score ≥ 14 → bid up to 100 max. Never overcall above 100.
+- **Coinche**: J+9 in opponent's trump, 4+ trumps in their suit, or 3+ trumps + side ace on high bids (≥120).
+
+### Design Principles
+
+1. **One-shot communication**: Partner responses are limited to a single raise (80→90). No escalation spirals.
+2. **Conservative overcalls**: Capped at 100. If opponents bid 100+, let them have it rather than start a bidding war.
+3. **Achievable contracts**: Avg bid ~88, with 78% achievable even against perfect-info defense (vs 72% for score-based heuristic at avg bid ~117).
+
+### Synergy with Beliefs
+
+The bidding conventions directly feed into `CardBeliefs`:
+- A player who bids 80 Hearts gets Jack-of-Hearts weight boosted 5x (soft inference)
+- A partner who responds 90 to an 80 bid reveals they hold the missing J or 9
+- A player who passes gets J/9 weights reduced across all suits
+
+This creates a feedback loop: structured bidding → better beliefs → better determinization → better play.
+
 ## What's Not Modeled
 
-- **Partner signaling conventions** (e.g., leading a suit to show strength to partner)
 - **Card counting** beyond void tracking (e.g., "only 2 hearts remain unplayed")
 - **Opponent modeling** (adjusting beliefs based on opponent skill level)
 - **Memory across deals** (each deal starts with fresh beliefs)

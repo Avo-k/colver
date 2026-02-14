@@ -61,7 +61,29 @@ fn main() {
     }
     let elapsed = start.elapsed();
     println!();
-    println!("Full deal (including bidding + deal) rollouts:");
+    println!("Full deal (random bidding + deal) rollouts:");
+    println!("Ran {} rollouts in {:?}", n, elapsed);
+    println!(
+        "Rate: {:.2} rollouts/sec",
+        n as f64 / elapsed.as_secs_f64()
+    );
+    println!(
+        "Per rollout: {:.0} ns",
+        elapsed.as_nanos() as f64 / n as f64
+    );
+
+    // Benchmark heuristic-bid rollouts
+    let start = Instant::now();
+    let mut total = [0.0f32; 2];
+    for _ in 0..n {
+        let mut s = GameState::deal_random(0, &mut rng);
+        let r = rollout::rollout_heuristic_bid(&mut s, &mut rng);
+        total[0] += r[0];
+        total[1] += r[1];
+    }
+    let elapsed = start.elapsed();
+    println!();
+    println!("Full deal (heuristic bidding + deal) rollouts:");
     println!("Ran {} rollouts in {:?}", n, elapsed);
     println!(
         "Rate: {:.2} rollouts/sec",

@@ -1,6 +1,7 @@
-use colver_core::mcts::{MctsConfig, MctsSearch};
+use colver_core::bid_eval::heuristic_bid;
+use colver_core::mcts::{BidPolicy, MctsConfig, MctsSearch};
 use colver_core::rollout::select_nth_bit;
-use colver_core::state::GameState;
+use colver_core::state::{GameState, Phase};
 use rand::Rng;
 use std::time::Instant;
 
@@ -11,7 +12,10 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
 
-    let config = MctsConfig::default(); // 1000 iterations, sqrt(2) exploration
+    let config = MctsConfig {
+        bid_policy: BidPolicy::Heuristic,
+        ..MctsConfig::default()
+    };
     let mut search = MctsSearch::new();
 
     let mut ns_wins = 0u32;
@@ -29,14 +33,18 @@ fn main() {
         while !state.is_terminal() {
             let team = state.current_player() & 1;
             let action = if team == 0 {
-                // NS: MCTS
+                // NS: MCTS (tree-searches bids, heuristic rollouts)
                 search.search(&state, &config, &mut rng)
             } else {
-                // EW: Random
-                let legal = state.legal_actions();
-                let count = legal.count_ones();
-                let idx = rng.gen_range(0..count);
-                select_nth_bit(legal, idx)
+                // EW: Heuristic bid, random play
+                if state.phase == Phase::Bidding {
+                    heuristic_bid(&state)
+                } else {
+                    let legal = state.legal_actions();
+                    let count = legal.count_ones();
+                    let idx = rng.gen_range(0..count);
+                    select_nth_bit(legal, idx)
+                }
             };
             state.step(action);
         }

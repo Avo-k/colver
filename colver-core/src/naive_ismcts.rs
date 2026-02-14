@@ -1,8 +1,11 @@
+use std::time::{Duration, Instant};
+
 use rand::Rng;
 
+use crate::card::card_count;
 use crate::determinize::determinize_greedy;
-use crate::mcts::{MctsConfig, MctsSearch, SearchResult};
-use crate::state::GameState;
+use crate::mcts::{BidPolicy, MctsConfig, MctsSearch, SearchResult};
+use crate::state::{GameState, Phase};
 
 /// Configuration for naive IS-MCTS (ensemble determinization).
 pub struct NaiveIsMctsConfig {
@@ -12,6 +15,10 @@ pub struct NaiveIsMctsConfig {
     pub iterations_per_det: u32,
     /// UCB1 exploration constant.
     pub exploration: f32,
+    /// Optional time limit in milliseconds (overrides `determinizations` count).
+    pub time_limit_ms: Option<u32>,
+    /// Which bid function to use during bidding phase.
+    pub use_smart_bid: bool,
 }
 
 impl Default for NaiveIsMctsConfig {
@@ -20,6 +27,8 @@ impl Default for NaiveIsMctsConfig {
             determinizations: 20,
             iterations_per_det: 50,
             exploration: std::f32::consts::SQRT_2,
+            time_limit_ms: None,
+            use_smart_bid: false,
         }
     }
 }
@@ -40,6 +49,14 @@ impl NaiveIsMctsSearch {
     }
 
     pub fn search(&mut self, state: &GameState, config: &NaiveIsMctsConfig, rng: &mut impl Rng) -> u8 {
+        // Skip MCTS search during bidding — use configured bid function
+        if state.phase == Phase::Bidding {
+            return if config.use_smart_bid {
+                crate::bid_eval::smart_bid(state)
+            } else {
+                crate::bid_eval::heuristic_bid(state)
+            };
+        }
         self.search_with_stats(state, config, rng).best_action
     }
 
@@ -54,17 +71,34 @@ impl NaiveIsMctsSearch {
         let observer = state.current_player();
         let mut action_votes = [0u32; 64];
 
+        // Scale iterations by cards remaining: 8 cards → full, 1 card → 1/8
+        let cards_left = card_count(state.hands[observer as usize]);
+        let scaled_iters = (config.iterations_per_det * cards_left) / 8;
+
         let mcts_config = MctsConfig {
-            iterations: config.iterations_per_det,
+            iterations: scaled_iters.max(1),
             exploration: config.exploration,
+            bid_policy: BidPolicy::Heuristic,
         };
 
-        let mut successful_dets = 0u32;
+        let deadline = config.time_limit_ms.map(|ms| {
+            let scaled_ms = (ms as u64 * cards_left as u64) / 8;
+            Instant::now() + Duration::from_millis(scaled_ms.max(1))
+        });
 
-        for _ in 0..config.determinizations {
+        let mut successful_dets = 0u32;
+        let mut det_count = 0u32;
+
+        loop {
+            if let Some(d) = deadline {
+                if Instant::now() >= d { break; }
+            } else if det_count >= config.determinizations {
+                break;
+            }
+
             let det_state = match determinize_greedy(state, observer, rng) {
                 Some(s) => s,
-                None => continue,
+                None => { det_count += 1; continue; }
             };
 
             let result = self.inner.search_with_stats(&det_state, &mcts_config, rng);
@@ -74,6 +108,7 @@ impl NaiveIsMctsSearch {
             }
 
             successful_dets += 1;
+            det_count += 1;
         }
 
         // Build result from aggregated votes

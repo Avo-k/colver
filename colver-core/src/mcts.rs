@@ -1,9 +1,19 @@
 use rand::Rng;
 
-use crate::rollout::rollout_random;
+use crate::rollout::{rollout_heuristic_bid, rollout_random};
 use crate::state::GameState;
 
 const REWARD_SCALE: f32 = 1.0 / 2000.0;
+
+/// Bidding policy used during MCTS rollouts.
+#[derive(Clone, Copy, Default)]
+pub enum BidPolicy {
+    /// Random bidding (original behavior).
+    #[default]
+    Random,
+    /// Heuristic bidding (fast, deterministic).
+    Heuristic,
+}
 
 /// Configuration for MCTS search.
 pub struct MctsConfig {
@@ -11,6 +21,8 @@ pub struct MctsConfig {
     pub iterations: u32,
     /// UCB1 exploration constant.
     pub exploration: f32,
+    /// Bidding policy for rollouts.
+    pub bid_policy: BidPolicy,
 }
 
 impl Default for MctsConfig {
@@ -18,6 +30,7 @@ impl Default for MctsConfig {
         MctsConfig {
             iterations: 1000,
             exploration: std::f32::consts::SQRT_2,
+            bid_policy: BidPolicy::default(),
         }
     }
 }
@@ -185,7 +198,10 @@ impl MctsSearch {
             let reward = if sim_state.is_terminal() {
                 sim_state.rewards()
             } else {
-                rollout_random(&mut sim_state, rng)
+                match config.bid_policy {
+                    BidPolicy::Random => rollout_random(&mut sim_state, rng),
+                    BidPolicy::Heuristic => rollout_heuristic_bid(&mut sim_state, rng),
+                }
             };
 
             // Backpropagation

@@ -1,7 +1,8 @@
+use colver_core::bid_eval::heuristic_bid;
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout::select_nth_bit;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
-use colver_core::state::GameState;
+use colver_core::state::{GameState, Phase};
 use rand::Rng;
 use std::time::Instant;
 
@@ -48,11 +49,15 @@ fn run_smart_vs_random(
                 0 => search_p0.search(&state, config, rng),
                 2 => search_p2.search(&state, config, rng),
                 _ => {
-                    // EW: Random
-                    let legal = state.legal_actions();
-                    let count = legal.count_ones();
-                    let idx = rng.gen_range(0..count);
-                    select_nth_bit(legal, idx)
+                    // EW: Heuristic bid, random play
+                    if state.phase == Phase::Bidding {
+                        heuristic_bid(&state)
+                    } else {
+                        let legal = state.legal_actions();
+                        let count = legal.count_ones();
+                        let idx = rng.gen_range(0..count);
+                        select_nth_bit(legal, idx)
+                    }
                 }
             };
 

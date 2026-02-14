@@ -19,7 +19,7 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 Requires Rust 1.70+ and Python 3.8+.
 
 ```bash
-# Run tests (93 tests)
+# Run tests (104 tests)
 cargo test -p colver-core
 
 # Performance benchmark
@@ -33,6 +33,12 @@ cargo run -p colver-core --bin ismcts_demo --release -- 100
 
 # Smart IS-MCTS vs random + vs naive demo
 cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
+
+# Oracle experiment (bid achievability)
+cargo run -p colver-core --bin oracle_experiment --release -- 200 2000
+
+# Bidding experiment (smart_bid vs heuristic)
+cargo run -p colver-core --bin bidding_experiment --release -- 200 50
 
 # Python bindings (via uv)
 uv sync
@@ -99,6 +105,37 @@ See [SMART_ISMCTS.md](SMART_ISMCTS.md) for the full design document.
 | Naive IS-MCTS (equal budget) | 46% | 536 - 647 | 17 ms |
 
 The Smart vs Naive matchup is roughly even at the default budget, suggesting the soft inference weights need further tuning or that hard constraints alone capture most useful information at low search budgets.
+
+### Bidding Strategies (`bid_eval.rs`)
+
+Colver includes two deterministic bidding strategies, both fast enough (~200 ops) for use inside MCTS rollouts.
+
+**Heuristic bid** — Score-based. Evaluates trump strength (J=8, 9=6, A=4, 10=3, K/Q=1) plus length bonus and side suit features (aces, voids). Maps total score to bid value (80-130). Simple and effective. Avg bid ~117, ~72% achievable with perfect play on both sides.
+
+**Smart bid** — Convention-based, mimicking human Belote Contrée signaling:
+
+| Situation | Logic | Bid range |
+|---|---|---|
+| **Opening with J+9** | Scale by side aces / trump count | 80-100 |
+| **Opening with J XOR 9** | Signal missing honor (need 3+ trumps) | 80 |
+| **Opening "aux as"** | 2+ aces, no J/9 | 80 |
+| **Partner response** | On partner's 80: respond 90 if holding missing J/9. On 90+: PASS | 90 max |
+| **Overcall** | J+9 in different suit, score ≥ 14, cap at 100 | 80-100 |
+| **Coinche** | J+9 in opponent's suit, 4+ trumps, or 3+ trumps + ace on bids ≥ 120 | — |
+
+The key design principle is **one-shot communication**: partner responses are limited to a single raise (80→90), and overcalls cap at 100. This eliminates the escalation spirals common in naive convention implementations. Avg bid ~88, ~78% achievable with perfect play.
+
+#### Oracle Experiment Results
+
+The oracle experiment pairs each bidding strategy with perfect-info MCTS (sees all cards) to measure what % of contracts are inherently achievable:
+
+| Bidding + Play | Avg Bid | Contract Success |
+|---|---|---|
+| smart_bid + Oracle vs Oracle | 88 | **78%** |
+| heuristic + Oracle vs Oracle | 117 | 72% |
+| smart_bid + Oracle vs Random | 88 | 98% |
+
+Smart bid's lower, more conservative contracts are more frequently achievable even against perfect defense, while still being almost always achievable against imperfect defense.
 
 ## Architecture
 

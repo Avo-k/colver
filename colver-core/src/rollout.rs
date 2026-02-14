@@ -1,7 +1,7 @@
 #[cfg(feature = "rand")]
 use rand::Rng;
 
-use crate::state::GameState;
+use crate::state::{GameState, Phase};
 
 /// Play the game to completion with random legal moves. State is mutated in place.
 /// Returns rewards for both teams.
@@ -30,6 +30,25 @@ pub fn rollout_batch(state: &GameState, n: u32, rng: &mut impl Rng) -> [f32; 2] 
         total[1] += r[1];
     }
     [total[0] / n as f32, total[1] / n as f32]
+}
+
+/// Play the game to completion using heuristic bidding and random plays.
+/// State is mutated in place. Returns rewards for both teams.
+#[cfg(feature = "rand")]
+pub fn rollout_heuristic_bid(state: &mut GameState, rng: &mut impl Rng) -> [f32; 2] {
+    while !state.is_terminal() {
+        let action = if state.phase == Phase::Bidding {
+            crate::bid_eval::heuristic_bid(state)
+        } else {
+            let legal = state.legal_actions();
+            debug_assert!(legal != 0);
+            let count = legal.count_ones();
+            let idx = rng.gen_range(0..count);
+            select_nth_bit(legal, idx)
+        };
+        state.step(action);
+    }
+    state.rewards()
 }
 
 /// Select the nth set bit from a u64.

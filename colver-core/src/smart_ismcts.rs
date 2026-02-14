@@ -1,9 +1,12 @@
+use std::time::{Duration, Instant};
+
 use rand::Rng;
 
+use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
-use crate::mcts::{MctsConfig, MctsSearch, SearchResult};
-use crate::state::GameState;
+use crate::mcts::{BidPolicy, MctsConfig, MctsSearch, SearchResult};
+use crate::state::{GameState, Phase};
 
 /// Configuration for smart IS-MCTS.
 pub struct SmartIsMctsConfig {
@@ -15,6 +18,10 @@ pub struct SmartIsMctsConfig {
     pub exploration: f32,
     /// Whether to use soft (probabilistic) inference in addition to hard constraints.
     pub use_soft_inference: bool,
+    /// Optional time limit in milliseconds (overrides `determinizations` count).
+    pub time_limit_ms: Option<u32>,
+    /// Which bid function to use during bidding phase.
+    pub use_smart_bid: bool,
 }
 
 impl Default for SmartIsMctsConfig {
@@ -24,6 +31,8 @@ impl Default for SmartIsMctsConfig {
             iterations_per_det: 50,
             exploration: std::f32::consts::SQRT_2,
             use_soft_inference: true,
+            time_limit_ms: None,
+            use_smart_bid: true,
         }
     }
 }
@@ -77,6 +86,14 @@ impl SmartIsMctsSearch {
         config: &SmartIsMctsConfig,
         rng: &mut impl Rng,
     ) -> u8 {
+        // Skip MCTS search during bidding — use configured bid function
+        if state.phase == Phase::Bidding {
+            return if config.use_smart_bid {
+                crate::bid_eval::smart_bid(state)
+            } else {
+                crate::bid_eval::heuristic_bid(state)
+            };
+        }
         self.search_with_stats(state, config, rng).best_action
     }
 
@@ -91,17 +108,34 @@ impl SmartIsMctsSearch {
         let observer = state.current_player();
         let mut action_votes = [0u32; 64];
 
+        // Scale iterations by cards remaining: 8 cards → full, 1 card → 1/8
+        let cards_left = card_count(state.hands[observer as usize]);
+        let scaled_iters = (config.iterations_per_det * cards_left) / 8;
+
         let mcts_config = MctsConfig {
-            iterations: config.iterations_per_det,
+            iterations: scaled_iters.max(1),
             exploration: config.exploration,
+            bid_policy: BidPolicy::Heuristic,
         };
 
+        let deadline = config.time_limit_ms.map(|ms| {
+            let scaled_ms = (ms as u64 * cards_left as u64) / 8;
+            Instant::now() + Duration::from_millis(scaled_ms.max(1))
+        });
+
         let mut successful_dets = 0u32;
+        let mut det_count = 0u32;
 
         // Get normalized weights from beliefs (if available)
         let weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
 
-        for _ in 0..config.determinizations {
+        loop {
+            if let Some(d) = deadline {
+                if Instant::now() >= d { break; }
+            } else if det_count >= config.determinizations {
+                break;
+            }
+
             let det_state = if let Some(ref w) = weights {
                 // Try weighted determinization first, fall back to greedy
                 determinize_weighted(state, observer, w, rng)
@@ -112,7 +146,7 @@ impl SmartIsMctsSearch {
 
             let det_state = match det_state {
                 Some(s) => s,
-                None => continue,
+                None => { det_count += 1; continue; }
             };
 
             let result = self.inner.search_with_stats(&det_state, &mcts_config, rng);
@@ -122,6 +156,7 @@ impl SmartIsMctsSearch {
             }
 
             successful_dets += 1;
+            det_count += 1;
         }
 
         // Build result from aggregated votes

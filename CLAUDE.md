@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Check compilation (both crates)
 cargo check
 
-# Run all core tests (93 tests)
+# Run all core tests (104 tests)
 cargo test -p colver-core
 
 # Run a single test
@@ -26,6 +26,12 @@ cargo run -p colver-core --bin mcts_demo --release -- 20  # custom game count
 
 # Run Smart IS-MCTS demo (vs random + vs naive IS-MCTS)
 cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
+
+# Run oracle experiment (bid achievability testing)
+cargo run -p colver-core --bin oracle_experiment --release -- 200 2000
+
+# Run bidding experiment (smart_bid vs heuristic)
+cargo run -p colver-core --bin bidding_experiment --release -- 200 50
 
 # Build and install Python bindings
 cd colver-py && maturin develop --release
@@ -87,6 +93,26 @@ Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 3
 ### Naive IS-MCTS Agent (`naive_ismcts.rs`, feature `rand`)
 
 Ensemble determinization without beliefs. Samples D determinized worlds (uniform, respecting void constraints only), runs standard MCTS on each, aggregates root visit counts. Simpler but less informed than Smart IS-MCTS.
+
+### Bidding Strategies (`bid_eval.rs`)
+
+Two deterministic bidding functions, both ~200 ops, suitable for use inside rollouts or as standalone bidders.
+
+**`heuristic_bid`** — Score-based. Evaluates all 4 suits via `evaluate_for_trump()` (trump honors + length bonus + side aces/voids), maps score to bid value (10→80, 14→90, ..., 26→130). Boosts partner's suit +3. Never coinches. Avg bid ~117, ~72% achievable with perfect play.
+
+**`smart_bid`** — Convention-based, mimicking human Contrée strategy. Uses J/9 signaling:
+
+- **Opening** (`smart_opening`): J+9 → 80-100 (scaled by side aces/trump count). J XOR 9 + 3 trumps → 80 (signals missing honor). 2+ aces without J/9 → 80 ("aux as").
+- **Partner response** (`smart_respond`): On partner's 80, respond 90 if holding the missing J/9. On partner's 90+, PASS (no escalation — one-shot communication).
+- **Overcall** (`smart_overcall`): J+9 in another suit with score ≥ 14 → bid up to 100 max. No overcalls above 100.
+- **Coinche**: J+9 in opponent's suit, 4+ trumps in their suit, or 3+ trumps + side ace on bids ≥ 120.
+
+Avg bid ~88, ~78% achievable with perfect play. The lower bid values eliminate partner escalation spirals and overcall bidding wars that plagued earlier versions.
+
+### Experiment Binaries
+
+- **`oracle_experiment`**: Tests bid achievability — pairs each bidding strategy with perfect-info MCTS play. Measures what % of contracts are achievable assuming perfect card play by both sides.
+- **`bidding_experiment`**: Head-to-head comparison of smart_bid vs heuristic_bid, using IS-MCTS for play. Isolates bidding value from belief value.
 
 ### Performance-Critical Path
 

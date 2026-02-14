@@ -28,3 +28,15 @@ path = "src/tests/ismcts_demo.rs"
 [[bin]]
 name = "smart_ismcts_demo"
 path = "src/tests/smart_ismcts_demo.rs"
+
+[[bin]]
+name = "bidding_experiment"
+path = "src/tests/bidding_experiment.rs"
+
+[[bin]]
+name = "bid_analysis"
+path = "src/tests/bid_analysis.rs"
+
+[[bin]]
+name = "oracle_experiment"
+path = "src/tests/oracle_experiment.rs"
