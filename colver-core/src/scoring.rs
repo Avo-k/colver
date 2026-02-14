@@ -10,10 +10,7 @@ use crate::state::*;
 /// - Standard: Preneurs get their_points + contract_value + belote. Défense gets their_points + belote.
 /// - Contré: Preneurs get 320 + contract×2 + belote(both). Défense gets 0.
 /// - Surcontré: Preneurs get 640 + contract×4 + belote(both). Défense gets 0.
-/// - Capot standard: Preneurs get 500 + belote. Défense gets 0 + their_belote.
-///   (Well, capot means defense has 0 points, so defense gets their belote only if they have it—
-///    but capot means 8 tricks so defense can't have belote unless they held Q+K of trump
-///    and played both cards... in 0 tricks? Not possible. So defense belote = 0 if capot réussi.)
+/// - Capot standard: Preneurs get 500 + their_belote. Défense gets their_belote (if any).
 /// - Capot contré: 1000 + belote(both). Défense 0.
 /// - Capot surcontré: 2000 + belote(both). Défense 0.
 ///
@@ -23,8 +20,7 @@ use crate::state::*;
 ///   - Preneurs get 0. Défense gets 160 + contract + all belote (both teams').
 /// - Contré: Preneurs get 0. Défense gets 320 + contract×2 + all belote.
 /// - Surcontré: Preneurs get 0. Défense gets 640 + contract×4 + all belote.
-/// - Capot chute standard: Preneurs get their_points + belote. Défense gets their_points + 250 + belote.
-///   Wait, this is tricky. Let me re-examine.
+/// - Capot chute: Defense gets flat capot value (500/1000/2000) + all belote. Same as réussi values.
 ///
 /// Let me simplify based on the rules:
 /// - Contract value = bid × 10 (or 250 for capot)
@@ -86,9 +82,9 @@ pub fn compute_deal_score(state: &GameState) -> DealScore {
         if capot_reussi {
             match coinche {
                 0 => {
-                    // Capot réussi standard: preneurs get 500 + belote(both)
-                    scores[taker] = round10(500 + total_belote);
-                    scores[defense] = 0;
+                    // Capot réussi standard: each team keeps their own belote
+                    scores[taker] = round10(500 + belote[taker]);
+                    scores[defense] = round10(belote[defense]);
                 }
                 1 => {
                     // Capot contré réussi: 1000 + belote(both)
@@ -103,23 +99,12 @@ pub fn compute_deal_score(state: &GameState) -> DealScore {
                 _ => unreachable!(),
             }
         } else {
-            // Capot chute
+            // Capot chute: defense gets flat capot value (same as réussi), per FFB rules section 10.2
+            scores[taker] = 0;
             match coinche {
-                0 => {
-                    // Capot chute standard: preneurs get 0, defense gets 160 + 250 + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(160 + 250 + total_belote);
-                }
-                1 => {
-                    // Capot contré chute: preneurs get 0, defense gets 320 + 500 + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(320 + 500 + total_belote);
-                }
-                2 => {
-                    // Capot surcontré chute: preneurs get 0, defense gets 640 + 1000 + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(640 + 1000 + total_belote);
-                }
+                0 => scores[defense] = round10(500 + total_belote),
+                1 => scores[defense] = round10(1000 + total_belote),
+                2 => scores[defense] = round10(2000 + total_belote),
                 _ => unreachable!(),
             }
         }
@@ -297,9 +282,47 @@ mod tests {
         // Taker bid capot, only won 7 tricks
         let state = make_scored_state(0, 25, 1, 0, 140, 22, 7, 0, 0);
         let score = compute_deal_score(&state);
-        // Capot chute standard: preneurs 0, defense round10(160 + 250 + 0) = round10(410) = 410
+        // Capot chute standard: preneurs 0, defense gets flat 500
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 410);
+        assert_eq!(score.scores[1], 500);
+    }
+
+    #[test]
+    fn test_capot_chute_contre() {
+        let state = make_scored_state(0, 25, 1, 1, 140, 22, 7, 0, 0);
+        let score = compute_deal_score(&state);
+        // Capot contré chute: defense gets flat 1000
+        assert_eq!(score.scores[0], 0);
+        assert_eq!(score.scores[1], 1000);
+    }
+
+    #[test]
+    fn test_capot_chute_surcontre() {
+        let state = make_scored_state(0, 25, 1, 2, 140, 22, 7, 0, 0);
+        let score = compute_deal_score(&state);
+        // Capot surcontré chute: defense gets flat 2000
+        assert_eq!(score.scores[0], 0);
+        assert_eq!(score.scores[1], 2000);
+    }
+
+    #[test]
+    fn test_capot_chute_with_belote() {
+        // Taker bid capot, chute, taker has belote
+        let state = make_scored_state(0, 25, 1, 0, 140, 22, 7, 2, 0);
+        let score = compute_deal_score(&state);
+        // Capot chute: defense gets round10(500 + 20) = 520
+        assert_eq!(score.scores[0], 0);
+        assert_eq!(score.scores[1], 520);
+    }
+
+    #[test]
+    fn test_capot_reussi_with_defense_belote() {
+        // Taker bid capot, won all 8 tricks, but defense has belote (Q+K of trump played)
+        let state = make_scored_state(0, 25, 1, 0, 252, 0, 8, 0, 2);
+        let score = compute_deal_score(&state);
+        // Capot réussi standard: taker gets 500, defense keeps their belote (20)
+        assert_eq!(score.scores[0], 500);
+        assert_eq!(score.scores[1], 20);
     }
 
     #[test]

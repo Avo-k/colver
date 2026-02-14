@@ -6,9 +6,11 @@ edition = "2021"
 [features]
 default = ["rand"]
 rand = ["dep:rand"]
+parallel = ["dep:rayon", "rand"]
 
 [dependencies]
 rand = { version = "0.8", optional = true }
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
@@ -40,3 +42,27 @@ path = "src/tests/bid_analysis.rs"
 [[bin]]
 name = "oracle_experiment"
 path = "src/tests/oracle_experiment.rs"
+
+[[bin]]
+name = "single_tree_ismcts_demo"
+path = "src/tests/single_tree_ismcts_demo.rs"
+
+[[bin]]
+name = "strength_experiment"
+path = "src/tests/strength_experiment.rs"
+
+[[bin]]
+name = "diagnose_smart"
+path = "src/tests/diagnose_smart.rs"
+
+[[bin]]
+name = "match_experiment"
+path = "src/tests/match_experiment.rs"
+
+[[bin]]
+name = "bid_debug"
+path = "src/tests/bid_debug.rs"
+
+[[bin]]
+name = "bid_tournament"
+path = "src/tests/bid_tournament.rs"

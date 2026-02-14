@@ -2,10 +2,11 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
+use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
-use crate::mcts::{BidPolicy, MctsConfig, MctsSearch, SearchResult};
+use crate::mcts::{MctsConfig, MctsSearch, RolloutPolicy, SearchResult};
 use crate::state::{GameState, Phase};
 
 /// Configuration for smart IS-MCTS.
@@ -21,7 +22,7 @@ pub struct SmartIsMctsConfig {
     /// Optional time limit in milliseconds (overrides `determinizations` count).
     pub time_limit_ms: Option<u32>,
     /// Which bid function to use during bidding phase.
-    pub use_smart_bid: bool,
+    pub bid_function: BidFunction,
 }
 
 impl Default for SmartIsMctsConfig {
@@ -32,7 +33,7 @@ impl Default for SmartIsMctsConfig {
             exploration: std::f32::consts::SQRT_2,
             use_soft_inference: true,
             time_limit_ms: None,
-            use_smart_bid: true,
+            bid_function: BidFunction::Improved,
         }
     }
 }
@@ -88,11 +89,7 @@ impl SmartIsMctsSearch {
     ) -> u8 {
         // Skip MCTS search during bidding — use configured bid function
         if state.phase == Phase::Bidding {
-            return if config.use_smart_bid {
-                crate::bid_eval::smart_bid(state)
-            } else {
-                crate::bid_eval::heuristic_bid(state)
-            };
+            return config.bid_function.bid(state);
         }
         self.search_with_stats(state, config, rng).best_action
     }
@@ -115,7 +112,8 @@ impl SmartIsMctsSearch {
         let mcts_config = MctsConfig {
             iterations: scaled_iters.max(1),
             exploration: config.exploration,
-            bid_policy: BidPolicy::Heuristic,
+            rollout_policy: RolloutPolicy::HeuristicPlay,
+            ..Default::default()
         };
 
         let deadline = config.time_limit_ms.map(|ms| {
@@ -189,6 +187,90 @@ impl SmartIsMctsSearch {
             visit_counts,
             root_visits: total_votes,
         }
+    }
+
+    /// Parallel search using rayon. Pre-generates seeds, runs determinizations in parallel.
+    #[cfg(feature = "parallel")]
+    pub fn search_parallel(
+        &mut self,
+        state: &GameState,
+        config: &SmartIsMctsConfig,
+        rng: &mut impl Rng,
+    ) -> u8 {
+        use rand::SeedableRng;
+        use rayon::prelude::*;
+
+        // Skip MCTS search during bidding
+        if state.phase == Phase::Bidding {
+            return config.bid_function.bid(state);
+        }
+
+        let observer = state.current_player();
+        let cards_left = card_count(state.hands[observer as usize]);
+        let scaled_iters = (config.iterations_per_det * cards_left) / 8;
+
+        // Pre-generate seeds
+        let num_dets = config.determinizations as usize;
+        let seeds: Vec<u64> = (0..num_dets).map(|_| rng.gen()).collect();
+        let weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
+        let game_state = *state; // Copy for thread safety
+
+        // Run determinizations in parallel
+        let vote_arrays: Vec<[u32; 64]> = seeds
+            .par_iter()
+            .map(|&seed| {
+                let mut local_rng = rand::rngs::StdRng::seed_from_u64(seed);
+                let mut local_search = MctsSearch::new();
+                let mcts_config = MctsConfig {
+                    iterations: scaled_iters.max(1),
+                    exploration: config.exploration,
+                    rollout_policy: RolloutPolicy::HeuristicPlay,
+                    ..Default::default()
+                };
+
+                let det_state = if let Some(ref w) = weights {
+                    crate::determinize::determinize_weighted(&game_state, observer, w, &mut local_rng)
+                        .or_else(|| crate::determinize::determinize_greedy(&game_state, observer, &mut local_rng))
+                } else {
+                    crate::determinize::determinize_greedy(&game_state, observer, &mut local_rng)
+                };
+
+                let det_state = match det_state {
+                    Some(s) => s,
+                    None => return [0u32; 64],
+                };
+
+                let result = local_search.search_with_stats(&det_state, &mcts_config, &mut local_rng);
+                let mut votes = [0u32; 64];
+                for &(action, visits) in &result.visit_counts {
+                    votes[action as usize] += visits;
+                }
+                votes
+            })
+            .collect();
+
+        // Aggregate
+        let mut action_votes = [0u32; 64];
+        for votes in &vote_arrays {
+            for i in 0..64 {
+                action_votes[i] += votes[i];
+            }
+        }
+
+        let legal = state.legal_actions();
+        let mut best_action = legal.trailing_zeros() as u8;
+        let mut best_votes = 0u32;
+        let mut mask = legal;
+        while mask != 0 {
+            let bit = mask.trailing_zeros() as u8;
+            if action_votes[bit as usize] > best_votes {
+                best_votes = action_votes[bit as usize];
+                best_action = bit;
+            }
+            mask &= mask - 1;
+        }
+
+        best_action
     }
 }
 
@@ -351,5 +433,34 @@ mod tests {
             }
         }
         assert!(found >= 5);
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn test_parallel_returns_legal_action() {
+        let mut rng = rand::thread_rng();
+        let config = SmartIsMctsConfig {
+            determinizations: 5,
+            iterations_per_det: 20,
+            ..Default::default()
+        };
+        let mut found = 0;
+        for _ in 0..100 {
+            if let Some(state) = random_playing_state(&mut rng) {
+                let mut search = SmartIsMctsSearch::new();
+                let action = search.search_parallel(&state, &config, &mut rng);
+                let legal = state.legal_actions();
+                assert!(
+                    legal & (1u64 << action) != 0,
+                    "Parallel IS-MCTS returned illegal action {}",
+                    action
+                );
+                found += 1;
+                if found >= 30 {
+                    break;
+                }
+            }
+        }
+        assert!(found >= 10, "Not enough non-void deals to test");
     }
 }

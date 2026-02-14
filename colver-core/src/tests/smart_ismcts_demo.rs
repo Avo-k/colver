@@ -218,47 +218,59 @@ fn main() {
         .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
+    let total_budget: u32 = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000);
 
-    let dets = 20u32;
-    let iters = 50u32;
-    let total = dets * iters;
-
-    // Part 1: Smart IS-MCTS vs Random
-    println!("===== Part 1: Smart IS-MCTS (NS) vs Random (EW) =====");
-    println!("--- {}D x {}I = {} total iterations ---", dets, iters, total);
-
-    let smart_config = SmartIsMctsConfig {
-        determinizations: dets,
-        iterations_per_det: iters,
-        ..Default::default()
+    // Budget configs: (dets, iters_per_det)
+    let configs: Vec<(u32, u32)> = if total_budget <= 1000 {
+        vec![(20, total_budget / 20)]
+    } else {
+        // Use D=100 sweet spot for high budgets
+        vec![(100, total_budget / 100)]
     };
 
-    let result = run_smart_vs_random(n_games, &smart_config, &mut rng);
-    print_summary(
-        &format!("Smart IS-MCTS({}D x {}I) vs Random", dets, iters),
-        "NS (Smart IS-MCTS)",
-        "EW (Random)",
-        n_games,
-        &result,
-    );
+    for &(dets, iters) in &configs {
+        let total = dets * iters;
 
-    // Part 2: Smart IS-MCTS vs Naive IS-MCTS (same budget)
-    println!();
-    println!("===== Part 2: Smart IS-MCTS (NS) vs Naive IS-MCTS (EW) =====");
-    println!("--- Both at {}D x {}I = {} total iterations ---", dets, iters, total);
+        // Part 1: Smart IS-MCTS vs Random
+        println!("===== Part 1: Smart IS-MCTS (NS) vs Random (EW) =====");
+        println!("--- {}D x {}I = {} total budget ---", dets, iters, total);
 
-    let naive_config = NaiveIsMctsConfig {
-        determinizations: dets,
-        iterations_per_det: iters,
-        ..Default::default()
-    };
+        let smart_config = SmartIsMctsConfig {
+            determinizations: dets,
+            iterations_per_det: iters,
+            ..Default::default()
+        };
 
-    let result = run_smart_vs_naive(n_games, &smart_config, &naive_config, &mut rng);
-    print_summary(
-        &format!("Smart({}D x {}I) vs Naive({}D x {}I)", dets, iters, dets, iters),
-        "NS (Smart IS-MCTS)",
-        "EW (Naive IS-MCTS)",
-        n_games,
-        &result,
-    );
+        let result = run_smart_vs_random(n_games, &smart_config, &mut rng);
+        print_summary(
+            &format!("Smart IS-MCTS({}D x {}I) vs Random", dets, iters),
+            "NS (Smart IS-MCTS)",
+            "EW (Random)",
+            n_games,
+            &result,
+        );
+
+        // Part 2: Smart IS-MCTS vs Naive IS-MCTS (same budget)
+        println!();
+        println!("===== Part 2: Smart IS-MCTS (NS) vs Naive IS-MCTS (EW) =====");
+        println!("--- Both at {}D x {}I = {} total budget ---", dets, iters, total);
+
+        let naive_config = NaiveIsMctsConfig {
+            determinizations: dets,
+            iterations_per_det: iters,
+            ..Default::default()
+        };
+
+        let result = run_smart_vs_naive(n_games, &smart_config, &naive_config, &mut rng);
+        print_summary(
+            &format!("Smart({}D x {}I) vs Naive({}D x {}I)", dets, iters, dets, iters),
+            "NS (Smart IS-MCTS)",
+            "EW (Naive IS-MCTS)",
+            n_games,
+            &result,
+        );
+    }
 }

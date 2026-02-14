@@ -1,3 +1,4 @@
+use colver_core::bid_eval::BidFunction;
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::GameState;
@@ -38,11 +39,14 @@ fn run_experiment(
 
     let start = Instant::now();
 
+    let ew_bf = if ew_smart_bid { BidFunction::Smart } else { BidFunction::Heuristic };
+    let ns_bf = if ns_smart_bid { BidFunction::Smart } else { BidFunction::Heuristic };
+
     // EW config (always naive)
     let ew_config = NaiveIsMctsConfig {
         iterations_per_det: 50,
         time_limit_ms: Some(time_ms),
-        use_smart_bid: ew_smart_bid,
+        bid_function: ew_bf,
         ..Default::default()
     };
 
@@ -51,7 +55,7 @@ fn run_experiment(
         let ns_config = SmartIsMctsConfig {
             iterations_per_det: 50,
             time_limit_ms: Some(time_ms),
-            use_smart_bid: ns_smart_bid,
+            bid_function: ns_bf,
             ..Default::default()
         };
 
@@ -113,7 +117,7 @@ fn run_experiment(
         let ns_config = NaiveIsMctsConfig {
             iterations_per_det: 50,
             time_limit_ms: Some(time_ms),
-            use_smart_bid: ns_smart_bid,
+            bid_function: ns_bf,
             ..Default::default()
         };
 

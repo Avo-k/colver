@@ -98,7 +98,7 @@ fn legal_plays_color(
 
 /// Find the highest trump strength rank currently on the trick for a given suit.
 /// Returns None if no cards of that suit are on the trick.
-fn best_trump_rank_on_trick(state: &GameState, suit: Suit) -> Option<u8> {
+pub(crate) fn best_trump_rank_on_trick(state: &GameState, suit: Suit) -> Option<u8> {
     let mut best: Option<u8> = None;
     let mut best_strength = 0u8;
 
@@ -122,7 +122,7 @@ fn best_trump_rank_on_trick(state: &GameState, suit: Suit) -> Option<u8> {
 }
 
 /// Check if the current player's partner is currently winning the trick.
-fn partner_is_master(state: &GameState) -> bool {
+pub(crate) fn partner_is_master(state: &GameState) -> bool {
     if state.trick_count < 2 {
         return false; // Partner hasn't played yet (or only lead played)
     }
@@ -184,7 +184,7 @@ fn partner_is_master(state: &GameState) -> bool {
 /// Get the subset of cards in `hand_in_suit` (which are all in `suit`) that
 /// overtrump the given rank (using trump strength ordering).
 #[inline]
-fn overtrump_in_suit(hand_in_suit: CardSet, suit: Suit, best_rank: u8) -> CardSet {
+pub(crate) fn overtrump_in_suit(hand_in_suit: CardSet, suit: Suit, best_rank: u8) -> CardSet {
     let higher_ranks = HIGHER_TRUMP_MASK[best_rank as usize];
     let shift = SUIT_SHIFT[suit as usize];
     let higher_mask = (higher_ranks as u32) << shift;

@@ -96,23 +96,39 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 ### Bidding Strategies (`bid_eval.rs`)
 
-Two deterministic bidding functions, both ~200 ops, suitable for use inside rollouts or as standalone bidders.
+Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
 
-**`heuristic_bid`** — Score-based. Evaluates all 4 suits via `evaluate_for_trump()` (trump honors + length bonus + side aces/voids), maps score to bid value (10→80, 14→90, ..., 26→130). Boosts partner's suit +3. Never coinches. Avg bid ~117, ~72% achievable with perfect play.
+**Hand evaluation:** `evaluate_for_trump(hand, suit) -> u16` scores a hand assuming `suit` is trump. Trump honors (J=8, 9=6, A=4, 10=3, K=1, Q=1), trump length bonus ((count−2)×2 if count>2), side aces (+3 each), voids (+3), singletons (+1). Typical range 0–35.
 
-**`smart_bid`** — Convention-based, mimicking human Contrée strategy. Uses J/9 signaling:
+**`improved_bid`** (default) — Tournament-winning balanced strategy. Quality gate (J/9/A/10 or 3+ cards in suit), then score→value mapping: 10→80, 13→90, 17→100, 21→110, 25→120. Opening cap 120, overcall cap 120, response cap 130. Coinches on J+9 in opponent's suit or 4+ trumps + side ace.
+- Opening: best suit must pass quality gate + score threshold
+- Partner response: raise in partner's suit based on own score, or bid alternative suit if score≥16
+- Overcall: score≥13, quality gate, cap 120, won't compete above opponent's 120
 
-- **Opening** (`smart_opening`): J+9 → 80-100 (scaled by side aces/trump count). J XOR 9 + 3 trumps → 80 (signals missing honor). 2+ aces without J/9 → 80 ("aux as").
-- **Partner response** (`smart_respond`): On partner's 80, respond 90 if holding the missing J/9. On partner's 90+, PASS (no escalation — one-shot communication).
-- **Overcall** (`smart_overcall`): J+9 in another suit with score ≥ 14 → bid up to 100 max. No overcalls above 100.
-- **Coinche**: J+9 in opponent's suit, 4+ trumps in their suit, or 3+ trumps + side ace on bids ≥ 120.
+**`heuristic_bid`** — Aggressive score-based. Maps score→value (10→80, 14→90, 17→100, 20→110, 23→120, 26→130). No quality gate, no cap. Boosts partner's suit +3. Never coinches. Takes ~50% of contracts with ~70% success rate.
 
-Avg bid ~88, ~78% achievable with perfect play. The lower bid values eliminate partner escalation spirals and overcall bidding wars that plagued earlier versions.
+**`smart_bid`** — Conservative convention-based. Requires J/9 for opening, J+9 signaling between partners. Very conservative (~10-13% contract take rate, ~78% success). Mostly historical.
+
+**`parametric_bid` + `BidParams`** — Configurable bidder for strategy sweeps. `BidParams` has: score thresholds[6] (for 80–130), opening/overcall/response caps, overcall_min_score, quality_gate flag. Presets: `ultra_conservative`, `conservative`, `moderate`, `balanced`, `aggressive`, `very_aggressive`. Used by `bid_tournament` binary.
+
+### Card Play Strategies
+
+**Random play** (`rollout.rs: rollout_random`) — Uniform random legal moves. ~1.3M rollouts/sec.
+
+**Heuristic play** (`rollout.rs: heuristic_play_action`) — Deterministic card play for rollouts (sees all hands). Decision tree: safe leads, partner feeding, minimum-winning-card, cheapest trump cut. ~769K full-deal rollouts/sec with heuristic bid.
+
+**Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Samples D determinized worlds (uniform, void-aware), runs MCTS on each, aggregates root visit counts. Default: 20 determinizations × 50 iters, `HeuristicPlay` rollouts.
+
+**Smart IS-MCTS** (`smart_ismcts.rs` + `card_beliefs.rs`) — Belief-weighted IS-MCTS. `CardBeliefs` weight matrix updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. ~+7.5% win rate vs Naive IS-MCTS in match play. Has `search_parallel()` behind `parallel` feature.
 
 ### Experiment Binaries
 
-- **`oracle_experiment`**: Tests bid achievability — pairs each bidding strategy with perfect-info MCTS play. Measures what % of contracts are achievable assuming perfect card play by both sides.
-- **`bidding_experiment`**: Head-to-head comparison of smart_bid vs heuristic_bid, using IS-MCTS for play. Isolates bidding value from belief value.
+- **`oracle_experiment`**: Tests bid achievability — pairs each bidding strategy with perfect-info MCTS play.
+- **`bidding_experiment`**: Head-to-head comparison of bidding strategies using IS-MCTS for play.
+- **`match_experiment`**: Full match play (first to 2000 points), 5 experiments comparing IS-MCTS variants and bidding strategies. Reports contracts taken/made, deal score distributions, coinches.
+- **`bid_tournament`**: Round-robin tournament of parameterized bidding strategies. Each pair plays both directions with Naive IS-MCTS for card play. Reports win matrix, margin matrix, rankings.
+- **`bid_debug`**: Prints detailed bidding rounds showing each player's hand, suit evaluations, and decisions for both heuristic and improved bidders side-by-side.
+- **`strength_experiment`**: Rollout policy comparison, D×I sweep, RAVE on/off.
 
 ### Performance-Critical Path
 

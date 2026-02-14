@@ -1,5 +1,5 @@
 use colver_core::bid_eval::heuristic_bid;
-use colver_core::mcts::{BidPolicy, MctsConfig, MctsSearch};
+use colver_core::mcts::{MctsConfig, MctsSearch, RolloutPolicy};
 use colver_core::rollout::select_nth_bit;
 use colver_core::state::{GameState, Phase};
 use rand::Rng;
@@ -13,7 +13,7 @@ fn main() {
         .unwrap_or(100);
 
     let config = MctsConfig {
-        bid_policy: BidPolicy::Heuristic,
+        rollout_policy: RolloutPolicy::HeuristicPlay,
         ..MctsConfig::default()
     };
     let mut search = MctsSearch::new();

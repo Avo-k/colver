@@ -5,7 +5,7 @@
 /// are calibrated correctly and the IS-MCTS play is the bottleneck.
 use colver_core::bid_eval::{heuristic_bid, smart_bid};
 use colver_core::bidding::{decode_bid, BID_COINCHE, BID_PASS, BID_SURCOINCHE};
-use colver_core::mcts::{BidPolicy, MctsConfig, MctsSearch};
+use colver_core::mcts::{MctsConfig, MctsSearch, RolloutPolicy};
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout::select_nth_bit;
 use colver_core::scoring::compute_deal_score;
@@ -110,7 +110,8 @@ fn do_play(
     let oracle_config = MctsConfig {
         iterations: oracle_iters,
         exploration: std::f32::consts::SQRT_2,
-        bid_policy: BidPolicy::Heuristic,
+        rollout_policy: RolloutPolicy::HeuristicPlay,
+        ..Default::default()
     };
 
     while !state.is_terminal() {

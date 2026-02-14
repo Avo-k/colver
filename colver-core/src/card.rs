@@ -229,6 +229,94 @@ pub fn select_nth_card(set: CardSet, mut n: u32) -> Card {
     }
 }
 
+/// Lowest card by bit index (7 of lowest suit present). O(1) via trailing_zeros.
+#[inline(always)]
+pub fn lowest_card_in_set(set: CardSet) -> Card {
+    debug_assert!(set != 0);
+    set.trailing_zeros() as Card
+}
+
+/// Card with minimum point value in set. Tie-break: lowest card index.
+#[inline]
+pub fn lowest_point_card(set: CardSet, ct: ContractType) -> Card {
+    debug_assert!(set != 0);
+    let mut best_card = set.trailing_zeros() as Card;
+    let mut best_pts = card_points(best_card, ct);
+    let mut remaining = set & (set - 1); // skip first
+    while remaining != 0 {
+        let card = remaining.trailing_zeros() as Card;
+        let pts = card_points(card, ct);
+        if pts < best_pts {
+            best_pts = pts;
+            best_card = card;
+        }
+        remaining &= remaining - 1;
+    }
+    best_card
+}
+
+/// Card with maximum point value in set. Tie-break: highest card index.
+#[inline]
+pub fn highest_point_card(set: CardSet, ct: ContractType) -> Card {
+    debug_assert!(set != 0);
+    let mut best_card = set.trailing_zeros() as Card;
+    let mut best_pts = card_points(best_card, ct);
+    let mut remaining = set & (set - 1);
+    while remaining != 0 {
+        let card = remaining.trailing_zeros() as Card;
+        let pts = card_points(card, ct);
+        if pts >= best_pts {
+            best_pts = pts;
+            best_card = card;
+        }
+        remaining &= remaining - 1;
+    }
+    best_card
+}
+
+/// Lowest rank in `suit` within `set` that beats `target_rank` (plain ordering).
+/// Returns EMPTY if none can beat. Used to play "minimum winning card".
+#[inline]
+pub fn min_winning_plain(set: CardSet, suit: Suit, target_rank: u8) -> Card {
+    let in_suit = cards_in_suit(set, suit);
+    if in_suit == 0 {
+        return EMPTY;
+    }
+    let shift = SUIT_SHIFT[suit as usize];
+    // Plain ordering: rank bits go 0=7, 1=8, ..., 7=A. Higher rank = stronger.
+    // We want the lowest rank > target_rank.
+    // Mask out ranks <= target_rank
+    let above_mask = !((1u32 << (target_rank + 1)) - 1); // bits target_rank+1 and above
+    let suit_above = (in_suit >> shift) as u8 & (above_mask as u8);
+    if suit_above == 0 {
+        return EMPTY;
+    }
+    // Lowest set bit = cheapest winner
+    let rank = suit_above.trailing_zeros() as u8;
+    make_card(suit, rank)
+}
+
+/// Weakest trump card in set by TRUMP_STRENGTH ordering.
+/// Used to cut with minimum cost.
+#[inline]
+pub fn lowest_trump_in_set(set: CardSet, suit: Suit) -> Card {
+    let bits = suit_bits(set, suit);
+    debug_assert!(bits != 0);
+    let mut best_rank = 0u8;
+    let mut best_strength = u8::MAX;
+    let mut b = bits;
+    while b != 0 {
+        let rank = b.trailing_zeros() as u8;
+        let str_ = TRUMP_STRENGTH[rank as usize];
+        if str_ < best_strength {
+            best_strength = str_;
+            best_rank = rank;
+        }
+        b &= b - 1;
+    }
+    make_card(suit, best_rank)
+}
+
 /// Iterate over cards in a CardSet.
 pub struct CardIter(pub CardSet);
 

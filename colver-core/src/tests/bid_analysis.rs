@@ -1,5 +1,5 @@
 /// Diagnostic: play games with full logging to understand bidding patterns.
-use colver_core::bid_eval::{heuristic_bid, smart_bid};
+use colver_core::bid_eval::{heuristic_bid, smart_bid, BidFunction};
 use colver_core::bidding::{decode_bid, BID_COINCHE, BID_PASS, BID_SURCOINCHE};
 use colver_core::card::cardset_str;
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
@@ -110,10 +110,13 @@ fn play_game_logged(
     let contract_coinche = state.contract.coinche;
 
     // --- Play phase with MCTS ---
+    let ew_bf = if ew_smart_bid { BidFunction::Smart } else { BidFunction::Heuristic };
+    let ns_bf = if ns_smart_bid { BidFunction::Smart } else { BidFunction::Heuristic };
+
     let ew_config = NaiveIsMctsConfig {
         iterations_per_det: 50,
         time_limit_ms: Some(time_ms),
-        use_smart_bid: ew_smart_bid,
+        bid_function: ew_bf,
         ..Default::default()
     };
 
@@ -121,7 +124,7 @@ fn play_game_logged(
         let ns_config = SmartIsMctsConfig {
             iterations_per_det: 50,
             time_limit_ms: Some(time_ms),
-            use_smart_bid: ns_smart_bid,
+            bid_function: ns_bf,
             ..Default::default()
         };
         let mut sp0 = SmartIsMctsSearch::new();
@@ -147,7 +150,7 @@ fn play_game_logged(
         let ns_config = NaiveIsMctsConfig {
             iterations_per_det: 50,
             time_limit_ms: Some(time_ms),
-            use_smart_bid: ns_smart_bid,
+            bid_function: ns_bf,
             ..Default::default()
         };
         let mut ns_search = NaiveIsMctsSearch::new();

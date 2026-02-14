@@ -16,3 +16,5 @@ pub mod naive_ismcts;
 pub mod card_beliefs;
 #[cfg(feature = "rand")]
 pub mod smart_ismcts;
+#[cfg(feature = "rand")]
+pub mod single_tree_ismcts;

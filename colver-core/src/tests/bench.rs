@@ -93,6 +93,28 @@ fn main() {
         "Per rollout: {:.0} ns",
         elapsed.as_nanos() as f64 / n as f64
     );
+
+    // Benchmark heuristic-play rollouts
+    let start = Instant::now();
+    let mut total = [0.0f32; 2];
+    for _ in 0..n {
+        let mut s = GameState::deal_random(0, &mut rng);
+        let r = rollout::rollout_heuristic_play(&mut s, &mut rng);
+        total[0] += r[0];
+        total[1] += r[1];
+    }
+    let elapsed = start.elapsed();
+    println!();
+    println!("Full deal (heuristic bidding + heuristic play) rollouts:");
+    println!("Ran {} rollouts in {:?}", n, elapsed);
+    println!(
+        "Rate: {:.2} rollouts/sec",
+        n as f64 / elapsed.as_secs_f64()
+    );
+    println!(
+        "Per rollout: {:.0} ns",
+        elapsed.as_nanos() as f64 / n as f64
+    );
 }
 
 fn select_nth_bit(mask: u64, mut n: u32) -> u8 {

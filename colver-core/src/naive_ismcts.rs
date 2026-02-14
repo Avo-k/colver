@@ -2,9 +2,10 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
+use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::determinize::determinize_greedy;
-use crate::mcts::{BidPolicy, MctsConfig, MctsSearch, SearchResult};
+use crate::mcts::{MctsConfig, MctsSearch, RolloutPolicy, SearchResult};
 use crate::state::{GameState, Phase};
 
 /// Configuration for naive IS-MCTS (ensemble determinization).
@@ -18,7 +19,7 @@ pub struct NaiveIsMctsConfig {
     /// Optional time limit in milliseconds (overrides `determinizations` count).
     pub time_limit_ms: Option<u32>,
     /// Which bid function to use during bidding phase.
-    pub use_smart_bid: bool,
+    pub bid_function: BidFunction,
 }
 
 impl Default for NaiveIsMctsConfig {
@@ -28,7 +29,7 @@ impl Default for NaiveIsMctsConfig {
             iterations_per_det: 50,
             exploration: std::f32::consts::SQRT_2,
             time_limit_ms: None,
-            use_smart_bid: false,
+            bid_function: BidFunction::Improved,
         }
     }
 }
@@ -51,11 +52,7 @@ impl NaiveIsMctsSearch {
     pub fn search(&mut self, state: &GameState, config: &NaiveIsMctsConfig, rng: &mut impl Rng) -> u8 {
         // Skip MCTS search during bidding — use configured bid function
         if state.phase == Phase::Bidding {
-            return if config.use_smart_bid {
-                crate::bid_eval::smart_bid(state)
-            } else {
-                crate::bid_eval::heuristic_bid(state)
-            };
+            return config.bid_function.bid(state);
         }
         self.search_with_stats(state, config, rng).best_action
     }
@@ -78,7 +75,8 @@ impl NaiveIsMctsSearch {
         let mcts_config = MctsConfig {
             iterations: scaled_iters.max(1),
             exploration: config.exploration,
-            bid_policy: BidPolicy::Heuristic,
+            rollout_policy: RolloutPolicy::HeuristicPlay,
+            ..Default::default()
         };
 
         let deadline = config.time_limit_ms.map(|ms| {
