@@ -4,10 +4,20 @@ version = "0.1.0"
 description = "Fast Belote Contrée environment for RL training"
 requires-python = ">=3.10"
 dependencies = [
-    "fastapi>=0.129.0",
     "numpy",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.129.0",
     "uvicorn[standard]>=0.40.0",
     "websockets>=16.0",
+]
+torch = [
+    "torch>=2.0",
+]
+dev = [
+    "colver[web,torch]",
 ]
 
 [build-system]
@@ -17,3 +27,14 @@ build-backend = "maturin"
 [tool.maturin]
 manifest-path = "colver-py/Cargo.toml"
 python-source = "python"
+
+[tool.uv]
+# Local dev installs all extras
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+    "colver[web,torch]",
+    "maturin>=1.0,<2.0",
+    "websockets>=16.0",
+]

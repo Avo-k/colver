@@ -8,6 +8,7 @@ pub mod game;
 pub mod rollout;
 pub mod determinize;
 pub mod bid_eval;
+pub mod dmc_net;
 #[cfg(feature = "rand")]
 pub mod mcts;
 #[cfg(feature = "rand")]

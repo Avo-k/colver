@@ -15,16 +15,16 @@ COPY Cargo.toml Cargo.lock ./
 
 RUN maturin build --release -m colver-py/Cargo.toml -o /wheels
 
-# Stage 2: Lightweight runtime
+# Stage 2: Lightweight runtime (no torch needed — DouDou uses Rust inference)
 FROM python:3.11-slim-bookworm
 
-RUN pip install --no-cache-dir fastapi uvicorn[standard] websockets numpy
-
 COPY --from=builder /wheels/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
+RUN pip install --no-cache-dir "/tmp/colver-*.whl[web]" && rm /tmp/*.whl
 
 COPY colver-web/ /app/colver-web/
 COPY images/cards/ /app/images/cards/
+# Copy DMC model weights if available (enables DouDou agent)
+COPY models/dmc_final.bi[n] /app/models/
 
 WORKDIR /app
 EXPOSE 8000

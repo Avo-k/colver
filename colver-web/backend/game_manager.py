@@ -1,29 +1,24 @@
 """Game session management for Colver web UI."""
 
+import time
 import colver
 
 
-class PlaySession:
-    """Wraps a colver.Env for human vs AI play."""
-
-    def __init__(self, ai_type="smart", time_ms=50):
-        self.ai_type = ai_type
-        self.time_ms = time_ms
-        self.env = colver.Env()
-        self.history = []  # list of {player, action, phase}
-        self.last_trick = None  # [card0, card1, card2, card3] or None
-        self.last_trick_winner = None
-        self.last_trick_points = 0
-        self.env.reset()
-        if ai_type == "smart":
-            self.env.smart_ismcts_init()
+class TrickTracker:
+    """Mixin for tracking completed tricks with point calculations."""
 
     # Card point values: [7, 8, 9, J, Q, K, 10, A]
     PLAIN_POINTS = [0, 0, 0, 2, 3, 4, 10, 11]
     TRUMP_POINTS = [0, 0, 14, 20, 3, 4, 10, 11]
 
+    def _init_trick_tracking(self):
+        self.last_trick = None
+        self.last_trick_winner = None
+        self.last_trick_points = 0
+        self.completed_tricks = []  # list of {cards, winner, points}
+        self._trick_just_completed = False
+
     def _card_points(self, card_idx, trump_suit):
-        """Point value of a single card given trump suit."""
         suit = card_idx >> 3
         rank = card_idx & 7
         if suit == trump_suit:
@@ -31,11 +26,9 @@ class PlaySession:
         return self.PLAIN_POINTS[rank]
 
     def _trick_points(self, trick, trump_suit):
-        """Total point value of a completed trick."""
         return sum(self._card_points(c, trump_suit) for c in trick if 0 <= c < 32)
 
     def _check_trick_completion(self, action):
-        """Save the trick before step if this action completes it (4th card)."""
         self._trick_just_completed = False
         if self.env.phase() != 1:
             return
@@ -51,22 +44,38 @@ class PlaySession:
             self._trick_just_completed = True
 
     def _finalize_trick_completion(self):
-        """After step, record the trick winner if a trick just completed."""
         if self._trick_just_completed:
             self.last_trick_winner = int(self.env.current_player())
+            self.completed_tricks.append({
+                "cards": self.last_trick[:],
+                "winner": self.last_trick_winner,
+                "points": self.last_trick_points,
+            })
             self._trick_just_completed = False
 
+
+class PlaySession(TrickTracker):
+    """Wraps a colver.Env for human vs AI play."""
+
+    def __init__(self, ai_type="smart", time_ms=50):
+        self.ai_type = ai_type
+        self.time_ms = time_ms
+        self.env = colver.Env()
+        self.history = []
+        self._init_trick_tracking()
+        self.env.reset()
+        if ai_type == "smart":
+            self.env.smart_ismcts_init()
+
     def get_state(self, human_seat=2):
-        """Get state dict for frontend. Hides other hands in play mode."""
         phase = self.env.phase()
         hands = self.env.get_hands()
-        # Only show human's hand in play mode
         hidden_hands = []
         for i, h in enumerate(hands):
             if i == human_seat:
                 hidden_hands.append(h)
             else:
-                hidden_hands.append([])  # hidden
+                hidden_hands.append([])
         return {
             "phase": phase,
             "current_player": int(self.env.current_player()),
@@ -85,7 +94,6 @@ class PlaySession:
         }
 
     def play_action(self, action):
-        """Human plays an action. Returns updated state."""
         player = self.env.current_player()
         phase = self.env.phase()
         self.history.append({"player": int(player), "action": int(action), "phase": int(phase)})
@@ -98,7 +106,6 @@ class PlaySession:
         return self.get_state()
 
     def get_ai_action(self):
-        """Get AI's chosen action for current state."""
         phase = self.env.phase()
         if phase == 0:
             return int(self.env.bid_improved())
@@ -109,7 +116,6 @@ class PlaySession:
                 return int(self.env.action_naive_ismcts(self.time_ms))
 
     def play_ai_turn(self):
-        """AI plays its turn. Returns (action, action_name, state)."""
         player = self.env.current_player()
         phase = self.env.phase()
         action = self.get_ai_action()
@@ -124,47 +130,146 @@ class PlaySession:
         return action, name, self.get_state()
 
 
-class ReplaySession:
-    """Replay a recorded game step by step."""
+AGENT_NAMES = {
+    "smart": "Smart IS-MCTS",
+    "naive": "Naive IS-MCTS",
+    "doudou": "DouDou NN",
+    "heuristic": "Heuristique",
+    "random": "Aleatoire",
+}
 
-    def __init__(self, log_data):
-        self.log = log_data
-        self.dealer = log_data["dealer"]
-        self.hands = log_data["hands"]
-        self.actions = log_data["actions"]
-        self.states = []
-        self._precompute_states()
+SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 
-    def _precompute_states(self):
-        """Replay all actions and store states at each step."""
-        env = colver.Env.deal_with_hands(self.dealer, self.hands)
-        self.states.append(self._extract_state(env))
-        for act in self.actions:
-            env.step(act["action"])
-            self.states.append(self._extract_state(env))
 
-    def _extract_state(self, env):
+class WatchSession(TrickTracker):
+    """AI vs AI spectating with per-action thinking stats."""
+
+    def __init__(self, agents, time_ms=50, dmc_model_path=None):
+        """
+        agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
+        dmc_model_path: path to .bin weights file for DouDou (Rust inference)
+        """
+        self.agents = agents
+        self.time_ms = time_ms
+        self.env = colver.Env()
+        self.history = []
+        self.bid_history = []
+        self._init_trick_tracking()
+        self.env.reset()
+
+        # Load DMC model if any seat uses DouDou
+        if dmc_model_path and any(a == "doudou" for a in agents.values()):
+            self.env.load_dmc_model(dmc_model_path)
+
+        # Initialize Smart IS-MCTS if any seat uses it
+        self.uses_smart = any(a == "smart" for a in agents.values())
+        if self.uses_smart:
+            self.env.smart_ismcts_init()
+
+    def get_state(self):
+        """Full state with ALL hands visible."""
         return {
-            "phase": int(env.phase()),
-            "current_player": int(env.current_player()),
-            "hands": env.get_hands(),
-            "current_trick": env.get_current_trick(),
-            "contract": env.get_contract(),
-            "points": list(env.get_points()),
-            "tricks_won": list(env.get_tricks_won()),
-            "legal_actions": list(env.legal_actions()) if not env.is_terminal() else [],
-            "dealer": int(env.get_dealer()),
-            "trick_lead": int(env.get_trick_lead()),
-            "is_terminal": env.is_terminal(),
+            "phase": int(self.env.phase()),
+            "current_player": int(self.env.current_player()),
+            "hands": self.env.get_hands(),
+            "current_trick": self.env.get_current_trick(),
+            "contract": self.env.get_contract(),
+            "points": list(self.env.get_points()),
+            "tricks_won": list(self.env.get_tricks_won()),
+            "legal_actions": list(self.env.legal_actions()) if not self.env.is_terminal() else [],
+            "dealer": int(self.env.get_dealer()),
+            "trick_lead": int(self.env.get_trick_lead()),
+            "is_terminal": self.env.is_terminal(),
+            "last_trick": self.last_trick,
+            "last_trick_winner": self.last_trick_winner,
+            "last_trick_points": self.last_trick_points,
         }
 
-    def get_state(self, step):
-        step = max(0, min(step, len(self.states) - 1))
-        return self.states[step]
+    def compute_next_action(self):
+        """Compute next action with thinking stats. Returns move dict."""
+        player = int(self.env.current_player())
+        phase = int(self.env.phase())
+        agent_type = self.agents.get(player, "random")
 
-    @property
-    def total_steps(self):
-        return len(self.states) - 1
+        # Bidding phase: all agents use improved_bid + hand eval
+        if phase == 0:
+            action = int(self.env.bid_improved())
+            name = colver.Env.action_name(action, phase)
+            bid_eval = self.env.evaluate_hand(player)
+            stats = {
+                "agent": agent_type,
+                "agent_label": AGENT_NAMES.get(agent_type, agent_type),
+                "bid_eval": {
+                    "scores": list(bid_eval["scores"]),
+                    "best_suit": int(bid_eval["best_suit"]),
+                    "best_score": int(bid_eval["best_score"]),
+                },
+            }
+            return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
+
+        # Play phase: dispatch by agent type
+        stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
+
+        if agent_type == "smart":
+            result = self.env.action_smart_ismcts_with_stats(self.time_ms)
+            action = int(result["best_action"])
+            stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
+            stats["root_visits"] = int(result["root_visits"])
+            stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
+
+        elif agent_type == "naive":
+            result = self.env.action_naive_ismcts_with_stats(self.time_ms)
+            action = int(result["best_action"])
+            stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
+            stats["root_visits"] = int(result["root_visits"])
+            stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
+
+        elif agent_type == "doudou" and self.env.has_dmc_model():
+            result = self.env.action_dmc_with_stats()
+            action = int(result["best_action"])
+            stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
+            stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
+
+        elif agent_type == "heuristic":
+            t0 = time.monotonic()
+            action = int(self.env.action_heuristic_play())
+            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 2)
+
+        else:  # random or fallback
+            action = int(self.env.action_random())
+            stats["elapsed_ms"] = 0.0
+
+        name = colver.Env.action_name(action, phase)
+        return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
+
+    def apply_action(self, action):
+        """Apply an action, track trick completion and history."""
+        player = int(self.env.current_player())
+        phase = int(self.env.phase())
+        name = colver.Env.action_name(action, phase)
+
+        if phase == 0:
+            self.bid_history.append({
+                "player": player,
+                "action": action,
+                "name": name,
+            })
+
+        self.history.append({"player": player, "action": action, "phase": phase, "name": name})
+        self._check_trick_completion(action)
+
+        if self.uses_smart:
+            self.env.smart_ismcts_step(action)
+        else:
+            self.env.step(action)
+
+        self._finalize_trick_completion()
+
+    def step(self):
+        """Compute + apply one action. Returns (move_info, state, completed_tricks)."""
+        move = self.compute_next_action()
+        self.apply_action(move["action"])
+        return move, self.get_state(), self.completed_tricks
 
 
 class AnalysisSession:
@@ -174,7 +279,6 @@ class AnalysisSession:
         self.env = None
 
     def setup(self, dealer, hands, contract):
-        """Set up a custom position."""
         self.env = colver.Env.deal_with_hands(dealer, hands)
         self.env.set_contract(
             contract["trump"],
@@ -201,7 +305,6 @@ class AnalysisSession:
         }
 
     def analyze(self, agent="naive", time_ms=200):
-        """Run MCTS analysis on current position."""
         if self.env is None:
             return {"error": "No position set up"}
 
@@ -209,18 +312,13 @@ class AnalysisSession:
         if not legal:
             return {"error": "No legal actions"}
 
-        # Run multiple rollouts to get visit distribution
-        results = {}
         phase = self.env.phase()
-
         if agent == "smart":
             self.env.smart_ismcts_init()
             action = self.env.action_smart_ismcts(time_ms)
         else:
             action = self.env.action_naive_ismcts(time_ms)
 
-        # We can only get the best action, not full visit counts from Python API
-        # So we return the best action
         return {
             "best": int(action),
             "name": colver.Env.action_name(action, phase),

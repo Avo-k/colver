@@ -188,6 +188,12 @@ document.getElementById('ai-time').addEventListener('input', e => {
 document.getElementById('analysis-time').addEventListener('input', e => {
     document.getElementById('analysis-time-val').textContent = e.target.value;
 });
+document.getElementById('watch-time').addEventListener('input', e => {
+    document.getElementById('watch-time-val').textContent = e.target.value;
+});
+document.getElementById('watch-speed').addEventListener('input', e => {
+    document.getElementById('watch-speed-val').textContent = e.target.value;
+});
 
 // Connect on load
 connect();

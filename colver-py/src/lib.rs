@@ -1,14 +1,19 @@
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use numpy::{PyArray1, PyArray2, PyArrayMethods};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use colver_core::bid_eval;
 use colver_core::bidding;
 use colver_core::card;
+use colver_core::card::Suit;
+use colver_core::dmc_net::DmcNet;
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
+use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{Contract, GameState, Phase};
 
@@ -403,6 +408,8 @@ struct Env {
     // Per-player card tracking for obs v2
     played_by: [u32; 4],
     trump_ceiling: [u8; 4],
+    // DMC Q-network (loaded lazily)
+    dmc_net: Option<DmcNet>,
 }
 
 #[pymethods]
@@ -419,6 +426,7 @@ impl Env {
             smart_initialized: false,
             played_by: [0; 4],
             trump_ceiling: [7; 4],
+            dmc_net: None,
         }
     }
 
@@ -756,6 +764,7 @@ impl Env {
             smart_initialized: false,
             played_by: [0; 4],
             trump_ceiling: [7; 4],
+            dmc_net: None,
         })
     }
 
@@ -781,6 +790,167 @@ impl Env {
     fn get_bid_history(&self) -> Vec<(u8, u8)> {
         // We don't store history in GameState, so return minimal info
         Vec::new()
+    }
+
+    /// Get Naive IS-MCTS action with search statistics.
+    /// Returns dict: {best_action, visit_counts: [(action, visits)...], root_visits, elapsed_ms}
+    /// During bidding, returns bid_improved() with minimal stats.
+    fn action_naive_ismcts_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new_bound(py);
+
+        if self.state.phase == Phase::Bidding {
+            let action = bid_eval::improved_bid(&self.state);
+            dict.set_item("best_action", action)?;
+            dict.set_item("visit_counts", Vec::<(u8, u32)>::new())?;
+            dict.set_item("root_visits", 0u32)?;
+            dict.set_item("elapsed_ms", 0.0f64)?;
+            return Ok(dict);
+        }
+
+        let config = NaiveIsMctsConfig {
+            time_limit_ms: Some(time_ms),
+            ..Default::default()
+        };
+        let search = self.naive_search.get_or_insert_with(NaiveIsMctsSearch::new);
+        let start = Instant::now();
+        let result = search.search_with_stats(&self.state, &config, &mut self.rng);
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+
+        dict.set_item("best_action", result.best_action)?;
+        dict.set_item("visit_counts", result.visit_counts)?;
+        dict.set_item("root_visits", result.root_visits)?;
+        dict.set_item("elapsed_ms", elapsed)?;
+        Ok(dict)
+    }
+
+    /// Get Smart IS-MCTS action with search statistics.
+    /// Returns dict: {best_action, visit_counts: [(action, visits)...], root_visits, elapsed_ms}
+    /// During bidding, returns bid_improved() with minimal stats.
+    fn action_smart_ismcts_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new_bound(py);
+
+        if self.state.phase == Phase::Bidding {
+            let action = bid_eval::improved_bid(&self.state);
+            dict.set_item("best_action", action)?;
+            dict.set_item("visit_counts", Vec::<(u8, u32)>::new())?;
+            dict.set_item("root_visits", 0u32)?;
+            dict.set_item("elapsed_ms", 0.0f64)?;
+            return Ok(dict);
+        }
+
+        if !self.smart_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call smart_ismcts_init() first",
+            ));
+        }
+        let player = self.state.current_player() as usize;
+        let config = SmartIsMctsConfig {
+            time_limit_ms: Some(time_ms),
+            ..Default::default()
+        };
+        let searches = self.smart_searches.as_mut().unwrap();
+        let start = Instant::now();
+        let result = searches[player].search_with_stats(&self.state, &config, &mut self.rng);
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+
+        dict.set_item("best_action", result.best_action)?;
+        dict.set_item("visit_counts", result.visit_counts)?;
+        dict.set_item("root_visits", result.root_visits)?;
+        dict.set_item("elapsed_ms", elapsed)?;
+        Ok(dict)
+    }
+
+    /// Evaluate a player's hand for all 4 trump suits.
+    /// Returns dict: {scores: [s0,s1,s2,s3], best_suit, best_score}
+    fn evaluate_hand<'py>(&self, py: Python<'py>, player: u8) -> PyResult<Bound<'py, PyDict>> {
+        if player >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err("player must be 0-3"));
+        }
+        let hand = self.state.hands[player as usize];
+        let mut scores = [0u16; 4];
+        let mut best_suit = 0u8;
+        let mut best_score = 0u16;
+        for suit in 0..4u8 {
+            let s = bid_eval::evaluate_for_trump(hand, Suit::from_u8(suit));
+            scores[suit as usize] = s;
+            if s > best_score {
+                best_score = s;
+                best_suit = suit;
+            }
+        }
+        let dict = PyDict::new_bound(py);
+        dict.set_item("scores", scores.to_vec())?;
+        dict.set_item("best_suit", best_suit)?;
+        dict.set_item("best_score", best_score)?;
+        Ok(dict)
+    }
+
+    /// Get heuristic play action (perfect-info deterministic heuristic).
+    /// Only valid during play phase.
+    fn action_heuristic_play(&self) -> PyResult<u8> {
+        if self.state.phase != Phase::Playing {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Heuristic play only valid during play phase",
+            ));
+        }
+        Ok(rollout::heuristic_play_action(&self.state))
+    }
+
+    /// Get a random legal action.
+    fn action_random(&mut self) -> u8 {
+        let mask = self.state.legal_actions();
+        let count = mask.count_ones();
+        let n = self.rng.gen_range(0..count);
+        rollout::select_nth_bit(mask, n)
+    }
+
+    /// Get observation v2 (372 floats) for current state.
+    fn get_observation_v2(&self) -> Vec<f32> {
+        make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling)
+    }
+
+    /// Load DMC Q-network weights from a raw binary file.
+    /// Call once, then use action_dmc_with_stats() for inference.
+    #[pyo3(signature = (path, hidden=None))]
+    fn load_dmc_model(&mut self, path: &str, hidden: Option<usize>) -> PyResult<()> {
+        let h = hidden.unwrap_or(1024);
+        let net = DmcNet::load_with_hidden(path, h).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to load DMC model: {}", e))
+        })?;
+        self.dmc_net = Some(net);
+        Ok(())
+    }
+
+    /// Check if DMC model is loaded.
+    fn has_dmc_model(&self) -> bool {
+        self.dmc_net.is_some()
+    }
+
+    /// Get DMC Q-network action with Q-value statistics.
+    /// Returns dict: {best_action, q_values: [(action, q)...], elapsed_ms}
+    /// Only valid during play phase. Requires load_dmc_model() first.
+    fn action_dmc_with_stats<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        if self.state.phase != Phase::Playing {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "DMC only valid during play phase",
+            ));
+        }
+        let net = self.dmc_net.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Call load_dmc_model() first")
+        })?;
+
+        let obs = make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling);
+        let legal_mask = self.state.legal_actions() as u32;
+
+        let start = Instant::now();
+        let (best_action, q_values) = net.best_action(&obs, legal_mask);
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+
+        let dict = PyDict::new_bound(py);
+        dict.set_item("best_action", best_action)?;
+        dict.set_item("q_values", q_values)?;
+        dict.set_item("elapsed_ms", elapsed)?;
+        Ok(dict)
     }
 
     fn __repr__(&self) -> String {
