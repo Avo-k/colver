@@ -210,6 +210,14 @@ function playCard(cardIdx) {
 // Message handlers
 onMessage('game_state', (data) => {
     renderPlayState(data.state);
+    // Disable DouDou option if not available on server
+    if (data.doudou_available === false) {
+        const opt = document.querySelector('#ai-type option[value="doudou"]');
+        if (opt) {
+            opt.disabled = true;
+            opt.textContent = 'DouDou NN (non dispo)';
+        }
+    }
 });
 
 onMessage('ai_move', (data) => {

@@ -240,8 +240,8 @@ function renderQValueBars(container, qValues, bestAction) {
     container.appendChild(div);
 }
 
-// Render bid history
-function renderBidHistory(bidHistory) {
+// Render bid history (watch mode)
+function renderWatchBidHistory(bidHistory) {
     const container = document.getElementById('watch-bid-entries');
     container.innerHTML = '';
     if (!bidHistory || bidHistory.length === 0) return;
@@ -303,7 +303,7 @@ onMessage('watch_started', (data) => {
     }
 
     renderWatchState(data.state);
-    renderBidHistory([]);
+    renderWatchBidHistory([]);
     renderTricksHistory([]);
     document.getElementById('watch-stats-header').innerHTML = '';
     document.getElementById('watch-stats-body').innerHTML = '<div class="stats-placeholder">Cliquez sur un bouton pour avancer</div>';
@@ -320,7 +320,7 @@ onMessage('watch_move', (data) => {
 
     renderWatchState(data.state);
     if (data.move) renderStats(data.move);
-    renderBidHistory(data.bid_history);
+    renderWatchBidHistory(data.bid_history);
     renderTricksHistory(data.completed_tricks);
 
     if (data.finished) {

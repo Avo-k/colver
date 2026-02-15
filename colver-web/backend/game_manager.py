@@ -57,7 +57,7 @@ class TrickTracker:
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_type="smart", time_ms=50):
+    def __init__(self, ai_type="smart", time_ms=50, dmc_model_path=None):
         self.ai_type = ai_type
         self.time_ms = time_ms
         self.env = colver.Env()
@@ -66,6 +66,8 @@ class PlaySession(TrickTracker):
         self.env.reset()
         if ai_type == "smart":
             self.env.smart_ismcts_init()
+        if ai_type == "doudou" and dmc_model_path:
+            self.env.load_dmc_model(dmc_model_path)
 
     def get_state(self, human_seat=2):
         phase = self.env.phase()
@@ -110,7 +112,10 @@ class PlaySession(TrickTracker):
         if phase == 0:
             return int(self.env.bid_improved())
         else:
-            if self.ai_type == "smart":
+            if self.ai_type == "doudou" and self.env.has_dmc_model():
+                result = self.env.action_dmc_with_stats()
+                return int(result["best_action"])
+            elif self.ai_type == "smart":
                 return int(self.env.action_smart_ismcts(self.time_ms))
             else:
                 return int(self.env.action_naive_ismcts(self.time_ms))

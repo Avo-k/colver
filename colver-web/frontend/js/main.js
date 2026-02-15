@@ -5,7 +5,8 @@ let messageHandlers = {};
 
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    const base = document.querySelector('base')?.getAttribute('href') || '/';
+    ws = new WebSocket(`${proto}://${location.host}${base}ws`);
 
     ws.onopen = () => console.log('Connecte');
     ws.onclose = () => {
@@ -45,7 +46,7 @@ function cardSvgPath(cardIdx) {
     const rank = cardRank(cardIdx);
     // Use version 2 art for face cards (jack=3, queen=4, king=5)
     const suffix = (rank >= 3 && rank <= 5) ? '2' : '';
-    return `/cards/${RANK_NAMES_EN[rank]}_of_${SUIT_NAMES_EN[suit]}${suffix}.svg`;
+    return `cards/${RANK_NAMES_EN[rank]}_of_${SUIT_NAMES_EN[suit]}${suffix}.svg`;
 }
 
 function cardToHtml(cardIdx, clickable = false, onClick = null, illegal = false) {

@@ -6,12 +6,17 @@ import sys
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse, FileResponse
 
 # Add backend dir to path
 sys.path.insert(0, os.path.dirname(__file__))
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 from game_manager import PlaySession, WatchSession, AnalysisSession
+
+# Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
+ROOT_PATH = os.environ.get("ROOT_PATH", "/")
+if not ROOT_PATH.endswith("/"):
+    ROOT_PATH += "/"
 
 app = FastAPI(title="Colver")
 
@@ -25,10 +30,17 @@ if doudou_available:
 else:
     print(f"[server] No DouDou model at {DMC_MODEL_PATH}")
 
+print(f"[server] ROOT_PATH={ROOT_PATH}")
+
 
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    html_path = os.path.join(FRONTEND_DIR, "index.html")
+    with open(html_path) as f:
+        html = f.read()
+    # Inject the correct base href for reverse proxy support
+    html = html.replace('<base href="/">', f'<base href="{ROOT_PATH}">')
+    return HTMLResponse(html)
 
 
 CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images", "cards")
@@ -53,11 +65,13 @@ async def websocket_endpoint(ws: WebSocket):
                 ai = data.get("ai", "smart")
                 time_ms = data.get("time_ms", 50)
                 human_seat = data.get("human_seat", 2)
-                play_session = PlaySession(ai_type=ai, time_ms=time_ms)
+                dmc_path = DMC_MODEL_PATH if (doudou_available and ai == "doudou") else None
+                play_session = PlaySession(ai_type=ai, time_ms=time_ms, dmc_model_path=dmc_path)
 
                 await ws.send_json({
                     "type": "game_state",
                     "state": play_session.get_state(human_seat),
+                    "doudou_available": doudou_available,
                 })
                 await _run_ai_turns(ws, play_session, human_seat)
 

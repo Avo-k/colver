@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <base href="/">
+    <link rel="stylesheet" href="static/styles.css">
 </head>
 <body>
     <header>
@@ -24,6 +25,7 @@
                     <select id="ai-type">
                         <option value="smart">Smart IS-MCTS</option>
                         <option value="naive">Naive IS-MCTS</option>
+                        <option value="doudou">DouDou NN</option>
                     </select>
                 </label>
                 <label>Temps (ms) :
@@ -106,7 +108,7 @@
         </div>
 
         <!-- WATCH MODE -->
-        <div id="watch-panel" class="panel hidden">
+        <div id="watch-panel" class="panel">
             <div id="watch-config">
                 <div class="watch-agents">
                     <label>N : <select class="agent-select" data-seat="0">
@@ -212,7 +214,7 @@
         </div>
 
         <!-- ANALYSIS MODE -->
-        <div id="analysis-panel" class="panel hidden">
+        <div id="analysis-panel" class="panel">
             <div id="analysis-config">
                 <h3>Configurer la position</h3>
                 <div id="hand-editor">
@@ -294,9 +296,9 @@
         </div>
     </main>
 
-    <script src="/static/js/main.js"></script>
-    <script src="/static/js/play.js"></script>
-    <script src="/static/js/watch.js"></script>
-    <script src="/static/js/analysis.js"></script>
+    <script src="static/js/main.js"></script>
+    <script src="static/js/play.js"></script>
+    <script src="static/js/watch.js"></script>
+    <script src="static/js/analysis.js"></script>
 </body>
 </html>
