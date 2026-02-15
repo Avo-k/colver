@@ -1,31 +1,41 @@
-# Stage 1: Build the Rust/PyO3 wheel
-FROM rust:1.83-bookworm AS builder
+# Stage 1: Build the PyO3 wheel and create venv with dependencies
+# Uses uv's Python 3.11 image (paths match python:3.11-slim-bookworm runtime)
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm AS builder
 
-# Install Python + maturin build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-dev python3-pip python3-venv && \
-    rm -rf /var/lib/apt/lists/*
+# Install Rust toolchain (needed for maturin/PyO3 build)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    --default-toolchain 1.83.0 --profile minimal
+ENV PATH="/root/.cargo/bin:$PATH"
 
-RUN pip3 install --break-system-packages maturin
+# uv best practices for Docker
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
 
-WORKDIR /build
-COPY colver-core/ colver-core/
-COPY colver-py/ colver-py/
-COPY Cargo.toml Cargo.lock ./
+WORKDIR /app
 
-RUN maturin build --release -m colver-py/Cargo.toml -o /wheels
+# Install dependencies first (cached layer — only invalidated when deps change)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project --no-editable --no-dev --extra web
 
-# Stage 2: Lightweight runtime (no torch needed — DouDou uses Rust inference)
-FROM python:3.11-slim-bookworm
+# Copy source and build/install the project
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-editable --no-dev --extra web
 
-COPY --from=builder /wheels/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl fastapi "uvicorn[standard]" websockets && rm /tmp/*.whl
+# Stage 2: Lightweight runtime (no Rust, no uv, no torch)
+FROM python:3.12-slim-bookworm
 
+# Copy virtual environment from builder
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application files
 COPY colver-web/ /app/colver-web/
 COPY images/cards/ /app/images/cards/
 # Copy DMC model weights if available (enables DouDou agent via Rust inference)
 COPY models/dmc_final.bi[n] /app/models/
 
+ENV PATH="/app/.venv/bin:$PATH"
 WORKDIR /app
 EXPOSE 8000
 
