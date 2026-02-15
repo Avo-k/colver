@@ -57,6 +57,16 @@ uv run python3 -c "import colver; env = colver.Env(); env.reset()"
 # Run web frontend (FastAPI + WebSocket)
 uv run python colver-web/backend/server.py
 # Then open http://localhost:8000
+
+# Docker build and run
+docker build -t colver .
+docker run -p 8000:8000 colver
+
+# Docker Compose
+docker compose up -d
+
+# Cross-build for Raspberry Pi (ARM64)
+docker buildx build --platform linux/arm64 -t colver .
 ```
 
 ## Architecture
@@ -147,10 +157,12 @@ DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single
 
 **Training features:** Prioritized Experience Replay (SumTree-based PER), opponent pool (70% self-play, 20% past checkpoints, 10% random), 2M replay buffer, 20M steps default.
 
+**Inline evaluation** (every `--eval-freq` steps): deal win rate vs random (200 deals both sides), match play to 2000 vs random (100 matches), vs naive IS-MCTS (10 matches, 20ms), vs smart IS-MCTS (10 matches, 20ms). Output: `[EVAL] deals 67% | rand 72% | naive 40% | smart 30% (45s)`.
+
 **Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
 **Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
 
-**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`.
+**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`, `rewards()`.
 **Python API (VecEnv):** `current_players()`, `phases()`, `bid_improved()`. `step()` returns 5-tuple with `deal_outcomes (n,2)`.
 
 ### Neural Network Value Function (feature `nn`)
@@ -196,7 +208,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 FastAPI + WebSocket backend with vanilla JS frontend. Three modes: Play (human vs AI), Replay (step through recorded games), Analysis (custom position setup + MCTS analysis).
 
 **Backend** (`colver-web/backend/`):
-- `server.py` — FastAPI app, WebSocket handler, serves static files + SVG cards from `images/cards/`. Loads NN model once at startup for DouDou agent.
+- `server.py` — FastAPI app, WebSocket handler, serves static files + SVG cards from `images/cards/`.
 - `game_manager.py` — `PlaySession` (human vs AI with trick tracking and point calculation), `ReplaySession` (precomputed state replay), `AnalysisSession` (custom position + MCTS analysis).
 
 **Frontend** (`colver-web/frontend/`):
@@ -210,6 +222,10 @@ FastAPI + WebSocket backend with vanilla JS frontend. Three modes: Play (human v
 **Card assets** (`images/cards/`): 67 SVG playing cards from [SVG-cards](https://svg-cards.sourceforge.net/). Face cards use version 2 art. Served at `/cards/<rank>_of_<suit>.svg`.
 
 **Running:** `uv run python colver-web/backend/server.py` → http://localhost:8000
+
+### Docker Deployment
+
+Multi-stage Dockerfile: `rust:1.83-bookworm` builder (compiles PyO3 wheel with maturin) + `python:3.11-slim-bookworm` runtime (~257MB image). No torch dependency — web frontend uses only IS-MCTS agents (pure Rust). `docker-compose.yml` for single-service deployment. Cross-builds for ARM64 (Raspberry Pi) via `docker buildx`.
 
 ## Rules Reference
 

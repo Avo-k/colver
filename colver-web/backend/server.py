@@ -9,29 +9,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-# Add backend dir and scripts dir to path
+# Add backend dir to path
 sys.path.insert(0, os.path.dirname(__file__))
 REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))
 from game_manager import PlaySession, ReplaySession, AnalysisSession
-
-# Load NN model once at startup
-_nn_model = None
-_nn_device = None
-
-def get_nn_model():
-    global _nn_model, _nn_device
-    if _nn_model is None:
-        import torch
-        from dmc_model import QNetwork
-        model_path = os.path.join(REPO_ROOT, "models", "dmc_final.pt")
-        _nn_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        _nn_model = QNetwork()
-        _nn_model.load_state_dict(torch.load(model_path, map_location=_nn_device, weights_only=True))
-        _nn_model.to(_nn_device)
-        _nn_model.eval()
-        print(f"Loaded NN model from {model_path} on {_nn_device}")
-    return _nn_model, _nn_device
 
 app = FastAPI(title="Colver")
 
@@ -65,11 +46,7 @@ async def websocket_endpoint(ws: WebSocket):
                 ai = data.get("ai", "smart")
                 time_ms = data.get("time_ms", 50)
                 human_seat = data.get("human_seat", 2)
-                nn_model, nn_device = (None, None)
-                if ai == "doudou":
-                    nn_model, nn_device = get_nn_model()
-                play_session = PlaySession(ai_type=ai, time_ms=time_ms,
-                                           nn_model=nn_model, nn_device=nn_device)
+                play_session = PlaySession(ai_type=ai, time_ms=time_ms)
 
                 # Send initial state
                 await ws.send_json({

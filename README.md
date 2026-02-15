@@ -57,7 +57,7 @@ uv run python colver-web/backend/server.py
 ```
 
 **Trois modes :**
-- **Jouer** — Partie humain vs IA. Choisissez l'agent (Smart IS-MCTS, Naive IS-MCTS, ou DouDou NN) et le temps de reflexion. Les cartes jouables sont surelevelees, les cartes illegales sont grisees. Le dernier pli est affiche avec les points et le gagnant.
+- **Jouer** — Partie humain vs IA. Choisissez l'agent (Smart IS-MCTS ou Naive IS-MCTS) et le temps de reflexion. Les cartes jouables sont surelevelees, les cartes illegales sont grisees. Le dernier pli est affiche avec les points et le gagnant.
 - **Rejouer** — Naviguez action par action dans une partie enregistree. Generez une partie IA vs IA ou chargez un fichier JSON.
 - **Analyse** — Configurez une position personnalisee (mains, contrat) et lancez l'analyse MCTS pour trouver le meilleur coup.
 
@@ -217,6 +217,24 @@ venv.bid_improved()        # (256,) u8
 - Cowling, P.I., Powley, E.J. et Whitehouse, D. (2012). [Information Set Monte Carlo Tree Search](https://doi.org/10.1109/TCIAIG.2012.2200894). *IEEE Transactions on Computational Intelligence and AI in Games*.
 - Zha, D. et al. (2021). [DouZero: Mastering DouDiZhu with Self-Play Deep Reinforcement Learning](https://arxiv.org/abs/2106.06135). *ICML*.
 - Auer, P., Cesa-Bianchi, N. et Fischer, P. (2002). [Finite-time Analysis of the Multiarmed Bandit Problem](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf). *Machine Learning*.
+
+## Docker
+
+L'image Docker permet de deployer l'interface web sur n'importe quelle machine, y compris un Raspberry Pi (ARM64).
+
+```bash
+# Build et lancement
+docker build -t colver .
+docker run -p 8000:8000 colver
+
+# Ou avec Docker Compose
+docker compose up -d
+
+# Cross-build pour Raspberry Pi (ARM64)
+docker buildx build --platform linux/arm64 -t colver .
+```
+
+L'image fait ~257 Mo (pas de dependance PyTorch). Les agents IS-MCTS sont en Rust pur et fonctionnent sur toutes les architectures.
 
 ## Regles
 

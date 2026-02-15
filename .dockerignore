@@ -1,0 +1,10 @@
+target/
+.venv/
+models/
+data/
+logs/
+scripts/
+__pycache__/
+*.pt
+*.bin
+.git/

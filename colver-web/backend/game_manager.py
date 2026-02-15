@@ -1,26 +1,20 @@
 """Game session management for Colver web UI."""
 
 import colver
-import json
-import time
-import numpy as np
 
 
 class PlaySession:
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_type="smart", time_ms=50, nn_model=None, nn_device=None):
+    def __init__(self, ai_type="smart", time_ms=50):
         self.ai_type = ai_type
         self.time_ms = time_ms
-        self.nn_model = nn_model
-        self.nn_device = nn_device
         self.env = colver.Env()
         self.history = []  # list of {player, action, phase}
         self.last_trick = None  # [card0, card1, card2, card3] or None
         self.last_trick_winner = None
         self.last_trick_points = 0
-        obs, _ = self.env.reset()
-        self._last_obs = obs  # track latest obs for NN agent
+        self.env.reset()
         if ai_type == "smart":
             self.env.smart_ismcts_init()
 
@@ -99,35 +93,18 @@ class PlaySession:
         if self.ai_type == "smart":
             self.env.smart_ismcts_step(action)
         else:
-            obs, _, _, _ = self.env.step(action)
-            self._last_obs = obs
+            self.env.step(action)
         self._finalize_trick_completion()
         return self.get_state()
 
     def get_ai_action(self):
         """Get AI's chosen action for current state."""
-        import torch
         phase = self.env.phase()
         if phase == 0:
-            # Bidding: use improved_bid for all AI types
             return int(self.env.bid_improved())
         else:
-            # Playing
-            if self.ai_type == "naive":
-                return int(self.env.action_naive_ismcts(self.time_ms))
-            elif self.ai_type == "smart":
+            if self.ai_type == "smart":
                 return int(self.env.action_smart_ismcts(self.time_ms))
-            elif self.ai_type == "doudou" and self.nn_model is not None:
-                # NN Q-network: single forward pass
-                obs = np.array(self._last_obs, dtype=np.float32)
-                mask = np.array(self.env.legal_action_mask(), dtype=np.float32)[:32]
-                obs_t = torch.tensor(obs, device=self.nn_device).unsqueeze(0)
-                mask_t = torch.tensor(mask, device=self.nn_device).unsqueeze(0)
-                with torch.no_grad():
-                    q = self.nn_model(obs_t)
-                    q[mask_t == 0] = -1e9
-                    action = q.argmax(dim=1).item()
-                return int(action)
             else:
                 return int(self.env.action_naive_ismcts(self.time_ms))
 
@@ -142,8 +119,7 @@ class PlaySession:
         if self.ai_type == "smart":
             self.env.smart_ismcts_step(action)
         else:
-            obs, _, _, _ = self.env.step(action)
-            self._last_obs = obs
+            self.env.step(action)
         self._finalize_trick_completion()
         return action, name, self.get_state()
 

@@ -27,61 +27,125 @@ from dmc_model import QNetwork, PrioritizedReplayBuffer, OBS_DIM, _sample_legal
 NUM_CARDS = 32
 
 
-def evaluate(q_net: QNetwork, device: torch.device, num_games: int = 200) -> dict:
-    """Evaluate Q-network vs random play.
+def _q_action(q_net: QNetwork, env, obs: np.ndarray, device: torch.device) -> int:
+    """Pick greedy Q-network action (or forced if only 1 legal)."""
+    mask_full = np.array(env.legal_action_mask(), dtype=np.float32)
+    mask = mask_full[:NUM_CARDS]
+    if int(mask.sum()) <= 1:
+        return env.legal_actions()[0]
+    obs_t = torch.tensor(obs, device=device).unsqueeze(0)
+    mask_t = torch.tensor(mask, device=device).unsqueeze(0)
+    with torch.no_grad():
+        q = q_net(obs_t)
+        q[mask_t == 0] = -1e9
+        return q.argmax(dim=1).item()
 
-    Q-network plays team 0 (NS), random plays team 1 (EW).
-    Returns win rate and average margin.
-    """
-    q_net.eval()
-    env = colver.Env()
-    wins = 0
-    total_margin = 0.0
-    completed = 0
 
-    for _ in range(num_games):
-        obs_list, _ = env.reset()
-        obs = np.array(obs_list, dtype=np.float32)
+def play_deal(env, q_net: QNetwork, device: torch.device,
+              q_team: int, baseline: str, time_ms: int) -> tuple[float, float]:
+    """Play a single deal. Returns (q_score, opp_score) as actual deal points."""
+    obs_list, _ = env.reset()
+    obs = np.array(obs_list, dtype=np.float32)
+    use_smart = (baseline == "smart")
+    if use_smart:
+        env.smart_ismcts_init()
 
-        while not env.is_terminal():
-            phase = env.phase()
-            player = env.current_player()
-            team = player % 2
+    while not env.is_terminal():
+        phase = env.phase()
+        player = env.current_player()
+        team = player % 2
 
-            if phase == 0:  # Bidding
-                action = env.bid_improved()
-            elif team == 0:  # Playing, Q-network team
-                mask_full = np.array(env.legal_action_mask(), dtype=np.float32)
-                mask = mask_full[:NUM_CARDS]
-                n_legal = int(mask.sum())
-                if n_legal <= 1:
-                    action = env.legal_actions()[0]
-                else:
-                    obs_t = torch.tensor(obs, device=device).unsqueeze(0)
-                    mask_t = torch.tensor(mask, device=device).unsqueeze(0)
-                    with torch.no_grad():
-                        q = q_net(obs_t)
-                        q[mask_t == 0] = -1e9
-                        action = q.argmax(dim=1).item()
-            else:  # Playing, random team
+        if phase == 0:
+            action = env.bid_improved()
+        elif team == q_team:
+            action = _q_action(q_net, env, obs, device)
+        else:
+            if baseline == "random":
                 legal = env.legal_actions()
                 action = legal[np.random.randint(len(legal))]
+            elif baseline == "naive":
+                action = env.action_naive_ismcts(time_ms)
+            else:  # smart
+                action = env.action_smart_ismcts(time_ms)
 
+        if use_smart:
+            obs_list, _, done, _ = env.smart_ismcts_step(action)
+        else:
             obs_list, _, done, _ = env.step(action)
-            obs = np.array(obs_list, dtype=np.float32)
+        obs = np.array(obs_list, dtype=np.float32)
 
-        outcome = env.deal_outcome()
-        if outcome[0] > outcome[1]:
-            wins += 1
-        total_margin += outcome[0] - outcome[1]
-        completed += 1
+    rewards = env.rewards()
+    return rewards[q_team], rewards[1 - q_team]
 
+
+def play_match_to_2000(env, q_net: QNetwork, device: torch.device,
+                       q_team: int, baseline: str, time_ms: int,
+                       max_deals: int = 50) -> tuple[bool, float, float]:
+    """Play a match (first to 2000). Returns (q_won, q_total, opp_total)."""
+    q_total, opp_total = 0.0, 0.0
+    for _ in range(max_deals):
+        q_score, opp_score = play_deal(env, q_net, device, q_team, baseline, time_ms)
+        q_total += q_score
+        opp_total += opp_score
+        if q_total >= 2000 or opp_total >= 2000:
+            break
+    return q_total >= 2000, q_total, opp_total
+
+
+def evaluate(q_net: QNetwork, device: torch.device,
+             random_matches: int = 100, naive_matches: int = 10,
+             smart_matches: int = 10, time_ms: int = 20) -> dict:
+    """Comprehensive evaluation: deal win rate + match play vs multiple baselines."""
+    q_net.eval()
+    env = colver.Env()
+    start = time.time()
+    results = {}
+
+    # 1. Deal-level vs random (both sides, 100 per side)
+    deal_wins = 0
+    for q_team in [0, 1]:
+        for _ in range(100):
+            q_score, opp_score = play_deal(env, q_net, device, q_team, "random", 0)
+            if q_score > opp_score:
+                deal_wins += 1
+    results["deal_wr"] = deal_wins / 200
+
+    # 2. Match play vs random (both sides)
+    if random_matches > 0:
+        wins = 0
+        per_side = random_matches // 2
+        for q_team in [0, 1]:
+            for _ in range(per_side):
+                won, _, _ = play_match_to_2000(env, q_net, device, q_team, "random", 0)
+                if won:
+                    wins += 1
+        results["rand_match"] = wins / random_matches
+
+    # 3. Match play vs naive IS-MCTS (both sides)
+    if naive_matches > 0:
+        wins = 0
+        per_side = naive_matches // 2
+        for q_team in [0, 1]:
+            for _ in range(per_side):
+                won, _, _ = play_match_to_2000(env, q_net, device, q_team, "naive", time_ms)
+                if won:
+                    wins += 1
+        results["naive_match"] = wins / naive_matches
+
+    # 4. Match play vs smart IS-MCTS (both sides)
+    if smart_matches > 0:
+        wins = 0
+        per_side = smart_matches // 2
+        for q_team in [0, 1]:
+            for _ in range(per_side):
+                won, _, _ = play_match_to_2000(env, q_net, device, q_team, "smart", time_ms)
+                if won:
+                    wins += 1
+        results["smart_match"] = wins / smart_matches
+
+    results["eval_time"] = time.time() - start
     q_net.train()
-    return {
-        "win_rate": wins / max(completed, 1),
-        "margin": total_margin / max(completed, 1),
-        "games": completed,
-    }
+    return results
 
 
 def main():
@@ -98,7 +162,10 @@ def main():
     parser.add_argument("--min-buffer", type=int, default=10_000, help="Min buffer size before training")
     parser.add_argument("--train-freq", type=int, default=4, help="Train every N env steps")
     parser.add_argument("--eval-freq", type=int, default=100_000, help="Evaluate every N steps")
-    parser.add_argument("--eval-games", type=int, default=200, help="Games per evaluation")
+    parser.add_argument("--eval-random-matches", type=int, default=100, help="Match-play games vs random")
+    parser.add_argument("--eval-naive-matches", type=int, default=10, help="Match-play games vs naive IS-MCTS")
+    parser.add_argument("--eval-smart-matches", type=int, default=10, help="Match-play games vs smart IS-MCTS")
+    parser.add_argument("--eval-time-ms", type=int, default=20, help="IS-MCTS time budget for eval")
     parser.add_argument("--save-freq", type=int, default=500_000, help="Save checkpoint every N steps")
     parser.add_argument("--save-dir", type=str, default="models", help="Checkpoint directory")
     parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint")
@@ -376,12 +443,19 @@ def main():
 
         # --- Evaluate ---
         if (step + 1) % args.eval_freq == 0:
-            result = evaluate(q_net, device, num_games=args.eval_games)
-            print(
-                f"  [EVAL] Win rate: {result['win_rate']:.1%}, "
-                f"Margin: {result['margin']:+.2f} "
-                f"({result['games']} games)"
-            )
+            result = evaluate(q_net, device,
+                              random_matches=args.eval_random_matches,
+                              naive_matches=args.eval_naive_matches,
+                              smart_matches=args.eval_smart_matches,
+                              time_ms=args.eval_time_ms)
+            parts = [f"deals {result['deal_wr']:.0%}"]
+            if "rand_match" in result:
+                parts.append(f"rand {result['rand_match']:.0%}")
+            if "naive_match" in result:
+                parts.append(f"naive {result['naive_match']:.0%}")
+            if "smart_match" in result:
+                parts.append(f"smart {result['smart_match']:.0%}")
+            print(f"  [EVAL] {' | '.join(parts)} ({result['eval_time']:.0f}s)")
 
         # --- Save checkpoint ---
         if (step + 1) % args.save_freq == 0:
@@ -406,8 +480,19 @@ def main():
 
     # Final eval and save
     print("\n--- Final Evaluation ---")
-    result = evaluate(q_net, device, num_games=args.eval_games)
-    print(f"Win rate vs random: {result['win_rate']:.1%}, Margin: {result['margin']:+.2f}")
+    result = evaluate(q_net, device,
+                      random_matches=args.eval_random_matches,
+                      naive_matches=args.eval_naive_matches,
+                      smart_matches=args.eval_smart_matches,
+                      time_ms=args.eval_time_ms)
+    print(f"Deals vs random: {result['deal_wr']:.1%}")
+    if "rand_match" in result:
+        print(f"Matches vs random: {result['rand_match']:.1%}")
+    if "naive_match" in result:
+        print(f"Matches vs naive IS-MCTS: {result['naive_match']:.1%}")
+    if "smart_match" in result:
+        print(f"Matches vs smart IS-MCTS: {result['smart_match']:.1%}")
+    print(f"Eval time: {result['eval_time']:.0f}s")
 
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
