@@ -2,7 +2,7 @@ services:
   colver:
     build: .
     ports:
-      - "8000:8000"
+      - "8002:8000"
     environment:
-      - ROOT_PATH=${ROOT_PATH:-/}
+      - ROOT_PATH=${ROOT_PATH:-/colver}
     restart: unless-stopped
