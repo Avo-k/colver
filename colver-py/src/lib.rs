@@ -17,97 +17,20 @@ use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{Contract, GameState, Phase};
 
-const OBS_V2_DIM: usize = 444;
+const OBS_V2_DIM: usize = 415;
 const BID_HISTORY_FLOATS: usize = 72; // 12 slots × 6 floats per slot
 
-/// Find the highest trump strength currently on the trick (before current player's move).
-fn best_trump_strength_on_trick(state: &GameState) -> Option<u8> {
-    let trump = state.contract.trump;
-    let mut best: Option<u8> = None;
-    for i in 0..state.trick_count {
-        let seat = (state.trick_lead + i) % 4;
-        let c = state.current_trick[seat as usize];
-        if c != card::EMPTY && (c >> 3) == trump {
-            let strength = card::TRUMP_STRENGTH[(c & 7) as usize];
-            best = Some(match best {
-                Some(b) => b.max(strength),
-                None => strength,
-            });
-        }
-    }
-    best
-}
-
-/// Determine the currently winning seat in a partial trick.
-fn compute_partial_trick_winner(state: &GameState) -> Option<u8> {
-    if state.trick_count == 0 {
-        return None;
-    }
-    let trump = state.contract.trump;
-    let lead_card = state.current_trick[state.trick_lead as usize];
-    let lead_suit = lead_card >> 3;
-
-    let mut best_seat = state.trick_lead;
-    let mut best_is_trump = lead_suit == trump;
-    let mut best_val: u8 = if best_is_trump {
-        card::TRUMP_STRENGTH[(lead_card & 7) as usize]
-    } else {
-        lead_card & 7
-    };
-
-    for i in 1..state.trick_count {
-        let seat = (state.trick_lead + i) % 4;
-        let c = state.current_trick[seat as usize];
-        if c == card::EMPTY {
-            continue;
-        }
-        let suit = c >> 3;
-        let is_trump = suit == trump;
-
-        if is_trump && !best_is_trump {
-            best_seat = seat;
-            best_is_trump = true;
-            best_val = card::TRUMP_STRENGTH[(c & 7) as usize];
-        } else if is_trump && best_is_trump {
-            let s = card::TRUMP_STRENGTH[(c & 7) as usize];
-            if s > best_val {
-                best_seat = seat;
-                best_val = s;
-            }
-        } else if !is_trump && !best_is_trump && suit == lead_suit {
-            let r = c & 7;
-            if r > best_val {
-                best_seat = seat;
-                best_val = r;
-            }
-        }
-    }
-    Some(best_seat)
-}
-
-/// Track a play action: update played_by mask and trump ceiling.
+/// Track a play action: update played_by mask.
 fn track_play(
     state: &GameState,
     action: u8,
     played_by: &mut [u32; 4],
-    trump_ceiling: &mut [u8; 4],
 ) {
     if state.phase != Phase::Playing {
         return;
     }
     let player = state.current_player() as usize;
     played_by[player] |= 1u32 << action;
-
-    let card_suit = action >> 3;
-    let trump = state.contract.trump;
-    if card_suit == trump {
-        if let Some(best_str) = best_trump_strength_on_trick(state) {
-            let played_str = card::TRUMP_STRENGTH[(action & 7) as usize];
-            if played_str < best_str && best_str > 0 {
-                trump_ceiling[player] = trump_ceiling[player].min(best_str - 1);
-            }
-        }
-    }
 }
 
 /// Encode bid history into 72 floats (12 slots × 6 floats).
@@ -171,11 +94,11 @@ fn encode_bid_history(
     out
 }
 
-/// Build observation v2 (444 floats) from game state + tracking arrays.
+/// Build observation v4 (415 floats) from game state + tracking arrays.
 fn make_observation_v2(
     state: &GameState,
     played_by: &[u32; 4],
-    trump_ceiling: &[u8; 4],
+    play_order: &[u8],
     bid_history: &[(u8, u8)],
     dealer: u8,
 ) -> Vec<f32> {
@@ -220,23 +143,6 @@ fn make_observation_v2(
         }
     }
 
-    // === Block 4: All played cards (32) ===
-    for i in 0..32u32 {
-        obs.push(if state.played_cards & (1 << i) != 0 { 1.0 } else { 0.0 });
-    }
-
-    // === Block 5: Trump-aware card point values (32) ===
-    for i in 0..32u8 {
-        let suit = i >> 3;
-        let rank = (i & 7) as usize;
-        let pts = if suit == trump {
-            card::TRUMP_POINTS[rank]
-        } else {
-            card::PLAIN_POINTS[rank]
-        };
-        obs.push(pts as f32 / 20.0);
-    }
-
     // === Block 6: Contract (7) ===
     for t in 0..4u8 {
         obs.push(if trump == t { 1.0 } else { 0.0 });
@@ -260,180 +166,34 @@ fn make_observation_v2(
         }
     }
 
-    // === Block 8: Scoring context (12) ===
+    // === Block 8: Scoring context (4) ===
     obs.push(state.points[my_team] as f32 / 252.0);
     obs.push(state.points[opp_team] as f32 / 252.0);
     obs.push(state.tricks_won[my_team] as f32 / 8.0);
     obs.push(state.tricks_won[opp_team] as f32 / 8.0);
 
-    // Points in current trick
-    let mut trick_pts: u16 = 0;
-    for i in 0..4 {
-        let c = state.current_trick[i];
-        if c != card::EMPTY {
-            let suit = c >> 3;
-            let rank = (c & 7) as usize;
-            trick_pts += if suit == trump {
-                card::TRUMP_POINTS[rank]
-            } else {
-                card::PLAIN_POINTS[rank]
-            } as u16;
-        }
-    }
-    obs.push(trick_pts as f32 / 62.0);
-
-    // Remaining points in play
-    let scored = state.points[0] as u16 + state.points[1] as u16;
-    obs.push(152u16.saturating_sub(scored) as f32 / 152.0);
-
-    // Points needed for contract (0 if not taker)
-    let cv = state.contract.point_value();
-    if state.contract.team as usize == my_team && cv > state.points[my_team] as u16 {
-        obs.push((cv - state.points[my_team] as u16) as f32 / 252.0);
-    } else {
-        obs.push(0.0);
-    }
-
-    // Belote
-    obs.push(state.belote[my_team] as f32 / 2.0);
-    obs.push(state.belote[opp_team] as f32 / 2.0);
-
-    // Trick number
-    let trick_num = state.tricks_won[0] + state.tricks_won[1];
-    obs.push(trick_num as f32 / 7.0);
-
-    // Position in trick
-    obs.push(state.trick_count as f32 / 3.0);
-
-    // Cards in my hand
-    obs.push(my_hand.count_ones() as f32 / 8.0);
-
-    // === Block 9: Tactical features (21) ===
-    let trump_mask: u32 = 0xFF << (trump as u32 * 8);
-    // Cards still in hands (not in completed tricks or current trick)
-    let remaining = !(state.played_cards | trick_union);
-
-    // My trump count
-    obs.push((my_hand & trump_mask).count_ones() as f32 / 8.0);
-
-    // Remaining trumps in play (in hands, not yet played)
-    let remaining_trumps = remaining & trump_mask;
-    obs.push(remaining_trumps.count_ones() as f32 / 8.0);
-
-    // I hold master trump
-    let has_master_trump = if remaining_trumps != 0 {
-        let trump_base = trump as u32 * 8;
-        let mut master_bit: u32 = 0;
-        let mut master_str: u8 = 0;
-        for rank in 0..8u8 {
-            let bit = 1u32 << (trump_base + rank as u32);
-            if remaining_trumps & bit != 0 {
-                let s = card::TRUMP_STRENGTH[rank as usize];
-                if s >= master_str {
-                    master_str = s;
-                    master_bit = bit;
-                }
-            }
-        }
-        my_hand & master_bit != 0
-    } else {
-        false
-    };
-    obs.push(if has_master_trump { 1.0 } else { 0.0 });
-
-    // I hold master in each suit (4)
-    for suit in 0..4u8 {
-        let smask: u32 = 0xFF << (suit as u32 * 8);
-        let rem_suit = remaining & smask;
-        let has_master = if rem_suit != 0 {
-            if suit == trump {
-                let base = suit as u32 * 8;
-                let mut mb: u32 = 0;
-                let mut ms: u8 = 0;
-                for rank in 0..8u8 {
-                    let bit = 1u32 << (base + rank as u32);
-                    if rem_suit & bit != 0 {
-                        let s = card::TRUMP_STRENGTH[rank as usize];
-                        if s >= ms {
-                            ms = s;
-                            mb = bit;
-                        }
-                    }
-                }
-                my_hand & mb != 0
-            } else {
-                // Plain: highest rank = highest bit set in rem_suit
-                let highest = 1u32 << (31 - rem_suit.leading_zeros());
-                my_hand & highest != 0
-            }
-        } else {
-            false
-        };
-        obs.push(if has_master { 1.0 } else { 0.0 });
-    }
-
-    // Remaining cards per suit (4)
-    for suit in 0..4u8 {
-        let smask: u32 = 0xFF << (suit as u32 * 8);
-        obs.push((remaining & smask).count_ones() as f32 / 8.0);
-    }
-
-    // Partner winning current trick
-    let partner_winning = if state.trick_count >= 1 {
-        compute_partial_trick_winner(state)
-            .map(|w| w as usize == seats[2])
-            .unwrap_or(false)
-    } else {
-        false
-    };
-    obs.push(if partner_winning { 1.0 } else { 0.0 });
-
-    // Led suit is trump (0 if leader)
-    let is_leader = state.trick_count == 0;
-    if is_leader {
-        obs.push(0.0);
-    } else {
-        let lead_card = state.current_trick[state.trick_lead as usize];
-        obs.push(if (lead_card >> 3) == trump {
-            1.0
-        } else {
-            0.0
-        });
-    }
-
-    // Led suit one-hot (4, zeros if leader)
-    if is_leader {
-        for _ in 0..4 {
-            obs.push(0.0);
-        }
-    } else {
-        let lead_card = state.current_trick[state.trick_lead as usize];
-        let lead_suit = lead_card >> 3;
-        for s in 0..4u8 {
-            obs.push(if lead_suit == s { 1.0 } else { 0.0 });
-        }
-    }
-
-    // My team led this trick
-    obs.push(if (state.trick_lead as usize & 1) == my_team {
-        1.0
-    } else {
-        0.0
-    });
-
-    // Trump ceiling for [left, partner, right]
-    for &seat in &seats[1..] {
-        obs.push(trump_ceiling[seat] as f32 / 7.0);
-    }
-
     // === Block 10: Bid history (72) ===
     let bid_enc = encode_bid_history(bid_history, me, dealer);
     obs.extend_from_slice(&bid_enc);
 
+    // === Block 11: Card trick index (32) ===
+    // For each card 0-31: trick_number/8.0 (1-8), 0.0 if not played
+    let mut card_trick = [0.0f32; 32];
+    let mut card_seq = [0.0f32; 32];
+    for (i, &card) in play_order.iter().enumerate() {
+        card_trick[card as usize] = (i / 4 + 1) as f32 / 8.0;
+        card_seq[card as usize] = (i % 4 + 1) as f32 / 4.0;
+    }
+    obs.extend_from_slice(&card_trick);
+
+    // === Block 12: Card sequence index (32) ===
+    // For each card 0-31: position_in_trick/4.0 (1-4), 0.0 if not played
+    obs.extend_from_slice(&card_seq);
+
     debug_assert_eq!(
         obs.len(),
         OBS_V2_DIM,
-        "obs v2 len = {}, expected {}",
+        "obs v4 len = {}, expected {}",
         obs.len(),
         OBS_V2_DIM
     );
@@ -475,7 +235,8 @@ struct Env {
     smart_initialized: bool,
     // Per-player card tracking for obs v2
     played_by: [u32; 4],
-    trump_ceiling: [u8; 4],
+    // Chronological play order (card indices) for timing features
+    play_order: Vec<u8>,
     // Bid history: (seat, bid_action) pairs, cleared on reset
     bid_history: Vec<(u8, u8)>,
     // DMC Q-network (loaded lazily)
@@ -495,7 +256,7 @@ impl Env {
             smart_searches: None,
             smart_initialized: false,
             played_by: [0; 4],
-            trump_ceiling: [7; 4],
+            play_order: Vec::with_capacity(32),
             bid_history: Vec::new(),
             dmc_net: None,
         }
@@ -507,10 +268,10 @@ impl Env {
         self.state = GameState::deal_random(dealer, &mut self.rng);
         self.smart_initialized = false;
         self.played_by = [0; 4];
-        self.trump_ceiling = [7; 4];
+        self.play_order.clear();
         self.bid_history.clear();
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
+            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             legal_actions_list(&self.state),
         ))
     }
@@ -523,11 +284,13 @@ impl Env {
         if self.state.phase == Phase::Bidding {
             self.bid_history.push((player, action));
         }
+        if self.state.phase == Phase::Playing {
+            self.play_order.push(action);
+        }
         track_play(
             &self.state,
             action,
             &mut self.played_by,
-            &mut self.trump_ceiling,
         );
         self.state.step(action);
 
@@ -539,7 +302,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
+            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -641,11 +404,13 @@ impl Env {
         if self.state.phase == Phase::Bidding {
             self.bid_history.push((player, action));
         }
+        if self.state.phase == Phase::Playing {
+            self.play_order.push(action);
+        }
         track_play(
             &self.state,
             action,
             &mut self.played_by,
-            &mut self.trump_ceiling,
         );
 
         // Record action in all 4 belief models before stepping
@@ -665,7 +430,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
+            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -846,7 +611,7 @@ impl Env {
             smart_searches: None,
             smart_initialized: false,
             played_by: [0; 4],
-            trump_ceiling: [7; 4],
+            play_order: Vec::new(),
             bid_history: Vec::new(),
             dmc_net: None,
         })
@@ -987,9 +752,9 @@ impl Env {
         rollout::select_nth_bit(mask, n)
     }
 
-    /// Get observation v2 (444 floats) for current state.
+    /// Get observation v4 (415 floats) for current state.
     fn get_observation_v2(&self) -> Vec<f32> {
-        make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer)
+        make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)
     }
 
     /// Load DMC Q-network weights from a raw binary file.
@@ -1022,7 +787,7 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_dmc_model() first")
         })?;
 
-        let obs_full = make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer);
+        let obs_full = make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer);
         // Truncate obs to match model's expected obs_dim (backward compat with 372-dim models)
         let obs = &obs_full[..net.obs_dim()];
         let legal_mask = self.state.legal_actions() as u32;
@@ -1050,7 +815,8 @@ struct VecEnv {
     rng: StdRng,
     // Per-env card tracking for obs v2
     played_by: Vec<[u32; 4]>,
-    trump_ceiling: Vec<[u8; 4]>,
+    // Per-env chronological play order for timing features
+    play_orders: Vec<Vec<u8>>,
     // Per-env bid history
     bid_histories: Vec<Vec<(u8, u8)>>,
     // Per-env bidding strategy: 0=improved (default), 1-6=BidParams presets
@@ -1074,7 +840,7 @@ impl VecEnv {
             states,
             rng,
             played_by: vec![[0u32; 4]; n],
-            trump_ceiling: vec![[7u8; 4]; n],
+            play_orders: (0..n).map(|_| Vec::with_capacity(32)).collect(),
             bid_histories: vec![Vec::new(); n],
             bid_strategy: vec![0u8; n],
         }
@@ -1139,7 +905,7 @@ impl VecEnv {
             let dealer = self.rng.gen_range(0..4u8);
             self.states[i] = GameState::deal_random(dealer, &mut self.rng);
             self.played_by[i] = [0; 4];
-            self.trump_ceiling[i] = [7; 4];
+            self.play_orders[i].clear();
             self.bid_histories[i].clear();
         }
 
@@ -1150,7 +916,7 @@ impl VecEnv {
             obs_data.extend(make_observation_v2(
                 &self.states[i],
                 &self.played_by[i],
-                &self.trump_ceiling[i],
+                &self.play_orders[i],
                 &self.bid_histories[i],
                 self.states[i].dealer,
             ));
@@ -1197,11 +963,13 @@ impl VecEnv {
             if self.states[i].phase == Phase::Bidding {
                 self.bid_histories[i].push((player, action));
             }
+            if self.states[i].phase == Phase::Playing {
+                self.play_orders[i].push(action);
+            }
             track_play(
                 &self.states[i],
                 action,
                 &mut self.played_by[i],
-                &mut self.trump_ceiling[i],
             );
             self.states[i].step(action);
 
@@ -1236,7 +1004,7 @@ impl VecEnv {
                 let dealer = self.rng.gen_range(0..4u8);
                 self.states[i] = GameState::deal_random(dealer, &mut self.rng);
                 self.played_by[i] = [0; 4];
-                self.trump_ceiling[i] = [7; 4];
+                self.play_orders[i].clear();
                 self.bid_histories[i].clear();
             } else {
                 outcomes_vec.push(0.0);
@@ -1251,7 +1019,7 @@ impl VecEnv {
             obs_data.extend(make_observation_v2(
                 &self.states[i],
                 &self.played_by[i],
-                &self.trump_ceiling[i],
+                &self.play_orders[i],
                 &self.bid_histories[i],
                 self.states[i].dealer,
             ));

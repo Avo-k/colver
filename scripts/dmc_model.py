@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 
-OBS_DIM = 444
+OBS_DIM = 415
 NUM_CARDS = 32
 
 
