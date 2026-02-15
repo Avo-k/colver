@@ -4,7 +4,7 @@
 Trains a Q-network to play cards using binary deal outcomes as targets.
 Bidding is handled by improved_bid (not learned).
 
-v2: richer observation (372), bigger model (1024), PER, opponent pool.
+v2: richer observation (444 with bid history), bigger model (1024), PER, opponent pool.
 
 Usage:
     uv run python scripts/train_dmc.py
@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 
 import colver
-from dmc_model import QNetwork, PrioritizedReplayBuffer, OBS_DIM, _sample_legal
+from dmc_model import QNetwork, OBS_DIM, _sample_legal
 
 NUM_CARDS = 32
 
@@ -161,6 +161,7 @@ def main():
     parser.add_argument("--buffer-size", type=int, default=2_000_000, help="Replay buffer capacity")
     parser.add_argument("--min-buffer", type=int, default=10_000, help="Min buffer size before training")
     parser.add_argument("--train-freq", type=int, default=4, help="Train every N env steps")
+    parser.add_argument("--train-steps", type=int, default=1, help="Gradient steps per training update")
     parser.add_argument("--eval-freq", type=int, default=100_000, help="Evaluate every N steps")
     parser.add_argument("--eval-random-matches", type=int, default=100, help="Match-play games vs random")
     parser.add_argument("--eval-naive-matches", type=int, default=10, help="Match-play games vs naive IS-MCTS")
@@ -187,13 +188,14 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
     print(f"Envs: {args.num_envs}, Steps: {args.steps}, LR: {args.lr}, Hidden: {args.hidden}")
+    print(f"Training: batch={args.batch_size}, freq={args.train_freq}, steps_per_update={args.train_steps}")
     print(f"PER: alpha={args.per_alpha}, beta={args.per_beta_start}->{args.per_beta_end}")
     print(f"Opponents: {1-args.pool_frac-args.random_frac:.0%} self, {args.pool_frac:.0%} pool, {args.random_frac:.0%} random")
 
     # Initialize
     q_net = QNetwork(hidden=args.hidden).to(device)
     optimizer = torch.optim.Adam(q_net.parameters(), lr=args.lr)
-    replay_buffer = PrioritizedReplayBuffer(
+    replay_buffer = colver.PrioritizedReplayBuffer(
         capacity=args.buffer_size, alpha=args.per_alpha)
     param_count = sum(p.numel() for p in q_net.parameters())
     print(f"Q-Network: {OBS_DIM} -> {args.hidden} -> {args.hidden} -> {args.hidden} -> 32 ({param_count:,} params)")
@@ -201,7 +203,12 @@ def main():
     start_step = 0
     if args.resume:
         ckpt = torch.load(args.resume, weights_only=False, map_location=device)
-        q_net.load_state_dict(ckpt["model"])
+        ckpt_obs_dim = ckpt.get("obs_dim", 372)
+        if ckpt_obs_dim != OBS_DIM:
+            print(f"WARNING: checkpoint obs_dim={ckpt_obs_dim} != current OBS_DIM={OBS_DIM}")
+            print(f"  The model architecture has changed. Starting fresh weights (keeping optimizer/step).")
+        else:
+            q_net.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         start_step = ckpt.get("step", 0)
         print(f"Resumed from {args.resume} at step {start_step}")
@@ -215,8 +222,13 @@ def main():
     opp_team = np.zeros(args.num_envs, dtype=np.uint8)  # which team opponent plays (0 or 1)
     pool_loaded_idx = -1  # which pool model is loaded in pool_net
 
-    # VecEnv
+    # VecEnv with varied bidding strategies
+    # 0=improved (default), 1-6=BidParams presets, 7=heuristic
+    NUM_BID_STRATEGIES = 8
     venv = colver.VecEnv(args.num_envs)
+    bid_strategies = np.random.randint(0, NUM_BID_STRATEGIES, size=args.num_envs).tolist()
+    venv.set_bid_strategies(bid_strategies)
+    print(f"Bid diversity: {NUM_BID_STRATEGIES} strategies across {args.num_envs} envs")
     obs, masks = venv.reset()
     obs = np.array(obs)      # (N, OBS_DIM)
     masks = np.array(masks)   # (N, 43)
@@ -364,6 +376,9 @@ def main():
             elif opp_type[env_i] == OPP_RANDOM:
                 random_episodes += 1
 
+            # Re-randomize bid strategy for reset env
+            bid_strategies[env_i] = int(np.random.randint(0, NUM_BID_STRATEGIES))
+
             # Assign opponent type for newly reset env
             roll = np.random.rand()
             if roll < args.random_frac:
@@ -382,35 +397,41 @@ def main():
                 # Self-play
                 opp_type[env_i] = OPP_SELF
 
+        # Update bid strategies if any envs reset
+        if len(done_idx) > 0:
+            venv.set_bid_strategies(bid_strategies)
+
         # --- Train ---
         if (replay_buffer.size >= args.min_buffer
                 and step % args.train_freq == 0):
-            b_obs, b_masks, b_actions, b_returns, b_weights, b_indices = \
-                replay_buffer.sample(args.batch_size, beta=beta)
-            b_obs = b_obs.to(device)
-            b_masks = b_masks.to(device)
-            b_actions = b_actions.to(device).long()
-            b_returns = b_returns.to(device)
-            b_weights = b_weights.to(device)
+            for _train_step in range(args.train_steps):
+                np_obs, np_masks, np_actions, np_returns, np_weights, b_indices = \
+                    replay_buffer.sample(args.batch_size, beta=beta)
+                b_obs = torch.from_numpy(np.asarray(np_obs)).to(device)
+                b_masks = torch.from_numpy(np.asarray(np_masks)).to(device)
+                b_actions = torch.from_numpy(np.asarray(np_actions)).to(device).long()
+                b_returns = torch.from_numpy(np.asarray(np_returns)).to(device)
+                b_weights = torch.from_numpy(np.asarray(np_weights)).to(device)
 
-            # Q-values for taken actions
-            q_values = q_net(b_obs)
-            q_taken = q_values.gather(1, b_actions.unsqueeze(1)).squeeze(1)
+                # Q-values for taken actions
+                q_values = q_net(b_obs)
+                q_taken = q_values.gather(1, b_actions.unsqueeze(1)).squeeze(1)
 
-            # Weighted MSE loss with IS correction
-            td_errors = q_taken - b_returns
-            loss = (b_weights * td_errors.pow(2)).mean()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # Weighted MSE loss with IS correction
+                td_errors = q_taken - b_returns
+                loss = (b_weights * td_errors.pow(2)).mean()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            # Update PER priorities
-            replay_buffer.update_priorities(
-                b_indices, td_errors.detach().cpu().numpy())
+                # Update PER priorities
+                td_np = td_errors.detach().cpu().numpy()
+                replay_buffer.update_priorities(
+                    np.asarray(b_indices), td_np)
 
-            total_loss += loss.item()
-            loss_count += 1
-            total_train_steps += 1
+                total_loss += loss.item()
+                loss_count += 1
+            total_train_steps += args.train_steps
 
         # --- Save to opponent pool ---
         if (step + 1) % args.pool_save_freq == 0 and args.pool_frac > 0:
@@ -467,6 +488,7 @@ def main():
                 "optimizer": optimizer.state_dict(),
                 "step": step + 1,
                 "hidden": args.hidden,
+                "obs_dim": OBS_DIM,
             }, ckpt_path)
             # Also save as latest
             latest_path = save_dir / "dmc_latest.pt"
@@ -475,6 +497,7 @@ def main():
                 "optimizer": optimizer.state_dict(),
                 "step": step + 1,
                 "hidden": args.hidden,
+                "obs_dim": OBS_DIM,
             }, latest_path)
             print(f"  [SAVE] {ckpt_path}")
 
@@ -502,6 +525,7 @@ def main():
         "optimizer": optimizer.state_dict(),
         "step": args.steps,
         "hidden": args.hidden,
+        "obs_dim": OBS_DIM,
     }, final_path)
     print(f"Saved final model to {final_path}")
 

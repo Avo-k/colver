@@ -1,3 +1,3 @@
-from colver.colver import Env, VecEnv
+from colver.colver import Env, VecEnv, PrioritizedReplayBuffer
 
-__all__ = ["Env", "VecEnv"]
+__all__ = ["Env", "VecEnv", "PrioritizedReplayBuffer"]

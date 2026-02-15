@@ -153,9 +153,9 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 
 DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration.
 
-**v2 architecture:** 372→1024→1024→1024→32 MLP with LayerNorm (~3.2M params). v2 observation is player-relative with per-player card tracking, trump ceiling inference, tactical features (master cards, partner winning, void info), and richer scoring context.
+**v3 architecture:** 444→1024→1024→1024→32 MLP with LayerNorm (~2.6M params). v3 observation extends v2 with 72-float bid history encoding (12 chronological slots in player-relative order, 6 floats each: action_type, bid_value, suit one-hot). Player-relative with per-player card tracking, trump ceiling inference, tactical features (master cards, partner winning, void info), and richer scoring context.
 
-**Rust inference** (`dmc_net.rs`) — Pure Rust forward pass, zero dependencies. `DmcNet::load(path)` reads raw f32 binary weights. `DmcNet::evaluate(&mut self, obs) -> [f32; 32]` returns Q-values. `DmcNet::best_action(&mut self, obs, legal_mask) -> (u8, Vec<(u8, f32)>)` picks best legal action. Uses scratch buffers (~1ms/eval on x86, no torch needed). LayerNorm implementation: `y = gamma * (x - mean) / sqrt(var + eps) + beta`.
+**Rust inference** (`dmc_net.rs`) — Pure Rust forward pass, zero dependencies. `DmcNet::load(path)` reads raw f32 binary weights (auto-detects obs_dim from file size). `DmcNet::evaluate(&mut self, obs) -> [f32; 32]` returns Q-values. `DmcNet::best_action(&mut self, obs, legal_mask) -> (u8, Vec<(u8, f32)>)` picks best legal action. `DmcNet::obs_dim()` returns expected input size. Uses scratch buffers (~1ms/eval on x86, no torch needed). Backward compatible: old 372-dim and new 444-dim models auto-detected.
 
 **Weight export:** `python scripts/export_dmc_weights.py models/dmc_final.pt models/dmc_final.bin` converts PyTorch checkpoint to raw f32 binary. Weight layout: for each of 3 hidden layers: W (in×H), b (H), gamma (H), beta (H); then output W (H×32), b (32). ~10MB for H=1024.
 
@@ -166,7 +166,7 @@ DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single
 **Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
 **Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
 
-**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`, `rewards()`, `load_dmc_model(path)`, `action_dmc_with_stats()`.
+**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`, `rewards()`, `load_dmc_model(path)`, `action_dmc_with_stats()`, `get_bid_history()`.
 **Python API (VecEnv):** `current_players()`, `phases()`, `bid_improved()`. `step()` returns 5-tuple with `deal_outcomes (n,2)`.
 
 ### Neural Network Value Function (feature `nn`)
@@ -203,7 +203,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 
 `Env` wraps a single GameState with IS-MCTS search support. `VecEnv(n)` wraps n parallel environments with NumPy array I/O. Uses `StdRng` (not `ThreadRng`) for PyO3 `Send` requirement.
 
-**Observation v2** (372 floats, player-relative): hand (32) + trick (128) + per-player played cards (96) + all played (32) + card point values (32) + contract (7) + void tracking (12) + scoring context (12) + tactical features (21). Legal action mask is 43 floats. `VecEnv.step()` returns 5-tuple including `deal_outcomes (n,2)`.
+**Observation v3** (444 floats, player-relative): hand (32) + trick (128) + per-player played cards (96) + all played (32) + card point values (32) + contract (7) + void tracking (12) + scoring context (12) + tactical features (21) + bid history (72). Bid history: 12 chronological slots in player-relative order `[me, left, partner, right] × 3 rounds`, 6 floats each (action_type, bid_value/250, suit one-hot). Legal action mask is 43 floats. `VecEnv.step()` returns 5-tuple including `deal_outcomes (n,2)`.
 
 **Web frontend API** (on `Env`): `get_hands()`, `get_current_trick()`, `get_contract()`, `get_points()`, `get_tricks_won()`, `get_dealer()`, `get_trick_lead()`, `get_played_cards()`, `phase()`, `current_player()`, `is_terminal()`, `legal_actions()`. Static methods: `Env.card_name(idx)`, `Env.action_name(action, phase)`, `Env.deal_with_hands(dealer, hands)`. Setup: `set_contract(trump, value, team, coinche)`, `set_phase_playing()`.
 

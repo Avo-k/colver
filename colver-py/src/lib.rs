@@ -17,7 +17,8 @@ use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{Contract, GameState, Phase};
 
-const OBS_V2_DIM: usize = 372;
+const OBS_V2_DIM: usize = 444;
+const BID_HISTORY_FLOATS: usize = 72; // 12 slots × 6 floats per slot
 
 /// Find the highest trump strength currently on the trick (before current player's move).
 fn best_trump_strength_on_trick(state: &GameState) -> Option<u8> {
@@ -109,11 +110,74 @@ fn track_play(
     }
 }
 
-/// Build observation v2 (372 floats) from game state + tracking arrays.
+/// Encode bid history into 72 floats (12 slots × 6 floats).
+/// Slots are in player-relative order: [me, left, partner, right] × 3 rounds.
+fn encode_bid_history(
+    bid_history: &[(u8, u8)], // (seat, action) pairs
+    me: usize,
+    dealer: u8,
+) -> [f32; BID_HISTORY_FLOATS] {
+    let mut out = [0.0f32; BID_HISTORY_FLOATS];
+
+    // First bidder is after dealer
+    let first_bidder = ((dealer + 1) % 4) as usize;
+    // Relative offset: how many slots of padding before first bid
+    let offset = (first_bidder + 4 - me) % 4;
+
+    // Use last 12 actions if history is longer (extremely rare)
+    let history = if bid_history.len() > 12 {
+        &bid_history[bid_history.len() - 12..]
+    } else {
+        bid_history
+    };
+
+    for (i, &(_seat, action)) in history.iter().enumerate() {
+        let slot = offset + i;
+        if slot >= 12 {
+            break;
+        }
+        let base = slot * 6;
+
+        match action {
+            0 => {
+                // Pass
+                out[base] = 0.2;
+            }
+            41 => {
+                // Coinche
+                out[base] = 0.8;
+            }
+            42 => {
+                // Surcoinche
+                out[base] = 1.0;
+            }
+            1..=40 => {
+                let (val_enc, suit_idx) = bidding::decode_bid(action);
+                if val_enc == 25 {
+                    // Capot
+                    out[base] = 0.6;
+                    out[base + 1] = 1.0;
+                } else {
+                    // Regular bid
+                    out[base] = 0.4;
+                    out[base + 1] = (val_enc as f32 * 10.0) / 250.0;
+                }
+                out[base + 2 + suit_idx as usize] = 1.0;
+            }
+            _ => {}
+        }
+    }
+
+    out
+}
+
+/// Build observation v2 (444 floats) from game state + tracking arrays.
 fn make_observation_v2(
     state: &GameState,
     played_by: &[u32; 4],
     trump_ceiling: &[u8; 4],
+    bid_history: &[(u8, u8)],
+    dealer: u8,
 ) -> Vec<f32> {
     let mut obs = Vec::with_capacity(OBS_V2_DIM);
     let me = state.current_player() as usize;
@@ -362,6 +426,10 @@ fn make_observation_v2(
         obs.push(trump_ceiling[seat] as f32 / 7.0);
     }
 
+    // === Block 10: Bid history (72) ===
+    let bid_enc = encode_bid_history(bid_history, me, dealer);
+    obs.extend_from_slice(&bid_enc);
+
     debug_assert_eq!(
         obs.len(),
         OBS_V2_DIM,
@@ -408,6 +476,8 @@ struct Env {
     // Per-player card tracking for obs v2
     played_by: [u32; 4],
     trump_ceiling: [u8; 4],
+    // Bid history: (seat, bid_action) pairs, cleared on reset
+    bid_history: Vec<(u8, u8)>,
     // DMC Q-network (loaded lazily)
     dmc_net: Option<DmcNet>,
 }
@@ -426,6 +496,7 @@ impl Env {
             smart_initialized: false,
             played_by: [0; 4],
             trump_ceiling: [7; 4],
+            bid_history: Vec::new(),
             dmc_net: None,
         }
     }
@@ -437,8 +508,9 @@ impl Env {
         self.smart_initialized = false;
         self.played_by = [0; 4];
         self.trump_ceiling = [7; 4];
+        self.bid_history.clear();
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling),
+            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
             legal_actions_list(&self.state),
         ))
     }
@@ -448,6 +520,9 @@ impl Env {
         let player = self.state.current_player();
         let team = GameState::player_team(player) as usize;
 
+        if self.state.phase == Phase::Bidding {
+            self.bid_history.push((player, action));
+        }
         track_play(
             &self.state,
             action,
@@ -464,7 +539,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling),
+            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -563,6 +638,9 @@ impl Env {
         let player = self.state.current_player();
         let team = GameState::player_team(player) as usize;
 
+        if self.state.phase == Phase::Bidding {
+            self.bid_history.push((player, action));
+        }
         track_play(
             &self.state,
             action,
@@ -587,7 +665,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling),
+            make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -769,6 +847,7 @@ impl Env {
             smart_initialized: false,
             played_by: [0; 4],
             trump_ceiling: [7; 4],
+            bid_history: Vec::new(),
             dmc_net: None,
         })
     }
@@ -793,8 +872,7 @@ impl Env {
 
     /// Get bidding history as list of (player, action) tuples.
     fn get_bid_history(&self) -> Vec<(u8, u8)> {
-        // We don't store history in GameState, so return minimal info
-        Vec::new()
+        self.bid_history.clone()
     }
 
     /// Get Naive IS-MCTS action with search statistics.
@@ -909,9 +987,9 @@ impl Env {
         rollout::select_nth_bit(mask, n)
     }
 
-    /// Get observation v2 (372 floats) for current state.
+    /// Get observation v2 (444 floats) for current state.
     fn get_observation_v2(&self) -> Vec<f32> {
-        make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling)
+        make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer)
     }
 
     /// Load DMC Q-network weights from a raw binary file.
@@ -944,11 +1022,13 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_dmc_model() first")
         })?;
 
-        let obs = make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling);
+        let obs_full = make_observation_v2(&self.state, &self.played_by, &self.trump_ceiling, &self.bid_history, self.state.dealer);
+        // Truncate obs to match model's expected obs_dim (backward compat with 372-dim models)
+        let obs = &obs_full[..net.obs_dim()];
         let legal_mask = self.state.legal_actions() as u32;
 
         let start = Instant::now();
-        let (best_action, q_values) = net.best_action(&obs, legal_mask);
+        let (best_action, q_values) = net.best_action(obs, legal_mask);
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
         let dict = PyDict::new_bound(py);
@@ -971,6 +1051,12 @@ struct VecEnv {
     // Per-env card tracking for obs v2
     played_by: Vec<[u32; 4]>,
     trump_ceiling: Vec<[u8; 4]>,
+    // Per-env bid history
+    bid_histories: Vec<Vec<(u8, u8)>>,
+    // Per-env bidding strategy: 0=improved (default), 1-6=BidParams presets
+    // Presets: 1=ultra_conservative, 2=conservative, 3=moderate,
+    //          4=balanced, 5=aggressive, 6=very_aggressive, 7=heuristic
+    bid_strategy: Vec<u8>,
 }
 
 #[pymethods]
@@ -989,6 +1075,8 @@ impl VecEnv {
             rng,
             played_by: vec![[0u32; 4]; n],
             trump_ceiling: vec![[7u8; 4]; n],
+            bid_histories: vec![Vec::new(); n],
+            bid_strategy: vec![0u8; n],
         }
     }
 
@@ -1009,16 +1097,32 @@ impl VecEnv {
         PyArray1::from_slice_bound(py, &v)
     }
 
-    /// Get improved_bid action for each environment (only valid for bidding-phase envs).
+    /// Set bidding strategy per environment.
+    /// 0=improved (default), 1=ultra_conservative, 2=conservative, 3=moderate,
+    /// 4=balanced, 5=aggressive, 6=very_aggressive, 7=heuristic.
+    fn set_bid_strategies(&mut self, strategies: Vec<u8>) {
+        assert_eq!(strategies.len(), self.states.len());
+        self.bid_strategy = strategies;
+    }
+
+    /// Get bid action for each environment using its assigned strategy.
     fn bid_improved<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
+        let presets = bid_eval::BidParams::all_presets();
         let v: Vec<u8> = self
             .states
             .iter()
-            .map(|s| {
-                if s.phase == Phase::Bidding {
-                    bid_eval::improved_bid(s)
-                } else {
-                    0 // placeholder for non-bidding envs
+            .enumerate()
+            .map(|(i, s)| {
+                if s.phase != Phase::Bidding {
+                    return 0;
+                }
+                match self.bid_strategy[i] {
+                    0 => bid_eval::improved_bid(s),
+                    idx @ 1..=6 => {
+                        bid_eval::parametric_bid(s, &presets[(idx - 1) as usize])
+                    }
+                    7 => bid_eval::heuristic_bid(s),
+                    _ => bid_eval::improved_bid(s),
                 }
             })
             .collect();
@@ -1036,6 +1140,7 @@ impl VecEnv {
             self.states[i] = GameState::deal_random(dealer, &mut self.rng);
             self.played_by[i] = [0; 4];
             self.trump_ceiling[i] = [7; 4];
+            self.bid_histories[i].clear();
         }
 
         let mut obs_data = Vec::with_capacity(n * OBS_V2_DIM);
@@ -1046,6 +1151,8 @@ impl VecEnv {
                 &self.states[i],
                 &self.played_by[i],
                 &self.trump_ceiling[i],
+                &self.bid_histories[i],
+                self.states[i].dealer,
             ));
             mask_data.extend(legal_mask_vec(&self.states[i]));
         }
@@ -1087,6 +1194,9 @@ impl VecEnv {
             let player = self.states[i].current_player();
             let team = GameState::player_team(player) as usize;
 
+            if self.states[i].phase == Phase::Bidding {
+                self.bid_histories[i].push((player, action));
+            }
             track_play(
                 &self.states[i],
                 action,
@@ -1127,6 +1237,7 @@ impl VecEnv {
                 self.states[i] = GameState::deal_random(dealer, &mut self.rng);
                 self.played_by[i] = [0; 4];
                 self.trump_ceiling[i] = [7; 4];
+                self.bid_histories[i].clear();
             } else {
                 outcomes_vec.push(0.0);
                 outcomes_vec.push(0.0);
@@ -1141,6 +1252,8 @@ impl VecEnv {
                 &self.states[i],
                 &self.played_by[i],
                 &self.trump_ceiling[i],
+                &self.bid_histories[i],
+                self.states[i].dealer,
             ));
             mask_data.extend(legal_mask_vec(&self.states[i]));
         }
@@ -1236,7 +1349,7 @@ impl SumTree {
     }
 }
 
-const PER_OBS_DIM: usize = OBS_V2_DIM; // 372
+const PER_OBS_DIM: usize = OBS_V2_DIM; // 444
 const PER_NUM_CARDS: usize = 32;
 
 /// Rust-based Prioritized Experience Replay buffer.

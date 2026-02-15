@@ -1,7 +1,8 @@
 /// DMC Q-Network: pure Rust inference for the DouZero-style Deep Monte-Carlo agent.
 ///
-/// Architecture: 372 → H (LN+ReLU) → H (LN+ReLU) → H (LN+ReLU) → 32
+/// Architecture: obs_dim → H (LN+ReLU) → H (LN+ReLU) → H (LN+ReLU) → 32
 /// where H = hidden size (default 1024), LN = LayerNorm.
+/// obs_dim is auto-detected from weight file size (372 for v2, 444 for v3).
 ///
 /// No external dependencies — loads raw f32 binary weights exported from PyTorch.
 /// Uses scratch buffers for zero-allocation forward pass.
@@ -12,7 +13,6 @@
 ///   Final output layer:
 ///     W: H × 32 (row-major), b: 32
 
-const OBS_DIM: usize = 372;
 const NUM_ACTIONS: usize = 32;
 const LN_EPS: f32 = 1e-5;
 
@@ -26,8 +26,9 @@ pub struct DmcNet {
     w_out: Vec<f32>,
     b_out: Vec<f32>,
     // Dimensions
+    obs_dim: usize,
     hidden: usize,
-    in_dims: [usize; 3], // [OBS_DIM, hidden, hidden]
+    in_dims: [usize; 3], // [obs_dim, hidden, hidden]
     // Scratch buffers (avoid allocations in hot loop)
     scratch_a: Vec<f32>,
     scratch_b: Vec<f32>,
@@ -40,6 +41,7 @@ impl DmcNet {
     }
 
     /// Load weights from a raw binary file with custom hidden size.
+    /// The obs_dim is auto-detected from the weight file size.
     pub fn load_with_hidden(path: &str, hidden: usize) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
         if data.len() % 4 != 0 {
@@ -54,12 +56,32 @@ impl DmcNet {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
 
-        Self::from_floats(&floats, hidden)
+        // Auto-detect obs_dim from weight file size.
+        // Total floats = obs_dim*H + 3*H (layer 0: W+b+gamma+beta)
+        //              + 2*(H*H + 3*H)  (layers 1-2: W+b+gamma+beta)
+        //              + H*32 + 32       (output: W+b)
+        // So: obs_dim = (total_floats - fixed) / H
+        //   where fixed = 2*(H*H + 3*H) + 3*H + H*32 + 32
+        let h = hidden;
+        let fixed = 2 * (h * h + 3 * h) + 3 * h + h * NUM_ACTIONS + NUM_ACTIONS;
+        let total = floats.len();
+        if total <= fixed || (total - fixed) % h != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "cannot infer obs_dim: {} floats, hidden={} (remainder={})",
+                    total, h, if total > fixed { (total - fixed) % h } else { 1 },
+                ),
+            ));
+        }
+        let obs_dim = (total - fixed) / h;
+
+        Self::from_floats(&floats, hidden, obs_dim)
     }
 
     /// Construct from a flat array of f32 weights.
-    fn from_floats(floats: &[f32], hidden: usize) -> std::io::Result<Self> {
-        let in_dims = [OBS_DIM, hidden, hidden];
+    fn from_floats(floats: &[f32], hidden: usize, obs_dim: usize) -> std::io::Result<Self> {
+        let in_dims = [obs_dim, hidden, hidden];
 
         // Calculate expected size
         let mut expected = 0;
@@ -112,6 +134,7 @@ impl DmcNet {
             beta,
             w_out,
             b_out,
+            obs_dim,
             hidden,
             in_dims,
             scratch_a: vec![0.0; hidden],
@@ -124,7 +147,7 @@ impl DmcNet {
     /// Uses internal scratch buffers — not thread-safe (use separate instances per thread).
     #[inline]
     pub fn evaluate(&mut self, obs: &[f32]) -> [f32; NUM_ACTIONS] {
-        debug_assert_eq!(obs.len(), OBS_DIM);
+        debug_assert_eq!(obs.len(), self.obs_dim);
 
         // Layer 0: scratch_a = ReLU(LN(W0 * obs + b0))
         linear(&self.w[0], &self.b[0], obs, &mut self.scratch_a, self.in_dims[0], self.hidden);
@@ -177,6 +200,11 @@ impl DmcNet {
         }
 
         (best_action, legal_q)
+    }
+
+    /// Return the observation dimensionality this network expects.
+    pub fn obs_dim(&self) -> usize {
+        self.obs_dim
     }
 }
 
@@ -232,6 +260,8 @@ fn relu(x: &mut [f32]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_OBS_DIM: usize = 372;
 
     #[test]
     fn test_layer_norm() {
@@ -297,17 +327,17 @@ mod tests {
 
     #[test]
     fn test_dmc_net_tiny() {
-        // Tiny network: obs_dim=372, hidden=2, num_actions=32
+        // Tiny network: obs_dim=TEST_OBS_DIM, hidden=2, num_actions=32
         // This tests the from_floats constructor and evaluate
         let hidden = 2;
 
         // Build weight vector
         let mut floats = Vec::new();
 
-        // Layer 0: W (372×2), b (2), gamma (2), beta (2)
-        let mut w0 = vec![0.0f32; OBS_DIM * hidden];
+        // Layer 0: W (TEST_OBS_DIM×2), b (2), gamma (2), beta (2)
+        let mut w0 = vec![0.0f32; TEST_OBS_DIM * hidden];
         w0[0] = 1.0; // neuron 0 reads input 0
-        w0[OBS_DIM + 1] = 1.0; // neuron 1 reads input 1
+        w0[TEST_OBS_DIM + 1] = 1.0; // neuron 1 reads input 1
         floats.extend_from_slice(&w0);
         floats.extend_from_slice(&[0.0, 0.0]); // b0
         floats.extend_from_slice(&[1.0, 1.0]); // gamma0
@@ -327,22 +357,16 @@ mod tests {
 
         // Output: W (2×32), b (32)
         let mut w_out = vec![0.0f32; hidden * NUM_ACTIONS];
-        w_out[0] = 1.0; // action 0 reads neuron 0
-        w_out[NUM_ACTIONS + 1] = 1.0; // action 1 reads neuron 1 (wait, wrong layout)
-        // Actually W_out[i * hidden + j]: action i, neuron j
-        // So w_out[0*2 + 0] = 1.0 means action 0 reads neuron 0 ✓
-        // w_out[1*2 + 1] = 1.0 means action 1 reads neuron 1
-        let mut w_out = vec![0.0f32; hidden * NUM_ACTIONS];
         w_out[0 * hidden + 0] = 1.0; // action 0 = neuron 0
         w_out[1 * hidden + 1] = 1.0; // action 1 = neuron 1
         floats.extend_from_slice(&w_out);
         floats.extend_from_slice(&vec![0.0f32; NUM_ACTIONS]); // b_out
 
-        let mut net = DmcNet::from_floats(&floats, hidden).unwrap();
+        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM).unwrap();
 
         // All-zero input: after layer 0 linear = [0, 0], LN([0,0]) = [0,0], ReLU = [0,0]
         // All layers keep [0,0]. Output = [0, 0, 0, ..., 0]
-        let obs = vec![0.0f32; OBS_DIM];
+        let obs = vec![0.0f32; TEST_OBS_DIM];
         let q = net.evaluate(&obs);
         for &v in &q {
             assert!(v.abs() < 1e-4, "expected ~0, got {}", v);
@@ -367,7 +391,7 @@ mod tests {
         };
 
         let mut net = DmcNet::load(&full_path).expect("Failed to load model");
-        let obs = [0.0f32; OBS_DIM];
+        let obs = vec![0.0f32; net.obs_dim()];
         let q = net.evaluate(&obs);
 
         // Reference PyTorch values for all-zeros obs (from cross-check):
@@ -400,7 +424,7 @@ mod tests {
         let mut floats = Vec::new();
 
         // Layer 0
-        let mut w0 = vec![0.0f32; OBS_DIM * hidden];
+        let mut w0 = vec![0.0f32; TEST_OBS_DIM * hidden];
         w0[0] = 5.0; // strong signal on neuron 0
         floats.extend_from_slice(&w0);
         floats.extend_from_slice(&[0.0, 0.0]);
@@ -425,9 +449,9 @@ mod tests {
         floats.extend_from_slice(&w_out);
         floats.extend_from_slice(&vec![0.0f32; NUM_ACTIONS]);
 
-        let mut net = DmcNet::from_floats(&floats, hidden).unwrap();
+        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM).unwrap();
 
-        let mut obs = vec![0.0f32; OBS_DIM];
+        let mut obs = vec![0.0f32; TEST_OBS_DIM];
         obs[0] = 1.0;
 
         // Legal mask: actions 0, 3, 5, 7 are legal
@@ -435,5 +459,34 @@ mod tests {
         let (best, legal_q) = net.best_action(&obs, legal_mask);
         assert_eq!(best, 5, "expected action 5 to be best");
         assert_eq!(legal_q.len(), 4);
+    }
+
+    #[test]
+    fn test_obs_dim_getter() {
+        // Verify obs_dim() returns the correct value for a tiny net
+        let hidden = 2;
+        let obs_dim = 444; // test with new obs dim
+        let mut floats = Vec::new();
+
+        // Layer 0: W (444×2), b, gamma, beta
+        floats.extend(vec![0.0f32; obs_dim * hidden]);
+        floats.extend_from_slice(&[0.0, 0.0]);
+        floats.extend_from_slice(&[1.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
+
+        // Layers 1-2: identity
+        for _ in 0..2 {
+            floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+            floats.extend_from_slice(&[0.0, 0.0]);
+            floats.extend_from_slice(&[1.0, 1.0]);
+            floats.extend_from_slice(&[0.0, 0.0]);
+        }
+
+        // Output
+        floats.extend(vec![0.0f32; hidden * NUM_ACTIONS]);
+        floats.extend(vec![0.0f32; NUM_ACTIONS]);
+
+        let net = DmcNet::from_floats(&floats, hidden, obs_dim).unwrap();
+        assert_eq!(net.obs_dim(), 444);
     }
 }

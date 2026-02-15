@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 
-OBS_DIM = 372
+OBS_DIM = 444
 NUM_CARDS = 32
 
 
@@ -126,7 +126,7 @@ class ReplayBuffer:
 
 
 class SumTree:
-    """Binary sum tree for O(log n) proportional sampling."""
+    """Binary sum tree for O(log n) proportional sampling. Iterative implementation."""
 
     def __init__(self, capacity: int):
         self.capacity = capacity
@@ -134,18 +134,15 @@ class SumTree:
         self.data_pointer = 0
         self.n_entries = 0
 
-    def _propagate(self, idx: int, change: float):
-        parent = idx >> 1
-        self.tree[parent] += change
-        if parent > 1:
-            self._propagate(parent, change)
-
     def update(self, idx: int, priority: float):
-        """Update priority at leaf index."""
+        """Update priority at leaf index (iterative propagation)."""
         tree_idx = idx + self.capacity
         change = priority - self.tree[tree_idx]
         self.tree[tree_idx] = priority
-        self._propagate(tree_idx, change)
+        tree_idx >>= 1
+        while tree_idx >= 1:
+            self.tree[tree_idx] += change
+            tree_idx >>= 1
 
     def add(self, priority: float) -> int:
         """Add new entry, returns data index."""
@@ -155,19 +152,43 @@ class SumTree:
         self.n_entries = min(self.n_entries + 1, self.capacity)
         return idx
 
-    def _retrieve(self, idx: int, s: float) -> int:
-        left = 2 * idx
-        right = left + 1
-        if left >= 2 * self.capacity:
-            return idx
-        if s <= self.tree[left]:
-            return self._retrieve(left, s)
-        return self._retrieve(right, s - self.tree[left])
-
     def get(self, s: float) -> int:
-        """Sample a leaf index proportional to priority."""
-        tree_idx = self._retrieve(1, s)
-        return tree_idx - self.capacity
+        """Sample a leaf index proportional to priority (iterative)."""
+        idx = 1
+        cap2 = 2 * self.capacity
+        tree = self.tree
+        while True:
+            left = 2 * idx
+            if left >= cap2:
+                break
+            if s <= tree[left]:
+                idx = left
+            else:
+                s -= tree[left]
+                idx = left + 1
+        return idx - self.capacity
+
+    def get_batch(self, s_values: np.ndarray) -> np.ndarray:
+        """Batch sample: retrieve leaf indices for an array of s values."""
+        n = len(s_values)
+        results = np.empty(n, dtype=np.int64)
+        cap2 = 2 * self.capacity
+        tree = self.tree
+        cap = self.capacity
+        for i in range(n):
+            s = s_values[i]
+            idx = 1
+            while True:
+                left = 2 * idx
+                if left >= cap2:
+                    break
+                if s <= tree[left]:
+                    idx = left
+                else:
+                    s -= tree[left]
+                    idx = left + 1
+            results[i] = idx - cap
+        return results
 
     @property
     def total(self) -> float:
@@ -175,6 +196,10 @@ class SumTree:
 
     def priority(self, idx: int) -> float:
         return self.tree[idx + self.capacity]
+
+    def priorities_batch(self, indices: np.ndarray) -> np.ndarray:
+        """Get priorities for a batch of data indices."""
+        return self.tree[indices + self.capacity]
 
 
 class PrioritizedReplayBuffer:
@@ -194,38 +219,41 @@ class PrioritizedReplayBuffer:
         self.returns = np.zeros(capacity, dtype=np.float32)
         self.max_priority = 1.0
         self.size = 0
+        self._cached_priority = 1.0  # cached max_priority ** alpha
 
     def push_batch(self, obs: np.ndarray, masks: np.ndarray,
                    actions: np.ndarray, returns: np.ndarray):
         """Add a batch of transitions with max priority."""
         n = len(obs)
+        p = self._cached_priority
+        tree = self.tree
         for i in range(n):
-            idx = self.tree.add(self.max_priority ** self.alpha)
+            idx = tree.add(p)
             self.obs[idx] = obs[i]
             self.masks[idx] = masks[i]
             self.actions[idx] = actions[i]
             self.returns[idx] = returns[i]
-        self.size = self.tree.n_entries
+        self.size = tree.n_entries
 
     def sample(self, batch_size: int, beta: float = 0.4
                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor,
                           torch.Tensor, torch.Tensor, np.ndarray]:
         """Sample with priorities. Returns (obs, masks, actions, returns, weights, indices)."""
-        indices = np.zeros(batch_size, dtype=np.int64)
-        priorities = np.zeros(batch_size, dtype=np.float64)
-
         total = self.tree.total
         segment = total / batch_size
 
-        for i in range(batch_size):
-            lo = segment * i
-            hi = segment * (i + 1)
-            s = np.random.uniform(lo, hi)
-            idx = self.tree.get(s)
-            # Clamp to valid range
-            idx = max(0, min(idx, self.size - 1))
-            indices[i] = idx
-            priorities[i] = max(self.tree.priority(idx), 1e-8)
+        # Vectorized random sampling
+        lo = np.arange(batch_size, dtype=np.float64) * segment
+        hi = lo + segment
+        s_values = np.random.uniform(lo, hi)
+
+        # Batch tree traversal
+        indices = self.tree.get_batch(s_values)
+        np.clip(indices, 0, self.size - 1, out=indices)
+
+        # Batch priority lookup
+        priorities = self.tree.priorities_batch(indices)
+        np.maximum(priorities, 1e-8, out=priorities)
 
         # Importance sampling weights
         probs = priorities / total
@@ -233,10 +261,10 @@ class PrioritizedReplayBuffer:
         weights /= weights.max()
 
         return (
-            torch.from_numpy(self.obs[indices]),
-            torch.from_numpy(self.masks[indices]),
-            torch.from_numpy(self.actions[indices]),
-            torch.from_numpy(self.returns[indices]),
+            torch.from_numpy(self.obs[indices].copy()),
+            torch.from_numpy(self.masks[indices].copy()),
+            torch.from_numpy(self.actions[indices].copy()),
+            torch.from_numpy(self.returns[indices].copy()),
             torch.from_numpy(weights.astype(np.float32)),
             indices,
         )
@@ -244,7 +272,11 @@ class PrioritizedReplayBuffer:
     def update_priorities(self, indices: np.ndarray, td_errors: np.ndarray):
         """Update priorities based on TD errors."""
         priorities = np.abs(td_errors) + 1e-6
-        for i, idx in enumerate(indices):
-            p = priorities[i] ** self.alpha
-            self.max_priority = max(self.max_priority, priorities[i])
-            self.tree.update(int(idx), p)
+        max_p = priorities.max()
+        if max_p > self.max_priority:
+            self.max_priority = float(max_p)
+            self._cached_priority = self.max_priority ** self.alpha
+        alpha = self.alpha
+        tree = self.tree
+        for i in range(len(indices)):
+            tree.update(int(indices[i]), float(priorities[i]) ** alpha)
