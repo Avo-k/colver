@@ -43,7 +43,7 @@ async def index():
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 
-CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images", "svg", "SVG-cards-1.3")
+CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images", "cards")
 
 app.mount("/cards", StaticFiles(directory=CARDS_DIR), name="cards")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

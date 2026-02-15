@@ -196,7 +196,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 FastAPI + WebSocket backend with vanilla JS frontend. Three modes: Play (human vs AI), Replay (step through recorded games), Analysis (custom position setup + MCTS analysis).
 
 **Backend** (`colver-web/backend/`):
-- `server.py` — FastAPI app, WebSocket handler, serves static files + SVG cards from `images/svg/SVG-cards-1.3/`. Loads NN model once at startup for DouDou agent.
+- `server.py` — FastAPI app, WebSocket handler, serves static files + SVG cards from `images/cards/`. Loads NN model once at startup for DouDou agent.
 - `game_manager.py` — `PlaySession` (human vs AI with trick tracking and point calculation), `ReplaySession` (precomputed state replay), `AnalysisSession` (custom position + MCTS analysis).
 
 **Frontend** (`colver-web/frontend/`):
@@ -207,7 +207,7 @@ FastAPI + WebSocket backend with vanilla JS frontend. Three modes: Play (human v
 - `js/analysis.js` — Analysis mode: card palette for hand editing, MCTS analysis results.
 - `styles.css` — Dark green table theme, responsive card sizing via CSS variables, compass grid layouts.
 
-**Card assets** (`images/svg/SVG-cards-1.3/`): 67 SVG playing cards from [SVG-cards](https://svg-cards.sourceforge.net/). Face cards use version 2 art. Served at `/cards/<rank>_of_<suit>.svg`.
+**Card assets** (`images/cards/`): 67 SVG playing cards from [SVG-cards](https://svg-cards.sourceforge.net/). Face cards use version 2 art. Served at `/cards/<rank>_of_<suit>.svg`.
 
 **Running:** `uv run python colver-web/backend/server.py` → http://localhost:8000
 

@@ -15,7 +15,6 @@ logs/
 
 # SVG card source archives
 images/SVG-cards-1.3.zip
-images/SVG-cards-1.3/
 
 # WSL Zone.Identifier files
 *:Zone.Identifier
