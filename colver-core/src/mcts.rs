@@ -338,6 +338,128 @@ impl MctsSearch {
             root_visits: root_node.visit_count,
         }
     }
+
+    /// MCTS search using a neural network value function instead of rollouts.
+    ///
+    /// At leaf nodes, instead of playing out to terminal, the NN evaluates the position
+    /// directly. Terminal nodes use actual outcomes (1.0 for team 0 win, 0.0 for loss).
+    /// NN outputs are already in [0,1], so no REWARD_SCALE is applied.
+    #[cfg(feature = "nn")]
+    pub fn search_with_nn(
+        &mut self,
+        state: &GameState,
+        config: &MctsConfig,
+        value_net: &mut crate::value_net::ValueNet,
+        _rng: &mut impl Rng,
+    ) -> SearchResult {
+        use crate::features::{extract_features, FEATURE_DIM};
+        use crate::scoring::compute_deal_score;
+
+        debug_assert!(!state.is_terminal(), "Cannot search from terminal state");
+        self.clear();
+
+        // NN path never uses RAVE
+        let use_rave = false;
+
+        let root = self.new_node(state.current_player(), false, use_rave);
+        self.expand(root, state);
+
+        let mut feature_buf = [0.0f32; FEATURE_DIM];
+
+        for _ in 0..config.iterations {
+            let mut sim_state = *state;
+            self.path.clear();
+            self.path.push(root);
+
+            let mut current = root;
+
+            // Selection: descend tree via UCB1
+            loop {
+                let node = &self.nodes[current as usize];
+                if node.is_terminal || node.children_count == 0 {
+                    break;
+                }
+
+                let edge_idx = self.ucb1_select(current, config.exploration);
+                let action = self.edges[edge_idx].action;
+
+                if self.edges[edge_idx].child == u32::MAX {
+                    sim_state.step(action);
+                    let is_term = sim_state.is_terminal();
+                    let child = self.new_node(sim_state.current_player(), is_term, use_rave);
+                    self.edges[edge_idx].child = child;
+                    if !is_term {
+                        self.expand(child, &sim_state);
+                    }
+                    self.path.push(child);
+                    break;
+                } else {
+                    sim_state.step(action);
+                    current = self.edges[edge_idx].child;
+                    self.path.push(current);
+                }
+            }
+
+            // Evaluation: NN value or terminal outcome
+            let reward = if sim_state.is_terminal() {
+                // Use binary win/loss based on deal score
+                if sim_state.contract.value == 0 {
+                    // Void deal (4 passes) — draw
+                    [0.5, 0.5]
+                } else {
+                    let score = compute_deal_score(&sim_state);
+                    if score.scores[0] > score.scores[1] {
+                        [1.0, 0.0]
+                    } else if score.scores[1] > score.scores[0] {
+                        [0.0, 1.0]
+                    } else {
+                        [0.5, 0.5]
+                    }
+                }
+            } else {
+                extract_features(&sim_state, &mut feature_buf);
+                let p = value_net.evaluate(&feature_buf);
+                [p, 1.0 - p]
+            };
+
+            // Backpropagation (no REWARD_SCALE — NN outputs already in [0,1])
+            for &node_idx in &self.path {
+                let node = &mut self.nodes[node_idx as usize];
+                node.visit_count += 1;
+                node.total_reward[0] += reward[0];
+                node.total_reward[1] += reward[1];
+            }
+        }
+
+        // Best action: most-visited child of root
+        let root_node = &self.nodes[root as usize];
+        let start = root_node.children_start as usize;
+        let end = start + root_node.children_count as usize;
+
+        let mut best_action = 0u8;
+        let mut best_visits = 0u32;
+        let mut visit_counts = Vec::with_capacity(root_node.children_count as usize);
+
+        for i in start..end {
+            let edge = &self.edges[i];
+            let visits = if edge.child != u32::MAX {
+                self.nodes[edge.child as usize].visit_count
+            } else {
+                0
+            };
+            visit_counts.push((edge.action, visits));
+            if visits > best_visits {
+                best_visits = visits;
+                best_action = edge.action;
+            }
+        }
+
+        SearchResult {
+            best_action,
+            visit_counts,
+            root_visits: root_node.visit_count,
+        }
+    }
 }
 
 /// Convenience wrapper that creates a temporary MctsSearch.

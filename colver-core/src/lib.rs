@@ -18,3 +18,7 @@ pub mod card_beliefs;
 pub mod smart_ismcts;
 #[cfg(feature = "rand")]
 pub mod single_tree_ismcts;
+#[cfg(feature = "nn")]
+pub mod features;
+#[cfg(feature = "nn")]
+pub mod value_net;

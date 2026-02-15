@@ -209,7 +209,7 @@ fn count_opponent_trumps(state: &GameState, player: u8, trump_suit: Suit) -> u32
 
 /// Heuristic play action for determinized rollouts (all hands visible).
 /// Picks from legal_plays() only, no allocations.
-pub(crate) fn heuristic_play_action(state: &GameState) -> u8 {
+pub fn heuristic_play_action(state: &GameState) -> u8 {
     let legal = crate::play::legal_plays(state) as u64;
     let legal32 = legal as CardSet;
     let count = legal32.count_ones();

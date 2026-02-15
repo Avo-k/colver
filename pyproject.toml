@@ -5,6 +5,7 @@ description = "Fast Belote Contrée environment for RL training"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
+    "torch",
 ]
 
 [build-system]

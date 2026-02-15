@@ -7,6 +7,7 @@ edition = "2021"
 default = ["rand"]
 rand = ["dep:rand"]
 parallel = ["dep:rayon", "rand"]
+nn = ["rand"]
 
 [dependencies]
 rand = { version = "0.8", optional = true }
@@ -66,3 +67,13 @@ path = "src/tests/bid_debug.rs"
 [[bin]]
 name = "bid_tournament"
 path = "src/tests/bid_tournament.rs"
+
+[[bin]]
+name = "generate_value_data"
+path = "src/tests/generate_value_data.rs"
+required-features = ["nn"]
+
+[[bin]]
+name = "nn_experiment"
+path = "src/tests/nn_experiment.rs"
+required-features = ["nn"]

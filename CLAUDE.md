@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Check compilation (both crates)
 cargo check
 
-# Run all core tests (104 tests)
+# Run all core tests (131 tests, 139 with --features nn)
 cargo test -p colver-core
 
 # Run a single test
@@ -33,6 +33,18 @@ cargo run -p colver-core --bin oracle_experiment --release -- 200 2000
 # Run bidding experiment (smart_bid vs heuristic)
 cargo run -p colver-core --bin bidding_experiment --release -- 200 50
 
+# Generate NN training data (fast mode with heuristic play)
+cargo run -p colver-core --bin generate_value_data --release --features nn -- 10000 data/value_train.bin --fast
+
+# Generate NN training data (slow mode with IS-MCTS play)
+cargo run -p colver-core --bin generate_value_data --release --features nn -- 1000 data/value_train.bin
+
+# Train value network (requires PyTorch)
+python scripts/train_value_net.py --data data/value_train.bin --output models/value_net.bin
+
+# Run NN evaluation experiment
+cargo run -p colver-core --bin nn_experiment --release --features nn -- models/value_net.bin 50 --data data/value_train.bin
+
 # Build and install Python bindings
 cd colver-py && maturin develop --release
 
@@ -48,6 +60,8 @@ uv run python3 -c "import colver; env = colver.Env(); env.reset()"
 Colver is a Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core with PyO3 Python bindings.
 
 **Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI)
+
+**Features:** `rand` (default), `parallel` (rayon parallel determinization), `nn` (neural network value function — features, value_net, NN-guided MCTS)
 
 ### Card Representation (`card.rs`)
 
@@ -80,9 +94,9 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node`s and `Edge`s in flat `Vec`s for cache-friendliness. `MctsSearch` is reusable across searches (arenas are cleared between calls). Default: 1000 iterations, `C = sqrt(2)`.
 
-**API:** `MctsSearch::search(&mut self, state, config, rng) -> u8` returns best action. `search_with_stats(...)` returns `SearchResult` with visit counts. `mcts_search(state, config, rng)` is a convenience one-shot wrapper.
+**API:** `MctsSearch::search(&mut self, state, config, rng) -> u8` returns best action. `search_with_stats(...)` returns `SearchResult` with visit counts. `search_with_nn(state, config, value_net, rng)` uses NN leaf evaluation instead of rollouts (feature `nn`). `mcts_search(state, config, rng)` is a convenience one-shot wrapper.
 
-**Algorithm:** Selection (UCB1 descent) → Expansion (enumerate legal actions as edges, create child node) → Simulation (`rollout_random`) → Backpropagation. Rewards scaled by `1/2000` to keep exploitation term in [0,1]. Best action = most-visited root child.
+**Algorithm:** Selection (UCB1 descent) → Expansion (enumerate legal actions as edges, create child node) → Simulation (`rollout_random` or NN eval) → Backpropagation. Rewards scaled by `1/2000` for rollouts (NN outputs already in [0,1], no scaling). Best action = most-visited root child.
 
 ### Smart IS-MCTS Agent (`smart_ismcts.rs` + `card_beliefs.rs`, feature `rand`)
 
@@ -119,7 +133,34 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 
 **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Samples D determinized worlds (uniform, void-aware), runs MCTS on each, aggregates root visit counts. Default: 20 determinizations × 50 iters, `HeuristicPlay` rollouts.
 
-**Smart IS-MCTS** (`smart_ismcts.rs` + `card_beliefs.rs`) — Belief-weighted IS-MCTS. `CardBeliefs` weight matrix updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. ~+7.5% win rate vs Naive IS-MCTS in match play. Has `search_parallel()` behind `parallel` feature.
+**Smart IS-MCTS** (`smart_ismcts.rs` + `card_beliefs.rs`) — Belief-weighted IS-MCTS. `CardBeliefs` weight matrix updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. ~+7.5% win rate vs Naive IS-MCTS in match play. Has `search_parallel()` behind `parallel` feature and `search_with_nn()` behind `nn` feature.
+
+### DMC Q-Network Agent (`scripts/dmc_model.py`, `scripts/train_dmc.py`, `scripts/eval_dmc.py`)
+
+DouZero-style Deep Monte-Carlo agent. A Q-network (213→512→512→512→32 MLP, ~651K params) picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration, circular replay buffer.
+
+**Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 11000000`
+**Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
+
+**Results (11M steps):** 65.9% vs random, ~51% vs Naive IS-MCTS (20ms), ~52% vs Smart IS-MCTS (20ms). Roughly even with IS-MCTS while being ~20x faster per decision.
+
+**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`.
+**Python API (VecEnv):** `current_players()`, `phases()`, `bid_improved()`. `step()` returns 5-tuple with `deal_outcomes (n,2)`.
+
+### Neural Network Value Function (feature `nn`)
+
+A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTorch), inference in pure Rust (hand-rolled matmul, zero deps).
+
+**Feature extraction** (`features.rs`) — 278 floats from perfect-info GameState: 4 hands (128), current trick (128), trump suit (4), bid value (1), coinche (3), taker team (2), points (2), tricks (2), current player (4), trick lead (4). `extract_features(state, &mut buf)` — no allocations.
+
+**Value network** (`value_net.rs`) — MLP: 278→256→256→1 (ReLU+Sigmoid). ~137K params. `ValueNet::load(path)` reads raw f32 binary. `ValueNet::evaluate(&mut self, features) -> f32` returns P(team 0 wins). Uses scratch buffers (not thread-safe — one instance per thread).
+
+**Weight file format** — Contiguous little-endian f32: W1 (278×H), b1 (H), W2 (H×H), b2 (H), W3 (H×1), b3 (1). Row-major (matches PyTorch Linear weight layout).
+
+**Training pipeline:**
+1. `generate_value_data` — self-play data generation (IS-MCTS or `--fast` heuristic)
+2. `scripts/train_value_net.py` — PyTorch training with BCELoss, exports raw f32 binary
+3. `nn_experiment` — accuracy, speed, and strength evaluation
 
 ### Experiment Binaries
 
@@ -129,6 +170,8 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 - **`bid_tournament`**: Round-robin tournament of parameterized bidding strategies. Each pair plays both directions with Naive IS-MCTS for card play. Reports win matrix, margin matrix, rankings.
 - **`bid_debug`**: Prints detailed bidding rounds showing each player's hand, suit evaluations, and decisions for both heuristic and improved bidders side-by-side.
 - **`strength_experiment`**: Rollout policy comparison, D×I sweep, RAVE on/off.
+- **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
+- **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
 
 ### Performance-Critical Path
 
@@ -136,7 +179,7 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 
 ### Python Layer (`colver-py/`)
 
-`Env` wraps a single GameState. `VecEnv(n)` wraps n parallel environments with NumPy array I/O. Observation is a 222-float vector (hand + trick cards + played cards + contract info + scores + phase + position). Legal action mask is 43 floats. Uses `StdRng` (not `ThreadRng`) for PyO3 `Send` requirement.
+`Env` wraps a single GameState with IS-MCTS search support. `VecEnv(n)` wraps n parallel environments with NumPy array I/O. Observation is a 213-float vector (hand 32 + trick 128 + played 32 + contract 10 + scores 2 + tricks 2 + phase 3 + position 4). Legal action mask is 43 floats. `VecEnv.step()` returns 5-tuple including `deal_outcomes (n,2)`. Uses `StdRng` (not `ThreadRng`) for PyO3 `Send` requirement.
 
 ## Rules Reference
 
