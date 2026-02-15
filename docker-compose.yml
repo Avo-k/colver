@@ -3,6 +3,8 @@ services:
     build: .
     ports:
       - "8002:8000"
+    volumes:
+      - ./models:/app/models
     environment:
       - ROOT_PATH=${ROOT_PATH:-/colver}
     restart: unless-stopped
