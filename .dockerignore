@@ -1,10 +1,9 @@
 target/
 .venv/
-models/
 data/
 logs/
 scripts/
 __pycache__/
 *.pt
-*.bin
 .git/
+# Keep models/dmc_final.bin for Rust inference (exclude .pt torch checkpoints above)

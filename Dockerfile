@@ -19,11 +19,11 @@ RUN maturin build --release -m colver-py/Cargo.toml -o /wheels
 FROM python:3.11-slim-bookworm
 
 COPY --from=builder /wheels/*.whl /tmp/
-RUN pip install --no-cache-dir "/tmp/colver-*.whl[web]" && rm /tmp/*.whl
+RUN pip install --no-cache-dir /tmp/*.whl fastapi "uvicorn[standard]" websockets && rm /tmp/*.whl
 
 COPY colver-web/ /app/colver-web/
 COPY images/cards/ /app/images/cards/
-# Copy DMC model weights if available (enables DouDou agent)
+# Copy DMC model weights if available (enables DouDou agent via Rust inference)
 COPY models/dmc_final.bi[n] /app/models/
 
 WORKDIR /app
