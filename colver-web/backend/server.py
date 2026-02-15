@@ -82,7 +82,11 @@ async def websocket_endpoint(ws: WebSocket):
                 action = data["action"]
                 human_seat = data.get("human_seat", 2)
                 state = play_session.play_action(action)
-                await ws.send_json({"type": "game_state", "state": state})
+                msg = {"type": "game_state", "state": state}
+                if play_session._belote_event:
+                    msg["belote_event"] = play_session._belote_event
+                    msg["belote_player"] = play_session._belote_player
+                await ws.send_json(msg)
                 await _run_ai_turns(ws, play_session, human_seat)
 
             elif msg_type == "watch_start":
@@ -121,14 +125,18 @@ async def websocket_endpoint(ws: WebSocket):
                 # Run in executor since IS-MCTS can block
                 loop = asyncio.get_event_loop()
                 move, state, tricks = await loop.run_in_executor(None, watch_session.step)
-                await ws.send_json({
+                watch_msg = {
                     "type": "watch_move",
                     "move": move,
                     "state": state,
                     "completed_tricks": tricks,
                     "bid_history": watch_session.bid_history,
                     "finished": watch_session.env.is_terminal(),
-                })
+                }
+                if watch_session._belote_event:
+                    watch_msg["belote_event"] = watch_session._belote_event
+                    watch_msg["belote_player"] = watch_session._belote_player
+                await ws.send_json(watch_msg)
 
             elif msg_type == "setup_analysis":
                 hands = data["hands"]
@@ -166,12 +174,16 @@ async def _run_ai_turns(ws, session, human_seat):
         await asyncio.sleep(0.3)
         action, name, state = session.play_ai_turn()
         player = session.history[-1]["player"]
-        await ws.send_json({
+        ai_msg = {
             "type": "ai_move",
             "player": player,
             "action": action,
             "name": name,
-        })
+        }
+        if session._belote_event:
+            ai_msg["belote_event"] = session._belote_event
+            ai_msg["belote_player"] = session._belote_player
+        await ws.send_json(ai_msg)
         await ws.send_json({"type": "game_state", "state": state})
 
 

@@ -140,6 +140,30 @@ function renderLastTrick(container, trick, trickWinner, trickPoints, humanSeat) 
 
 const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 
+function showBeloteAnnouncement(trickAreaId, text) {
+    const area = document.getElementById(trickAreaId);
+    if (!area) return;
+    const el = document.createElement('div');
+    el.className = 'belote-announcement';
+    el.textContent = text;
+    area.style.position = 'relative';
+    area.appendChild(el);
+    setTimeout(() => el.remove(), 1800);
+}
+
+function renderBeloteBadge(scoreElId, beloteVal) {
+    const scoreEl = document.getElementById(scoreElId);
+    if (!scoreEl) return;
+    const existing = scoreEl.querySelector('.belote-badge');
+    if (existing) existing.remove();
+    if (beloteVal === 2) {
+        const badge = document.createElement('span');
+        badge.className = 'belote-badge';
+        badge.textContent = '+20 belote';
+        scoreEl.appendChild(badge);
+    }
+}
+
 function contractStr(contract) {
     if (!contract || Object.keys(contract).length === 0) return '';
     const val = contract.value;

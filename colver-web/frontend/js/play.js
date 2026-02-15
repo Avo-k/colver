@@ -20,6 +20,12 @@ function renderPlayState(state) {
     document.getElementById('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
     document.getElementById('contract-display').textContent = contractStr(state.contract);
 
+    // Belote badges
+    if (state.belote) {
+        renderBeloteBadge('score-ns', state.belote[0]);
+        renderBeloteBadge('score-ew', state.belote[1]);
+    }
+
     // Hands
     const handEls = {
         0: document.getElementById('hand-north'),
@@ -210,6 +216,10 @@ function playCard(cardIdx) {
 // Message handlers
 onMessage('game_state', (data) => {
     renderPlayState(data.state);
+    if (data.belote_event) {
+        const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
+        showBeloteAnnouncement('trick-area', text);
+    }
     // Disable DouDou option if not available on server
     if (data.doudou_available === false) {
         const opt = document.querySelector('#ai-type option[value="doudou"]');
@@ -225,6 +235,10 @@ onMessage('ai_move', (data) => {
         // Use JS actionName for proper suit symbols instead of server-provided name
         const name = actionName(data.action, 0);
         bidHistory.push({ player: data.player, action: data.action, name });
+    }
+    if (data.belote_event) {
+        const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
+        showBeloteAnnouncement('trick-area', text);
     }
 });
 

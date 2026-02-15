@@ -100,6 +100,12 @@ function renderWatchState(state) {
     document.getElementById('watch-score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
     document.getElementById('watch-contract-display').textContent = contractStr(state.contract);
 
+    // Belote badges
+    if (state.belote) {
+        renderBeloteBadge('watch-score-ns', state.belote[0]);
+        renderBeloteBadge('watch-score-ew', state.belote[1]);
+    }
+
     // All 4 hands visible
     const handEls = {
         0: document.getElementById('watch-hand-north'),
@@ -322,6 +328,11 @@ onMessage('watch_move', (data) => {
     if (data.move) renderStats(data.move);
     renderWatchBidHistory(data.bid_history);
     renderTricksHistory(data.completed_tricks);
+
+    if (data.belote_event) {
+        const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
+        showBeloteAnnouncement('watch-trick-area', text);
+    }
 
     if (data.finished) {
         watchFinished = true;

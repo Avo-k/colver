@@ -17,6 +17,8 @@ class TrickTracker:
         self.last_trick_points = 0
         self.completed_tricks = []  # list of {cards, winner, points}
         self._trick_just_completed = False
+        self._belote_event = None  # "belote" or "rebelote" after an action
+        self._belote_player = None  # seat that triggered it
 
     def _card_points(self, card_idx, trump_suit):
         suit = card_idx >> 3
@@ -42,6 +44,20 @@ class TrickTracker:
             trump = contract.get("trump", 0)
             self.last_trick_points = self._trick_points(trick, trump)
             self._trick_just_completed = True
+
+    def _detect_belote(self, player_before, belote_before):
+        """Compare belote state before/after an action to detect announcements."""
+        belote_after = list(self.env.get_belote())
+        self._belote_event = None
+        self._belote_player = None
+        for team in range(2):
+            if belote_after[team] != belote_before[team]:
+                self._belote_player = int(player_before)
+                if belote_after[team] == 1:
+                    self._belote_event = "belote"
+                elif belote_after[team] == 2:
+                    self._belote_event = "rebelote"
+                break
 
     def _finalize_trick_completion(self):
         if self._trick_just_completed:
@@ -93,11 +109,13 @@ class PlaySession(TrickTracker):
             "last_trick": self.last_trick,
             "last_trick_winner": self.last_trick_winner,
             "last_trick_points": self.last_trick_points,
+            "belote": list(self.env.get_belote()),
         }
 
     def play_action(self, action):
         player = self.env.current_player()
         phase = self.env.phase()
+        belote_before = list(self.env.get_belote())
         self.history.append({"player": int(player), "action": int(action), "phase": int(phase)})
         self._check_trick_completion(action)
         if self.ai_type == "smart":
@@ -105,6 +123,7 @@ class PlaySession(TrickTracker):
         else:
             self.env.step(action)
         self._finalize_trick_completion()
+        self._detect_belote(player, belote_before)
         return self.get_state()
 
     def get_ai_action(self):
@@ -123,6 +142,7 @@ class PlaySession(TrickTracker):
     def play_ai_turn(self):
         player = self.env.current_player()
         phase = self.env.phase()
+        belote_before = list(self.env.get_belote())
         action = self.get_ai_action()
         name = colver.Env.action_name(action, phase)
         self.history.append({"player": int(player), "action": action, "phase": int(phase)})
@@ -132,6 +152,7 @@ class PlaySession(TrickTracker):
         else:
             self.env.step(action)
         self._finalize_trick_completion()
+        self._detect_belote(player, belote_before)
         return action, name, self.get_state()
 
 
@@ -188,6 +209,7 @@ class WatchSession(TrickTracker):
             "last_trick": self.last_trick,
             "last_trick_winner": self.last_trick_winner,
             "last_trick_points": self.last_trick_points,
+            "belote": list(self.env.get_belote()),
         }
 
     def compute_next_action(self):
@@ -251,6 +273,7 @@ class WatchSession(TrickTracker):
         """Apply an action, track trick completion and history."""
         player = int(self.env.current_player())
         phase = int(self.env.phase())
+        belote_before = list(self.env.get_belote())
         name = colver.Env.action_name(action, phase)
 
         if phase == 0:
@@ -269,6 +292,7 @@ class WatchSession(TrickTracker):
             self.env.step(action)
 
         self._finalize_trick_completion()
+        self._detect_belote(player, belote_before)
 
     def step(self):
         """Compute + apply one action. Returns (move_info, state, completed_tricks)."""
@@ -307,6 +331,7 @@ class AnalysisSession:
             "dealer": int(self.env.get_dealer()),
             "trick_lead": int(self.env.get_trick_lead()),
             "is_terminal": self.env.is_terminal(),
+            "belote": list(self.env.get_belote()),
         }
 
     def analyze(self, agent="naive", time_ms=200):

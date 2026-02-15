@@ -692,6 +692,11 @@ impl Env {
         self.state.tricks_won
     }
 
+    /// Get belote state per team [NS, EW]. 0=none, 1=belote, 2=rebelote.
+    fn get_belote(&self) -> [u8; 2] {
+        self.state.belote
+    }
+
     /// Get dealer seat (0-3).
     fn get_dealer(&self) -> u8 {
         self.state.dealer
@@ -1156,9 +1161,273 @@ impl VecEnv {
     }
 }
 
+// ============================================================
+// Rust-based Prioritized Experience Replay for fast training
+// ============================================================
+
+/// Binary sum tree for O(log n) proportional sampling.
+struct SumTree {
+    capacity: usize,
+    tree: Vec<f64>,
+    data_pointer: usize,
+    n_entries: usize,
+}
+
+impl SumTree {
+    fn new(capacity: usize) -> Self {
+        SumTree {
+            capacity,
+            tree: vec![0.0f64; 2 * capacity],
+            data_pointer: 0,
+            n_entries: 0,
+        }
+    }
+
+    #[inline]
+    fn update(&mut self, idx: usize, priority: f64) {
+        let tree_idx = idx + self.capacity;
+        let change = priority - self.tree[tree_idx];
+        self.tree[tree_idx] = priority;
+        let mut i = tree_idx >> 1;
+        while i >= 1 {
+            self.tree[i] += change;
+            i >>= 1;
+        }
+    }
+
+    #[inline]
+    fn add(&mut self, priority: f64) -> usize {
+        let idx = self.data_pointer;
+        self.update(idx, priority);
+        self.data_pointer = (self.data_pointer + 1) % self.capacity;
+        if self.n_entries < self.capacity {
+            self.n_entries += 1;
+        }
+        idx
+    }
+
+    #[inline]
+    fn get(&self, mut s: f64) -> usize {
+        let mut idx = 1;
+        let cap2 = 2 * self.capacity;
+        loop {
+            let left = 2 * idx;
+            if left >= cap2 {
+                break;
+            }
+            if s <= self.tree[left] {
+                idx = left;
+            } else {
+                s -= self.tree[left];
+                idx = left + 1;
+            }
+        }
+        idx - self.capacity
+    }
+
+    #[inline]
+    fn total(&self) -> f64 {
+        self.tree[1]
+    }
+
+    #[inline]
+    fn priority(&self, idx: usize) -> f64 {
+        self.tree[idx + self.capacity]
+    }
+}
+
+const PER_OBS_DIM: usize = OBS_V2_DIM; // 372
+const PER_NUM_CARDS: usize = 32;
+
+/// Rust-based Prioritized Experience Replay buffer.
+#[pyclass]
+struct PrioritizedReplayBuffer {
+    capacity: usize,
+    alpha: f64,
+    tree: SumTree,
+    obs: Vec<f32>,       // capacity * OBS_DIM, row-major
+    masks: Vec<f32>,     // capacity * NUM_CARDS
+    actions: Vec<i64>,
+    returns: Vec<f32>,
+    max_priority: f64,
+    cached_priority: f64,
+    size: usize,
+}
+
+#[pymethods]
+impl PrioritizedReplayBuffer {
+    #[new]
+    #[pyo3(signature = (capacity=2_000_000, alpha=0.6))]
+    fn new(capacity: usize, alpha: f64) -> Self {
+        let cached_priority = 1.0f64.powf(alpha);
+        PrioritizedReplayBuffer {
+            capacity,
+            alpha,
+            tree: SumTree::new(capacity),
+            obs: vec![0.0f32; capacity * PER_OBS_DIM],
+            masks: vec![0.0f32; capacity * PER_NUM_CARDS],
+            actions: vec![0i64; capacity],
+            returns: vec![0.0f32; capacity],
+            max_priority: 1.0,
+            cached_priority,
+            size: 0,
+        }
+    }
+
+    /// Current buffer size.
+    #[getter]
+    fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Push a batch of transitions with max priority.
+    /// obs: (n, 372), masks: (n, 32), actions: (n,), returns: (n,)
+    fn push_batch(
+        &mut self,
+        obs: numpy::PyReadonlyArray2<f32>,
+        masks: numpy::PyReadonlyArray2<f32>,
+        actions: numpy::PyReadonlyArray1<i64>,
+        returns: numpy::PyReadonlyArray1<f32>,
+    ) {
+        let obs = obs.as_slice().unwrap();
+        let masks = masks.as_slice().unwrap();
+        let actions = actions.as_slice().unwrap();
+        let returns = returns.as_slice().unwrap();
+        let n = actions.len();
+        let p = self.cached_priority;
+
+        for i in 0..n {
+            let idx = self.tree.add(p);
+            let obs_start = idx * PER_OBS_DIM;
+            let mask_start = idx * PER_NUM_CARDS;
+            self.obs[obs_start..obs_start + PER_OBS_DIM]
+                .copy_from_slice(&obs[i * PER_OBS_DIM..(i + 1) * PER_OBS_DIM]);
+            self.masks[mask_start..mask_start + PER_NUM_CARDS]
+                .copy_from_slice(&masks[i * PER_NUM_CARDS..(i + 1) * PER_NUM_CARDS]);
+            self.actions[idx] = actions[i];
+            self.returns[idx] = returns[i];
+        }
+        self.size = self.tree.n_entries;
+    }
+
+    /// Sample with priorities.
+    /// Returns (obs, masks, actions, returns, weights, indices) as numpy arrays.
+    fn sample<'py>(
+        &self,
+        py: Python<'py>,
+        batch_size: usize,
+        beta: f64,
+    ) -> PyResult<(
+        Bound<'py, PyArray2<f32>>,
+        Bound<'py, PyArray2<f32>>,
+        Bound<'py, PyArray1<i64>>,
+        Bound<'py, PyArray1<f32>>,
+        Bound<'py, PyArray1<f32>>,
+        Bound<'py, PyArray1<i64>>,
+    )> {
+        let total = self.tree.total();
+        let segment = total / batch_size as f64;
+
+        let mut indices = Vec::with_capacity(batch_size);
+        let mut priorities = Vec::with_capacity(batch_size);
+        let mut rng = rand::thread_rng();
+
+        for i in 0..batch_size {
+            let lo = segment * i as f64;
+            let hi = segment * (i + 1) as f64;
+            let s: f64 = lo + rng.gen::<f64>() * (hi - lo);
+            let mut idx = self.tree.get(s);
+            if idx >= self.size {
+                idx = self.size - 1;
+            }
+            indices.push(idx);
+            let p = self.tree.priority(idx);
+            priorities.push(if p > 1e-8 { p } else { 1e-8 });
+        }
+
+        // IS weights
+        let mut weights = Vec::with_capacity(batch_size);
+        let mut max_weight: f32 = 0.0;
+        let size_f = self.size as f64;
+        for &p in &priorities {
+            let prob = p / total;
+            let w = ((size_f * prob).powf(-beta)) as f32;
+            if w > max_weight {
+                max_weight = w;
+            }
+            weights.push(w);
+        }
+        if max_weight > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= max_weight;
+            }
+        }
+
+        // Gather data
+        let mut obs_data = vec![0.0f32; batch_size * PER_OBS_DIM];
+        let mut mask_data = vec![0.0f32; batch_size * PER_NUM_CARDS];
+        let mut act_data = Vec::with_capacity(batch_size);
+        let mut ret_data = Vec::with_capacity(batch_size);
+        let mut idx_data = Vec::with_capacity(batch_size);
+
+        for (j, &idx) in indices.iter().enumerate() {
+            let obs_src = idx * PER_OBS_DIM;
+            let obs_dst = j * PER_OBS_DIM;
+            obs_data[obs_dst..obs_dst + PER_OBS_DIM]
+                .copy_from_slice(&self.obs[obs_src..obs_src + PER_OBS_DIM]);
+            let mask_src = idx * PER_NUM_CARDS;
+            let mask_dst = j * PER_NUM_CARDS;
+            mask_data[mask_dst..mask_dst + PER_NUM_CARDS]
+                .copy_from_slice(&self.masks[mask_src..mask_src + PER_NUM_CARDS]);
+            act_data.push(self.actions[idx]);
+            ret_data.push(self.returns[idx]);
+            idx_data.push(idx as i64);
+        }
+
+        let obs = numpy::PyArray::from_vec_bound(py, obs_data)
+            .reshape([batch_size, PER_OBS_DIM])
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
+        let masks = numpy::PyArray::from_vec_bound(py, mask_data)
+            .reshape([batch_size, PER_NUM_CARDS])
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
+        let actions = PyArray1::from_slice_bound(py, &act_data);
+        let returns = PyArray1::from_slice_bound(py, &ret_data);
+        let weights_arr = PyArray1::from_slice_bound(py, &weights);
+        let indices_arr = PyArray1::from_slice_bound(py, &idx_data);
+
+        Ok((obs, masks, actions, returns, weights_arr, indices_arr))
+    }
+
+    /// Update priorities based on TD errors.
+    fn update_priorities(
+        &mut self,
+        indices: numpy::PyReadonlyArray1<i64>,
+        td_errors: numpy::PyReadonlyArray1<f32>,
+    ) {
+        let indices = indices.as_slice().unwrap();
+        let td_errors = td_errors.as_slice().unwrap();
+        let alpha = self.alpha;
+        let mut max_p = self.max_priority;
+
+        for i in 0..indices.len() {
+            let p = (td_errors[i].abs() + 1e-6) as f64;
+            if p > max_p {
+                max_p = p;
+            }
+            self.tree.update(indices[i] as usize, p.powf(alpha));
+        }
+
+        if max_p > self.max_priority {
+            self.max_priority = max_p;
+            self.cached_priority = max_p.powf(alpha);
+        }
+    }
+}
+
 #[pymodule]
 fn colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Env>()?;
     m.add_class::<VecEnv>()?;
+    m.add_class::<PrioritizedReplayBuffer>()?;
     Ok(())
 }
