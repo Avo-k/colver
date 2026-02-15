@@ -11,6 +11,7 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
 - **Etat de jeu `Copy` de 56 octets** pour un clonage MCTS performant
 - **Quatre agents IA** — MCTS parfait, IS-MCTS naif, IS-MCTS intelligent avec croyances, et reseau Q (Deep Monte-Carlo)
+- **Interface web** — Jouez contre l'IA dans le navigateur (FastAPI + WebSocket)
 - **Bindings Python** via PyO3 — `Env` (partie unique) et `VecEnv` (batch) avec NumPy
 - Zero dependances dans le coeur (seulement `rand` derriere un feature flag)
 
@@ -35,12 +36,32 @@ cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
 uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
+# Interface web (jouer contre l'IA)
+uv run python colver-web/backend/server.py
+# Ouvrir http://localhost:8000
+
 # Entrainement DMC (reseau Q)
-PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 1000000
+PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
 
 # Evaluation DMC vs IS-MCTS
 PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --baseline smart --time-ms 20 --both-sides
 ```
+
+## Interface Web
+
+Jouez contre les agents IA directement dans le navigateur.
+
+```bash
+uv run python colver-web/backend/server.py
+# Ouvrir http://localhost:8000
+```
+
+**Trois modes :**
+- **Jouer** — Partie humain vs IA. Choisissez l'agent (Smart IS-MCTS, Naive IS-MCTS, ou DouDou NN) et le temps de reflexion. Les cartes jouables sont surelevelees, les cartes illegales sont grisees. Le dernier pli est affiche avec les points et le gagnant.
+- **Rejouer** — Naviguez action par action dans une partie enregistree. Generez une partie IA vs IA ou chargez un fichier JSON.
+- **Analyse** — Configurez une position personnalisee (mains, contrat) et lancez l'analyse MCTS pour trouver le meilleur coup.
+
+Le backend utilise FastAPI avec WebSocket pour la communication temps reel. Les cartes sont rendues en SVG.
 
 ## Agents IA
 
@@ -97,20 +118,13 @@ Voir [SMART_ISMCTS.md](SMART_ISMCTS.md) pour le document de conception complet.
 
 ### 4. Agent DMC (Deep Monte-Carlo) (`scripts/dmc_model.py`)
 
-Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q (MLP 213→512→512→512→32, ~651K parametres) choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Les encheres utilisent `improved_bid` (non apprises).
+Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Les encheres utilisent `improved_bid` (non apprises).
 
-**Principe** : Deep Monte-Carlo (DMC). L'agent joue des milliers de parties en parallele (VecEnv, 256 environnements). A chaque decision de jeu de carte, le reseau Q predit la valeur de chaque carte. L'objectif d'apprentissage est le resultat binaire de la donne (victoire=1.0, defaite=0.0). Entrainement epsilon-greedy avec buffer de replay circulaire.
+**Architecture v2** : MLP 372→1024→1024→1024→32 avec LayerNorm (~3.2M parametres). L'observation est relative au joueur courant (372 flottants) : main, pli, cartes jouees par adversaire, plafond d'atout infere, cartes maitresses, coupes connues, contexte de scoring.
 
-**Entree** : observation de 213 flottants (main du joueur, pli courant, cartes jouees, contrat, scores, atout, position).
+**Entrainement** : Deep Monte-Carlo (DMC) avec Prioritized Experience Replay (PER), pool d'adversaires (70% self-play, 20% checkpoints passes, 10% aleatoire), 20M etapes, buffer de 2M transitions.
+
 **Sortie** : 32 Q-valeurs, une par carte. Les actions illegales sont masquees a `-inf` avant l'argmax.
-
-| Adversaire | Victoires | Marge | Parties | Vitesse |
-|---|---|---|---|---|
-| Aleatoire | **65.9%** | +89 | 2000 | ~300 parties/s |
-| IS-MCTS naif (20ms/coup) | **51.0%** | +4.7 | 400 | ~5 parties/s |
-| IS-MCTS intelligent (20ms/coup) | **52.2%** | +13.6 | 400 | ~5 parties/s |
-
-L'agent DMC est a peu pres au niveau des agents IS-MCTS avec un budget de 20ms/coup, tout en etant **~20x plus rapide** par decision (<1ms par coup vs 20ms). Entraine pendant 11M etapes (~8h sur GPU 4090).
 
 ### Strategies d'encheres (`bid_eval.rs`)
 
@@ -136,7 +150,7 @@ Trois strategies d'encheres deterministes, toutes assez rapides (~200 operations
 
 ## Architecture
 
-**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI)
+**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-web` (FastAPI/WebSocket)
 
 ### Representation des cartes
 
@@ -185,7 +199,7 @@ venv.current_players()     # (256,) u8
 venv.bid_improved()        # (256,) u8
 ```
 
-**Observation** (213 flottants) : main (32) + pli courant (4x32) + cartes jouees (32) + info contrat (atout 4 + valeur 1 + coinche 3 + equipe 2) + points (2) + plis (2) + phase (3) + position relative (4).
+**Observation v2** (372 flottants, relative au joueur) : main (32) + pli courant (128) + cartes jouees par adversaire (96) + toutes cartes jouees (32) + valeurs de points (32) + contrat (7) + coupes connues (12) + contexte scoring (12) + features tactiques (21).
 
 ## Performance
 

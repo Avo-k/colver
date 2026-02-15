@@ -53,13 +53,17 @@ uv sync
 
 # Test Python bindings
 uv run python3 -c "import colver; env = colver.Env(); env.reset()"
+
+# Run web frontend (FastAPI + WebSocket)
+uv run python colver-web/backend/server.py
+# Then open http://localhost:8000
 ```
 
 ## Architecture
 
 Colver is a Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core with PyO3 Python bindings.
 
-**Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI)
+**Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `colver-web` (FastAPI/WebSocket frontend)
 
 **Features:** `rand` (default), `parallel` (rayon parallel determinization), `nn` (neural network value function — features, value_net, NN-guided MCTS)
 
@@ -137,12 +141,14 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 
 ### DMC Q-Network Agent (`scripts/dmc_model.py`, `scripts/train_dmc.py`, `scripts/eval_dmc.py`)
 
-DouZero-style Deep Monte-Carlo agent. A Q-network (213→512→512→512→32 MLP, ~651K params) picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration, circular replay buffer.
+DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration.
 
-**Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 11000000`
+**v2 architecture:** 372→1024→1024→1024→32 MLP with LayerNorm (~3.2M params). v2 observation is player-relative with per-player card tracking, trump ceiling inference, tactical features (master cards, partner winning, void info), and richer scoring context.
+
+**Training features:** Prioritized Experience Replay (SumTree-based PER), opponent pool (70% self-play, 20% past checkpoints, 10% random), 2M replay buffer, 20M steps default.
+
+**Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
 **Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
-
-**Results (11M steps):** 65.9% vs random, ~51% vs Naive IS-MCTS (20ms), ~52% vs Smart IS-MCTS (20ms). Roughly even with IS-MCTS while being ~20x faster per decision.
 
 **Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`.
 **Python API (VecEnv):** `current_players()`, `phases()`, `bid_improved()`. `step()` returns 5-tuple with `deal_outcomes (n,2)`.
@@ -179,7 +185,31 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 
 ### Python Layer (`colver-py/`)
 
-`Env` wraps a single GameState with IS-MCTS search support. `VecEnv(n)` wraps n parallel environments with NumPy array I/O. Observation is a 213-float vector (hand 32 + trick 128 + played 32 + contract 10 + scores 2 + tricks 2 + phase 3 + position 4). Legal action mask is 43 floats. `VecEnv.step()` returns 5-tuple including `deal_outcomes (n,2)`. Uses `StdRng` (not `ThreadRng`) for PyO3 `Send` requirement.
+`Env` wraps a single GameState with IS-MCTS search support. `VecEnv(n)` wraps n parallel environments with NumPy array I/O. Uses `StdRng` (not `ThreadRng`) for PyO3 `Send` requirement.
+
+**Observation v2** (372 floats, player-relative): hand (32) + trick (128) + per-player played cards (96) + all played (32) + card point values (32) + contract (7) + void tracking (12) + scoring context (12) + tactical features (21). Legal action mask is 43 floats. `VecEnv.step()` returns 5-tuple including `deal_outcomes (n,2)`.
+
+**Web frontend API** (on `Env`): `get_hands()`, `get_current_trick()`, `get_contract()`, `get_points()`, `get_tricks_won()`, `get_dealer()`, `get_trick_lead()`, `get_played_cards()`, `phase()`, `current_player()`, `is_terminal()`, `legal_actions()`. Static methods: `Env.card_name(idx)`, `Env.action_name(action, phase)`, `Env.deal_with_hands(dealer, hands)`. Setup: `set_contract(trump, value, team, coinche)`, `set_phase_playing()`.
+
+### Web Frontend (`colver-web/`)
+
+FastAPI + WebSocket backend with vanilla JS frontend. Three modes: Play (human vs AI), Replay (step through recorded games), Analysis (custom position setup + MCTS analysis).
+
+**Backend** (`colver-web/backend/`):
+- `server.py` — FastAPI app, WebSocket handler, serves static files + SVG cards from `images/svg/SVG-cards-1.3/`. Loads NN model once at startup for DouDou agent.
+- `game_manager.py` — `PlaySession` (human vs AI with trick tracking and point calculation), `ReplaySession` (precomputed state replay), `AnalysisSession` (custom position + MCTS analysis).
+
+**Frontend** (`colver-web/frontend/`):
+- `index.html` — Three-tab layout (Jouer, Rejouer, Analyse) with compass-style table layout.
+- `js/main.js` — WebSocket connection, card rendering (SVG images), shared utilities (`cardToHtml`, `renderHand`, `renderTrick`, `renderLastTrick`, `actionName`).
+- `js/play.js` — Play mode: bidding panel with dropdown selectors, legal/illegal card states (raised/greyed), last trick display with compass grid and team-colored point labels.
+- `js/replay.js` — Replay mode: step navigation, auto-play, log display.
+- `js/analysis.js` — Analysis mode: card palette for hand editing, MCTS analysis results.
+- `styles.css` — Dark green table theme, responsive card sizing via CSS variables, compass grid layouts.
+
+**Card assets** (`images/svg/SVG-cards-1.3/`): 67 SVG playing cards from [SVG-cards](https://svg-cards.sourceforge.net/). Face cards use version 2 art. Served at `/cards/<rank>_of_<suit>.svg`.
+
+**Running:** `uv run python colver-web/backend/server.py` → http://localhost:8000
 
 ## Rules Reference
 

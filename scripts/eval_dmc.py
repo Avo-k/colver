@@ -133,19 +133,23 @@ def main():
                         help="IS-MCTS time budget per move in ms")
     parser.add_argument("--both-sides", action="store_true",
                         help="Play both as NS and EW (doubles game count)")
+    parser.add_argument("--hidden", type=int, default=None,
+                        help="Hidden layer size (auto-detected from checkpoint)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # Load model
-    q_net = QNetwork().to(device)
+    # Load checkpoint and detect architecture
     ckpt = torch.load(args.model, weights_only=False, map_location=device)
+    hidden = args.hidden or ckpt.get("hidden", 1024)
+
+    q_net = QNetwork(hidden=hidden).to(device)
     q_net.load_state_dict(ckpt["model"])
     q_net.eval()
     step = ckpt.get("step", "?")
     param_count = sum(p.numel() for p in q_net.parameters())
-    print(f"Loaded model from {args.model} (step {step}, {param_count:,} params)")
+    print(f"Loaded model from {args.model} (step {step}, {param_count:,} params, hidden={hidden})")
     baseline_desc = args.baseline
     if args.baseline in ("naive", "smart"):
         baseline_desc += f" IS-MCTS ({args.time_ms}ms/move)"
