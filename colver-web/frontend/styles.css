@@ -11,6 +11,11 @@
     /* Palette cards (analysis) */
     --palette-w: clamp(40px, 4vw, 70px);
     --palette-h: calc(var(--palette-w) * 1.43);
+
+    /* Drop zone cards (smaller) */
+    --dz-card-w: clamp(34px, 3.4vw, 58px);
+    --dz-card-h: calc(var(--dz-card-w) * 1.43);
+    --dz-card-overlap: calc(var(--dz-card-w) * -0.3);
 }
 
 body {
@@ -755,10 +760,20 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .trick-history-row.team-ew .trick-winner { color: #ef9a9a; }
 
 /* Analysis */
+#analysis-panel {
+    overflow-y: auto;
+    max-height: calc(100vh - 60px);
+}
+
+#analysis-config {
+    flex-direction: column;
+    align-items: stretch;
+}
+
 #hand-editor {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 #card-palette {
@@ -771,23 +786,93 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 #card-palette .card {
     width: var(--palette-w);
     height: var(--palette-h);
-    cursor: pointer;
+    cursor: grab;
 }
-#card-palette .card.assigned { opacity: 0.25; pointer-events: none; }
+#card-palette .card.assigned { opacity: 0.25; }
+#card-palette .card.dragging { opacity: 0.4; }
+#card-palette.drag-over { background: rgba(212, 175, 55, 0.1); border-radius: 6px; }
 
-#assigned-cards {
+/* Drop zones: 2x2 grid */
+#drop-zones {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    max-width: 800px;
+}
+
+.drop-zone {
+    background: rgba(0, 0, 0, 0.25);
+    border: 2px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 6px 8px;
+    min-height: 80px;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.drop-zone.ns {
+    border-color: rgba(76, 175, 80, 0.3);
+    background: rgba(76, 175, 80, 0.06);
+}
+
+.drop-zone.ew {
+    border-color: rgba(229, 115, 115, 0.3);
+    background: rgba(229, 115, 115, 0.06);
+}
+
+.drop-zone.drag-over {
+    border-color: #d4af37;
+    background: rgba(212, 175, 55, 0.12);
+    border-style: solid;
+}
+
+.drop-zone.full {
+    border-color: rgba(76, 175, 80, 0.6);
+    border-style: solid;
+}
+
+.drop-zone-label {
+    font-size: clamp(0.7rem, 0.8vw, 0.85rem);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+}
+
+.drop-zone.ns .drop-zone-label { color: #a5d6a7; }
+.drop-zone.ew .drop-zone-label { color: #ef9a9a; }
+
+.dz-count {
+    font-weight: 400;
+    opacity: 0.7;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.drop-zone-cards {
     display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-    font-size: 0.8rem;
+    flex-wrap: nowrap;
+    gap: 0;
+    min-height: var(--dz-card-h);
+    align-items: flex-end;
 }
 
-.player-cards {
-    background: rgba(0,0,0,0.2);
-    padding: 4px 8px;
-    border-radius: 4px;
+.drop-zone-cards .card {
+    width: var(--dz-card-w);
+    height: var(--dz-card-h);
+    margin-left: var(--dz-card-overlap);
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
 }
-.player-cards .label { font-weight: 600; margin-bottom: 2px; }
+
+.drop-zone-cards .card:first-child {
+    margin-left: 0;
+}
+
+.drop-zone-cards .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 10;
+}
 
 #contract-editor {
     display: flex;

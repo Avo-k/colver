@@ -1,9 +1,54 @@
-// Analysis mode logic
+// Analysis mode logic — drag-and-drop card assignment
 
 let analysisHands = [[], [], [], []];
 let assignedCards = new Set();
 
 const PLAYER_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
+
+// Currently dragged card info
+let dragCardIdx = null;
+let dragSource = null; // 'palette' or player index (0-3)
+
+function createDraggableCard(cardIdx, source) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.draggable = true;
+
+    const img = document.createElement('img');
+    img.src = cardSvgPath(cardIdx);
+    img.alt = `${RANKS[cardRank(cardIdx)]}${SUITS[cardSuit(cardIdx)]}`;
+    img.draggable = false;
+    el.appendChild(img);
+
+    el.dataset.card = cardIdx;
+    el.dataset.source = source;
+
+    el.addEventListener('dragstart', (e) => {
+        dragCardIdx = cardIdx;
+        dragSource = source;
+        el.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(cardIdx));
+    });
+
+    el.addEventListener('dragend', () => {
+        el.classList.remove('dragging');
+        dragCardIdx = null;
+        dragSource = null;
+        // Clean up all drag-over highlights
+        document.querySelectorAll('.drag-over').forEach(z => z.classList.remove('drag-over'));
+    });
+
+    // Cards in drop zones: click to remove
+    if (source !== 'palette') {
+        el.addEventListener('click', () => {
+            removeCardFromPlayer(cardIdx);
+            updateCardDisplay();
+        });
+    }
+
+    return el;
+}
 
 function initCardPalette() {
     const palette = document.getElementById('card-palette');
@@ -11,7 +56,7 @@ function initCardPalette() {
     for (let suit = 0; suit < 4; suit++) {
         for (let rank = 0; rank < 8; rank++) {
             const idx = suit * 8 + rank;
-            const card = cardToHtml(idx, true, () => toggleCard(idx));
+            const card = createDraggableCard(idx, 'palette');
             card.id = `palette-card-${idx}`;
             if (assignedCards.has(idx)) card.classList.add('assigned');
             palette.appendChild(card);
@@ -19,45 +64,117 @@ function initCardPalette() {
     }
 }
 
-function toggleCard(cardIdx) {
-    const player = parseInt(document.getElementById('edit-player').value);
-    if (assignedCards.has(cardIdx)) {
-        for (let p = 0; p < 4; p++) {
-            const i = analysisHands[p].indexOf(cardIdx);
-            if (i >= 0) {
-                analysisHands[p].splice(i, 1);
-                break;
+function initDropZones() {
+    // Drop zones accept cards
+    document.querySelectorAll('.drop-zone').forEach(zone => {
+        zone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            zone.classList.add('drag-over');
+        });
+
+        zone.addEventListener('dragleave', (e) => {
+            // Only remove if leaving the zone itself (not entering a child)
+            if (!zone.contains(e.relatedTarget)) {
+                zone.classList.remove('drag-over');
             }
+        });
+
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('drag-over');
+            const cardIdx = parseInt(e.dataTransfer.getData('text/plain'));
+            if (isNaN(cardIdx)) return;
+            const playerIdx = parseInt(zone.dataset.player);
+
+            if (dragSource === 'palette') {
+                // From palette to drop zone
+                assignCardToPlayer(cardIdx, playerIdx);
+            } else {
+                // From one drop zone to another (or same)
+                const srcPlayer = parseInt(dragSource);
+                if (srcPlayer === playerIdx) return;
+                // Remove from source player
+                removeCardFromPlayer(cardIdx);
+                // Add to target player
+                assignCardToPlayer(cardIdx, playerIdx);
+            }
+            updateCardDisplay();
+        });
+    });
+
+    // Palette accepts cards back (drag from drop zone to palette = remove)
+    const palette = document.getElementById('card-palette');
+    palette.addEventListener('dragover', (e) => {
+        if (dragSource !== 'palette') {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            palette.classList.add('drag-over');
         }
-        assignedCards.delete(cardIdx);
-    } else {
-        if (analysisHands[player].length >= 8) return;
-        analysisHands[player].push(cardIdx);
-        assignedCards.add(cardIdx);
+    });
+
+    palette.addEventListener('dragleave', (e) => {
+        if (!palette.contains(e.relatedTarget)) {
+            palette.classList.remove('drag-over');
+        }
+    });
+
+    palette.addEventListener('drop', (e) => {
+        e.preventDefault();
+        palette.classList.remove('drag-over');
+        if (dragSource === 'palette') return;
+        const cardIdx = parseInt(e.dataTransfer.getData('text/plain'));
+        if (isNaN(cardIdx)) return;
+        removeCardFromPlayer(cardIdx);
+        updateCardDisplay();
+    });
+}
+
+function assignCardToPlayer(cardIdx, playerIdx) {
+    if (analysisHands[playerIdx].length >= 8) return false;
+    if (assignedCards.has(cardIdx)) return false;
+    analysisHands[playerIdx].push(cardIdx);
+    assignedCards.add(cardIdx);
+    return true;
+}
+
+function removeCardFromPlayer(cardIdx) {
+    for (let p = 0; p < 4; p++) {
+        const i = analysisHands[p].indexOf(cardIdx);
+        if (i >= 0) {
+            analysisHands[p].splice(i, 1);
+            break;
+        }
     }
-    updateCardDisplay();
+    assignedCards.delete(cardIdx);
 }
 
 function updateCardDisplay() {
+    // Update palette: fade assigned cards
     for (let i = 0; i < 32; i++) {
         const el = document.getElementById(`palette-card-${i}`);
         if (el) {
-            if (assignedCards.has(i)) el.classList.add('assigned');
-            else el.classList.remove('assigned');
+            el.classList.toggle('assigned', assignedCards.has(i));
+            el.draggable = !assignedCards.has(i);
         }
     }
-    const container = document.getElementById('assigned-cards');
-    container.innerHTML = '';
-    for (let p = 0; p < 4; p++) {
-        const div = document.createElement('div');
-        div.className = 'player-cards';
-        div.innerHTML = `<div class="label">${PLAYER_NAMES_FR[p]} (${analysisHands[p].length})</div>`;
-        const sorted = [...analysisHands[p]].sort((a, b) => a - b);
+
+    // Update each drop zone
+    document.querySelectorAll('.drop-zone').forEach(zone => {
+        const playerIdx = parseInt(zone.dataset.player);
+        const cards = analysisHands[playerIdx];
+        const countEl = zone.querySelector('.dz-count');
+        countEl.textContent = `(${cards.length}/8)`;
+
+        zone.classList.toggle('full', cards.length === 8);
+
+        const container = zone.querySelector('.drop-zone-cards');
+        container.innerHTML = '';
+        const sorted = [...cards].sort((a, b) => a - b);
         for (const c of sorted) {
-            div.appendChild(cardToHtml(c));
+            container.appendChild(createDraggableCard(c, String(playerIdx)));
         }
-        container.appendChild(div);
-    }
+    });
 }
 
 document.getElementById('random-deal').addEventListener('click', () => {
@@ -153,4 +270,5 @@ onMessage('analysis_result', (data) => {
 
 // Init
 initCardPalette();
+initDropZones();
 updateCardDisplay();

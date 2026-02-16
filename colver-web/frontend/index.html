@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css">
+    <link rel="stylesheet" href="static/styles.css?v=2">
 </head>
 <body>
     <header>
@@ -223,18 +223,25 @@
             <div id="analysis-config">
                 <h3>Configurer la position</h3>
                 <div id="hand-editor">
-                    <div class="hand-edit-row">
-                        <label>Joueur :
-                            <select id="edit-player">
-                                <option value="0">Nord</option>
-                                <option value="1">Est</option>
-                                <option value="2">Sud</option>
-                                <option value="3">Ouest</option>
-                            </select>
-                        </label>
-                    </div>
                     <div id="card-palette"></div>
-                    <div id="assigned-cards"></div>
+                    <div id="drop-zones">
+                        <div class="drop-zone ns" data-player="0">
+                            <div class="drop-zone-label">Nord <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ew" data-player="1">
+                            <div class="drop-zone-label">Est <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ns" data-player="2">
+                            <div class="drop-zone-label">Sud <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ew" data-player="3">
+                            <div class="drop-zone-label">Ouest <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                    </div>
                 </div>
                 <div id="contract-editor">
                     <label>Atout :
