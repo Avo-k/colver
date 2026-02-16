@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css?v=2">
+    <link rel="stylesheet" href="static/styles.css?v=3">
 </head>
 <body>
     <header>
@@ -14,6 +14,7 @@
             <button class="tab active" data-tab="play">Jouer</button>
             <button class="tab" data-tab="watch">Regarder</button>
             <button class="tab" data-tab="analysis">Analyse</button>
+            <button class="tab" data-tab="docs">Docs</button>
         </nav>
     </header>
 
@@ -304,6 +305,116 @@
                     <button id="run-analysis">Analyser</button>
                 </div>
                 <div id="analysis-result"></div>
+            </div>
+        </div>
+        <!-- DOCS -->
+        <div id="docs-panel" class="panel">
+            <div id="docs-content">
+                <h2>Colver <span class="docs-subtitle">Belote Contree Engine</span></h2>
+                <p class="docs-intro">
+                    Colver is a high-performance Belote Contree game environment built for reinforcement learning research.
+                    The core engine is written in Rust, capable of over 1 million rollouts per second.
+                    This web interface lets you play against various AI agents, watch them compete, and analyze positions.
+                </p>
+                <p class="docs-link">
+                    Source code: <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
+                </p>
+
+                <h3>Game Modes</h3>
+
+                <div class="docs-section">
+                    <h4>Jouer</h4>
+                    <p>
+                        Play as South against AI opponents. Choose the AI for your opponents (East/West) and your partner (North) independently.
+                        The game follows official FFB Belote Contree rules: bidding phase with coinche/surcoinche, then 8 tricks of play.
+                        First team to 2000 cumulative points wins the match.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Regarder</h4>
+                    <p>
+                        Spectate AI vs AI matches with full visibility of all hands.
+                        Assign a different agent to each of the 4 seats, then step through actions one by one,
+                        play full tricks, or use auto-play. The stats panel shows MCTS visit counts and Q-values for each decision.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Analyse</h4>
+                    <p>
+                        Set up a custom position by dragging cards from the palette into 4 player drop zones
+                        (or use "Donne aleatoire" for a random deal). Configure the contract (trump, value, declaring team),
+                        then run IS-MCTS analysis to see the best move and action rankings for the current player.
+                    </p>
+                </div>
+
+                <h3>AI Agents</h3>
+
+                <div class="docs-section">
+                    <h4>DouDou <span class="docs-tag best">Recommended</span></h4>
+                    <p>
+                        Deep Monte-Carlo Q-network trained via self-play (DouZero-style).
+                        A 3-layer MLP (1024 hidden units, ~2.6M parameters) takes a 415-dimensional observation
+                        and outputs Q-values for all 32 cards in a single forward pass &mdash; no search tree needed.
+                        Bidding uses a hand-tuned heuristic (ImprovedV2). Inference runs in pure Rust at ~1ms per decision.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Smart IS-MCTS <span class="docs-tag">Strong</span></h4>
+                    <p>
+                        Belief-weighted Information Set Monte Carlo Tree Search.
+                        Maintains a probabilistic belief model over hidden cards, updated after every action
+                        using hard constraints (void inference, trump ceiling) and soft signals (bidding patterns, play conventions).
+                        Samples plausible opponent hands biased by these beliefs, then runs standard MCTS on each world.
+                        ~7.5% stronger than Naive IS-MCTS in match play.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Naive IS-MCTS</h4>
+                    <p>
+                        Ensemble determinization without a belief model.
+                        Samples multiple possible worlds (respecting known void constraints only),
+                        runs MCTS on each, and aggregates visit counts across all worlds.
+                        Simpler than Smart IS-MCTS but still a competent player.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Oracle (MCTS)</h4>
+                    <p>
+                        Perfect-information MCTS that sees all 4 hands.
+                        Uses UCT (UCB1 for trees) with arena-based tree allocation for cache efficiency.
+                        Unrealistically strong since it has no hidden information &mdash; useful as an upper bound
+                        for evaluating other agents' play quality.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Heuristique <span class="docs-tag subtle">Watch only</span></h4>
+                    <p>
+                        A fast deterministic strategy with no search. Follows a handcrafted decision tree:
+                        safe leads, partner feeding, minimum winning card, cheapest trump cut.
+                        Runs at ~769K games/sec and is used as the rollout policy inside MCTS agents.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Aleatoire <span class="docs-tag subtle">Watch only</span></h4>
+                    <p>
+                        Plays uniformly random legal moves. Useful as a baseline for measuring other agents' strength.
+                        Runs at ~1.3M rollouts/sec.
+                    </p>
+                </div>
+
+                <div class="docs-footer">
+                    <p>
+                        Created by <a href="https://github.com/Avo-k" target="_blank" rel="noopener">Avo-k</a>
+                        &amp; <a href="https://claude.ai" target="_blank" rel="noopener">Claude Opus 4.6</a>
+                    </p>
+                </div>
             </div>
         </div>
     </main>

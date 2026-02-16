@@ -959,6 +959,115 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     vertical-align: middle;
 }
 
+/* ===== DOCS ===== */
+#docs-panel {
+    overflow-y: auto;
+    max-height: calc(100vh - 60px);
+}
+
+#docs-content {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 16px 24px;
+    line-height: 1.65;
+    font-size: clamp(0.85rem, 1vw, 0.95rem);
+}
+
+#docs-content h2 {
+    font-size: clamp(1.3rem, 1.8vw, 1.7rem);
+    color: #d4af37;
+    margin-bottom: 6px;
+    font-weight: 700;
+}
+
+.docs-subtitle {
+    font-weight: 400;
+    color: #999;
+    font-size: 0.75em;
+}
+
+.docs-intro {
+    color: #ccc;
+    margin-bottom: 10px;
+}
+
+.docs-link {
+    margin-bottom: 20px;
+}
+
+.docs-link a {
+    color: #d4af37;
+    text-decoration: none;
+}
+.docs-link a:hover { text-decoration: underline; }
+
+#docs-content h3 {
+    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    color: #e0e0e0;
+    margin: 24px 0 12px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.docs-section {
+    margin-bottom: 14px;
+}
+
+.docs-section h4 {
+    font-size: clamp(0.9rem, 1vw, 1rem);
+    color: #e0d8c0;
+    margin-bottom: 4px;
+}
+
+.docs-section p {
+    color: #aaa;
+    margin: 0;
+}
+
+.docs-tag {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 10px;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.docs-tag.best {
+    background: rgba(212, 175, 55, 0.2);
+    border: 1px solid rgba(212, 175, 55, 0.4);
+    color: #d4af37;
+}
+
+.docs-tag:not(.best):not(.subtle) {
+    background: rgba(76, 175, 80, 0.15);
+    border: 1px solid rgba(76, 175, 80, 0.3);
+    color: #a5d6a7;
+}
+
+.docs-tag.subtle {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #888;
+}
+
+.docs-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    text-align: center;
+    color: #777;
+    font-size: clamp(0.8rem, 0.9vw, 0.9rem);
+}
+
+.docs-footer a {
+    color: #d4af37;
+    text-decoration: none;
+    font-weight: 600;
+}
+.docs-footer a:hover { text-decoration: underline; }
+
 /* ===== RESPONSIVE: small screens ===== */
 @media (max-width: 600px) {
     :root {
