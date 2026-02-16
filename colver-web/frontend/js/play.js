@@ -71,7 +71,7 @@ function renderPlayState(state) {
         biddingPanel.classList.remove('hidden');
         renderBidHistory();
         if (isHumanTurn) {
-            showBidControls(state.legal_actions);
+            showBidControls(state.legal_actions, state);
         } else {
             hideBidControls();
         }
@@ -119,7 +119,7 @@ function encodeBidAction(value, suitIdx) {
     return valIdx * 4 + suitIdx + 1;
 }
 
-function showBidControls(legalActions) {
+function showBidControls(legalActions, state) {
     const legalSet = new Set(legalActions);
 
     // Show/hide bid selectors + submit
@@ -151,6 +151,11 @@ function showBidControls(legalActions) {
             if (opt.value !== '' && !opt.disabled) { firstLegal = opt.value; break; }
         }
         bidValue.value = firstLegal;
+
+        // Default suit to the one with highest trump potential
+        if (state && state.best_trump_suit !== undefined) {
+            bidSuit.value = String(state.best_trump_suit);
+        }
 
         bidSubmit.onclick = () => {
             const val = parseInt(bidValue.value);

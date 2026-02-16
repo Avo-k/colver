@@ -94,7 +94,7 @@ class PlaySession(TrickTracker):
                 hidden_hands.append(h)
             else:
                 hidden_hands.append([])
-        return {
+        state = {
             "phase": phase,
             "current_player": int(self.env.current_player()),
             "hands": hidden_hands,
@@ -111,6 +111,11 @@ class PlaySession(TrickTracker):
             "last_trick_points": self.last_trick_points,
             "belote": list(self.env.get_belote()),
         }
+        # During bidding, suggest the best trump suit for the human player
+        if phase == 0:
+            eval_result = self.env.evaluate_hand(human_seat)
+            state["best_trump_suit"] = int(eval_result["best_suit"])
+        return state
 
     def play_action(self, action):
         player = self.env.current_player()
