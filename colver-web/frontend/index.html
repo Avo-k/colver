@@ -21,16 +21,21 @@
         <!-- PLAY MODE -->
         <div id="play-panel" class="panel active">
             <div id="play-config">
-                <label>IA :
-                    <select id="ai-type">
+                <label>Adversaires :
+                    <select id="opponent-ai">
                         <option value="doudou">DouDou</option>
                         <option value="smart">Smart IS-MCTS</option>
                         <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
                     </select>
                 </label>
-                <label>Temps (ms) :
-                    <input type="range" id="ai-time" min="10" max="500" value="50" step="10">
-                    <span id="ai-time-val">50</span>
+                <label>Partenaire :
+                    <select id="partner-ai">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                    </select>
                 </label>
                 <button id="start-game">Nouvelle Partie</button>
             </div>
@@ -112,38 +117,38 @@
             <div id="watch-config">
                 <div class="watch-agents">
                     <label>N : <select class="agent-select" data-seat="0">
+                        <option value="doudou">DouDou</option>
                         <option value="smart">Smart IS-MCTS</option>
                         <option value="naive">Naive IS-MCTS</option>
-                        <option value="doudou">DouDou</option>
+                        <option value="oracle">Oracle (MCTS)</option>
                         <option value="heuristic">Heuristique</option>
                         <option value="random">Aleatoire</option>
                     </select></label>
                     <label>E : <select class="agent-select" data-seat="1">
-                        <option value="smart">Smart IS-MCTS</option>
-                        <option value="naive" selected>Naive IS-MCTS</option>
                         <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
                         <option value="heuristic">Heuristique</option>
                         <option value="random">Aleatoire</option>
                     </select></label>
                     <label>S : <select class="agent-select" data-seat="2">
+                        <option value="doudou">DouDou</option>
                         <option value="smart">Smart IS-MCTS</option>
                         <option value="naive">Naive IS-MCTS</option>
-                        <option value="doudou">DouDou</option>
+                        <option value="oracle">Oracle (MCTS)</option>
                         <option value="heuristic">Heuristique</option>
                         <option value="random">Aleatoire</option>
                     </select></label>
                     <label>O : <select class="agent-select" data-seat="3">
-                        <option value="smart">Smart IS-MCTS</option>
-                        <option value="naive" selected>Naive IS-MCTS</option>
                         <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
                         <option value="heuristic">Heuristique</option>
                         <option value="random">Aleatoire</option>
                     </select></label>
                 </div>
-                <label>Temps (ms) :
-                    <input type="range" id="watch-time" min="10" max="500" value="50" step="10">
-                    <span id="watch-time-val">50</span>
-                </label>
                 <button id="watch-start">Lancer</button>
             </div>
 

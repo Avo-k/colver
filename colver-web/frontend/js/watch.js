@@ -15,8 +15,7 @@ document.getElementById('watch-start').addEventListener('click', () => {
     document.querySelectorAll('.agent-select').forEach(sel => {
         agents[sel.dataset.seat] = sel.value;
     });
-    const time_ms = parseInt(document.getElementById('watch-time').value);
-    send({ type: 'watch_start', agents, time_ms });
+    send({ type: 'watch_start', agents });
     document.getElementById('watch-start').disabled = true;
     document.getElementById('watch-start').textContent = 'Demarrage...';
 });
@@ -258,7 +257,8 @@ function renderWatchBidHistory(bidHistory) {
         const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
         el.className = `watch-bid-entry ${team}`;
         const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-        el.textContent = `${seatLetter}:${bid.name}`;
+        const name = actionName(bid.action, 0);
+        el.textContent = `${seatLetter}:${name}`;
         container.appendChild(el);
     }
 }

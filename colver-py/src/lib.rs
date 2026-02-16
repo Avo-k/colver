@@ -772,6 +772,26 @@ impl Env {
         rollout::select_nth_bit(mask, n)
     }
 
+    /// Oracle MCTS: perfect-information MCTS with time budget.
+    /// Sees all hands — strongest possible play but "cheats".
+    fn action_oracle_mcts(&mut self, time_ms: u32) -> PyResult<u8> {
+        use colver_core::mcts::{MctsConfig, MctsSearch, RolloutPolicy};
+        if self.state.phase != Phase::Playing {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Oracle MCTS only valid during play phase",
+            ));
+        }
+        // ~769K rollouts/sec with HeuristicPlay, so time_ms * 769 ≈ iterations
+        let iterations = (time_ms as u32) * 700;
+        let config = MctsConfig {
+            iterations,
+            rollout_policy: RolloutPolicy::HeuristicPlay,
+            ..Default::default()
+        };
+        let mut search = MctsSearch::new();
+        Ok(search.search(&self.state, &config, &mut self.rng))
+    }
+
     /// Get observation v4 (415 floats) for current state.
     fn get_observation_v2(&self) -> Vec<f32> {
         make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)

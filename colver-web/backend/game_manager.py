@@ -70,19 +70,26 @@ class TrickTracker:
             self._trick_just_completed = False
 
 
+AI_TIME_MS = 100  # Fixed time budget for all search-based AIs
+
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_type="smart", time_ms=50, dmc_model_path=None):
-        self.ai_type = ai_type
-        self.time_ms = time_ms
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None):
+        # ai_types: dict mapping seat -> ai_type (for non-human seats)
+        # If not provided, default all AI seats to "doudou"
+        self.human_seat = human_seat
+        if ai_types is None:
+            ai_types = {}
+        self.ai_types = ai_types
         self.env = colver.Env()
         self.history = []
         self._init_trick_tracking()
         self.env.reset()
-        if ai_type == "smart":
+        self.uses_smart = any(t == "smart" for t in self.ai_types.values())
+        if self.uses_smart:
             self.env.smart_ismcts_init()
-        if ai_type == "doudou" and dmc_model_path:
+        if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
             self.env.load_dmc_model(dmc_model_path)
 
     def get_state(self, human_seat=2):
@@ -123,7 +130,7 @@ class PlaySession(TrickTracker):
         belote_before = list(self.env.get_belote())
         self.history.append({"player": int(player), "action": int(action), "phase": int(phase)})
         self._check_trick_completion(action)
-        if self.ai_type == "smart":
+        if self.uses_smart:
             self.env.smart_ismcts_step(action)
         else:
             self.env.step(action)
@@ -133,16 +140,22 @@ class PlaySession(TrickTracker):
 
     def get_ai_action(self):
         phase = self.env.phase()
+        player = int(self.env.current_player())
+        ai_type = self.ai_types.get(player, "doudou")
         if phase == 0:
             return int(self.env.bid_improved())
         else:
-            if self.ai_type == "doudou" and self.env.has_dmc_model():
+            if ai_type == "doudou" and self.env.has_dmc_model():
                 result = self.env.action_dmc_with_stats()
                 return int(result["best_action"])
-            elif self.ai_type == "smart":
-                return int(self.env.action_smart_ismcts(self.time_ms))
+            elif ai_type == "smart":
+                return int(self.env.action_smart_ismcts(AI_TIME_MS))
+            elif ai_type == "naive":
+                return int(self.env.action_naive_ismcts(AI_TIME_MS))
+            elif ai_type == "oracle":
+                return int(self.env.action_oracle_mcts(AI_TIME_MS))
             else:
-                return int(self.env.action_naive_ismcts(self.time_ms))
+                return int(self.env.action_naive_ismcts(AI_TIME_MS))
 
     def play_ai_turn(self):
         player = self.env.current_player()
@@ -152,7 +165,7 @@ class PlaySession(TrickTracker):
         name = colver.Env.action_name(action, phase)
         self.history.append({"player": int(player), "action": action, "phase": int(phase)})
         self._check_trick_completion(action)
-        if self.ai_type == "smart":
+        if self.uses_smart:
             self.env.smart_ismcts_step(action)
         else:
             self.env.step(action)
@@ -165,6 +178,7 @@ AGENT_NAMES = {
     "smart": "Smart IS-MCTS",
     "naive": "Naive IS-MCTS",
     "doudou": "DouDou",
+    "oracle": "Oracle (MCTS)",
     "heuristic": "Heuristique",
     "random": "Aleatoire",
 }
@@ -175,13 +189,12 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, time_ms=50, dmc_model_path=None):
+    def __init__(self, agents, dmc_model_path=None):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
         """
         self.agents = agents
-        self.time_ms = time_ms
         self.env = colver.Env()
         self.history = []
         self.bid_history = []
@@ -243,18 +256,23 @@ class WatchSession(TrickTracker):
         stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
 
         if agent_type == "smart":
-            result = self.env.action_smart_ismcts_with_stats(self.time_ms)
+            result = self.env.action_smart_ismcts_with_stats(AI_TIME_MS)
             action = int(result["best_action"])
             stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
             stats["root_visits"] = int(result["root_visits"])
             stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
 
         elif agent_type == "naive":
-            result = self.env.action_naive_ismcts_with_stats(self.time_ms)
+            result = self.env.action_naive_ismcts_with_stats(AI_TIME_MS)
             action = int(result["best_action"])
             stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
             stats["root_visits"] = int(result["root_visits"])
             stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
+
+        elif agent_type == "oracle":
+            t0 = time.monotonic()
+            action = int(self.env.action_oracle_mcts(AI_TIME_MS))
+            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
         elif agent_type == "doudou" and self.env.has_dmc_model():
             result = self.env.action_dmc_with_stats()

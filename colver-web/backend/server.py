@@ -62,11 +62,21 @@ async def websocket_endpoint(ws: WebSocket):
             msg_type = data.get("type")
 
             if msg_type == "start_game":
-                ai = data.get("ai", "smart")
-                time_ms = data.get("time_ms", 50)
                 human_seat = data.get("human_seat", 2)
-                dmc_path = DMC_MODEL_PATH if (doudou_available and ai == "doudou") else None
-                play_session = PlaySession(ai_type=ai, time_ms=time_ms, dmc_model_path=dmc_path)
+                opponent_ai = data.get("opponent_ai", "doudou")
+                partner_ai = data.get("partner_ai", "doudou")
+                # Build per-seat AI mapping (human excluded)
+                ai_types = {}
+                for seat in range(4):
+                    if seat == human_seat:
+                        continue
+                    if seat == (human_seat ^ 2):  # partner
+                        ai_types[seat] = partner_ai
+                    else:  # opponents
+                        ai_types[seat] = opponent_ai
+                needs_dmc = any(t == "doudou" for t in ai_types.values())
+                dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path)
 
                 await ws.send_json({
                     "type": "game_state",
@@ -93,10 +103,8 @@ async def websocket_endpoint(ws: WebSocket):
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
                 # Convert string keys from JSON to int
                 agents = {int(k): v for k, v in agents.items()}
-                time_ms = data.get("time_ms", 50)
                 watch_session = WatchSession(
                     agents=agents,
-                    time_ms=time_ms,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                 )
                 await ws.send_json({

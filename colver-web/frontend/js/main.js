@@ -219,14 +219,8 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 // Range value displays
-document.getElementById('ai-time').addEventListener('input', e => {
-    document.getElementById('ai-time-val').textContent = e.target.value;
-});
 document.getElementById('analysis-time').addEventListener('input', e => {
     document.getElementById('analysis-time-val').textContent = e.target.value;
-});
-document.getElementById('watch-time').addEventListener('input', e => {
-    document.getElementById('watch-time-val').textContent = e.target.value;
 });
 document.getElementById('watch-speed').addEventListener('input', e => {
     document.getElementById('watch-speed-val').textContent = e.target.value;

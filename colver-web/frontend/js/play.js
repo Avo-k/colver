@@ -5,10 +5,10 @@ const HUMAN_SEAT = 2; // South
 let bidHistory = [];
 
 document.getElementById('start-game').addEventListener('click', () => {
-    const ai = document.getElementById('ai-type').value;
-    const timeMs = parseInt(document.getElementById('ai-time').value);
+    const opponentAi = document.getElementById('opponent-ai').value;
+    const partnerAi = document.getElementById('partner-ai').value;
     bidHistory = [];
-    send({ type: 'start_game', ai, time_ms: timeMs, human_seat: HUMAN_SEAT });
+    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
     document.getElementById('play-status').textContent = 'Lancement de la partie...';
@@ -227,15 +227,17 @@ onMessage('game_state', (data) => {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
         showBeloteAnnouncement('trick-area', text);
     }
-    // Disable DouDou option if not available on server, fall back to Smart
+    // Disable DouDou options if not available on server, fall back to Smart
     if (data.doudou_available === false) {
-        const opt = document.querySelector('#ai-type option[value="doudou"]');
-        if (opt) {
-            opt.disabled = true;
-            opt.textContent = 'DouDou (non dispo)';
+        for (const selId of ['opponent-ai', 'partner-ai']) {
+            const opt = document.querySelector(`#${selId} option[value="doudou"]`);
+            if (opt) {
+                opt.disabled = true;
+                opt.textContent = 'DouDou (non dispo)';
+            }
+            const sel = document.getElementById(selId);
+            if (sel.value === 'doudou') sel.value = 'smart';
         }
-        const sel = document.getElementById('ai-type');
-        if (sel.value === 'doudou') sel.value = 'smart';
     }
 });
 
