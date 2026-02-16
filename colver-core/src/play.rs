@@ -262,19 +262,31 @@ fn resolve_trick(state: &mut GameState) {
 }
 
 /// Check and track belote (Q+K of trump suit).
+/// Belote is only valid when the SAME player holds both Q and K of trump.
+/// Note: the card has already been removed from the player's hand at this point.
 fn check_belote(state: &mut GameState, player: u8, card: Card) {
     let trump_suit = state.contract.trump_suit();
-    if card_suit(card) == trump_suit {
-        let rank = card_rank(card);
-        if rank == 4 || rank == 5 {
-            // Queen or King of trump
-            let team = GameState::player_team(player) as usize;
-            if state.belote[team] == 0 {
-                state.belote[team] = 1; // belote
-            } else if state.belote[team] == 1 {
-                state.belote[team] = 2; // rebelote
-            }
+    if card_suit(card) != trump_suit {
+        return;
+    }
+    let rank = card_rank(card);
+    if rank != 4 && rank != 5 {
+        return; // Not Queen (4) or King (5)
+    }
+    let team = GameState::player_team(player) as usize;
+    if state.belote[team] == 0 {
+        // First Q or K of trump played — check if player still has the other card
+        let other_rank = if rank == 4 { 5 } else { 4 }; // Q↔K
+        let other_card = make_card(trump_suit, other_rank);
+        let other_bit = card_to_bit(other_card);
+        if state.hands[player as usize] & other_bit != 0 {
+            // Player has both — declare belote
+            state.belote[team] = 1;
+            state.belote_player[team] = player;
         }
+    } else if state.belote[team] == 1 && state.belote_player[team] == player {
+        // Same player plays the second card — rebelote
+        state.belote[team] = 2;
     }
 }
 
