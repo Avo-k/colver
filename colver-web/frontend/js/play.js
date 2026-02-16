@@ -220,13 +220,15 @@ onMessage('game_state', (data) => {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
         showBeloteAnnouncement('trick-area', text);
     }
-    // Disable DouDou option if not available on server
+    // Disable DouDou option if not available on server, fall back to Smart
     if (data.doudou_available === false) {
         const opt = document.querySelector('#ai-type option[value="doudou"]');
         if (opt) {
             opt.disabled = true;
-            opt.textContent = 'DouDou NN (non dispo)';
+            opt.textContent = 'DouDou (non dispo)';
         }
+        const sel = document.getElementById('ai-type');
+        if (sel.value === 'doudou') sel.value = 'smart';
     }
 });
 

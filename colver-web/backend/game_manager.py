@@ -159,7 +159,7 @@ class PlaySession(TrickTracker):
 AGENT_NAMES = {
     "smart": "Smart IS-MCTS",
     "naive": "Naive IS-MCTS",
-    "doudou": "DouDou NN",
+    "doudou": "DouDou",
     "heuristic": "Heuristique",
     "random": "Aleatoire",
 }
