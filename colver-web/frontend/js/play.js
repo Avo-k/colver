@@ -40,11 +40,13 @@ function renderPlayState(state) {
 
     const legalSet = (isHumanTurn && isPlayPhase) ? new Set(state.legal_actions) : null;
 
+    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+
     for (let seat = 0; seat < 4; seat++) {
         const cards = state.hands[seat];
         if (seat === HUMAN_SEAT) {
             const clickable = isHumanTurn && isPlayPhase;
-            renderHand(handEls[seat], cards, clickable, clickable ? playCard : null, legalSet);
+            renderHand(handEls[seat], cards, clickable, clickable ? playCard : null, legalSet, trumpSuit);
         } else {
             const count = cards.length || Math.max(0, 8 - (state.tricks_won[0] + state.tricks_won[1]));
             renderFaceDownHand(handEls[seat], count);

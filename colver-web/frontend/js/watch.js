@@ -113,8 +113,9 @@ function renderWatchState(state) {
         2: document.getElementById('watch-hand-south'),
         3: document.getElementById('watch-hand-west'),
     };
+    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
     for (let seat = 0; seat < 4; seat++) {
-        renderHand(handEls[seat], state.hands[seat]);
+        renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit);
     }
 
     // Trick

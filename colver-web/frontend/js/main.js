@@ -75,9 +75,21 @@ function faceDownCard() {
     return el;
 }
 
-function renderHand(container, cards, clickable = false, onClick = null, legalSet = null) {
+// Sort keys for display order within a suit (lower = shown first / strongest)
+// Plain: A > 10 > K > Q > J > 9 > 8 > 7
+const PLAIN_ORDER = [7, 6, 5, 4, 3, 2, 1, 0]; // rank -> sort key
+// Trump: J > 9 > A > 10 > K > Q > 8 > 7
+const TRUMP_ORDER = [7, 6, 1, 0, 5, 4, 3, 2]; // rank -> sort key
+
+function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1) {
     container.innerHTML = '';
-    const sorted = [...cards].sort((a, b) => a - b);
+    const sorted = [...cards].sort((a, b) => {
+        const suitA = cardSuit(a), suitB = cardSuit(b);
+        if (suitA !== suitB) return suitA - suitB;
+        const orderA = suitA === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
+        const orderB = suitB === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
+        return orderA[cardRank(a)] - orderB[cardRank(b)];
+    });
     for (const c of sorted) {
         const isLegal = !legalSet || legalSet.has(c);
         const cardClickable = clickable && isLegal;
