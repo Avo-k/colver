@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Fast Belote Contrée environment for RL training"
 requires-python = ">=3.10"
 dependencies = [
+    "matplotlib>=3.10.8",
     "numpy",
 ]
 

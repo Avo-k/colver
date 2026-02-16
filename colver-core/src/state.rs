@@ -110,12 +110,11 @@ pub struct GameState {
     /// Per player: bit i = known void in suit i.
     pub voids: [u8; 4],
 
-    // ---- Belote tracking: 2 bytes ----
+    // ---- Belote tracking: 4 bytes ----
     /// Per team: 0=none, 1=belote declared, 2=rebelote declared (complete).
     pub belote: [u8; 2],
-
-    // ---- Padding: 2 bytes to reach 56 bytes nicely ----
-    _pad2: [u8; 2],
+    /// Per team: which player (0-3) declared belote (valid when belote[team] >= 1).
+    pub belote_player: [u8; 2],
 }
 
 // Ensure we're small enough for fast copies.
@@ -146,7 +145,7 @@ impl GameState {
             played_cards: 0,
             voids: [0; 4],
             belote: [0; 2],
-            _pad2: [0; 2],
+            belote_player: [0; 2],
         }
     }
 

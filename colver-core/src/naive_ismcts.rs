@@ -29,7 +29,7 @@ impl Default for NaiveIsMctsConfig {
             iterations_per_det: 50,
             exploration: std::f32::consts::SQRT_2,
             time_limit_ms: None,
-            bid_function: BidFunction::Improved,
+            bid_function: BidFunction::ImprovedV2,
         }
     }
 }

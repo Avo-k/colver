@@ -346,7 +346,27 @@ impl Env {
 
     /// Get improved_bid action for current state (only valid during bidding phase).
     fn bid_improved(&self) -> u8 {
-        bid_eval::improved_bid(&self.state)
+        bid_eval::improved_v2_bid(&self.state)
+    }
+
+    /// Get improved_v2_bid action for current state (only valid during bidding phase).
+    fn bid_improved_v2(&self) -> u8 {
+        bid_eval::improved_v2_bid(&self.state)
+    }
+
+    /// Get roro_bid action for current state (only valid during bidding phase).
+    fn bid_roro(&self) -> u8 {
+        bid_eval::roro_bid(&self.state)
+    }
+
+    /// Get petit_bide_bid action for current state (only valid during bidding phase).
+    fn bid_petit_bide(&self) -> u8 {
+        bid_eval::petit_bide_bid(&self.state)
+    }
+
+    /// Get moelleux_bid action for current state (only valid during bidding phase).
+    fn bid_moelleux(&self) -> u8 {
+        bid_eval::moelleux_bid(&self.state)
     }
 
     /// Get binary deal outcome [NS_outcome, EW_outcome].
@@ -642,12 +662,12 @@ impl Env {
 
     /// Get Naive IS-MCTS action with search statistics.
     /// Returns dict: {best_action, visit_counts: [(action, visits)...], root_visits, elapsed_ms}
-    /// During bidding, returns bid_improved() with minimal stats.
+    /// During bidding, returns bid_improved_v2() with minimal stats.
     fn action_naive_ismcts_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
 
         if self.state.phase == Phase::Bidding {
-            let action = bid_eval::improved_bid(&self.state);
+            let action = bid_eval::improved_v2_bid(&self.state);
             dict.set_item("best_action", action)?;
             dict.set_item("visit_counts", Vec::<(u8, u32)>::new())?;
             dict.set_item("root_visits", 0u32)?;
@@ -673,12 +693,12 @@ impl Env {
 
     /// Get Smart IS-MCTS action with search statistics.
     /// Returns dict: {best_action, visit_counts: [(action, visits)...], root_visits, elapsed_ms}
-    /// During bidding, returns bid_improved() with minimal stats.
+    /// During bidding, returns bid_improved_v2() with minimal stats.
     fn action_smart_ismcts_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new_bound(py);
 
         if self.state.phase == Phase::Bidding {
-            let action = bid_eval::improved_bid(&self.state);
+            let action = bid_eval::improved_v2_bid(&self.state);
             dict.set_item("best_action", action)?;
             dict.set_item("visit_counts", Vec::<(u8, u32)>::new())?;
             dict.set_item("root_visits", 0u32)?;
@@ -883,12 +903,13 @@ impl VecEnv {
                     return 0;
                 }
                 match self.bid_strategy[i] {
-                    0 => bid_eval::improved_bid(s),
+                    0 => bid_eval::improved_v2_bid(s),
                     idx @ 1..=6 => {
                         bid_eval::parametric_bid(s, &presets[(idx - 1) as usize])
                     }
                     7 => bid_eval::heuristic_bid(s),
-                    _ => bid_eval::improved_bid(s),
+                    8 => bid_eval::roro_bid(s),
+                    _ => bid_eval::improved_v2_bid(s),
                 }
             })
             .collect();

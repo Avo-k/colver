@@ -8,10 +8,14 @@ default = ["rand"]
 rand = ["dep:rand"]
 parallel = ["dep:rayon", "rand"]
 nn = ["rand"]
+dmc_train = ["rand", "dep:candle-core", "dep:candle-nn", "dep:clap"]
 
 [dependencies]
 rand = { version = "0.8", optional = true }
 rayon = { version = "1.10", optional = true }
+candle-core = { version = "0.9", optional = true, features = ["cuda"] }
+candle-nn = { version = "0.9", optional = true }
+clap = { version = "4", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 rand = "0.8"
@@ -77,3 +81,16 @@ required-features = ["nn"]
 name = "nn_experiment"
 path = "src/tests/nn_experiment.rs"
 required-features = ["nn"]
+
+[[bin]]
+name = "agent_tournament"
+path = "src/tests/agent_tournament.rs"
+
+[[bin]]
+name = "v2_tournament"
+path = "src/tests/v2_tournament.rs"
+
+[[bin]]
+name = "train_dmc"
+path = "src/tests/train_dmc.rs"
+required-features = ["dmc_train"]

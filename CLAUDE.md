@@ -124,7 +124,7 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 ### Bidding Strategies (`bid_eval.rs`)
 
-Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
+Four fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`, `Roro`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
 
 **Hand evaluation:** `evaluate_for_trump(hand, suit) -> u16` scores a hand assuming `suit` is trump. Trump honors (J=8, 9=6, A=4, 10=3, K=1, Q=1), trump length bonus ((count−2)×2 if count>2), side aces (+3 each), voids (+3), singletons (+1). Typical range 0–35.
 
@@ -136,6 +136,8 @@ Three fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improv
 **`heuristic_bid`** — Aggressive score-based. Maps score→value (10→80, 14→90, 17→100, 20→110, 23→120, 26→130). No quality gate, no cap. Boosts partner's suit +3. Never coinches. Takes ~50% of contracts with ~70% success rate.
 
 **`smart_bid`** — Conservative convention-based. Requires J/9 for opening, J+9 signaling between partners. Very conservative (~10-13% contract take rate, ~78% success). Mostly historical.
+
+**`roro_bid`** — Expert convention-based strategy. Position-aware openings, highest-level-first scan (130→80), structured partner responses, intervention (+10 light / +20 "la barre"), Théorème 3 coinche.
 
 **`parametric_bid` + `BidParams`** — Configurable bidder for strategy sweeps. `BidParams` has: score thresholds[6] (for 80–130), opening/overcall/response caps, overcall_min_score, quality_gate flag. Presets: `ultra_conservative`, `conservative`, `moderate`, `balanced`, `aggressive`, `very_aggressive`. Used by `bid_tournament` binary.
 
@@ -166,7 +168,7 @@ DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single
 **Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
 **Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
 
-**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `deal_outcome()`, `rewards()`, `load_dmc_model(path)`, `action_dmc_with_stats()`, `get_bid_history()`.
+**Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `bid_roro()`, `deal_outcome()`, `rewards()`, `load_dmc_model(path)`, `action_dmc_with_stats()`, `get_bid_history()`.
 **Python API (VecEnv):** `current_players()`, `phases()`, `bid_improved()`. `step()` returns 5-tuple with `deal_outcomes (n,2)`.
 
 ### Neural Network Value Function (feature `nn`)

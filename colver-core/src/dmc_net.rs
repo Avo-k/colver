@@ -1,17 +1,30 @@
 /// DMC Q-Network: pure Rust inference for the DouZero-style Deep Monte-Carlo agent.
 ///
-/// Architecture: obs_dim → H (LN+ReLU) → H (LN+ReLU) → H (LN+ReLU) → 32
+/// Architecture (standard): obs_dim → H (LN+ReLU) → H (LN+ReLU) → H (LN+ReLU) → 32
+/// Architecture (dueling):  obs_dim → H (LN+ReLU) → H (LN+ReLU) → H (LN+ReLU)
+///                            → Value head: H → 1 (V)
+///                            → Advantage head: H → 32 (A)
+///                            → Q = V + (A - mean(A))
+///
 /// where H = hidden size (default 1024), LN = LayerNorm.
-/// obs_dim is auto-detected from weight file size (372 for v2, 444 for v3).
+/// obs_dim is auto-detected from weight file size (372, 415, or 444).
 ///
 /// No external dependencies — loads raw f32 binary weights exported from PyTorch.
 /// Uses scratch buffers for zero-allocation forward pass.
 ///
-/// Weight file layout (contiguous little-endian f32):
+/// Weight file layout — standard (contiguous little-endian f32):
 ///   For each of 3 hidden layers:
 ///     W: in_dim × H (row-major), b: H, gamma: H, beta: H
 ///   Final output layer:
 ///     W: H × 32 (row-major), b: 32
+///
+/// Weight file layout — dueling:
+///   For each of 3 hidden layers:
+///     W: in_dim × H (row-major), b: H, gamma: H, beta: H
+///   Value head:
+///     W_v: H × 1 (row-major), b_v: 1
+///   Advantage head:
+///     W_a: H × 32 (row-major), b_a: 32
 
 const NUM_ACTIONS: usize = 32;
 const LN_EPS: f32 = 1e-5;
@@ -22,9 +35,15 @@ pub struct DmcNet {
     b: [Vec<f32>; 3],
     gamma: [Vec<f32>; 3],
     beta: [Vec<f32>; 3],
-    // Final output layer: Linear only
+    // Standard output layer (used when dueling=false)
     w_out: Vec<f32>,
     b_out: Vec<f32>,
+    // Dueling heads (used when dueling=true)
+    dueling: bool,
+    w_value: Vec<f32>,   // H × 1
+    b_value: f32,
+    w_adv: Vec<f32>,     // H × 32
+    b_adv: Vec<f32>,     // 32
     // Dimensions
     obs_dim: usize,
     hidden: usize,
@@ -41,7 +60,7 @@ impl DmcNet {
     }
 
     /// Load weights from a raw binary file with custom hidden size.
-    /// The obs_dim is auto-detected from the weight file size.
+    /// The obs_dim and dueling mode are auto-detected from the weight file size.
     pub fn load_with_hidden(path: &str, hidden: usize) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
         if data.len() % 4 != 0 {
@@ -56,31 +75,55 @@ impl DmcNet {
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
 
-        // Auto-detect obs_dim from weight file size.
-        // Total floats = obs_dim*H + 3*H (layer 0: W+b+gamma+beta)
-        //              + 2*(H*H + 3*H)  (layers 1-2: W+b+gamma+beta)
-        //              + H*32 + 32       (output: W+b)
-        // So: obs_dim = (total_floats - fixed) / H
-        //   where fixed = 2*(H*H + 3*H) + 3*H + H*32 + 32
         let h = hidden;
-        let fixed = 2 * (h * h + 3 * h) + 3 * h + h * NUM_ACTIONS + NUM_ACTIONS;
         let total = floats.len();
-        if total <= fixed || (total - fixed) % h != 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "cannot infer obs_dim: {} floats, hidden={} (remainder={})",
-                    total, h, if total > fixed { (total - fixed) % h } else { 1 },
-                ),
-            ));
-        }
-        let obs_dim = (total - fixed) / h;
 
-        Self::from_floats(&floats, hidden, obs_dim)
+        // Trunk floats = obs_dim*H + 3*H (layer 0) + 2*(H*H + 3*H) (layers 1-2)
+        // Standard tail = H*32 + 32
+        // Dueling tail = H + 1 + H*32 + 32
+        let trunk_fixed = 2 * (h * h + 3 * h) + 3 * h; // layers 1-2 + layer 0 b/gamma/beta
+        let standard_tail = h * NUM_ACTIONS + NUM_ACTIONS;
+        let dueling_tail = h + 1 + h * NUM_ACTIONS + NUM_ACTIONS;
+
+        // Try standard first
+        let standard_fixed = trunk_fixed + standard_tail;
+        if total > standard_fixed && (total - standard_fixed) % h == 0 {
+            let obs_dim = (total - standard_fixed) / h;
+            // Also check if dueling fits
+            let dueling_fixed = trunk_fixed + dueling_tail;
+            if total > dueling_fixed && (total - dueling_fixed) % h == 0 {
+                let dueling_obs_dim = (total - dueling_fixed) / h;
+                // Both fit — disambiguate: if standard obs_dim is a known value, prefer it
+                let known_dims = [372, 415, 444];
+                if known_dims.contains(&obs_dim) && !known_dims.contains(&dueling_obs_dim) {
+                    return Self::from_floats(&floats, hidden, obs_dim, false);
+                } else if !known_dims.contains(&obs_dim) && known_dims.contains(&dueling_obs_dim) {
+                    return Self::from_floats(&floats, hidden, dueling_obs_dim, true);
+                }
+                // Both known or both unknown — prefer standard (backward compat)
+                return Self::from_floats(&floats, hidden, obs_dim, false);
+            }
+            return Self::from_floats(&floats, hidden, obs_dim, false);
+        }
+
+        // Try dueling
+        let dueling_fixed = trunk_fixed + dueling_tail;
+        if total > dueling_fixed && (total - dueling_fixed) % h == 0 {
+            let obs_dim = (total - dueling_fixed) / h;
+            return Self::from_floats(&floats, hidden, obs_dim, true);
+        }
+
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "cannot infer obs_dim: {} floats, hidden={} (neither standard nor dueling layout fits)",
+                total, h,
+            ),
+        ))
     }
 
     /// Construct from a flat array of f32 weights.
-    fn from_floats(floats: &[f32], hidden: usize, obs_dim: usize) -> std::io::Result<Self> {
+    pub fn from_floats(floats: &[f32], hidden: usize, obs_dim: usize, dueling: bool) -> std::io::Result<Self> {
         let in_dims = [obs_dim, hidden, hidden];
 
         // Calculate expected size
@@ -88,16 +131,22 @@ impl DmcNet {
         for &in_dim in &in_dims {
             expected += in_dim * hidden + hidden + hidden + hidden; // W + b + gamma + beta
         }
-        expected += hidden * NUM_ACTIONS + NUM_ACTIONS; // output W + b
+        if dueling {
+            expected += hidden + 1; // value head: W (H×1) + b (1)
+            expected += hidden * NUM_ACTIONS + NUM_ACTIONS; // advantage head: W (H×32) + b (32)
+        } else {
+            expected += hidden * NUM_ACTIONS + NUM_ACTIONS; // output W + b
+        }
 
         if floats.len() != expected {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "weight file has {} floats, expected {} for hidden={}",
+                    "weight file has {} floats, expected {} for hidden={}, dueling={}",
                     floats.len(),
                     expected,
                     hidden,
+                    dueling,
                 ),
             ));
         }
@@ -122,24 +171,57 @@ impl DmcNet {
             offset += hidden;
         }
 
-        let w_out_size = hidden * NUM_ACTIONS;
-        let w_out = floats[offset..offset + w_out_size].to_vec();
-        offset += w_out_size;
-        let b_out = floats[offset..offset + NUM_ACTIONS].to_vec();
+        if dueling {
+            // Value head: W_v (H×1), b_v (1)
+            let w_value = floats[offset..offset + hidden].to_vec();
+            offset += hidden;
+            let b_value = floats[offset];
+            offset += 1;
 
-        Ok(DmcNet {
-            w,
-            b,
-            gamma,
-            beta,
-            w_out,
-            b_out,
-            obs_dim,
-            hidden,
-            in_dims,
-            scratch_a: vec![0.0; hidden],
-            scratch_b: vec![0.0; hidden],
-        })
+            // Advantage head: W_a (H×32), b_a (32)
+            let w_adv = floats[offset..offset + hidden * NUM_ACTIONS].to_vec();
+            offset += hidden * NUM_ACTIONS;
+            let b_adv = floats[offset..offset + NUM_ACTIONS].to_vec();
+            offset += NUM_ACTIONS;
+            debug_assert_eq!(offset, floats.len());
+
+            Ok(DmcNet {
+                w, b, gamma, beta,
+                w_out: Vec::new(),
+                b_out: Vec::new(),
+                dueling: true,
+                w_value,
+                b_value,
+                w_adv,
+                b_adv,
+                obs_dim,
+                hidden,
+                in_dims,
+                scratch_a: vec![0.0; hidden],
+                scratch_b: vec![0.0; hidden],
+            })
+        } else {
+            let w_out_size = hidden * NUM_ACTIONS;
+            let w_out = floats[offset..offset + w_out_size].to_vec();
+            offset += w_out_size;
+            let b_out = floats[offset..offset + NUM_ACTIONS].to_vec();
+
+            Ok(DmcNet {
+                w, b, gamma, beta,
+                w_out,
+                b_out,
+                dueling: false,
+                w_value: Vec::new(),
+                b_value: 0.0,
+                w_adv: Vec::new(),
+                b_adv: Vec::new(),
+                obs_dim,
+                hidden,
+                in_dims,
+                scratch_a: vec![0.0; hidden],
+                scratch_b: vec![0.0; hidden],
+            })
+        }
     }
 
     /// Forward pass: compute Q-values for all 32 card actions.
@@ -164,18 +246,46 @@ impl DmcNet {
         layer_norm(&mut self.scratch_a, &self.gamma[2], &self.beta[2], self.hidden);
         relu(&mut self.scratch_a);
 
-        // Output: q = W_out * scratch_a + b_out (no activation)
-        let mut q = [0.0f32; NUM_ACTIONS];
-        for i in 0..NUM_ACTIONS {
-            let row_start = i * self.hidden;
-            let mut sum = self.b_out[i];
+        if self.dueling {
+            // Value head: V = W_v * trunk + b_v (scalar)
+            let mut v = self.b_value;
             for j in 0..self.hidden {
-                sum += self.w_out[row_start + j] * self.scratch_a[j];
+                v += self.w_value[j] * self.scratch_a[j];
             }
-            q[i] = sum;
-        }
 
-        q
+            // Advantage head: A[i] = W_a[i] * trunk + b_a[i]
+            let mut q = [0.0f32; NUM_ACTIONS];
+            let mut adv_sum = 0.0f32;
+            for i in 0..NUM_ACTIONS {
+                let row_start = i * self.hidden;
+                let mut a = self.b_adv[i];
+                for j in 0..self.hidden {
+                    a += self.w_adv[row_start + j] * self.scratch_a[j];
+                }
+                q[i] = a;
+                adv_sum += a;
+            }
+
+            // Q = V + (A - mean(A))
+            let adv_mean = adv_sum / NUM_ACTIONS as f32;
+            for i in 0..NUM_ACTIONS {
+                q[i] = v + q[i] - adv_mean;
+            }
+
+            q
+        } else {
+            // Standard: q = W_out * scratch_a + b_out
+            let mut q = [0.0f32; NUM_ACTIONS];
+            for i in 0..NUM_ACTIONS {
+                let row_start = i * self.hidden;
+                let mut sum = self.b_out[i];
+                for j in 0..self.hidden {
+                    sum += self.w_out[row_start + j] * self.scratch_a[j];
+                }
+                q[i] = sum;
+            }
+            q
+        }
     }
 
     /// Pick the best legal action given a legal action bitmask (u32, bit i = card i legal).
@@ -205,6 +315,16 @@ impl DmcNet {
     /// Return the observation dimensionality this network expects.
     pub fn obs_dim(&self) -> usize {
         self.obs_dim
+    }
+
+    /// Return whether this is a dueling network.
+    pub fn is_dueling(&self) -> bool {
+        self.dueling
+    }
+
+    /// Return hidden size.
+    pub fn hidden(&self) -> usize {
+        self.hidden
     }
 }
 
@@ -262,6 +382,68 @@ mod tests {
     use super::*;
 
     const TEST_OBS_DIM: usize = 372;
+
+    /// Build standard (non-dueling) weight vector for a tiny network.
+    fn build_standard_weights(obs_dim: usize, hidden: usize) -> Vec<f32> {
+        let mut floats = Vec::new();
+
+        // Layer 0: W, b, gamma, beta
+        floats.extend(vec![0.0f32; obs_dim * hidden]);
+        floats.extend(vec![0.0f32; hidden]); // b
+        floats.extend(vec![1.0f32; hidden]); // gamma
+        floats.extend(vec![0.0f32; hidden]); // beta
+
+        // Layers 1-2: identity-ish
+        for _ in 0..2 {
+            let mut w = vec![0.0f32; hidden * hidden];
+            for i in 0..hidden {
+                w[i * hidden + i] = 1.0;
+            }
+            floats.extend(w);
+            floats.extend(vec![0.0f32; hidden]);
+            floats.extend(vec![1.0f32; hidden]);
+            floats.extend(vec![0.0f32; hidden]);
+        }
+
+        // Output: W (hidden×32), b (32)
+        floats.extend(vec![0.0f32; hidden * NUM_ACTIONS]);
+        floats.extend(vec![0.0f32; NUM_ACTIONS]);
+
+        floats
+    }
+
+    /// Build dueling weight vector for a tiny network.
+    fn build_dueling_weights(obs_dim: usize, hidden: usize) -> Vec<f32> {
+        let mut floats = Vec::new();
+
+        // Layer 0
+        floats.extend(vec![0.0f32; obs_dim * hidden]);
+        floats.extend(vec![0.0f32; hidden]);
+        floats.extend(vec![1.0f32; hidden]);
+        floats.extend(vec![0.0f32; hidden]);
+
+        // Layers 1-2: identity
+        for _ in 0..2 {
+            let mut w = vec![0.0f32; hidden * hidden];
+            for i in 0..hidden {
+                w[i * hidden + i] = 1.0;
+            }
+            floats.extend(w);
+            floats.extend(vec![0.0f32; hidden]);
+            floats.extend(vec![1.0f32; hidden]);
+            floats.extend(vec![0.0f32; hidden]);
+        }
+
+        // Value head: W_v (hidden), b_v (1)
+        floats.extend(vec![0.0f32; hidden]);
+        floats.push(0.0);
+
+        // Advantage head: W_a (hidden×32), b_a (32)
+        floats.extend(vec![0.0f32; hidden * NUM_ACTIONS]);
+        floats.extend(vec![0.0f32; NUM_ACTIONS]);
+
+        floats
+    }
 
     #[test]
     fn test_layer_norm() {
@@ -327,45 +509,40 @@ mod tests {
 
     #[test]
     fn test_dmc_net_tiny() {
-        // Tiny network: obs_dim=TEST_OBS_DIM, hidden=2, num_actions=32
-        // This tests the from_floats constructor and evaluate
         let hidden = 2;
-
-        // Build weight vector
         let mut floats = Vec::new();
 
         // Layer 0: W (TEST_OBS_DIM×2), b (2), gamma (2), beta (2)
         let mut w0 = vec![0.0f32; TEST_OBS_DIM * hidden];
-        w0[0] = 1.0; // neuron 0 reads input 0
-        w0[TEST_OBS_DIM + 1] = 1.0; // neuron 1 reads input 1
+        w0[0] = 1.0;
+        w0[TEST_OBS_DIM + 1] = 1.0;
         floats.extend_from_slice(&w0);
-        floats.extend_from_slice(&[0.0, 0.0]); // b0
-        floats.extend_from_slice(&[1.0, 1.0]); // gamma0
-        floats.extend_from_slice(&[0.0, 0.0]); // beta0
+        floats.extend_from_slice(&[0.0, 0.0]);
+        floats.extend_from_slice(&[1.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
 
-        // Layer 1: W (2×2), b (2), gamma (2), beta (2)
-        floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]); // identity
-        floats.extend_from_slice(&[0.0, 0.0]); // b1
-        floats.extend_from_slice(&[1.0, 1.0]); // gamma1
-        floats.extend_from_slice(&[0.0, 0.0]); // beta1
+        // Layer 1: identity
+        floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
+        floats.extend_from_slice(&[1.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
 
-        // Layer 2: W (2×2), b (2), gamma (2), beta (2)
-        floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]); // identity
-        floats.extend_from_slice(&[0.0, 0.0]); // b2
-        floats.extend_from_slice(&[1.0, 1.0]); // gamma2
-        floats.extend_from_slice(&[0.0, 0.0]); // beta2
+        // Layer 2: identity
+        floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
+        floats.extend_from_slice(&[1.0, 1.0]);
+        floats.extend_from_slice(&[0.0, 0.0]);
 
         // Output: W (2×32), b (32)
         let mut w_out = vec![0.0f32; hidden * NUM_ACTIONS];
-        w_out[0 * hidden + 0] = 1.0; // action 0 = neuron 0
+        w_out[0] = 1.0; // action 0 = neuron 0
         w_out[1 * hidden + 1] = 1.0; // action 1 = neuron 1
         floats.extend_from_slice(&w_out);
-        floats.extend_from_slice(&vec![0.0f32; NUM_ACTIONS]); // b_out
+        floats.extend_from_slice(&vec![0.0f32; NUM_ACTIONS]);
 
-        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM).unwrap();
+        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM, false).unwrap();
+        assert!(!net.is_dueling());
 
-        // All-zero input: after layer 0 linear = [0, 0], LN([0,0]) = [0,0], ReLU = [0,0]
-        // All layers keep [0,0]. Output = [0, 0, 0, ..., 0]
         let obs = vec![0.0f32; TEST_OBS_DIM];
         let q = net.evaluate(&obs);
         for &v in &q {
@@ -378,7 +555,6 @@ mod tests {
         // Cross-check against PyTorch reference values for all-zeros observation.
         // Skip if model file doesn't exist.
         let path = "models/dmc_final.bin";
-        // Try relative to workspace root
         let full_path = if std::path::Path::new(path).exists() {
             path.to_string()
         } else {
@@ -419,13 +595,12 @@ mod tests {
 
     #[test]
     fn test_best_action() {
-        // Use the tiny net from above and verify best_action picks highest Q
         let hidden = 2;
         let mut floats = Vec::new();
 
         // Layer 0
         let mut w0 = vec![0.0f32; TEST_OBS_DIM * hidden];
-        w0[0] = 5.0; // strong signal on neuron 0
+        w0[0] = 5.0;
         floats.extend_from_slice(&w0);
         floats.extend_from_slice(&[0.0, 0.0]);
         floats.extend_from_slice(&[1.0, 1.0]);
@@ -449,12 +624,11 @@ mod tests {
         floats.extend_from_slice(&w_out);
         floats.extend_from_slice(&vec![0.0f32; NUM_ACTIONS]);
 
-        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM).unwrap();
+        let mut net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM, false).unwrap();
 
         let mut obs = vec![0.0f32; TEST_OBS_DIM];
         obs[0] = 1.0;
 
-        // Legal mask: actions 0, 3, 5, 7 are legal
         let legal_mask: u32 = (1 << 0) | (1 << 3) | (1 << 5) | (1 << 7);
         let (best, legal_q) = net.best_action(&obs, legal_mask);
         assert_eq!(best, 5, "expected action 5 to be best");
@@ -463,30 +637,92 @@ mod tests {
 
     #[test]
     fn test_obs_dim_getter() {
-        // Verify obs_dim() returns the correct value for a tiny net
         let hidden = 2;
-        let obs_dim = 444; // test with new obs dim
+        let obs_dim = 444;
+        let floats = build_standard_weights(obs_dim, hidden);
+        let net = DmcNet::from_floats(&floats, hidden, obs_dim, false).unwrap();
+        assert_eq!(net.obs_dim(), 444);
+        assert!(!net.is_dueling());
+    }
+
+    #[test]
+    fn test_dueling_net_tiny() {
+        let hidden = 4;
+        let obs_dim = 8;
+        let floats = build_dueling_weights(obs_dim, hidden);
+        let mut net = DmcNet::from_floats(&floats, hidden, obs_dim, true).unwrap();
+        assert!(net.is_dueling());
+        assert_eq!(net.obs_dim(), obs_dim);
+
+        // All-zero input: trunk outputs zero, V=0, A=0, Q=0
+        let obs = vec![0.0f32; obs_dim];
+        let q = net.evaluate(&obs);
+        for &v in &q {
+            assert!(v.abs() < 1e-4, "expected ~0, got {}", v);
+        }
+    }
+
+    #[test]
+    fn test_dueling_v_plus_a() {
+        // Verify Q = V + (A - mean(A)) with known weights.
+        let hidden = 2;
+        let obs_dim = 4;
         let mut floats = Vec::new();
 
-        // Layer 0: W (444×2), b, gamma, beta
-        floats.extend(vec![0.0f32; obs_dim * hidden]);
-        floats.extend_from_slice(&[0.0, 0.0]);
-        floats.extend_from_slice(&[1.0, 1.0]);
-        floats.extend_from_slice(&[0.0, 0.0]);
+        // Layer 0: identity-ish (just pass through first 2 inputs)
+        let mut w0 = vec![0.0f32; obs_dim * hidden];
+        w0[0] = 1.0; // neuron 0 = input 0
+        w0[obs_dim + 1] = 1.0; // neuron 1 = input 1
+        floats.extend(w0);
+        floats.extend(vec![0.0f32; hidden]); // b
+        floats.extend(vec![1.0f32; hidden]); // gamma
+        floats.extend(vec![0.0f32; hidden]); // beta
 
         // Layers 1-2: identity
         for _ in 0..2 {
             floats.extend_from_slice(&[1.0, 0.0, 0.0, 1.0]);
-            floats.extend_from_slice(&[0.0, 0.0]);
-            floats.extend_from_slice(&[1.0, 1.0]);
-            floats.extend_from_slice(&[0.0, 0.0]);
+            floats.extend(vec![0.0f32; hidden]);
+            floats.extend(vec![1.0f32; hidden]);
+            floats.extend(vec![0.0f32; hidden]);
         }
 
-        // Output
-        floats.extend(vec![0.0f32; hidden * NUM_ACTIONS]);
-        floats.extend(vec![0.0f32; NUM_ACTIONS]);
+        // Value head: V = 5.0 (constant)
+        floats.extend(vec![0.0f32; hidden]); // W_v = 0
+        floats.push(5.0); // b_v = 5.0
 
-        let net = DmcNet::from_floats(&floats, hidden, obs_dim).unwrap();
-        assert_eq!(net.obs_dim(), 444);
+        // Advantage head: A[0] = 2.0, A[1] = -1.0, rest = 0.0
+        let mut w_adv = vec![0.0f32; hidden * NUM_ACTIONS];
+        // All zeros — advantages come from bias
+        floats.extend(w_adv);
+        let mut b_adv = vec![0.0f32; NUM_ACTIONS];
+        b_adv[0] = 2.0;
+        b_adv[1] = -1.0;
+        floats.extend(b_adv);
+
+        let mut net = DmcNet::from_floats(&floats, hidden, obs_dim, true).unwrap();
+        assert!(net.is_dueling());
+
+        let obs = vec![0.0f32; obs_dim];
+        let q = net.evaluate(&obs);
+
+        // A = [2, -1, 0, 0, ..., 0], mean(A) = (2-1)/32 = 1/32 ≈ 0.03125
+        let adv_mean = (2.0 - 1.0) / 32.0;
+        let expected_q0 = 5.0 + 2.0 - adv_mean;
+        let expected_q1 = 5.0 + (-1.0) - adv_mean;
+        let expected_q2 = 5.0 + 0.0 - adv_mean;
+
+        assert!((q[0] - expected_q0).abs() < 1e-4, "Q[0]: got {}, expected {}", q[0], expected_q0);
+        assert!((q[1] - expected_q1).abs() < 1e-4, "Q[1]: got {}, expected {}", q[1], expected_q1);
+        assert!((q[2] - expected_q2).abs() < 1e-4, "Q[2]: got {}, expected {}", q[2], expected_q2);
+    }
+
+    #[test]
+    fn test_standard_backward_compat() {
+        // Existing standard weights should still load correctly
+        let hidden = 2;
+        let floats = build_standard_weights(TEST_OBS_DIM, hidden);
+        let net = DmcNet::from_floats(&floats, hidden, TEST_OBS_DIM, false).unwrap();
+        assert!(!net.is_dueling());
+        assert_eq!(net.obs_dim(), TEST_OBS_DIM);
     }
 }

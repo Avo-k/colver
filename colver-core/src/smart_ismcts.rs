@@ -33,7 +33,7 @@ impl Default for SmartIsMctsConfig {
             exploration: std::f32::consts::SQRT_2,
             use_soft_inference: true,
             time_limit_ms: None,
-            bid_function: BidFunction::Improved,
+            bid_function: BidFunction::ImprovedV2,
         }
     }
 }

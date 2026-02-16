@@ -21,3 +21,6 @@ images/SVG-cards-1.3.zip
 
 # Secrets
 .env
+
+# Private strategy documents
+docs/enchere_cannes_roro.md

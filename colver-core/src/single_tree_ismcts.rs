@@ -39,7 +39,7 @@ impl Default for SingleTreeIsmctsConfig {
             iterations: 1000,
             exploration: std::f32::consts::SQRT_2,
             use_soft_inference: true,
-            bid_function: BidFunction::Improved,
+            bid_function: BidFunction::ImprovedV2,
             time_limit_ms: None,
             rollout_policy: RolloutPolicy::HeuristicPlay,
             reuse_tree: true,
