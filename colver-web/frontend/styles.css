@@ -67,7 +67,8 @@ main {
 
 .panel { display: none; }
 .panel.active { display: block; }
-#play-panel.active {
+#play-panel.active,
+#watch-panel.active {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -208,7 +209,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .seat.west .hand .card,
 .seat.east .hand .card {
     margin-left: 0;
-    margin-top: calc(var(--card-h) * -0.78);
+    margin-top: calc(var(--card-h) * -0.85);
 }
 .seat.west .hand .card:first-child,
 .seat.east .hand .card:first-child {
@@ -473,7 +474,8 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 #watch-main {
     display: flex;
     gap: 16px;
-    height: calc(100vh - 130px);
+    flex: 1;
+    min-height: 0;
     /* Scope card sizes for watch: board shares viewport with sidebars */
     --card-w: clamp(40px, min(4.2vw, 7vh), 90px);
     --card-h: calc(var(--card-w) * 1.43);
