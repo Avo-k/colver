@@ -2,6 +2,14 @@
   <img src="https://raw.githubusercontent.com/Avo-k/colver/master/images/colver.png" alt="Colver Logo" width="200">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?color=blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/pyversions/colver" alt="Python"></a>
+  <a href="https://crates.io/crates/colver-core"><img src="https://img.shields.io/crates/v/colver-core?color=orange" alt="crates.io"></a>
+  <a href="https://avok.me/colver/"><img src="https://img.shields.io/badge/demo-avok.me%2Fcolver-green" alt="Live Demo"></a>
+  <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/pypi/l/colver" alt="License"></a>
+</p>
+
 # Colver
 
 **[Lire en francais](README.fr.md)**
