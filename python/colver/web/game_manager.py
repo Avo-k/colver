@@ -21,6 +21,7 @@ class TrickTracker:
         self._current_trick_lead = None  # lead of the trick in progress
         self._belote_event = None  # "belote" or "rebelote" after an action
         self._belote_player = None  # seat that triggered it
+        self.trick_just_completed = False  # set after each trick, cleared by caller
 
     def _card_points(self, card_idx, trump_suit):
         suit = card_idx >> 3
@@ -74,6 +75,7 @@ class TrickTracker:
                 "lead": self.last_trick_lead,
             })
             self._trick_just_completed = False
+            self.trick_just_completed = True
 
 
 AI_TIME_MS = 100  # Fixed time budget for all search-based AIs

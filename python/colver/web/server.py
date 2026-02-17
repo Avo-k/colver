@@ -164,6 +164,11 @@ async def websocket_endpoint(ws: WebSocket):
                 if play_game_id and play_session.env.is_terminal():
                     await _complete_game(play_game_id, play_session)
 
+                # Pause 2s when human plays the 4th card so the trick is visible
+                if play_session.trick_just_completed:
+                    play_session.trick_just_completed = False
+                    await asyncio.sleep(2.0)
+
                 await _run_ai_turns(ws, play_session, human_seat, play_game_id)
 
             elif msg_type == "watch_start":
@@ -380,6 +385,11 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None):
         # Save action to DB
         if game_id:
             await db.append_action(game_id, session.history[-1])
+
+        # Pause 2s when AI plays the 4th card so the trick is visible
+        if session.trick_just_completed:
+            session.trick_just_completed = False
+            await asyncio.sleep(2.0)
 
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():
