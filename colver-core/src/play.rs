@@ -234,6 +234,10 @@ pub fn apply_play(state: &mut GameState, card: Card) {
 
 /// Resolve a completed trick.
 fn resolve_trick(state: &mut GameState) {
+    // Save trick to history before incrementing tricks_won
+    let trick_idx = (state.tricks_won[0] + state.tricks_won[1]) as usize;
+    state.trick_history[trick_idx] = state.current_trick;
+
     let winner = trick_winner(&state.current_trick, state.trick_lead, &state.contract);
     let team = GameState::player_team(winner) as usize;
 

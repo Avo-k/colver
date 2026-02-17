@@ -5,6 +5,7 @@ pub mod trick;
 pub mod play;
 pub mod scoring;
 pub mod game;
+pub mod cfn;
 pub mod rollout;
 pub mod determinize;
 pub mod bid_eval;

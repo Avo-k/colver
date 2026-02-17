@@ -848,6 +848,62 @@ impl Env {
         Ok(dict)
     }
 
+    /// Convert game state to CFN (Contrée FEN Notation) string.
+    fn to_cfn(&self) -> String {
+        self.state.to_cfn()
+    }
+
+    /// Create an Env from a CFN string.
+    #[staticmethod]
+    fn from_cfn(cfn: &str) -> PyResult<Self> {
+        let state = GameState::from_cfn(cfn).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("{}", e))
+        })?;
+
+        // Reconstruct play_order and played_by from trick_history
+        let mut played_by = [0u32; 4];
+        let mut play_order = Vec::with_capacity(32);
+        let bid_history = Vec::new();
+
+        let completed = (state.tricks_won[0] + state.tricks_won[1]) as usize;
+        let first_lead = (state.dealer + 1) % 4;
+        let mut current_lead = first_lead;
+
+        for t in 0..completed {
+            let trick = state.trick_history[t];
+            for i in 0..4u8 {
+                let seat = (current_lead + i) % 4;
+                let card = trick[seat as usize];
+                played_by[seat as usize] |= 1u32 << card;
+                play_order.push(card);
+            }
+            let winner = colver_core::trick::trick_winner(&trick, current_lead, &state.contract);
+            current_lead = winner;
+        }
+
+        // Current partial trick
+        if state.phase == Phase::Playing && state.trick_count > 0 {
+            for i in 0..state.trick_count {
+                let seat = (state.trick_lead + i) % 4;
+                let card = state.current_trick[seat as usize];
+                played_by[seat as usize] |= 1u32 << card;
+                play_order.push(card);
+            }
+        }
+
+        Ok(Env {
+            state,
+            rng: StdRng::from_entropy(),
+            naive_search: None,
+            smart_searches: None,
+            smart_initialized: false,
+            played_by,
+            play_order,
+            bid_history,
+            dmc_net: None,
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("{:?}", self.state)
     }

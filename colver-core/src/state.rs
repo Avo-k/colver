@@ -61,8 +61,8 @@ impl Contract {
     }
 }
 
-/// Full game state. Designed to be Copy and small (~64 bytes) for fast MCTS cloning.
-#[derive(Clone, Copy)]
+/// Full game state. Designed to be Copy and small for fast MCTS cloning.
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub struct GameState {
     // ---- Hands: 16 bytes ----
@@ -115,10 +115,15 @@ pub struct GameState {
     pub belote: [u8; 2],
     /// Per team: which player (0-3) declared belote (valid when belote[team] >= 1).
     pub belote_player: [u8; 2],
+
+    // ---- Trick history: 32 bytes ----
+    /// Completed tricks stored by seat index (like current_trick).
+    /// trick_history[i] contains the cards for the (i+1)-th completed trick.
+    pub trick_history: [[Card; 4]; 8],
 }
 
 // Ensure we're small enough for fast copies.
-const _: () = assert!(core::mem::size_of::<GameState>() <= 64);
+const _: () = assert!(core::mem::size_of::<GameState>() <= 96);
 
 impl GameState {
     /// Create a new game state with dealt hands.
@@ -146,6 +151,7 @@ impl GameState {
             voids: [0; 4],
             belote: [0; 2],
             belote_player: [0; 2],
+            trick_history: [[EMPTY; 4]; 8],
         }
     }
 
@@ -221,8 +227,8 @@ mod tests {
     #[test]
     fn test_state_size() {
         assert!(
-            core::mem::size_of::<GameState>() <= 64,
-            "GameState is {} bytes, must be <= 64",
+            core::mem::size_of::<GameState>() <= 96,
+            "GameState is {} bytes, must be <= 96",
             core::mem::size_of::<GameState>()
         );
     }
