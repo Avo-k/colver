@@ -446,6 +446,10 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     display: flex;
     gap: 16px;
     height: calc(100vh - 130px);
+    /* Scope card sizes for watch: board shares viewport with sidebars */
+    --card-w: clamp(40px, min(4.2vw, 7vh), 90px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
 }
 
 /* History sidebar */
@@ -674,7 +678,8 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     flex: 1;
     position: relative;
     min-width: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 #watch-right {
