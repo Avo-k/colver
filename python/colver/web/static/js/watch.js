@@ -299,6 +299,7 @@ function renderWatchState(state) {
     document.getElementById('watch-score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
     document.getElementById('watch-score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
     document.getElementById('watch-contract-display').textContent = contractStr(state.contract);
+    updateCfnBox('watch-cfn', state.cfn);
 
     // Belote badges
     if (state.belote) {

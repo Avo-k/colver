@@ -123,6 +123,7 @@ class PlaySession(TrickTracker):
             "last_trick_winner": self.last_trick_winner,
             "last_trick_points": self.last_trick_points,
             "belote": list(self.env.get_belote()),
+            "cfn": self.env.to_cfn(),
         }
         # During bidding, suggest the best trump suit for the human player
         if phase == 0:
@@ -244,6 +245,7 @@ class WatchSession(TrickTracker):
             "last_trick_winner": self.last_trick_winner,
             "last_trick_points": self.last_trick_points,
             "belote": list(self.env.get_belote()),
+            "cfn": self.env.to_cfn(),
         }
 
     def compute_next_action(self):
@@ -377,6 +379,7 @@ class ReplaySession(TrickTracker):
             "last_trick_winner": self.last_trick_winner,
             "last_trick_points": self.last_trick_points,
             "belote": list(self.env.get_belote()),
+            "cfn": self.env.to_cfn(),
         }
 
     def step(self):
