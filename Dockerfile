@@ -28,12 +28,13 @@ FROM python:3.12-slim-bookworm
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy DMC model weights if available (enables DouDou agent via Rust inference)
-COPY models/dmc_final.bi[n] /app/models/
+# Entrypoint auto-downloads model if missing
+COPY entrypoint.sh /app/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV COLVER_MODEL_PATH="/app/models/dmc_final.bin"
 WORKDIR /app
 EXPOSE 8000
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "-m", "colver.web"]

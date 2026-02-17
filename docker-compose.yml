@@ -8,4 +8,5 @@ services:
       - ./data:/app/data
     environment:
       - ROOT_PATH=${ROOT_PATH:-/colver}
+      - COLVER_UPDATE_MODEL=1
     restart: unless-stopped
