@@ -87,6 +87,15 @@ struct Args {
     pool_save_freq: usize,
     #[arg(long, default_value_t = 10)]
     pool_size: usize,
+    /// Path to a frozen .bin model to evaluate against (e.g. a strong checkpoint).
+    #[arg(long)]
+    eval_checkpoint: Option<String>,
+    /// Number of matches to play against the frozen checkpoint.
+    #[arg(long, default_value_t = 50)]
+    eval_checkpoint_matches: usize,
+    /// Offset added to step counter for logging and checkpoint filenames (for resumed runs).
+    #[arg(long, default_value_t = 0)]
+    step_offset: usize,
 }
 
 /// Opponent type per environment.
@@ -102,6 +111,16 @@ struct EpisodeTransition {
     team: u8,        // 0=NS, 1=EW
 }
 
+/// Evaluation results.
+struct EvalResult {
+    deal_wr: f64,
+    rand_wr: f64,
+    naive_wr: f64,
+    smart_wr: f64,
+    ckpt_wr: f64,
+    elapsed: f64,
+}
+
 /// Evaluate the Q-network vs various baselines.
 fn evaluate(
     trainer: &DuelingTrainer,
@@ -109,8 +128,10 @@ fn evaluate(
     random_matches: usize,
     naive_matches: usize,
     smart_matches: usize,
+    checkpoint_matches: usize,
     time_ms: u32,
-) -> (f64, f64, f64, f64, f64) {
+    baseline_net: Option<&mut DmcNet>,
+) -> EvalResult {
     let start = Instant::now();
 
     // Export current weights for CPU inference
@@ -118,14 +139,14 @@ fn evaluate(
         Ok(w) => w,
         Err(e) => {
             eprintln!("Failed to snapshot weights: {}", e);
-            return (0.0, 0.0, 0.0, 0.0, 0.0);
+            return EvalResult { deal_wr: 0.0, rand_wr: 0.0, naive_wr: 0.0, smart_wr: 0.0, ckpt_wr: 0.0, elapsed: 0.0 };
         }
     };
     let mut q_net = match DmcNet::from_floats(&weights, hidden, OBS_DIM, true) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to load eval net: {}", e);
-            return (0.0, 0.0, 0.0, 0.0, 0.0);
+            return EvalResult { deal_wr: 0.0, rand_wr: 0.0, naive_wr: 0.0, smart_wr: 0.0, ckpt_wr: 0.0, elapsed: 0.0 };
         }
     };
 
@@ -135,7 +156,7 @@ fn evaluate(
     let mut deal_wins = 0;
     for q_team in 0..2u8 {
         for _ in 0..100 {
-            let won = play_deal_eval(&mut q_net, q_team, "random", 0, &mut rng);
+            let won = play_deal_eval(&mut q_net, q_team, "random", 0, None, &mut rng);
             if won { deal_wins += 1; }
         }
     }
@@ -147,7 +168,7 @@ fn evaluate(
         let per_side = random_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "random", 0, &mut rng) {
+                if play_match_eval(&mut q_net, q_team, "random", 0, None, &mut rng) {
                     wins += 1;
                 }
             }
@@ -163,7 +184,7 @@ fn evaluate(
         let per_side = naive_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "naive", time_ms, &mut rng) {
+                if play_match_eval(&mut q_net, q_team, "naive", time_ms, None, &mut rng) {
                     wins += 1;
                 }
             }
@@ -179,7 +200,7 @@ fn evaluate(
         let per_side = smart_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "smart", time_ms, &mut rng) {
+                if play_match_eval(&mut q_net, q_team, "smart", time_ms, None, &mut rng) {
                     wins += 1;
                 }
             }
@@ -189,8 +210,28 @@ fn evaluate(
         0.0
     };
 
+    // 5. Match play vs frozen checkpoint
+    let ckpt_wr = if checkpoint_matches > 0 {
+        if let Some(ref_net) = baseline_net {
+            let mut wins = 0;
+            let per_side = checkpoint_matches / 2;
+            for q_team in 0..2u8 {
+                for _ in 0..per_side {
+                    if play_match_eval(&mut q_net, q_team, "checkpoint", 0, Some(ref_net), &mut rng) {
+                        wins += 1;
+                    }
+                }
+            }
+            wins as f64 / checkpoint_matches as f64
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
     let elapsed = start.elapsed().as_secs_f64();
-    (deal_wr, rand_wr, naive_wr, smart_wr, elapsed)
+    EvalResult { deal_wr, rand_wr, naive_wr, smart_wr, ckpt_wr, elapsed }
 }
 
 /// Play a single deal for evaluation. Returns true if Q-team wins.
@@ -199,6 +240,7 @@ fn play_deal_eval(
     q_team: u8,
     baseline: &str,
     time_ms: u32,
+    mut baseline_net: Option<&mut DmcNet>,
     rng: &mut StdRng,
 ) -> bool {
     let dealer = rng.gen_range(0..4u8);
@@ -257,6 +299,13 @@ fn play_deal_eval(
                     let searches = smart_searches.as_mut().unwrap();
                     searches[player as usize].search(&state, &config, rng)
                 }
+                "checkpoint" => {
+                    let net = baseline_net.as_deref_mut().unwrap();
+                    let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
+                    let legal_mask = state.legal_actions() as u32;
+                    let (best, _) = net.best_action(&obs, legal_mask);
+                    best
+                }
                 _ => unreachable!(),
             }
         };
@@ -282,6 +331,7 @@ fn play_match_eval(
     q_team: u8,
     baseline: &str,
     time_ms: u32,
+    mut baseline_net: Option<&mut DmcNet>,
     rng: &mut StdRng,
 ) -> bool {
     let mut q_total = 0.0f32;
@@ -341,6 +391,13 @@ fn play_match_eval(
                         let searches = smart_searches.as_mut().unwrap();
                         searches[player as usize].search(&state, &config, rng)
                     }
+                    "checkpoint" => {
+                        let net = baseline_net.as_deref_mut().unwrap();
+                        let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
+                        let legal_mask = state.legal_actions() as u32;
+                        let (best, _) = net.best_action(&obs, legal_mask);
+                        best
+                    }
                     _ => unreachable!(),
                 }
             };
@@ -387,6 +444,10 @@ fn main() {
         (1.0 - args.pool_frac - args.random_frac) * 100.0,
         args.pool_frac * 100.0,
         args.random_frac * 100.0);
+    if args.step_offset > 0 {
+        println!("Step offset: {} (steps will display as {}..{})",
+            args.step_offset, args.step_offset + 1, args.step_offset + args.steps);
+    }
 
     // Initialize trainer
     let mut trainer = DuelingTrainer::new(args.hidden, args.lr, 0.0, device)
@@ -396,6 +457,13 @@ fn main() {
         trainer.load_checkpoint(path).expect("Failed to load checkpoint");
         println!("Resumed from {}", path);
     }
+
+    // Load frozen checkpoint for evaluation baseline
+    let mut eval_baseline: Option<DmcNet> = args.eval_checkpoint.as_ref().map(|path| {
+        let net = DmcNet::load(path).unwrap_or_else(|e| panic!("Failed to load eval checkpoint {}: {}", path, e));
+        println!("Eval baseline: {} (obs_dim={}, dueling={})", path, net.obs_dim(), net.is_dueling());
+        net
+    });
 
     // Initialize replay buffer
     let mut replay_buffer = PrioritizedReplayBuffer::new(args.buffer_size, args.per_alpha);
@@ -668,7 +736,7 @@ fn main() {
             let avg_loss = if loss_count > 0 { total_loss / loss_count as f64 } else { 0.0 };
             println!(
                 "{:>10} | {:>5.3} | {:>5.3} | {:>7} | {:>8.4} | {:>8} | {:>7.0}",
-                step + 1, eps, beta, replay_buffer.size(), avg_loss, total_episodes, sps
+                step + 1 + args.step_offset, eps, beta, replay_buffer.size(), avg_loss, total_episodes, sps
             );
             total_loss = 0.0;
             loss_count = 0;
@@ -678,31 +746,36 @@ fn main() {
 
         // --- Evaluate ---
         if (step + 1) % args.eval_freq == 0 {
-            let (deal_wr, rand_wr, naive_wr, smart_wr, eval_time) = evaluate(
+            let er = evaluate(
                 &trainer, args.hidden,
                 args.eval_random_matches,
                 args.eval_naive_matches,
                 args.eval_smart_matches,
+                args.eval_checkpoint_matches,
                 args.eval_time_ms,
+                eval_baseline.as_mut(),
             );
-            let mut parts = vec![format!("deals {:.0}%", deal_wr * 100.0)];
+            let mut parts = vec![format!("deals {:.0}%", er.deal_wr * 100.0)];
             if args.eval_random_matches > 0 {
-                parts.push(format!("rand {:.0}%", rand_wr * 100.0));
+                parts.push(format!("rand {:.0}%", er.rand_wr * 100.0));
             }
             if args.eval_naive_matches > 0 {
-                parts.push(format!("naive {:.0}%", naive_wr * 100.0));
+                parts.push(format!("naive {:.0}%", er.naive_wr * 100.0));
             }
             if args.eval_smart_matches > 0 {
-                parts.push(format!("smart {:.0}%", smart_wr * 100.0));
+                parts.push(format!("smart {:.0}%", er.smart_wr * 100.0));
             }
-            println!("  [EVAL] {} ({:.0}s)", parts.join(" | "), eval_time);
+            if eval_baseline.is_some() && args.eval_checkpoint_matches > 0 {
+                parts.push(format!("ckpt {:.0}%", er.ckpt_wr * 100.0));
+            }
+            println!("  [EVAL] {} ({:.0}s)", parts.join(" | "), er.elapsed);
         }
 
         // --- Save checkpoint ---
         if (step + 1) % args.save_freq == 0 {
             std::fs::create_dir_all(&args.save_dir).ok();
-            let st_path = format!("{}/dmc_{}.safetensors", args.save_dir, step + 1);
-            let bin_path = format!("{}/dmc_{}.bin", args.save_dir, step + 1);
+            let st_path = format!("{}/dmc_{}.safetensors", args.save_dir, step + 1 + args.step_offset);
+            let bin_path = format!("{}/dmc_{}.bin", args.save_dir, step + 1 + args.step_offset);
             if let Err(e) = trainer.save_checkpoint(&st_path) {
                 eprintln!("Failed to save safetensors: {}", e);
             }
@@ -720,24 +793,29 @@ fn main() {
 
     // Final eval and save
     println!("\n--- Final Evaluation ---");
-    let (deal_wr, rand_wr, naive_wr, smart_wr, eval_time) = evaluate(
+    let er = evaluate(
         &trainer, args.hidden,
         args.eval_random_matches,
         args.eval_naive_matches,
         args.eval_smart_matches,
+        args.eval_checkpoint_matches,
         args.eval_time_ms,
+        eval_baseline.as_mut(),
     );
-    println!("Deals vs random: {:.1}%", deal_wr * 100.0);
+    println!("Deals vs random: {:.1}%", er.deal_wr * 100.0);
     if args.eval_random_matches > 0 {
-        println!("Matches vs random: {:.1}%", rand_wr * 100.0);
+        println!("Matches vs random: {:.1}%", er.rand_wr * 100.0);
     }
     if args.eval_naive_matches > 0 {
-        println!("Matches vs naive IS-MCTS: {:.1}%", naive_wr * 100.0);
+        println!("Matches vs naive IS-MCTS: {:.1}%", er.naive_wr * 100.0);
     }
     if args.eval_smart_matches > 0 {
-        println!("Matches vs smart IS-MCTS: {:.1}%", smart_wr * 100.0);
+        println!("Matches vs smart IS-MCTS: {:.1}%", er.smart_wr * 100.0);
     }
-    println!("Eval time: {:.0}s", eval_time);
+    if eval_baseline.is_some() && args.eval_checkpoint_matches > 0 {
+        println!("Matches vs checkpoint: {:.1}%", er.ckpt_wr * 100.0);
+    }
+    println!("Eval time: {:.0}s", er.elapsed);
     println!("Total training time: {:.0}s", step_start.elapsed().as_secs_f64());
 
     std::fs::create_dir_all(&args.save_dir).ok();
