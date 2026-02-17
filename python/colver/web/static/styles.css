@@ -59,7 +59,7 @@ nav { display: flex; gap: 4px; }
 
 main {
     padding: clamp(8px, 1vw, 16px);
-    max-width: 1400px;
+    max-width: 1800px;
     margin: 0 auto;
     height: calc(100vh - 46px); /* viewport minus header */
     overflow: hidden;
@@ -429,7 +429,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 #play-table {
-    --card-w: clamp(45px, min(5.5vw, 8vh), 95px);
+    --card-w: clamp(65px, min(6vw, 10.5vh), 150px);
     --card-h: calc(var(--card-w) * 1.43);
     --card-overlap: calc(var(--card-w) * -0.2);
     display: grid;
