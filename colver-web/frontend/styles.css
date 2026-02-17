@@ -423,6 +423,13 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     border: 1px solid rgba(212,175,55,0.2);
 }
 
+#play-table {
+    /* Scope card sizes for play: leave room for bidding panel + status below the board */
+    --card-w: clamp(45px, min(5.5vw, 6.5vh), 95px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
+}
+
 #play-status {
     text-align: center;
     padding: 8px;
