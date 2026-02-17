@@ -13,7 +13,7 @@
         <nav>
             <button class="tab active" data-tab="play">Jouer</button>
             <button class="tab" data-tab="watch">Regarder</button>
-            <button class="tab" data-tab="analysis">Analyse</button>
+            <button class="tab" data-tab="deal">Donner</button>
             <button class="tab" data-tab="docs">Docs</button>
         </nav>
     </header>
@@ -232,10 +232,10 @@
             </div>
         </div>
 
-        <!-- ANALYSIS MODE -->
-        <div id="analysis-panel" class="panel">
-            <div id="analysis-config">
-                <h3>Configurer la position</h3>
+        <!-- DEAL MODE -->
+        <div id="deal-panel" class="panel">
+            <div id="deal-config">
+                <h3>Configurer la donne</h3>
                 <div id="hand-editor">
                     <div id="card-palette"></div>
                     <div id="drop-zones">
@@ -257,67 +257,55 @@
                         </div>
                     </div>
                 </div>
-                <div id="contract-editor">
-                    <label>Atout :
-                        <select id="analysis-trump">
-                            <option value="0">&#9824; Pique</option>
-                            <option value="1">&#9829; Coeur</option>
-                            <option value="2">&#9830; Carreau</option>
-                            <option value="3">&#9827; Trefle</option>
+                <div id="deal-options">
+                    <label>Donneur :
+                        <select id="deal-dealer">
+                            <option value="0">Nord</option>
+                            <option value="1">Est</option>
+                            <option value="2">Sud</option>
+                            <option value="3">Ouest</option>
                         </select>
                     </label>
-                    <label>Valeur :
-                        <select id="analysis-value">
-                            <option value="80">80</option>
-                            <option value="90">90</option>
-                            <option value="100">100</option>
-                            <option value="110">110</option>
-                            <option value="120">120</option>
-                            <option value="130">130</option>
-                            <option value="140">140</option>
-                            <option value="150">150</option>
-                            <option value="160">160</option>
-                            <option value="250">Capot</option>
-                        </select>
-                    </label>
-                    <label>Equipe :
-                        <select id="analysis-team">
-                            <option value="0">NS</option>
-                            <option value="1">EO</option>
-                        </select>
-                    </label>
-                </div>
-                <button id="random-deal">Donne aleatoire</button>
-                <button id="setup-analysis">Valider la position</button>
-            </div>
-
-            <div id="analysis-table" class="table hidden">
-                <div class="seats">
-                    <div class="seat north"><div class="seat-label">Nord</div><div class="hand" id="analysis-hand-north"></div></div>
-                    <div class="seat west"><div class="seat-label">Ouest</div><div class="hand" id="analysis-hand-west"></div></div>
-                    <div id="analysis-trick-area">
-                        <div class="trick-card" id="analysis-trick-n"></div>
-                        <div class="trick-card" id="analysis-trick-w"></div>
-                        <div class="trick-card" id="analysis-trick-e"></div>
-                        <div class="trick-card" id="analysis-trick-s"></div>
-                    </div>
-                    <div class="seat east"><div class="seat-label">Est</div><div class="hand" id="analysis-hand-east"></div></div>
-                    <div class="seat south"><div class="seat-label">Sud</div><div class="hand" id="analysis-hand-south"></div></div>
-                </div>
-                <div id="analysis-controls">
-                    <label>Agent :
-                        <select id="analysis-agent">
-                            <option value="naive">Naive IS-MCTS</option>
+                    <div class="deal-agents">
+                        <label>N : <select class="deal-agent-select" data-seat="0">
+                            <option value="doudou">DouDou</option>
                             <option value="smart">Smart IS-MCTS</option>
-                        </select>
-                    </label>
-                    <label>Temps (ms) :
-                        <input type="range" id="analysis-time" min="50" max="2000" value="200" step="50">
-                        <span id="analysis-time-val">200</span>
-                    </label>
-                    <button id="run-analysis">Analyser</button>
+                            <option value="naive">Naive IS-MCTS</option>
+                            <option value="oracle">Oracle (MCTS)</option>
+                            <option value="heuristic">Heuristique</option>
+                            <option value="random">Aleatoire</option>
+                        </select></label>
+                        <label>E : <select class="deal-agent-select" data-seat="1">
+                            <option value="doudou">DouDou</option>
+                            <option value="smart">Smart IS-MCTS</option>
+                            <option value="naive">Naive IS-MCTS</option>
+                            <option value="oracle">Oracle (MCTS)</option>
+                            <option value="heuristic">Heuristique</option>
+                            <option value="random">Aleatoire</option>
+                        </select></label>
+                        <label>S : <select class="deal-agent-select" data-seat="2">
+                            <option value="doudou">DouDou</option>
+                            <option value="smart">Smart IS-MCTS</option>
+                            <option value="naive">Naive IS-MCTS</option>
+                            <option value="oracle">Oracle (MCTS)</option>
+                            <option value="heuristic">Heuristique</option>
+                            <option value="random">Aleatoire</option>
+                        </select></label>
+                        <label>O : <select class="deal-agent-select" data-seat="3">
+                            <option value="doudou">DouDou</option>
+                            <option value="smart">Smart IS-MCTS</option>
+                            <option value="naive">Naive IS-MCTS</option>
+                            <option value="oracle">Oracle (MCTS)</option>
+                            <option value="heuristic">Heuristique</option>
+                            <option value="random">Aleatoire</option>
+                        </select></label>
+                    </div>
                 </div>
-                <div id="analysis-result"></div>
+                <div id="deal-buttons">
+                    <button id="random-deal">Donne aleatoire</button>
+                    <button id="save-deal">Enregistrer</button>
+                </div>
+                <div id="deal-feedback" class="hidden"></div>
             </div>
         </div>
         <!-- DOCS -->
@@ -327,7 +315,7 @@
                 <p class="docs-intro">
                     Colver is a high-performance Belote Contree game environment built for reinforcement learning research.
                     The core engine is written in Rust, capable of over 1 million rollouts per second.
-                    This web interface lets you play against various AI agents, watch them compete, and analyze positions.
+                    This web interface lets you play against various AI agents, watch them compete, and create custom deals.
                 </p>
                 <p class="docs-link">
                     Source code: <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
@@ -354,11 +342,11 @@
                 </div>
 
                 <div class="docs-section">
-                    <h4>Analyse</h4>
+                    <h4>Donner</h4>
                     <p>
-                        Set up a custom position by dragging cards from the palette into 4 player drop zones
-                        (or use "Donne aleatoire" for a random deal). Configure the contract (trump, value, declaring team),
-                        then run IS-MCTS analysis to see the best move and action rankings for the current player.
+                        Create a custom deal by dragging cards from the palette into 4 player drop zones
+                        (or use "Donne aleatoire" for a random deal). Pick the dealer and assign an AI agent
+                        to each seat, then save the deal. Load it in Regarder to watch the AI play it live.
                     </p>
                 </div>
 
@@ -450,6 +438,6 @@
     <script src="static/js/play.js?v=5"></script>
     <script src="static/js/watch.js?v=5"></script>
     <script src="static/js/history.js?v=5"></script>
-    <script src="static/js/analysis.js?v=5"></script>
+    <script src="static/js/deal.js?v=5"></script>
 </body>
 </html>

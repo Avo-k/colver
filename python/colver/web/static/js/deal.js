@@ -1,6 +1,6 @@
-// Analysis mode logic — drag-and-drop card assignment
+// Deal mode logic — drag-and-drop card assignment + save to DB
 
-let analysisHands = [[], [], [], []];
+let dealHands = [[], [], [], []];
 let assignedCards = new Set();
 
 const PLAYER_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
@@ -131,18 +131,18 @@ function initDropZones() {
 }
 
 function assignCardToPlayer(cardIdx, playerIdx) {
-    if (analysisHands[playerIdx].length >= 8) return false;
+    if (dealHands[playerIdx].length >= 8) return false;
     if (assignedCards.has(cardIdx)) return false;
-    analysisHands[playerIdx].push(cardIdx);
+    dealHands[playerIdx].push(cardIdx);
     assignedCards.add(cardIdx);
     return true;
 }
 
 function removeCardFromPlayer(cardIdx) {
     for (let p = 0; p < 4; p++) {
-        const i = analysisHands[p].indexOf(cardIdx);
+        const i = dealHands[p].indexOf(cardIdx);
         if (i >= 0) {
-            analysisHands[p].splice(i, 1);
+            dealHands[p].splice(i, 1);
             break;
         }
     }
@@ -162,7 +162,7 @@ function updateCardDisplay() {
     // Update each drop zone
     document.querySelectorAll('.drop-zone').forEach(zone => {
         const playerIdx = parseInt(zone.dataset.player);
-        const cards = analysisHands[playerIdx];
+        const cards = dealHands[playerIdx];
         const countEl = zone.querySelector('.dz-count');
         countEl.textContent = `(${cards.length}/8)`;
 
@@ -183,7 +183,7 @@ document.getElementById('random-deal').addEventListener('click', () => {
         const j = Math.floor(Math.random() * (i + 1));
         [cards[i], cards[j]] = [cards[j], cards[i]];
     }
-    analysisHands = [
+    dealHands = [
         cards.slice(0, 8),
         cards.slice(8, 16),
         cards.slice(16, 24),
@@ -194,78 +194,57 @@ document.getElementById('random-deal').addEventListener('click', () => {
     updateCardDisplay();
 });
 
-document.getElementById('setup-analysis').addEventListener('click', () => {
+document.getElementById('save-deal').addEventListener('click', () => {
     for (let p = 0; p < 4; p++) {
-        if (analysisHands[p].length !== 8) {
-            alert(`${PLAYER_NAMES_FR[p]} doit avoir exactement 8 cartes (en a ${analysisHands[p].length})`);
+        if (dealHands[p].length !== 8) {
+            alert(`${PLAYER_NAMES_FR[p]} doit avoir exactement 8 cartes (en a ${dealHands[p].length})`);
             return;
         }
     }
 
-    const trump = parseInt(document.getElementById('analysis-trump').value);
-    const value = parseInt(document.getElementById('analysis-value').value);
-    const team = parseInt(document.getElementById('analysis-team').value);
+    const dealer = parseInt(document.getElementById('deal-dealer').value);
+    const agents = {};
+    document.querySelectorAll('.deal-agent-select').forEach(sel => {
+        agents[sel.dataset.seat] = sel.value;
+    });
 
     send({
-        type: 'setup_analysis',
-        dealer: 0,
-        hands: analysisHands,
-        contract: { trump, value, team, coinche: 0 },
+        type: 'save_custom_deal',
+        dealer,
+        hands: dealHands,
+        agents,
     });
 });
 
-document.getElementById('run-analysis').addEventListener('click', () => {
-    const agent = document.getElementById('analysis-agent').value;
-    const timeMs = parseInt(document.getElementById('analysis-time').value);
-    document.getElementById('run-analysis').disabled = true;
-    document.getElementById('run-analysis').textContent = 'Analyse en cours...';
-    send({ type: 'analyze', agent, time_ms: timeMs });
-});
-
-function renderAnalysisState(state) {
-    document.getElementById('analysis-table').classList.remove('hidden');
-
-    const handEls = {
-        0: document.getElementById('analysis-hand-north'),
-        1: document.getElementById('analysis-hand-east'),
-        2: document.getElementById('analysis-hand-south'),
-        3: document.getElementById('analysis-hand-west'),
-    };
-    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-    for (let seat = 0; seat < 4; seat++) {
-        renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit);
-    }
-    renderTrick('analysis-trick', state.current_trick);
-}
-
 // Message handlers
-onMessage('analysis_ready', (data) => {
-    renderAnalysisState(data.state);
-});
+onMessage('deal_saved', (data) => {
+    const feedback = document.getElementById('deal-feedback');
+    feedback.classList.remove('hidden');
+    feedback.innerHTML = '';
 
-onMessage('analysis_result', (data) => {
-    document.getElementById('run-analysis').disabled = false;
-    document.getElementById('run-analysis').textContent = 'Analyser';
+    const msg = document.createElement('span');
+    msg.textContent = `Donne enregistree : `;
+    feedback.appendChild(msg);
 
-    const el = document.getElementById('analysis-result');
-    el.innerHTML = '';
+    const idTag = document.createElement('span');
+    idTag.className = 'game-id-tag';
+    idTag.textContent = data.game_id;
+    feedback.appendChild(idTag);
 
-    const best = document.createElement('div');
-    best.className = 'best-action';
-    best.textContent = `Meilleur coup : ${data.name}`;
-    el.appendChild(best);
+    const watchBtn = document.createElement('button');
+    watchBtn.textContent = 'Regarder';
+    watchBtn.className = 'deal-watch-btn';
+    watchBtn.addEventListener('click', () => {
+        // Switch to watch tab
+        document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.querySelector('[data-tab="watch"]').classList.add('active');
+        document.getElementById('watch-panel').classList.add('active');
 
-    if (data.legal_actions) {
-        const list = document.createElement('div');
-        list.className = 'action-list';
-        for (const a of data.legal_actions) {
-            const item = document.createElement('div');
-            item.className = 'action-item' + (a.action === data.best ? ' best' : '');
-            item.textContent = a.name;
-            list.appendChild(item);
-        }
-        el.appendChild(list);
-    }
+        // Send watch_custom to start a live session with this deal
+        send({ type: 'watch_custom', game_id: data.game_id });
+    });
+    feedback.appendChild(watchBtn);
 });
 
 // Init

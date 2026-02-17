@@ -195,17 +195,22 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None):
+    def __init__(self, agents, dmc_model_path=None, dealer=None, hands=None):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
+        dealer: optional dealer seat (for custom deals)
+        hands: optional list of 4 hands (for custom deals)
         """
         self.agents = agents
         self.env = colver.Env()
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()
-        self.env.reset()
+        if hands is not None:
+            self.env = colver.Env.deal_with_hands(dealer if dealer is not None else 0, hands)
+        else:
+            self.env.reset()
 
         # Load DMC model if any seat uses DouDou
         if dmc_model_path and any(a == "doudou" for a in agents.values()):
@@ -403,59 +408,3 @@ class ReplaySession(TrickTracker):
         return move, self.get_state(), self.completed_tricks, finished
 
 
-class AnalysisSession:
-    """Custom position setup and analysis."""
-
-    def __init__(self):
-        self.env = None
-
-    def setup(self, dealer, hands, contract):
-        self.env = colver.Env.deal_with_hands(dealer, hands)
-        self.env.set_contract(
-            contract["trump"],
-            contract["value"],
-            contract["team"],
-            contract.get("coinche", 0),
-        )
-        self.env.set_phase_playing()
-        return self._get_state()
-
-    def _get_state(self):
-        return {
-            "phase": int(self.env.phase()),
-            "current_player": int(self.env.current_player()),
-            "hands": self.env.get_hands(),
-            "current_trick": self.env.get_current_trick(),
-            "contract": self.env.get_contract(),
-            "points": list(self.env.get_points()),
-            "tricks_won": list(self.env.get_tricks_won()),
-            "legal_actions": list(self.env.legal_actions()) if not self.env.is_terminal() else [],
-            "dealer": int(self.env.get_dealer()),
-            "trick_lead": int(self.env.get_trick_lead()),
-            "is_terminal": self.env.is_terminal(),
-            "belote": list(self.env.get_belote()),
-        }
-
-    def analyze(self, agent="naive", time_ms=200):
-        if self.env is None:
-            return {"error": "No position set up"}
-
-        legal = self.env.legal_actions()
-        if not legal:
-            return {"error": "No legal actions"}
-
-        phase = self.env.phase()
-        if agent == "smart":
-            self.env.smart_ismcts_init()
-            action = self.env.action_smart_ismcts(time_ms)
-        else:
-            action = self.env.action_naive_ismcts(time_ms)
-
-        return {
-            "best": int(action),
-            "name": colver.Env.action_name(action, phase),
-            "legal_actions": [
-                {"action": int(a), "name": colver.Env.action_name(a, phase)}
-                for a in legal
-            ],
-        }

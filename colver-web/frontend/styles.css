@@ -8,7 +8,7 @@
     --card-hover: calc(var(--card-w) * -0.17);
     --card-radius: clamp(4px, 0.5vw, 8px);
 
-    /* Palette cards (analysis) */
+    /* Palette cards (deal mode) */
     --palette-w: clamp(40px, 4vw, 70px);
     --palette-h: calc(var(--palette-w) * 1.43);
 
@@ -75,7 +75,7 @@ main {
 .hidden { display: none !important; }
 
 /* Config areas */
-#play-config, #watch-config, #analysis-config {
+#play-config, #watch-config, #deal-config {
     background: rgba(0,0,0,0.3);
     border-radius: 8px;
     padding: 12px 16px;
@@ -168,7 +168,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     text-shadow: 0 0 6px rgba(212, 175, 55, 0.5);
 }
 
-#trick-area, #watch-trick-area, #analysis-trick-area {
+#trick-area, #watch-trick-area {
     grid-area: trick;
     display: grid;
     grid-template-areas:
@@ -183,10 +183,10 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     min-height: calc(var(--card-h) * 1.4);
 }
 
-#trick-n, #watch-trick-n, #analysis-trick-n { grid-area: n; }
-#trick-s, #watch-trick-s, #analysis-trick-s { grid-area: s; }
-#trick-w, #watch-trick-w, #analysis-trick-w { grid-area: w; }
-#trick-e, #watch-trick-e, #analysis-trick-e { grid-area: e; }
+#trick-n, #watch-trick-n { grid-area: n; }
+#trick-s, #watch-trick-s { grid-area: s; }
+#trick-w, #watch-trick-w { grid-area: w; }
+#trick-e, #watch-trick-e { grid-area: e; }
 
 /* ===== PLAYING CARDS (SVG) ===== */
 .hand {
@@ -1057,13 +1057,13 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #fff8e1;
 }
 
-/* Analysis */
-#analysis-panel {
+/* Deal mode */
+#deal-panel {
     overflow-y: auto;
     max-height: calc(100vh - 60px);
 }
 
-#analysis-config {
+#deal-config {
     flex-direction: column;
     align-items: stretch;
 }
@@ -1172,52 +1172,45 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     z-index: 10;
 }
 
-#contract-editor {
+#deal-options {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.deal-agents {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
-    align-items: center;
 }
 
-#analysis-controls {
+.deal-agents select {
+    min-width: 120px;
+}
+
+#deal-buttons {
     display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-top: 12px;
-    padding: 8px 12px;
-    background: rgba(0,0,0,0.3);
-    border-radius: 6px;
-    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
 }
 
-#analysis-result {
-    margin-top: 12px;
-    background: rgba(0,0,0,0.3);
-    border-radius: 6px;
-    padding: 12px;
-}
-
-#analysis-result .best-action {
-    font-size: 1.1rem;
-    color: #d4af37;
-    margin-bottom: 8px;
-}
-
-#analysis-result .action-list {
+#deal-feedback {
     display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    background: rgba(76, 175, 80, 0.15);
+    border: 1px solid rgba(76, 175, 80, 0.4);
+    border-radius: 6px;
+    font-size: 0.9rem;
+    color: #a5d6a7;
 }
 
-#analysis-result .action-item {
-    background: rgba(255,255,255,0.1);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 0.85rem;
-}
-#analysis-result .action-item.best {
-    background: rgba(212, 175, 55, 0.3);
-    border: 1px solid #d4af37;
+.deal-watch-btn {
+    margin-left: auto;
 }
 
 /* ===== BELOTE ANNOUNCEMENTS ===== */

@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, AnalysisSession
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession
 import colver.web.database as db
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -89,7 +89,6 @@ async def websocket_endpoint(ws: WebSocket):
     play_session = None
     watch_session = None
     replay_session = None
-    analysis_session = None
     play_game_id = None
     watch_game_id = None
 
@@ -266,27 +265,45 @@ async def websocket_endpoint(ws: WebSocket):
                     replay_msg["belote_player"] = replay_session._belote_player
                 await ws.send_json(replay_msg)
 
-            elif msg_type == "setup_analysis":
+            elif msg_type == "save_custom_deal":
                 hands = data["hands"]
-                contract = data["contract"]
                 dealer = data.get("dealer", 0)
-                analysis_session = AnalysisSession()
-                state = analysis_session.setup(dealer, hands, contract)
+                agents = data.get("agents", {})
+                agents_map = {str(k): v for k, v in agents.items()}
+                game_id = await db.create_game(
+                    mode="custom",
+                    dealer=dealer,
+                    hands=hands,
+                    agents=agents_map,
+                )
                 await ws.send_json({
-                    "type": "analysis_ready",
-                    "state": state,
+                    "type": "deal_saved",
+                    "game_id": game_id,
                 })
 
-            elif msg_type == "analyze":
-                if analysis_session is None:
-                    await ws.send_json({"type": "error", "msg": "No analysis position"})
+            elif msg_type == "watch_custom":
+                game_id = data.get("game_id", "").strip().lower()
+                game_data = await db.get_game(game_id)
+                if not game_data:
+                    await ws.send_json({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
                     continue
-                agent = data.get("agent", "naive")
-                time_ms = data.get("time_ms", 200)
-                result = analysis_session.analyze(agent=agent, time_ms=time_ms)
+                agents = {int(k): v for k, v in game_data["agents"].items()}
+                watch_session = WatchSession(
+                    agents=agents,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    dealer=game_data["dealer"],
+                    hands=game_data["hands"],
+                )
+                replay_session = None
+                watch_game_id = game_id
+
                 await ws.send_json({
-                    "type": "analysis_result",
-                    **result,
+                    "type": "watch_started",
+                    "state": watch_session.get_state(),
+                    "doudou_available": doudou_available,
+                    "bid_history": [],
+                    "completed_tricks": [],
+                    "game_id": watch_game_id,
                 })
 
             else:

@@ -231,9 +231,5 @@ document.querySelectorAll('.tab').forEach(btn => {
     });
 });
 
-// Range value displays
-document.getElementById('analysis-time').addEventListener('input', e => {
-    document.getElementById('analysis-time-val').textContent = e.target.value;
-});
 // Connect on load
 connect();

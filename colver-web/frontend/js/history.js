@@ -37,8 +37,10 @@ function renderGameHistory(games) {
 
         const mode = document.createElement('span');
         mode.className = 'history-mode';
-        mode.textContent = g.mode === 'play' ? 'J' : 'R';
-        mode.title = g.mode === 'play' ? 'Jouer' : 'Regarder';
+        const modeMap = { play: 'J', watch: 'R', custom: 'D' };
+        const titleMap = { play: 'Jouer', watch: 'Regarder', custom: 'Donner' };
+        mode.textContent = modeMap[g.mode] || 'R';
+        mode.title = titleMap[g.mode] || g.mode;
 
         const info = document.createElement('span');
         info.className = 'history-info';
