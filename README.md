@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/colver.png" alt="Colver Logo" width="200">
+  <img src="https://raw.githubusercontent.com/Avo-k/colver/master/images/colver.png" alt="Colver Logo" width="200">
 </p>
 
 # Colver
@@ -35,25 +35,25 @@ The interface has four tabs:
 
 Play as South against AI opponents. Choose the agent for your opponents (East/West) and your partner (North) independently — DouDou, Smart IS-MCTS, Naive IS-MCTS, or Oracle. The game follows official FFB Belote Contree rules: bidding with coinche/surcoinche, then 8 tricks. Playable cards are raised, illegal cards are greyed out. The last trick is shown with points and winner.
 
-![Play tab](images/screenshots/tab-play.png)
+![Play tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-play.png)
 
 ### Watch
 
 Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats (including Heuristic and Random). Step through actions one by one, play full tricks, or use auto-play with adjustable speed. The stats panel shows MCTS visit counts and Q-values for each decision, with full bidding and trick history.
 
-![Watch tab](images/screenshots/tab-watch.png)
+![Watch tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-watch.png)
 
 ### Analysis
 
 Set up a custom position by dragging cards into 4 player drop zones, or generate a random deal. Configure the contract (trump suit, value, declaring team), then run IS-MCTS analysis to find the best move and action rankings for the current player.
 
-![Analysis tab](images/screenshots/tab-analysis.png)
+![Analysis tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-analysis.png)
 
 ### Docs
 
 In-app documentation describing the game modes and each AI agent in detail.
 
-![Docs tab](images/screenshots/tab-docs.png)
+![Docs tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-docs.png)
 
 ## Build & Run
 
