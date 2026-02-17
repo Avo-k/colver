@@ -16,7 +16,7 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 - **Etat de jeu `Copy` de 56 octets** pour un clonage MCTS performant
 - **Quatre agents IA** — MCTS parfait, IS-MCTS naif, IS-MCTS intelligent avec croyances, et reseau Q (Deep Monte-Carlo)
 - **Interface web** — Jouez contre l'IA dans le navigateur (FastAPI + WebSocket)
-- **Bindings Python** via PyO3 — `Env` (partie unique) et `VecEnv` (batch) avec NumPy
+- **Bindings Python** via PyO3 — classe `Env` avec stubs de types complets, installable depuis PyPI
 - Zero dependances dans le coeur (seulement `rand` derriere un feature flag)
 
 ## Interface Web
@@ -24,7 +24,8 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 Jouez contre les agents IA directement dans le navigateur sur **[avok.me/colver/](https://avok.me/colver/)**, ou lancez-le en local :
 
 ```bash
-uv run python colver-web/backend/server.py
+uv run python -m colver.web
+# Ou : uv run colver-web
 # Ouvrir http://localhost:8000
 ```
 
@@ -76,7 +77,7 @@ uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
 # Interface web (jouer contre l'IA)
-uv run python colver-web/backend/server.py
+uv run python -m colver.web
 
 # Entrainement DMC (reseau Q)
 PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
@@ -198,6 +199,8 @@ Encheres → Jeu → Fin. Les encheres se terminent apres 3 passes consecutives,
 ```python
 import colver
 
+print(colver.__version__)  # "0.2.0"
+
 # Environnement unique
 env = colver.Env()
 obs, legal_actions = env.reset()
@@ -209,16 +212,15 @@ env.legal_action_mask()    # tableau numpy (43,)
 env.rewards()              # [score_NS, score_EO]
 env.bid_improved()         # action d'enchere improved_bid
 env.deal_outcome()         # [resultat_NS, resultat_EO] binaire
+env.get_observation()      # vecteur d'observation de 415 flottants
 env.action_naive_ismcts(20)  # action IS-MCTS naif (20ms)
 env.action_smart_ismcts(20)  # action IS-MCTS intelligent (20ms)
 
-# Environnement vectorise pour l'entrainement RL
-venv = colver.VecEnv(256)
-obs, masks = venv.reset()                                   # (256, 415), (256, 43)
-obs, rewards, dones, masks, outcomes = venv.step(actions)   # actions: liste de 256 entiers
-venv.phases()              # (256,) u8
-venv.current_players()     # (256,) u8
-venv.bid_improved()        # (256,) u8
+# Reseau Q DMC (si les poids du modele sont telecharges)
+model = colver.model_path()  # ~/.cache/colver/models/dmc_final.bin
+if model:
+    env.load_dmc_model(str(model))
+    result = env.action_dmc_with_stats()  # {"best_action": 5, "q_values": [...]}
 ```
 
 ## Performance

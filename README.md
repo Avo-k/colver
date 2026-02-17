@@ -16,7 +16,7 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 - **56-byte `Copy` game state** for fast MCTS cloning
 - **Four AI agents** — perfect-info MCTS, Naive IS-MCTS, belief-weighted Smart IS-MCTS, and a Q-network (Deep Monte-Carlo)
 - **Web interface** — play against AI in the browser (FastAPI + WebSocket)
-- **Python bindings** via PyO3 — `Env` (single game) and `VecEnv` (batched) with NumPy
+- **Python bindings** via PyO3 — `Env` class with full type stubs, installable from PyPI
 - Zero dependencies in the core (only `rand` behind a feature flag)
 
 ## Web Interface
@@ -24,7 +24,8 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 Play against AI agents directly in your browser at **[avok.me/colver/](https://avok.me/colver/)**, or run it locally:
 
 ```bash
-uv run python colver-web/backend/server.py
+uv run python -m colver.web
+# Or: uv run colver-web
 # Open http://localhost:8000
 ```
 
@@ -76,7 +77,7 @@ uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
 # Web interface (play against AI)
-uv run python colver-web/backend/server.py
+uv run python -m colver.web
 
 # DMC training (Q-network)
 PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
@@ -198,6 +199,8 @@ Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoin
 ```python
 import colver
 
+print(colver.__version__)  # "0.2.0"
+
 # Single environment
 env = colver.Env()
 obs, legal_actions = env.reset()
@@ -209,16 +212,15 @@ env.legal_action_mask()    # numpy array (43,)
 env.rewards()              # [NS_score, EW_score]
 env.bid_improved()         # improved_bid action
 env.deal_outcome()         # [NS_outcome, EW_outcome] binary
+env.get_observation()      # 415-float observation vector
 env.action_naive_ismcts(20)  # naive IS-MCTS action (20ms)
 env.action_smart_ismcts(20)  # smart IS-MCTS action (20ms)
 
-# Vectorized environment for RL training
-venv = colver.VecEnv(256)
-obs, masks = venv.reset()                                   # (256, 415), (256, 43)
-obs, rewards, dones, masks, outcomes = venv.step(actions)   # actions: list of 256 ints
-venv.phases()              # (256,) u8
-venv.current_players()     # (256,) u8
-venv.bid_improved()        # (256,) u8
+# DMC Q-network (if model weights downloaded)
+model = colver.model_path()  # ~/.cache/colver/models/dmc_final.bin
+if model:
+    env.load_dmc_model(str(model))
+    result = env.action_dmc_with_stats()  # {"best_action": 5, "q_values": [...]}
 ```
 
 ## Performance
