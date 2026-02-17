@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css?v=3">
+    <link rel="stylesheet" href="static/styles.css?v=4">
 </head>
 <body>
     <header>
@@ -44,8 +44,10 @@
             <div id="play-table" class="table hidden">
                 <div id="score-bar">
                     <span id="score-ns">NS : 0</span>
+                    <span id="play-game-id" class="game-id-tag hidden"></span>
                     <span id="contract-display"></span>
                     <span id="score-ew">EO : 0</span>
+                    <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
                 </div>
 
                 <div class="seats">
@@ -154,11 +156,22 @@
             </div>
 
             <div id="watch-main" class="hidden">
+                <div id="watch-history">
+                    <div class="section-title">Historique</div>
+                    <div id="history-search">
+                        <input type="text" id="history-search-input" placeholder="ID..." maxlength="4">
+                        <button id="history-search-btn">Charger</button>
+                    </div>
+                    <div id="history-list"></div>
+                </div>
+
                 <div id="watch-left">
                     <div id="watch-score-bar">
                         <span id="watch-score-ns">NS : 0</span>
+                        <span id="watch-game-id" class="game-id-tag hidden"></span>
                         <span id="watch-contract-display"></span>
                         <span id="watch-score-ew">EO : 0</span>
+                        <button id="watch-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
                     </div>
 
                     <div class="seats">
@@ -419,9 +432,24 @@
         </div>
     </main>
 
-    <script src="static/js/main.js?v=3"></script>
-    <script src="static/js/play.js?v=3"></script>
-    <script src="static/js/watch.js?v=3"></script>
-    <script src="static/js/analysis.js?v=3"></script>
+    <!-- Bug report modal -->
+    <div id="report-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-title">Signaler un bug</div>
+            <div id="report-game-label" class="report-game-label"></div>
+            <textarea id="report-message" rows="4" placeholder="Decrivez le probleme..."></textarea>
+            <div class="modal-buttons">
+                <button id="report-cancel" class="modal-btn cancel">Annuler</button>
+                <button id="report-submit" class="modal-btn submit">Envoyer</button>
+            </div>
+            <div id="report-status"></div>
+        </div>
+    </div>
+
+    <script src="static/js/main.js?v=4"></script>
+    <script src="static/js/play.js?v=4"></script>
+    <script src="static/js/watch.js?v=4"></script>
+    <script src="static/js/history.js?v=4"></script>
+    <script src="static/js/analysis.js?v=4"></script>
 </body>
 </html>

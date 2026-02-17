@@ -223,6 +223,7 @@ function playCard(cardIdx) {
 // Message handlers
 onMessage('game_state', (data) => {
     renderPlayState(data.state);
+    if (data.game_id) setPlayGameId(data.game_id);
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
         showBeloteAnnouncement('trick-area', text);

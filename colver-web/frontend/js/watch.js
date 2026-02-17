@@ -46,7 +46,7 @@ document.getElementById('watch-end-btn').addEventListener('click', () => {
 
 function requestStep() {
     waitingForStep = true;
-    send({ type: 'watch_step' });
+    send({ type: replaySession ? 'replay_step' : 'watch_step' });
 }
 
 function startAutoPlay(mode) {
@@ -297,9 +297,11 @@ onMessage('watch_started', (data) => {
     watchFinished = false;
     waitingForStep = false;
     autoPlayMode = null;
+    replaySession = false;
     document.getElementById('watch-main').classList.remove('hidden');
     document.getElementById('watch-start').disabled = false;
     document.getElementById('watch-start').textContent = 'Relancer';
+    if (data.game_id) setWatchGameId(data.game_id);
 
     // Disable DouDou if not available
     if (!data.doudou_available) {

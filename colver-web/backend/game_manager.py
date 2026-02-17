@@ -324,6 +324,79 @@ class WatchSession(TrickTracker):
         return move, self.get_state(), self.completed_tricks
 
 
+class ReplaySession(TrickTracker):
+    """Replay a stored game from the database step-by-step."""
+
+    def __init__(self, game_data):
+        self.actions = game_data["actions"]
+        self.agents = game_data["agents"]
+        self.action_idx = 0
+        self.bid_history = []
+        self._init_trick_tracking()
+        self.env = colver.Env.deal_with_hands(game_data["dealer"], game_data["hands"])
+
+    def get_state(self):
+        """Full state with ALL hands visible (same as WatchSession)."""
+        return {
+            "phase": int(self.env.phase()),
+            "current_player": int(self.env.current_player()),
+            "hands": self.env.get_hands(),
+            "current_trick": self.env.get_current_trick(),
+            "contract": self.env.get_contract(),
+            "points": list(self.env.get_points()),
+            "tricks_won": list(self.env.get_tricks_won()),
+            "legal_actions": list(self.env.legal_actions()) if not self.env.is_terminal() else [],
+            "dealer": int(self.env.get_dealer()),
+            "trick_lead": int(self.env.get_trick_lead()),
+            "is_terminal": self.env.is_terminal(),
+            "last_trick": self.last_trick,
+            "last_trick_winner": self.last_trick_winner,
+            "last_trick_points": self.last_trick_points,
+            "belote": list(self.env.get_belote()),
+        }
+
+    def step(self):
+        """Apply next stored action. Returns (move_info, state, completed_tricks, finished)."""
+        if self.action_idx >= len(self.actions):
+            return None, self.get_state(), self.completed_tricks, True
+
+        entry = self.actions[self.action_idx]
+        action = entry["action"]
+        player = int(self.env.current_player())
+        phase = int(self.env.phase())
+        name = colver.Env.action_name(action, phase)
+
+        if phase == 0:
+            self.bid_history.append({
+                "player": player,
+                "action": action,
+                "name": name,
+            })
+
+        belote_before = list(self.env.get_belote())
+        self._check_trick_completion(action)
+        self.env.step(action)
+        self._finalize_trick_completion()
+        self._detect_belote(player, belote_before)
+
+        self.action_idx += 1
+
+        agent_type = self.agents.get(str(player), self.agents.get(player, "?"))
+        move = {
+            "player": player,
+            "action": action,
+            "phase": phase,
+            "name": name,
+            "stats": {
+                "agent": agent_type,
+                "agent_label": AGENT_NAMES.get(agent_type, agent_type),
+            },
+        }
+
+        finished = self.env.is_terminal() or self.action_idx >= len(self.actions)
+        return move, self.get_state(), self.completed_tricks, finished
+
+
 class AnalysisSession:
     """Custom position setup and analysis."""
 
