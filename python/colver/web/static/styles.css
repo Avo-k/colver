@@ -674,6 +674,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     flex: 1;
     position: relative;
     min-width: 0;
+    overflow: hidden;
 }
 
 #watch-right {
