@@ -6,7 +6,12 @@ services:
     volumes:
       - ./models:/app/models
       - ./data:/app/data
+      - colver-db:/data/colver
     environment:
       - ROOT_PATH=${ROOT_PATH:-/colver}
       - COLVER_UPDATE_MODEL=1
+      - COLVER_DB_PATH=/data/colver/colver.db
     restart: unless-stopped
+
+volumes:
+  colver-db:
