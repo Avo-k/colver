@@ -65,7 +65,23 @@ docker compose up -d
 
 # Cross-build for Raspberry Pi (ARM64)
 docker buildx build --platform linux/arm64 -t colver .
+
+# Publish to PyPI (automated via GitHub Actions)
+# Tag a release to trigger the publish workflow:
+git tag v0.2.1
+git push origin v0.2.1
+# Builds wheels for Linux (x86_64/aarch64), macOS (Intel/Apple Silicon), Windows
+# Publishes via trusted publishing (no API tokens needed)
+# Manual trigger also available from GitHub Actions tab
 ```
+
+## PyPI Publishing
+
+Published as [`colver`](https://pypi.org/project/colver/) on PyPI. Uses GitHub Actions (`.github/workflows/publish.yml`) with [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) — no API tokens needed.
+
+**Release flow:** push a `v*` tag → CI builds manylinux/macOS/Windows wheels via `maturin` → publishes automatically.
+
+**Targets:** `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
 
 ## Architecture
 
