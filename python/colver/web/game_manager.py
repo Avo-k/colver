@@ -15,8 +15,10 @@ class TrickTracker:
         self.last_trick = None
         self.last_trick_winner = None
         self.last_trick_points = 0
-        self.completed_tricks = []  # list of {cards, winner, points}
+        self.last_trick_lead = None
+        self.completed_tricks = []  # list of {cards, winner, points, lead}
         self._trick_just_completed = False
+        self._current_trick_lead = None  # lead of the trick in progress
         self._belote_event = None  # "belote" or "rebelote" after an action
         self._belote_player = None  # seat that triggered it
 
@@ -36,10 +38,13 @@ class TrickTracker:
             return
         trick = self.env.get_current_trick()
         filled = sum(1 for c in trick if c >= 0)
+        if filled == 0:
+            self._current_trick_lead = int(self.env.current_player())
         if filled == 3:
             player = int(self.env.current_player())
             trick[player] = action
             self.last_trick = trick
+            self.last_trick_lead = self._current_trick_lead
             contract = self.env.get_contract()
             trump = contract.get("trump", 0)
             self.last_trick_points = self._trick_points(trick, trump)
@@ -66,6 +71,7 @@ class TrickTracker:
                 "cards": self.last_trick[:],
                 "winner": self.last_trick_winner,
                 "points": self.last_trick_points,
+                "lead": self.last_trick_lead,
             })
             self._trick_just_completed = False
 

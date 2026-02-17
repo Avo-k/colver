@@ -967,8 +967,15 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 .trick-num {
     color: #666;
-    width: 24px;
+    width: 20px;
     font-weight: 600;
+}
+
+.trick-lead-label {
+    color: #999;
+    width: 12px;
+    font-weight: 600;
+    font-size: 0.7rem;
 }
 
 .trick-cards {

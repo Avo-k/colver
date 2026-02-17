@@ -2,10 +2,9 @@
 
 let watchActive = false;
 let watchFinished = false;
-let autoPlayMode = null; // null, 'trick', 'game'
+let autoPlayMode = null; // null, 'game', 'end'
 let autoPlayTimer = null;
 let waitingForStep = false;
-let trickCountBefore = 0;
 
 // History buffer for bidirectional navigation
 let moveHistory = [];    // Array of all received watch_move/replay_move data
@@ -36,12 +35,6 @@ document.getElementById('watch-step-btn').addEventListener('click', () => {
     if (!watchActive || waitingForStep) return;
     stopAutoPlay();
     goToNextMove();
-});
-
-document.getElementById('watch-trick-btn').addEventListener('click', () => {
-    if (!watchActive || waitingForStep) return;
-    stopAutoPlay();
-    goToNextTrick();
 });
 
 document.getElementById('watch-start-btn').addEventListener('click', () => {
@@ -100,11 +93,6 @@ function requestStep() {
 
 function startAutoPlay(mode) {
     autoPlayMode = mode;
-    if (mode === 'trick') {
-        trickCountBefore = historyIndex >= 0
-            ? (moveHistory[historyIndex].completed_tricks || []).length
-            : 0;
-    }
     document.getElementById('watch-auto-btn').textContent = '\u23F8';
     goToNextMove();
 }
@@ -139,34 +127,6 @@ function goToNextMove() {
         requestStep();
     } else if (autoPlayMode) {
         stopAutoPlay();
-    }
-}
-
-function goToNextTrick() {
-    if (historyIndex < moveHistory.length - 1) {
-        // Try to advance within buffer until trick count increases
-        const startTricks = historyIndex >= 0
-            ? (moveHistory[historyIndex].completed_tricks || []).length
-            : 0;
-        while (historyIndex < moveHistory.length - 1) {
-            historyIndex++;
-            const curTricks = (moveHistory[historyIndex].completed_tricks || []).length;
-            if (curTricks > startTricks) {
-                renderHistoryEntry(historyIndex);
-                return;
-            }
-        }
-        renderHistoryEntry(historyIndex);
-        // If we exhausted the buffer without finding a trick boundary, request more
-        if (!watchFinished && !isAtEnd()) {
-            trickCountBefore = startTricks;
-            autoPlayMode = 'trick';
-            document.getElementById('watch-auto-btn').textContent = '\u23F8';
-            requestStep();
-        }
-    } else if (!watchFinished && !isAtEnd()) {
-        // Start auto-play in trick mode from server
-        startAutoPlay('trick');
     }
 }
 
@@ -219,7 +179,6 @@ function updateTransportButtons() {
     const prevBtn = document.getElementById('watch-prev-btn');
     const startBtn = document.getElementById('watch-start-btn');
     const stepBtn = document.getElementById('watch-step-btn');
-    const trickBtn = document.getElementById('watch-trick-btn');
     const endBtn = document.getElementById('watch-end-btn');
 
     const canGoBack = historyIndex >= 0;
@@ -228,7 +187,6 @@ function updateTransportButtons() {
     prevBtn.disabled = !canGoBack;
     startBtn.disabled = !canGoBack;
     stepBtn.disabled = !canGoForward || waitingForStep;
-    trickBtn.disabled = !canGoForward || waitingForStep;
     endBtn.disabled = !canGoForward || waitingForStep;
 }
 
@@ -240,14 +198,6 @@ function continueAutoPlayFromBuffer() {
     if (data.finished) {
         stopAutoPlay();
         return;
-    }
-
-    if (autoPlayMode === 'trick') {
-        const currentTricks = (data.completed_tricks || []).length;
-        if (currentTricks > trickCountBefore) {
-            stopAutoPlay();
-            return;
-        }
     }
 
     const delay = autoPlayMode === 'end' ? 0 : 1000;
@@ -262,67 +212,21 @@ function continueAutoPlay(data) {
         return;
     }
 
-    if (autoPlayMode === 'trick') {
-        const currentTricks = (data.completed_tricks || []).length;
-        if (currentTricks > trickCountBefore) {
-            stopAutoPlay();
-            return;
-        }
-    }
-
     const delay = autoPlayMode === 'end' ? 0 : 1000;
     autoPlayTimer = setTimeout(() => {
         if (autoPlayMode) goToNextMove();
     }, delay);
 }
 
-// Card point annotations during bidding
-function buildPointAnnotations(state) {
-    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-    const phase = state.phase !== undefined ? state.phase : (state.is_terminal ? 2 : -1);
-    // Only annotate during bidding phase
-    if (phase !== 0) return null;
-
-    const annotations = new Map();
-    for (let seat = 0; seat < 4; seat++) {
-        const hand = state.hands[seat];
-        if (!hand) continue;
-        for (const c of hand) {
-            const suit = cardSuit(c);
-            const rank = cardRank(c);
-            const pts = (suit === trumpSuit) ? TRUMP_POINTS[rank] : PLAIN_POINTS[rank];
-            if (pts > 0) {
-                annotations.set(c, { text: String(pts), cls: 'card-pts' });
-            }
-        }
-    }
-    return annotations.size > 0 ? annotations : null;
-}
-
 // Q-value annotations on cards
 function renderCardAnnotations(data, state) {
-    if (!data || !data.move || !data.move.stats) {
-        // During bidding, show point values
-        if (state && state.phase === 0) {
-            const annotations = buildPointAnnotations(state);
-            if (annotations) {
-                reRenderHandsWithAnnotations(state, annotations);
-            }
-        }
-        return;
-    }
+    if (!data || !data.move || !data.move.stats) return;
 
     const move = data.move;
     const stats = move.stats;
 
-    // During bidding phase, show point values
-    if (state.phase === 0 || move.phase === 0) {
-        const annotations = buildPointAnnotations(state);
-        if (annotations) {
-            reRenderHandsWithAnnotations(state, annotations);
-        }
-        return;
-    }
+    // No annotations during bidding phase
+    if (state.phase === 0 || move.phase === 0) return;
 
     // During play phase with DouDou Q-values
     if (stats.q_values && stats.q_values.length > 0) {
@@ -416,15 +320,6 @@ function renderWatchState(state) {
 
     // Trick
     renderTrick('watch-trick', state.current_trick);
-
-    // Last trick
-    renderLastTrick(
-        document.getElementById('watch-last-trick'),
-        state.last_trick,
-        state.last_trick_winner,
-        state.last_trick_points,
-        0  // NS perspective for team coloring
-    );
 
     // Highlight current player
     const labelMap = { 0: 'watch-label-n', 1: 'watch-label-e', 2: 'watch-label-s', 3: 'watch-label-w' };
@@ -572,14 +467,32 @@ function renderTricksHistory(tricks) {
         const winnerTeam = t.winner % 2 === 0 ? 'team-ns' : 'team-ew';
         row.className = `trick-history-row ${winnerTeam}`;
 
-        const cards = t.cards.map(c => {
-            if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
-            return '?';
-        }).join(' ');
+        const SEAT_L = ['N', 'E', 'S', 'O'];
+        const leadSeat = t.lead !== undefined ? t.lead : -1;
 
+        // Show cards in play order starting from lead
+        let orderedCards = '';
+        if (leadSeat >= 0) {
+            for (let j = 0; j < 4; j++) {
+                const seat = (leadSeat + j) % 4;
+                const c = t.cards[seat];
+                if (c >= 0 && c < 32) {
+                    orderedCards += `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]} `;
+                }
+            }
+            orderedCards = orderedCards.trim();
+        } else {
+            orderedCards = t.cards.map(c => {
+                if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
+                return '?';
+            }).join(' ');
+        }
+
+        const leadLabel = leadSeat >= 0 ? SEAT_L[leadSeat] : '?';
         const winnerName = SEAT_NAMES_FR[t.winner];
         row.innerHTML = `<span class="trick-num">#${i + 1}</span>` +
-            `<span class="trick-cards">${cards}</span>` +
+            `<span class="trick-lead-label">${leadLabel}</span>` +
+            `<span class="trick-cards">${orderedCards}</span>` +
             `<span class="trick-winner">${winnerName} +${t.points}</span>`;
         container.appendChild(row);
     }
