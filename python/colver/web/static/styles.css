@@ -67,6 +67,11 @@ main {
 
 .panel { display: none; }
 .panel.active { display: block; }
+#play-panel.active {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
 .hidden { display: none !important; }
 
 /* Config areas */
@@ -117,10 +122,10 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 16px;
+    padding: 6px 16px;
     background: rgba(0,0,0,0.35);
     border-radius: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     font-size: clamp(0.85rem, 1vw, 1.05rem);
 }
 
@@ -175,7 +180,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     gap: clamp(2px, 0.5vw, 8px);
     align-items: center;
     justify-items: center;
-    min-height: calc(var(--card-h) * 2 + 8px);
+    min-height: calc(var(--card-h) * 1.4);
 }
 
 #trick-n, #watch-trick-n, #analysis-trick-n { grid-area: n; }
@@ -203,7 +208,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .seat.west .hand .card,
 .seat.east .hand .card {
     margin-left: 0;
-    margin-top: calc(var(--card-h) * -0.7);
+    margin-top: calc(var(--card-h) * -0.78);
 }
 .seat.west .hand .card:first-child,
 .seat.east .hand .card:first-child {
@@ -333,17 +338,16 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 /* ===== BIDDING PANEL ===== */
 #bidding-panel {
-    margin-top: 12px;
     background: rgba(0,0,0,0.25);
     border-radius: 8px;
-    padding: 12px 16px;
+    padding: 10px 12px;
 }
 
 #bid-history {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     flex-wrap: wrap;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     min-height: 24px;
     font-size: clamp(0.75rem, 0.85vw, 0.95rem);
 }
@@ -367,15 +371,16 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 #bid-controls {
     display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 6px;
+    align-items: stretch;
 }
 
 #bid-selectors {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 #bid-selectors select {
@@ -385,7 +390,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 #bid-special {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     align-items: center;
 }
 
@@ -424,11 +429,27 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 #play-table {
-    /* Scope card sizes for play: leave room for bidding panel + status below the board */
-    --card-w: clamp(45px, min(5.5vw, 6.5vh), 95px);
+    --card-w: clamp(45px, min(5.5vw, 8vh), 95px);
     --card-h: calc(var(--card-w) * 1.43);
     --card-overlap: calc(var(--card-w) * -0.2);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto 1fr auto auto;
+    flex: 1;
+    min-height: 0;
+    gap: 0 12px;
 }
+
+#play-table #score-bar { grid-column: 1 / -1; grid-row: 1; }
+#play-table .seats { grid-column: 1; grid-row: 2; min-height: 0; }
+#play-table #bidding-panel {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+    width: clamp(170px, 14vw, 220px);
+}
+#play-table #game-result { grid-column: 1 / -1; grid-row: 3; }
+#play-table #play-status { grid-column: 1 / -1; grid-row: 4; }
 
 #play-status {
     text-align: center;
