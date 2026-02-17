@@ -12,6 +12,7 @@ pub enum BidFunction {
     Roro,
     PetitBide,
     Moelleux,
+    Maxi,
 }
 
 impl BidFunction {
@@ -25,6 +26,7 @@ impl BidFunction {
             BidFunction::Roro => roro_bid(state),
             BidFunction::PetitBide => petit_bide_bid(state),
             BidFunction::Moelleux => moelleux_bid(state),
+            BidFunction::Maxi => crate::maxi::maxi_bid(state),
         }
     }
 }

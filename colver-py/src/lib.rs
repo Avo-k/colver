@@ -374,6 +374,22 @@ impl Env {
         bid_eval::moelleux_bid(&self.state)
     }
 
+    /// Get maxi_bid action for current state (only valid during bidding phase).
+    fn bid_maxi(&self) -> u8 {
+        colver_core::maxi::maxi_bid(&self.state)
+    }
+
+    /// Get maxi play action (perfect-info convention-linked heuristic).
+    /// Only valid during play phase.
+    fn action_maxi_play(&self) -> PyResult<u8> {
+        if self.state.phase != Phase::Playing {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Maxi play only valid during play phase",
+            ));
+        }
+        Ok(colver_core::maxi::maxi_play_action(&self.state))
+    }
+
     /// Get binary deal outcome [NS_outcome, EW_outcome].
     /// 1.0/0.0 for win/loss, 0.5/0.5 for void/tie.
     fn deal_outcome(&self) -> [f32; 2] {

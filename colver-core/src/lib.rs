@@ -9,6 +9,7 @@ pub mod cfn;
 pub mod rollout;
 pub mod determinize;
 pub mod bid_eval;
+pub mod maxi;
 pub mod dmc_net;
 pub mod dmc_obs;
 #[cfg(feature = "rand")]

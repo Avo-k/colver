@@ -87,6 +87,10 @@ name = "agent_tournament"
 path = "src/tests/agent_tournament.rs"
 
 [[bin]]
+name = "maxi_tournament"
+path = "src/tests/maxi_tournament.rs"
+
+[[bin]]
 name = "v2_tournament"
 path = "src/tests/v2_tournament.rs"
 

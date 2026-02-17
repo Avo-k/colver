@@ -149,6 +149,8 @@ class PlaySession(TrickTracker):
         player = int(self.env.current_player())
         ai_type = self.ai_types.get(player, "doudou")
         if phase == 0:
+            if ai_type == "maxi_bid":
+                return int(self.env.bid_maxi())
             return int(self.env.bid_improved())
         else:
             if ai_type == "doudou" and self.env.has_dmc_model():
@@ -160,6 +162,8 @@ class PlaySession(TrickTracker):
                 return int(self.env.action_naive_ismcts(AI_TIME_MS))
             elif ai_type == "oracle":
                 return int(self.env.action_oracle_mcts(AI_TIME_MS))
+            elif ai_type == "maxi_bid":
+                return int(self.env.action_maxi_play())
             else:
                 return int(self.env.action_naive_ismcts(AI_TIME_MS))
 
@@ -186,6 +190,7 @@ AGENT_NAMES = {
     "doudou": "DouDou",
     "oracle": "Oracle (MCTS)",
     "heuristic": "Heuristique",
+    "maxi_bid": "Maxi Bid",
     "random": "Aleatoire",
 }
 
@@ -247,9 +252,12 @@ class WatchSession(TrickTracker):
         phase = int(self.env.phase())
         agent_type = self.agents.get(player, "random")
 
-        # Bidding phase: all agents use improved_bid + hand eval
+        # Bidding phase: maxi uses its own bidding, others use improved_bid
         if phase == 0:
-            action = int(self.env.bid_improved())
+            if agent_type == "maxi_bid":
+                action = int(self.env.bid_maxi())
+            else:
+                action = int(self.env.bid_improved())
             name = colver.Env.action_name(action, phase)
             bid_eval = self.env.evaluate_hand(player)
             stats = {
@@ -294,6 +302,11 @@ class WatchSession(TrickTracker):
         elif agent_type == "heuristic":
             t0 = time.monotonic()
             action = int(self.env.action_heuristic_play())
+            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 2)
+
+        elif agent_type == "maxi_bid":
+            t0 = time.monotonic()
+            action = int(self.env.action_maxi_play())
             stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 2)
 
         else:  # random or fallback

@@ -412,6 +412,7 @@ impl SingleTreeIsmctsSearch {
                     RolloutPolicy::Random => rollout_random(&mut sim_state, rng),
                     RolloutPolicy::HeuristicBid => rollout_heuristic_bid(&mut sim_state, rng),
                     RolloutPolicy::HeuristicPlay => rollout_heuristic_play(&mut sim_state, rng),
+                    RolloutPolicy::MaxiPlay => crate::rollout::rollout_maxi_play(&mut sim_state, rng),
                 }
             };
 

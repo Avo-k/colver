@@ -374,6 +374,21 @@ pub fn rollout_heuristic_play(state: &mut GameState, _rng: &mut impl Rng) -> [f3
     state.rewards()
 }
 
+/// Play the game to completion using maxi bidding + maxi play.
+/// State is mutated in place. Returns rewards for both teams.
+#[cfg(feature = "rand")]
+pub fn rollout_maxi_play(state: &mut GameState, _rng: &mut impl Rng) -> [f32; 2] {
+    while !state.is_terminal() {
+        let action = if state.phase == Phase::Bidding {
+            crate::maxi::maxi_bid(state)
+        } else {
+            crate::maxi::maxi_play_action(state)
+        };
+        state.step(action);
+    }
+    state.rewards()
+}
+
 /// Lightweight struct for RAVE info from one rollout.
 /// Only tracks playing-phase actions (cards 0-31).
 pub struct RolloutRaveInfo {
