@@ -630,6 +630,28 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     border-color: rgba(76, 175, 80, 0.4);
 }
 
+.config-separator {
+    color: #555;
+    font-size: 1.2rem;
+    user-select: none;
+}
+
+#cfn-input {
+    background: #1a1a1a;
+    color: #d4af37;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-family: monospace;
+    font-size: clamp(0.7rem, 0.8vw, 0.85rem);
+    width: clamp(200px, 30vw, 450px);
+}
+#cfn-input::placeholder {
+    color: #555;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+}
+#cfn-input:focus { outline: 1px solid #d4af37; border-color: #d4af37; }
+
 /* Bug report button */
 .report-btn {
     background: transparent;

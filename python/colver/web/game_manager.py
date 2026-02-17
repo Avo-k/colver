@@ -201,21 +201,24 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None, dealer=None, hands=None):
+    def __init__(self, agents, dmc_model_path=None, dealer=None, hands=None, env=None):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
         dealer: optional dealer seat (for custom deals)
         hands: optional list of 4 hands (for custom deals)
+        env: optional pre-built Env (e.g. from CFN), takes priority over dealer/hands
         """
         self.agents = agents
-        self.env = colver.Env()
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()
-        if hands is not None:
+        if env is not None:
+            self.env = env
+        elif hands is not None:
             self.env = colver.Env.deal_with_hands(dealer if dealer is not None else 0, hands)
         else:
+            self.env = colver.Env()
             self.env.reset()
 
         # Load DMC model if any seat uses DouDou

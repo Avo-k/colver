@@ -13,6 +13,23 @@ let initialState = null; // State from watch_started/replay_loaded
 
 const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 
+// Load from CFN
+document.getElementById('cfn-load').addEventListener('click', loadFromCfn);
+document.getElementById('cfn-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadFromCfn();
+});
+
+function loadFromCfn() {
+    const input = document.getElementById('cfn-input');
+    const cfn = input.value.trim();
+    if (!cfn) return;
+    const agents = {};
+    document.querySelectorAll('.agent-select').forEach(sel => {
+        agents[sel.dataset.seat] = sel.value;
+    });
+    send({ type: 'watch_cfn', cfn, agents });
+}
+
 // Start game
 document.getElementById('watch-start').addEventListener('click', () => {
     const agents = {};

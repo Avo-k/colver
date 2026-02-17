@@ -290,6 +290,36 @@ async def websocket_endpoint(ws: WebSocket):
                     "game_id": game_id,
                 })
 
+            elif msg_type == "watch_cfn":
+                cfn_str = data.get("cfn", "").strip()
+                if not cfn_str:
+                    await ws.send_json({"type": "error", "msg": "CFN vide"})
+                    continue
+                try:
+                    import colver as _cfn_colver
+                    cfn_env = _cfn_colver.Env.from_cfn(cfn_str)
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"CFN invalide : {e}"})
+                    continue
+                agents = data.get("agents", {0: "doudou", 1: "doudou", 2: "doudou", 3: "doudou"})
+                agents = {int(k): v for k, v in agents.items()}
+                watch_session = WatchSession(
+                    agents=agents,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    env=cfn_env,
+                )
+                replay_session = None
+                watch_game_id = None
+
+                await ws.send_json({
+                    "type": "watch_started",
+                    "state": watch_session.get_state(),
+                    "doudou_available": doudou_available,
+                    "bid_history": [],
+                    "completed_tricks": [],
+                    "game_id": watch_game_id,
+                })
+
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
                 game_data = await db.get_game(game_id)
