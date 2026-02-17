@@ -1,7 +1,7 @@
 """Model weight download and discovery."""
 
 import os
-import sys
+import tempfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
@@ -42,6 +42,8 @@ def download_model(
     """Download model weights to ``~/.cache/colver/models/``.
 
     Returns the local path to the downloaded file.
+    Downloads to a temp file first, then atomically moves into place
+    to avoid leaving corrupt partial files on interrupted downloads.
     """
     dest = _CACHE_DIR / name
     if dest.is_file() and not force:
@@ -51,12 +53,14 @@ def download_model(
     url = url or _DEFAULT_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {url}")
+    fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
+    os.close(fd)
     try:
-        urlretrieve(url, dest, reporthook=_progress_hook)
+        urlretrieve(url, tmp, reporthook=_progress_hook)
         print()  # newline after progress
+        os.replace(tmp, dest)
     except Exception:
-        if dest.exists():
-            dest.unlink()
+        os.unlink(tmp)
         raise
     print(f"Saved to {dest}")
     return dest

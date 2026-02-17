@@ -26,12 +26,21 @@ CARDS_DIR = os.path.join(_WEB_DIR, "cards")
 import colver as _colver_pkg
 
 _model = _colver_pkg.model_path()
+if _model is None:
+    # Auto-download model if not found
+    print("[server] No DouDou model found, downloading...")
+    try:
+        _model = _colver_pkg.download_model()
+    except Exception as e:
+        print(f"[server] Download failed: {e}")
+        _model = None
+
 DMC_MODEL_PATH = str(_model) if _model else None
 doudou_available = _model is not None
 if doudou_available:
     print(f"[server] DouDou model available at {DMC_MODEL_PATH} (Rust inference)")
 else:
-    print("[server] No DouDou model found (run colver.download_model() to fetch)")
+    print("[server] No DouDou model found and download failed")
 
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
