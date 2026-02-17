@@ -1,3 +1,5 @@
-from colver.colver import Env, VecEnv, PrioritizedReplayBuffer
+from colver._colver import Env
+from colver._version import __version__
+from colver._model import download_model, model_path
 
-__all__ = ["Env", "VecEnv", "PrioritizedReplayBuffer"]
+__all__ = ["Env", "__version__", "download_model", "model_path"]

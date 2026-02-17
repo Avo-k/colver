@@ -24,3 +24,13 @@ images/SVG-cards-1.3.zip
 
 # Private strategy documents
 docs/enchere_cannes_roro.md
+
+# Playwright MCP
+.playwright-mcp/
+
+# Screenshots (keep images/cards SVGs)
+*.png
+!images/**/*.png
+
+# Training logs
+training.log

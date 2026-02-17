@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colver - Belote Contree</title>
+    <base href="/">
+    <link rel="stylesheet" href="static/styles.css?v=4">
+</head>
+<body>
+    <header>
+        <h1>COLVER</h1>
+        <nav>
+            <button class="tab active" data-tab="play">Jouer</button>
+            <button class="tab" data-tab="watch">Regarder</button>
+            <button class="tab" data-tab="analysis">Analyse</button>
+            <button class="tab" data-tab="docs">Docs</button>
+        </nav>
+    </header>
+
+    <main>
+        <!-- PLAY MODE -->
+        <div id="play-panel" class="panel active">
+            <div id="play-config">
+                <label>Adversaires :
+                    <select id="opponent-ai">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                    </select>
+                </label>
+                <label>Partenaire :
+                    <select id="partner-ai">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                    </select>
+                </label>
+                <button id="start-game">Nouvelle Partie</button>
+            </div>
+
+            <div id="play-table" class="table hidden">
+                <div id="score-bar">
+                    <span id="score-ns">NS : 0</span>
+                    <span id="play-game-id" class="game-id-tag hidden"></span>
+                    <span id="contract-display"></span>
+                    <span id="score-ew">EO : 0</span>
+                    <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+                </div>
+
+                <div class="seats">
+                    <div class="seat north" id="seat-north">
+                        <div class="seat-label">Nord (Partenaire)</div>
+                        <div class="hand" id="hand-north"></div>
+                    </div>
+                    <div class="seat west" id="seat-west">
+                        <div class="seat-label">Ouest</div>
+                        <div class="hand" id="hand-west"></div>
+                    </div>
+                    <div id="trick-area">
+                        <div class="trick-card" id="trick-n"></div>
+                        <div class="trick-card" id="trick-w"></div>
+                        <div class="trick-card" id="trick-e"></div>
+                        <div class="trick-card" id="trick-s"></div>
+                    </div>
+                    <div class="seat east" id="seat-east">
+                        <div class="seat-label">Est</div>
+                        <div class="hand" id="hand-east"></div>
+                    </div>
+                    <div class="seat south" id="seat-south">
+                        <div class="seat-label">Sud (Vous)</div>
+                        <div class="hand" id="hand-south"></div>
+                    </div>
+                </div>
+
+                <div id="last-trick" class="hidden"></div>
+
+                <div id="bidding-panel" class="hidden">
+                    <div id="bid-history"></div>
+                    <div id="bid-controls">
+                        <div id="bid-selectors">
+                            <select id="bid-value">
+                                <option value="">Valeur...</option>
+                                <option value="80">80</option>
+                                <option value="90">90</option>
+                                <option value="100">100</option>
+                                <option value="110">110</option>
+                                <option value="120">120</option>
+                                <option value="130">130</option>
+                                <option value="140">140</option>
+                                <option value="150">150</option>
+                                <option value="160">160</option>
+                                <option value="250">Capot</option>
+                            </select>
+                            <select id="bid-suit">
+                                <option value="0">&spades; Pique</option>
+                                <option value="1">&hearts; Coeur</option>
+                                <option value="2">&diams; Carreau</option>
+                                <option value="3">&clubs; Trefle</option>
+                            </select>
+                            <button id="bid-submit" class="bid-btn bid-action">Annoncer</button>
+                        </div>
+                        <div id="bid-special">
+                            <button id="bid-pass" class="bid-btn pass">Passe</button>
+                            <button id="bid-coinche" class="bid-btn coinche hidden">Coinche</button>
+                            <button id="bid-surcoinche" class="bid-btn coinche hidden">Surcoinche</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="game-result" class="hidden"></div>
+                <div id="play-status"></div>
+            </div>
+        </div>
+
+        <!-- WATCH MODE -->
+        <div id="watch-panel" class="panel">
+            <div id="watch-config">
+                <div class="watch-agents">
+                    <label>N : <select class="agent-select" data-seat="0">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                        <option value="heuristic">Heuristique</option>
+                        <option value="random">Aleatoire</option>
+                    </select></label>
+                    <label>E : <select class="agent-select" data-seat="1">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                        <option value="heuristic">Heuristique</option>
+                        <option value="random">Aleatoire</option>
+                    </select></label>
+                    <label>S : <select class="agent-select" data-seat="2">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                        <option value="heuristic">Heuristique</option>
+                        <option value="random">Aleatoire</option>
+                    </select></label>
+                    <label>O : <select class="agent-select" data-seat="3">
+                        <option value="doudou">DouDou</option>
+                        <option value="smart">Smart IS-MCTS</option>
+                        <option value="naive">Naive IS-MCTS</option>
+                        <option value="oracle">Oracle (MCTS)</option>
+                        <option value="heuristic">Heuristique</option>
+                        <option value="random">Aleatoire</option>
+                    </select></label>
+                </div>
+                <button id="watch-start">Lancer</button>
+            </div>
+
+            <div id="watch-main" class="hidden">
+                <div id="watch-history">
+                    <div class="section-title">Historique</div>
+                    <div id="history-search">
+                        <input type="text" id="history-search-input" placeholder="ID..." maxlength="4">
+                        <button id="history-search-btn">Charger</button>
+                    </div>
+                    <div id="history-list"></div>
+                </div>
+
+                <div id="watch-left">
+                    <div id="watch-score-bar">
+                        <span id="watch-score-ns">NS : 0</span>
+                        <span id="watch-game-id" class="game-id-tag hidden"></span>
+                        <span id="watch-contract-display"></span>
+                        <span id="watch-score-ew">EO : 0</span>
+                        <button id="watch-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+                    </div>
+
+                    <div class="seats">
+                        <div class="seat north">
+                            <div class="seat-label" id="watch-label-n">Nord</div>
+                            <div class="hand" id="watch-hand-north"></div>
+                        </div>
+                        <div class="seat west">
+                            <div class="seat-label" id="watch-label-w">Ouest</div>
+                            <div class="hand" id="watch-hand-west"></div>
+                        </div>
+                        <div id="watch-trick-area">
+                            <div class="trick-card" id="watch-trick-n"></div>
+                            <div class="trick-card" id="watch-trick-w"></div>
+                            <div class="trick-card" id="watch-trick-e"></div>
+                            <div class="trick-card" id="watch-trick-s"></div>
+                        </div>
+                        <div class="seat east">
+                            <div class="seat-label" id="watch-label-e">Est</div>
+                            <div class="hand" id="watch-hand-east"></div>
+                        </div>
+                        <div class="seat south">
+                            <div class="seat-label" id="watch-label-s">Sud</div>
+                            <div class="hand" id="watch-hand-south"></div>
+                        </div>
+                    </div>
+
+                    <div id="watch-last-trick" class="hidden"></div>
+                </div>
+
+                <div id="watch-right">
+                    <div id="watch-transport">
+                        <button id="watch-step-btn" title="Prochain coup">&#9654;|</button>
+                        <button id="watch-trick-btn" title="Jouer le pli">&#9654;&#9654;</button>
+                        <button id="watch-auto-btn" title="Auto-play">&#9654;</button>
+                        <button id="watch-end-btn" title="Fin de partie">&#9654;&#9654;|</button>
+                        <label class="speed-label">Vitesse :
+                            <input type="range" id="watch-speed" min="100" max="2000" value="500" step="100">
+                            <span id="watch-speed-val">500</span>ms
+                        </label>
+                    </div>
+
+                    <div id="watch-stats-panel">
+                        <div id="watch-stats-header"></div>
+                        <div id="watch-stats-body"></div>
+                    </div>
+
+                    <div id="watch-bid-history">
+                        <div class="section-title">Encheres</div>
+                        <div id="watch-bid-entries"></div>
+                    </div>
+
+                    <div id="watch-tricks-history">
+                        <div class="section-title">Plis</div>
+                        <div id="watch-tricks-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ANALYSIS MODE -->
+        <div id="analysis-panel" class="panel">
+            <div id="analysis-config">
+                <h3>Configurer la position</h3>
+                <div id="hand-editor">
+                    <div id="card-palette"></div>
+                    <div id="drop-zones">
+                        <div class="drop-zone ns" data-player="0">
+                            <div class="drop-zone-label">Nord <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ew" data-player="1">
+                            <div class="drop-zone-label">Est <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ns" data-player="2">
+                            <div class="drop-zone-label">Sud <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                        <div class="drop-zone ew" data-player="3">
+                            <div class="drop-zone-label">Ouest <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="contract-editor">
+                    <label>Atout :
+                        <select id="analysis-trump">
+                            <option value="0">&#9824; Pique</option>
+                            <option value="1">&#9829; Coeur</option>
+                            <option value="2">&#9830; Carreau</option>
+                            <option value="3">&#9827; Trefle</option>
+                        </select>
+                    </label>
+                    <label>Valeur :
+                        <select id="analysis-value">
+                            <option value="80">80</option>
+                            <option value="90">90</option>
+                            <option value="100">100</option>
+                            <option value="110">110</option>
+                            <option value="120">120</option>
+                            <option value="130">130</option>
+                            <option value="140">140</option>
+                            <option value="150">150</option>
+                            <option value="160">160</option>
+                            <option value="250">Capot</option>
+                        </select>
+                    </label>
+                    <label>Equipe :
+                        <select id="analysis-team">
+                            <option value="0">NS</option>
+                            <option value="1">EO</option>
+                        </select>
+                    </label>
+                </div>
+                <button id="random-deal">Donne aleatoire</button>
+                <button id="setup-analysis">Valider la position</button>
+            </div>
+
+            <div id="analysis-table" class="table hidden">
+                <div class="seats">
+                    <div class="seat north"><div class="seat-label">Nord</div><div class="hand" id="analysis-hand-north"></div></div>
+                    <div class="seat west"><div class="seat-label">Ouest</div><div class="hand" id="analysis-hand-west"></div></div>
+                    <div id="analysis-trick-area">
+                        <div class="trick-card" id="analysis-trick-n"></div>
+                        <div class="trick-card" id="analysis-trick-w"></div>
+                        <div class="trick-card" id="analysis-trick-e"></div>
+                        <div class="trick-card" id="analysis-trick-s"></div>
+                    </div>
+                    <div class="seat east"><div class="seat-label">Est</div><div class="hand" id="analysis-hand-east"></div></div>
+                    <div class="seat south"><div class="seat-label">Sud</div><div class="hand" id="analysis-hand-south"></div></div>
+                </div>
+                <div id="analysis-controls">
+                    <label>Agent :
+                        <select id="analysis-agent">
+                            <option value="naive">Naive IS-MCTS</option>
+                            <option value="smart">Smart IS-MCTS</option>
+                        </select>
+                    </label>
+                    <label>Temps (ms) :
+                        <input type="range" id="analysis-time" min="50" max="2000" value="200" step="50">
+                        <span id="analysis-time-val">200</span>
+                    </label>
+                    <button id="run-analysis">Analyser</button>
+                </div>
+                <div id="analysis-result"></div>
+            </div>
+        </div>
+        <!-- DOCS -->
+        <div id="docs-panel" class="panel">
+            <div id="docs-content">
+                <h2>Colver <span class="docs-subtitle">Belote Contree Engine</span></h2>
+                <p class="docs-intro">
+                    Colver is a high-performance Belote Contree game environment built for reinforcement learning research.
+                    The core engine is written in Rust, capable of over 1 million rollouts per second.
+                    This web interface lets you play against various AI agents, watch them compete, and analyze positions.
+                </p>
+                <p class="docs-link">
+                    Source code: <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
+                </p>
+
+                <h3>Game Modes</h3>
+
+                <div class="docs-section">
+                    <h4>Jouer</h4>
+                    <p>
+                        Play as South against AI opponents. Choose the AI for your opponents (East/West) and your partner (North) independently.
+                        The game follows official FFB Belote Contree rules: bidding phase with coinche/surcoinche, then 8 tricks of play.
+                        First team to 2000 cumulative points wins the match.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Regarder</h4>
+                    <p>
+                        Spectate AI vs AI matches with full visibility of all hands.
+                        Assign a different agent to each of the 4 seats, then step through actions one by one,
+                        play full tricks, or use auto-play. The stats panel shows MCTS visit counts and Q-values for each decision.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Analyse</h4>
+                    <p>
+                        Set up a custom position by dragging cards from the palette into 4 player drop zones
+                        (or use "Donne aleatoire" for a random deal). Configure the contract (trump, value, declaring team),
+                        then run IS-MCTS analysis to see the best move and action rankings for the current player.
+                    </p>
+                </div>
+
+                <h3>AI Agents</h3>
+
+                <div class="docs-section">
+                    <h4>DouDou <span class="docs-tag best">Recommended</span></h4>
+                    <p>
+                        Deep Monte-Carlo Q-network trained via self-play (DouZero-style).
+                        A 3-layer MLP (1024 hidden units, ~2.6M parameters) takes a 415-dimensional observation
+                        and outputs Q-values for all 32 cards in a single forward pass &mdash; no search tree needed.
+                        Bidding uses a hand-tuned heuristic (ImprovedV2). Inference runs in pure Rust at ~1ms per decision.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Smart IS-MCTS <span class="docs-tag">Strong</span></h4>
+                    <p>
+                        Belief-weighted Information Set Monte Carlo Tree Search.
+                        Maintains a probabilistic belief model over hidden cards, updated after every action
+                        using hard constraints (void inference, trump ceiling) and soft signals (bidding patterns, play conventions).
+                        Samples plausible opponent hands biased by these beliefs, then runs standard MCTS on each world.
+                        ~7.5% stronger than Naive IS-MCTS in match play.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Naive IS-MCTS</h4>
+                    <p>
+                        Ensemble determinization without a belief model.
+                        Samples multiple possible worlds (respecting known void constraints only),
+                        runs MCTS on each, and aggregates visit counts across all worlds.
+                        Simpler than Smart IS-MCTS but still a competent player.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Oracle (MCTS)</h4>
+                    <p>
+                        Perfect-information MCTS that sees all 4 hands.
+                        Uses UCT (UCB1 for trees) with arena-based tree allocation for cache efficiency.
+                        Unrealistically strong since it has no hidden information &mdash; useful as an upper bound
+                        for evaluating other agents' play quality.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Heuristique <span class="docs-tag subtle">Watch only</span></h4>
+                    <p>
+                        A fast deterministic strategy with no search. Follows a handcrafted decision tree:
+                        safe leads, partner feeding, minimum winning card, cheapest trump cut.
+                        Runs at ~769K games/sec and is used as the rollout policy inside MCTS agents.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Aleatoire <span class="docs-tag subtle">Watch only</span></h4>
+                    <p>
+                        Plays uniformly random legal moves. Useful as a baseline for measuring other agents' strength.
+                        Runs at ~1.3M rollouts/sec.
+                    </p>
+                </div>
+
+                <div class="docs-footer">
+                    <p>
+                        Created by <a href="https://github.com/Avo-k" target="_blank" rel="noopener">Avo-k</a>
+                        &amp; <a href="https://claude.ai" target="_blank" rel="noopener">Claude Opus 4.6</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Bug report modal -->
+    <div id="report-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-title">Signaler un bug</div>
+            <div id="report-game-label" class="report-game-label"></div>
+            <textarea id="report-message" rows="4" placeholder="Decrivez le probleme..."></textarea>
+            <div class="modal-buttons">
+                <button id="report-cancel" class="modal-btn cancel">Annuler</button>
+                <button id="report-submit" class="modal-btn submit">Envoyer</button>
+            </div>
+            <div id="report-status"></div>
+        </div>
+    </div>
+
+    <script src="static/js/main.js?v=4"></script>
+    <script src="static/js/play.js?v=4"></script>
+    <script src="static/js/watch.js?v=4"></script>
+    <script src="static/js/history.js?v=4"></script>
+    <script src="static/js/analysis.js?v=4"></script>
+</body>
+</html>

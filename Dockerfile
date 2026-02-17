@@ -1,5 +1,4 @@
 # Stage 1: Build the PyO3 wheel and create venv with dependencies
-# Uses uv's Python 3.11 image (paths match python:3.11-slim-bookworm runtime)
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm AS builder
 
 # Install Rust toolchain (needed for maturin/PyO3 build)
@@ -29,14 +28,12 @@ FROM python:3.12-slim-bookworm
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application files
-COPY colver-web/ /app/colver-web/
-COPY images/cards/ /app/images/cards/
 # Copy DMC model weights if available (enables DouDou agent via Rust inference)
 COPY models/dmc_final.bi[n] /app/models/
 
 ENV PATH="/app/.venv/bin:$PATH"
+ENV COLVER_MODEL_PATH="/app/models/dmc_final.bin"
 WORKDIR /app
 EXPOSE 8000
 
-CMD ["python", "colver-web/backend/server.py"]
+CMD ["python", "-m", "colver.web"]

@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use numpy::{PyArray1, PyArray2, PyArrayMethods};
+use numpy::PyArray1;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -17,7 +17,7 @@ use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{Contract, GameState, Phase};
 
-const OBS_V2_DIM: usize = 415;
+const OBS_DIM: usize = 415;
 const BID_HISTORY_FLOATS: usize = 72; // 12 slots × 6 floats per slot
 
 /// Track a play action: update played_by mask.
@@ -95,14 +95,14 @@ fn encode_bid_history(
 }
 
 /// Build observation v4 (415 floats) from game state + tracking arrays.
-fn make_observation_v2(
+fn make_observation(
     state: &GameState,
     played_by: &[u32; 4],
     play_order: &[u8],
     bid_history: &[(u8, u8)],
     dealer: u8,
 ) -> Vec<f32> {
-    let mut obs = Vec::with_capacity(OBS_V2_DIM);
+    let mut obs = Vec::with_capacity(OBS_DIM);
     let me = state.current_player() as usize;
     let my_team = me & 1;
     let opp_team = 1 - my_team;
@@ -192,10 +192,10 @@ fn make_observation_v2(
 
     debug_assert_eq!(
         obs.len(),
-        OBS_V2_DIM,
+        OBS_DIM,
         "obs v4 len = {}, expected {}",
         obs.len(),
-        OBS_V2_DIM
+        OBS_DIM
     );
     obs
 }
@@ -271,7 +271,7 @@ impl Env {
         self.play_order.clear();
         self.bid_history.clear();
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
+            make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             legal_actions_list(&self.state),
         ))
     }
@@ -302,7 +302,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
+            make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -344,14 +344,19 @@ impl Env {
         }
     }
 
-    /// Get improved_bid action for current state (only valid during bidding phase).
+    /// Get improved_v2_bid action (default bidding strategy).
     fn bid_improved(&self) -> u8 {
         bid_eval::improved_v2_bid(&self.state)
     }
 
-    /// Get improved_v2_bid action for current state (only valid during bidding phase).
+    /// Alias for bid_improved (same as improved_v2).
     fn bid_improved_v2(&self) -> u8 {
         bid_eval::improved_v2_bid(&self.state)
+    }
+
+    /// Get the OLD improved_bid action (legacy, pre-v2).
+    fn bid_improved_v1(&self) -> u8 {
+        bid_eval::improved_bid(&self.state)
     }
 
     /// Get roro_bid action for current state (only valid during bidding phase).
@@ -450,7 +455,7 @@ impl Env {
         };
 
         Ok((
-            make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
+            make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
             reward,
             done,
             legal_actions_list(&self.state),
@@ -792,9 +797,9 @@ impl Env {
         Ok(search.search(&self.state, &config, &mut self.rng))
     }
 
-    /// Get observation v4 (415 floats) for current state.
-    fn get_observation_v2(&self) -> Vec<f32> {
-        make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)
+    /// Get observation (415 floats) for current state.
+    fn get_observation(&self) -> Vec<f32> {
+        make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)
     }
 
     /// Load DMC Q-network weights from a raw binary file.
@@ -827,7 +832,7 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_dmc_model() first")
         })?;
 
-        let obs_full = make_observation_v2(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer);
+        let obs_full = make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer);
         // Truncate obs to match model's expected obs_dim (backward compat with 372-dim models)
         let obs = &obs_full[..net.obs_dim()];
         let legal_mask = self.state.legal_actions() as u32;
@@ -848,508 +853,8 @@ impl Env {
     }
 }
 
-/// Vectorized environment for batch RL training.
-#[pyclass]
-struct VecEnv {
-    states: Vec<GameState>,
-    rng: StdRng,
-    // Per-env card tracking for obs v2
-    played_by: Vec<[u32; 4]>,
-    // Per-env chronological play order for timing features
-    play_orders: Vec<Vec<u8>>,
-    // Per-env bid history
-    bid_histories: Vec<Vec<(u8, u8)>>,
-    // Per-env bidding strategy: 0=improved (default), 1-6=BidParams presets
-    // Presets: 1=ultra_conservative, 2=conservative, 3=moderate,
-    //          4=balanced, 5=aggressive, 6=very_aggressive, 7=heuristic
-    bid_strategy: Vec<u8>,
-}
-
-#[pymethods]
-impl VecEnv {
-    #[new]
-    fn new(n: usize) -> Self {
-        let mut rng = StdRng::from_entropy();
-        let states: Vec<GameState> = (0..n)
-            .map(|_| {
-                let dealer = rng.gen_range(0..4u8);
-                GameState::deal_random(dealer, &mut rng)
-            })
-            .collect();
-        VecEnv {
-            states,
-            rng,
-            played_by: vec![[0u32; 4]; n],
-            play_orders: (0..n).map(|_| Vec::with_capacity(32)).collect(),
-            bid_histories: vec![Vec::new(); n],
-            bid_strategy: vec![0u8; n],
-        }
-    }
-
-    /// Number of environments.
-    fn num_envs(&self) -> usize {
-        self.states.len()
-    }
-
-    /// Current player index (0-3) for each environment.
-    fn current_players<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
-        let v: Vec<u8> = self.states.iter().map(|s| s.current_player()).collect();
-        PyArray1::from_slice_bound(py, &v)
-    }
-
-    /// Current phase (0=Bidding, 1=Playing, 2=Done) for each environment.
-    fn phases<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
-        let v: Vec<u8> = self.states.iter().map(|s| s.phase as u8).collect();
-        PyArray1::from_slice_bound(py, &v)
-    }
-
-    /// Set bidding strategy per environment.
-    /// 0=improved (default), 1=ultra_conservative, 2=conservative, 3=moderate,
-    /// 4=balanced, 5=aggressive, 6=very_aggressive, 7=heuristic.
-    fn set_bid_strategies(&mut self, strategies: Vec<u8>) {
-        assert_eq!(strategies.len(), self.states.len());
-        self.bid_strategy = strategies;
-    }
-
-    /// Get bid action for each environment using its assigned strategy.
-    fn bid_improved<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<u8>> {
-        let presets = bid_eval::BidParams::all_presets();
-        let v: Vec<u8> = self
-            .states
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                if s.phase != Phase::Bidding {
-                    return 0;
-                }
-                match self.bid_strategy[i] {
-                    0 => bid_eval::improved_v2_bid(s),
-                    idx @ 1..=6 => {
-                        bid_eval::parametric_bid(s, &presets[(idx - 1) as usize])
-                    }
-                    7 => bid_eval::heuristic_bid(s),
-                    8 => bid_eval::roro_bid(s),
-                    _ => bid_eval::improved_v2_bid(s),
-                }
-            })
-            .collect();
-        PyArray1::from_slice_bound(py, &v)
-    }
-
-    /// Reset all environments. Returns (observations, legal_masks).
-    fn reset<'py>(
-        &mut self,
-        py: Python<'py>,
-    ) -> PyResult<(Bound<'py, PyArray2<f32>>, Bound<'py, PyArray2<f32>>)> {
-        let n = self.states.len();
-        for i in 0..n {
-            let dealer = self.rng.gen_range(0..4u8);
-            self.states[i] = GameState::deal_random(dealer, &mut self.rng);
-            self.played_by[i] = [0; 4];
-            self.play_orders[i].clear();
-            self.bid_histories[i].clear();
-        }
-
-        let mut obs_data = Vec::with_capacity(n * OBS_V2_DIM);
-        let mut mask_data = Vec::with_capacity(n * 43);
-
-        for i in 0..n {
-            obs_data.extend(make_observation_v2(
-                &self.states[i],
-                &self.played_by[i],
-                &self.play_orders[i],
-                &self.bid_histories[i],
-                self.states[i].dealer,
-            ));
-            mask_data.extend(legal_mask_vec(&self.states[i]));
-        }
-
-        let obs = numpy::PyArray::from_vec_bound(py, obs_data)
-            .reshape([n, OBS_V2_DIM])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-        let masks = numpy::PyArray::from_vec_bound(py, mask_data)
-            .reshape([n, 43])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-
-        Ok((obs, masks))
-    }
-
-    /// Step all environments with given actions.
-    /// Auto-resets terminated environments.
-    /// Returns (observations, rewards, dones, legal_masks, deal_outcomes).
-    /// deal_outcomes is (n, 2) with [NS_outcome, EW_outcome] — binary 1.0/0.0/0.5
-    /// for terminated envs (captured before auto-reset), [0, 0] for non-terminal.
-    fn step<'py>(
-        &mut self,
-        py: Python<'py>,
-        actions: Vec<u8>,
-    ) -> PyResult<(
-        Bound<'py, PyArray2<f32>>,
-        Bound<'py, PyArray1<f32>>,
-        Bound<'py, PyArray1<bool>>,
-        Bound<'py, PyArray2<f32>>,
-        Bound<'py, PyArray2<f32>>,
-    )> {
-        let n = self.states.len();
-        assert_eq!(actions.len(), n);
-
-        let mut rewards_vec = Vec::with_capacity(n);
-        let mut dones_vec = Vec::with_capacity(n);
-        let mut outcomes_vec = Vec::with_capacity(n * 2);
-
-        for (i, &action) in actions.iter().enumerate() {
-            let player = self.states[i].current_player();
-            let team = GameState::player_team(player) as usize;
-
-            if self.states[i].phase == Phase::Bidding {
-                self.bid_histories[i].push((player, action));
-            }
-            if self.states[i].phase == Phase::Playing {
-                self.play_orders[i].push(action);
-            }
-            track_play(
-                &self.states[i],
-                action,
-                &mut self.played_by[i],
-            );
-            self.states[i].step(action);
-
-            let done = self.states[i].is_terminal();
-            let reward = if done {
-                self.states[i].rewards()[team]
-            } else {
-                0.0
-            };
-
-            rewards_vec.push(reward);
-            dones_vec.push(done);
-
-            // Capture deal outcomes before auto-reset
-            if done {
-                let r = self.states[i].rewards();
-                if r[0] == 0.0 && r[1] == 0.0 {
-                    // void deal (4 passes)
-                    outcomes_vec.push(0.5);
-                    outcomes_vec.push(0.5);
-                } else if r[0] > r[1] {
-                    outcomes_vec.push(1.0);
-                    outcomes_vec.push(0.0);
-                } else if r[1] > r[0] {
-                    outcomes_vec.push(0.0);
-                    outcomes_vec.push(1.0);
-                } else {
-                    outcomes_vec.push(0.5);
-                    outcomes_vec.push(0.5);
-                }
-
-                let dealer = self.rng.gen_range(0..4u8);
-                self.states[i] = GameState::deal_random(dealer, &mut self.rng);
-                self.played_by[i] = [0; 4];
-                self.play_orders[i].clear();
-                self.bid_histories[i].clear();
-            } else {
-                outcomes_vec.push(0.0);
-                outcomes_vec.push(0.0);
-            }
-        }
-
-        let mut obs_data = Vec::with_capacity(n * OBS_V2_DIM);
-        let mut mask_data = Vec::with_capacity(n * 43);
-
-        for i in 0..n {
-            obs_data.extend(make_observation_v2(
-                &self.states[i],
-                &self.played_by[i],
-                &self.play_orders[i],
-                &self.bid_histories[i],
-                self.states[i].dealer,
-            ));
-            mask_data.extend(legal_mask_vec(&self.states[i]));
-        }
-
-        let obs = numpy::PyArray::from_vec_bound(py, obs_data)
-            .reshape([n, OBS_V2_DIM])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-        let rewards = PyArray1::from_slice_bound(py, &rewards_vec);
-        let dones = PyArray1::from_slice_bound(py, &dones_vec);
-        let masks = numpy::PyArray::from_vec_bound(py, mask_data)
-            .reshape([n, 43])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-        let outcomes = numpy::PyArray::from_vec_bound(py, outcomes_vec)
-            .reshape([n, 2])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-
-        Ok((obs, rewards, dones, masks, outcomes))
-    }
-}
-
-// ============================================================
-// Rust-based Prioritized Experience Replay for fast training
-// ============================================================
-
-/// Binary sum tree for O(log n) proportional sampling.
-struct SumTree {
-    capacity: usize,
-    tree: Vec<f64>,
-    data_pointer: usize,
-    n_entries: usize,
-}
-
-impl SumTree {
-    fn new(capacity: usize) -> Self {
-        SumTree {
-            capacity,
-            tree: vec![0.0f64; 2 * capacity],
-            data_pointer: 0,
-            n_entries: 0,
-        }
-    }
-
-    #[inline]
-    fn update(&mut self, idx: usize, priority: f64) {
-        let tree_idx = idx + self.capacity;
-        let change = priority - self.tree[tree_idx];
-        self.tree[tree_idx] = priority;
-        let mut i = tree_idx >> 1;
-        while i >= 1 {
-            self.tree[i] += change;
-            i >>= 1;
-        }
-    }
-
-    #[inline]
-    fn add(&mut self, priority: f64) -> usize {
-        let idx = self.data_pointer;
-        self.update(idx, priority);
-        self.data_pointer = (self.data_pointer + 1) % self.capacity;
-        if self.n_entries < self.capacity {
-            self.n_entries += 1;
-        }
-        idx
-    }
-
-    #[inline]
-    fn get(&self, mut s: f64) -> usize {
-        let mut idx = 1;
-        let cap2 = 2 * self.capacity;
-        loop {
-            let left = 2 * idx;
-            if left >= cap2 {
-                break;
-            }
-            if s <= self.tree[left] {
-                idx = left;
-            } else {
-                s -= self.tree[left];
-                idx = left + 1;
-            }
-        }
-        idx - self.capacity
-    }
-
-    #[inline]
-    fn total(&self) -> f64 {
-        self.tree[1]
-    }
-
-    #[inline]
-    fn priority(&self, idx: usize) -> f64 {
-        self.tree[idx + self.capacity]
-    }
-}
-
-const PER_OBS_DIM: usize = OBS_V2_DIM; // 444
-const PER_NUM_CARDS: usize = 32;
-
-/// Rust-based Prioritized Experience Replay buffer.
-#[pyclass]
-struct PrioritizedReplayBuffer {
-    capacity: usize,
-    alpha: f64,
-    tree: SumTree,
-    obs: Vec<f32>,       // capacity * OBS_DIM, row-major
-    masks: Vec<f32>,     // capacity * NUM_CARDS
-    actions: Vec<i64>,
-    returns: Vec<f32>,
-    max_priority: f64,
-    cached_priority: f64,
-    size: usize,
-}
-
-#[pymethods]
-impl PrioritizedReplayBuffer {
-    #[new]
-    #[pyo3(signature = (capacity=2_000_000, alpha=0.6))]
-    fn new(capacity: usize, alpha: f64) -> Self {
-        let cached_priority = 1.0f64.powf(alpha);
-        PrioritizedReplayBuffer {
-            capacity,
-            alpha,
-            tree: SumTree::new(capacity),
-            obs: vec![0.0f32; capacity * PER_OBS_DIM],
-            masks: vec![0.0f32; capacity * PER_NUM_CARDS],
-            actions: vec![0i64; capacity],
-            returns: vec![0.0f32; capacity],
-            max_priority: 1.0,
-            cached_priority,
-            size: 0,
-        }
-    }
-
-    /// Current buffer size.
-    #[getter]
-    fn size(&self) -> usize {
-        self.size
-    }
-
-    /// Push a batch of transitions with max priority.
-    /// obs: (n, 372), masks: (n, 32), actions: (n,), returns: (n,)
-    fn push_batch(
-        &mut self,
-        obs: numpy::PyReadonlyArray2<f32>,
-        masks: numpy::PyReadonlyArray2<f32>,
-        actions: numpy::PyReadonlyArray1<i64>,
-        returns: numpy::PyReadonlyArray1<f32>,
-    ) {
-        let obs = obs.as_slice().unwrap();
-        let masks = masks.as_slice().unwrap();
-        let actions = actions.as_slice().unwrap();
-        let returns = returns.as_slice().unwrap();
-        let n = actions.len();
-        let p = self.cached_priority;
-
-        for i in 0..n {
-            let idx = self.tree.add(p);
-            let obs_start = idx * PER_OBS_DIM;
-            let mask_start = idx * PER_NUM_CARDS;
-            self.obs[obs_start..obs_start + PER_OBS_DIM]
-                .copy_from_slice(&obs[i * PER_OBS_DIM..(i + 1) * PER_OBS_DIM]);
-            self.masks[mask_start..mask_start + PER_NUM_CARDS]
-                .copy_from_slice(&masks[i * PER_NUM_CARDS..(i + 1) * PER_NUM_CARDS]);
-            self.actions[idx] = actions[i];
-            self.returns[idx] = returns[i];
-        }
-        self.size = self.tree.n_entries;
-    }
-
-    /// Sample with priorities.
-    /// Returns (obs, masks, actions, returns, weights, indices) as numpy arrays.
-    fn sample<'py>(
-        &self,
-        py: Python<'py>,
-        batch_size: usize,
-        beta: f64,
-    ) -> PyResult<(
-        Bound<'py, PyArray2<f32>>,
-        Bound<'py, PyArray2<f32>>,
-        Bound<'py, PyArray1<i64>>,
-        Bound<'py, PyArray1<f32>>,
-        Bound<'py, PyArray1<f32>>,
-        Bound<'py, PyArray1<i64>>,
-    )> {
-        let total = self.tree.total();
-        let segment = total / batch_size as f64;
-
-        let mut indices = Vec::with_capacity(batch_size);
-        let mut priorities = Vec::with_capacity(batch_size);
-        let mut rng = rand::thread_rng();
-
-        for i in 0..batch_size {
-            let lo = segment * i as f64;
-            let hi = segment * (i + 1) as f64;
-            let s: f64 = lo + rng.gen::<f64>() * (hi - lo);
-            let mut idx = self.tree.get(s);
-            if idx >= self.size {
-                idx = self.size - 1;
-            }
-            indices.push(idx);
-            let p = self.tree.priority(idx);
-            priorities.push(if p > 1e-8 { p } else { 1e-8 });
-        }
-
-        // IS weights
-        let mut weights = Vec::with_capacity(batch_size);
-        let mut max_weight: f32 = 0.0;
-        let size_f = self.size as f64;
-        for &p in &priorities {
-            let prob = p / total;
-            let w = ((size_f * prob).powf(-beta)) as f32;
-            if w > max_weight {
-                max_weight = w;
-            }
-            weights.push(w);
-        }
-        if max_weight > 0.0 {
-            for w in weights.iter_mut() {
-                *w /= max_weight;
-            }
-        }
-
-        // Gather data
-        let mut obs_data = vec![0.0f32; batch_size * PER_OBS_DIM];
-        let mut mask_data = vec![0.0f32; batch_size * PER_NUM_CARDS];
-        let mut act_data = Vec::with_capacity(batch_size);
-        let mut ret_data = Vec::with_capacity(batch_size);
-        let mut idx_data = Vec::with_capacity(batch_size);
-
-        for (j, &idx) in indices.iter().enumerate() {
-            let obs_src = idx * PER_OBS_DIM;
-            let obs_dst = j * PER_OBS_DIM;
-            obs_data[obs_dst..obs_dst + PER_OBS_DIM]
-                .copy_from_slice(&self.obs[obs_src..obs_src + PER_OBS_DIM]);
-            let mask_src = idx * PER_NUM_CARDS;
-            let mask_dst = j * PER_NUM_CARDS;
-            mask_data[mask_dst..mask_dst + PER_NUM_CARDS]
-                .copy_from_slice(&self.masks[mask_src..mask_src + PER_NUM_CARDS]);
-            act_data.push(self.actions[idx]);
-            ret_data.push(self.returns[idx]);
-            idx_data.push(idx as i64);
-        }
-
-        let obs = numpy::PyArray::from_vec_bound(py, obs_data)
-            .reshape([batch_size, PER_OBS_DIM])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-        let masks = numpy::PyArray::from_vec_bound(py, mask_data)
-            .reshape([batch_size, PER_NUM_CARDS])
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("{}", e)))?;
-        let actions = PyArray1::from_slice_bound(py, &act_data);
-        let returns = PyArray1::from_slice_bound(py, &ret_data);
-        let weights_arr = PyArray1::from_slice_bound(py, &weights);
-        let indices_arr = PyArray1::from_slice_bound(py, &idx_data);
-
-        Ok((obs, masks, actions, returns, weights_arr, indices_arr))
-    }
-
-    /// Update priorities based on TD errors.
-    fn update_priorities(
-        &mut self,
-        indices: numpy::PyReadonlyArray1<i64>,
-        td_errors: numpy::PyReadonlyArray1<f32>,
-    ) {
-        let indices = indices.as_slice().unwrap();
-        let td_errors = td_errors.as_slice().unwrap();
-        let alpha = self.alpha;
-        let mut max_p = self.max_priority;
-
-        for i in 0..indices.len() {
-            let p = (td_errors[i].abs() + 1e-6) as f64;
-            if p > max_p {
-                max_p = p;
-            }
-            self.tree.update(indices[i] as usize, p.powf(alpha));
-        }
-
-        if max_p > self.max_priority {
-            self.max_priority = max_p;
-            self.cached_priority = max_p.powf(alpha);
-        }
-    }
-}
-
 #[pymodule]
-fn colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Env>()?;
-    m.add_class::<VecEnv>()?;
-    m.add_class::<PrioritizedReplayBuffer>()?;
     Ok(())
 }

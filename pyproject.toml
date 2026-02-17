@@ -1,32 +1,45 @@
 [project]
 name = "colver"
-version = "0.1.0"
-description = "Fast Belote Contrée environment for RL training"
+version = "0.2.0"
+description = "Fast Belote Contree game engine with AI agents"
+readme = "README.md"
+license = { text = "WTFPL" }
 requires-python = ">=3.10"
+keywords = ["belote", "card-game", "reinforcement-learning", "mcts"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment :: Board Games",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
-    "matplotlib>=3.10.8",
     "numpy",
+    "matplotlib>=3.5",
 ]
 
 [project.optional-dependencies]
 web = [
-    "fastapi>=0.129.0",
-    "uvicorn[standard]>=0.40.0",
-    "websockets>=16.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "websockets>=12.0",
     "aiosqlite>=0.20.0",
 ]
-torch = [
-    "torch>=2.0",
-]
 dev = [
-    "colver[web,torch]",
+    "colver[web]",
+    "torch>=2.0",
+    "maturin>=1.0,<2.0",
 ]
+
+[project.scripts]
+colver-web = "colver.web:main"
 
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
+module-name = "colver._colver"
 manifest-path = "colver-py/Cargo.toml"
 python-source = "python"
 
@@ -36,7 +49,7 @@ default-groups = ["dev"]
 
 [dependency-groups]
 dev = [
-    "colver[web,torch]",
+    "colver[web]",
+    "torch>=2.0",
     "maturin>=1.0,<2.0",
-    "websockets>=16.0",
 ]
