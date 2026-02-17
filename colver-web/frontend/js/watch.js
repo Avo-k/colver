@@ -7,6 +7,11 @@ let autoPlayTimer = null;
 let waitingForStep = false;
 let trickCountBefore = 0;
 
+// History buffer for bidirectional navigation
+let moveHistory = [];    // Array of all received watch_move/replay_move data
+let historyIndex = -1;   // Cursor (-1 = initial state before any move)
+let initialState = null; // State from watch_started/replay_loaded
+
 const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 
 // Start game
@@ -21,28 +26,72 @@ document.getElementById('watch-start').addEventListener('click', () => {
 });
 
 // Transport controls
+document.getElementById('watch-prev-btn').addEventListener('click', () => {
+    if (!watchActive) return;
+    stopAutoPlay();
+    goToPreviousMove();
+});
+
 document.getElementById('watch-step-btn').addEventListener('click', () => {
-    if (!watchActive || watchFinished || waitingForStep) return;
-    requestStep();
+    if (!watchActive || waitingForStep) return;
+    stopAutoPlay();
+    goToNextMove();
 });
 
 document.getElementById('watch-trick-btn').addEventListener('click', () => {
-    if (!watchActive || watchFinished || waitingForStep) return;
-    startAutoPlay('trick');
+    if (!watchActive || waitingForStep) return;
+    stopAutoPlay();
+    goToNextTrick();
+});
+
+document.getElementById('watch-start-btn').addEventListener('click', () => {
+    if (!watchActive) return;
+    stopAutoPlay();
+    goToStart();
 });
 
 document.getElementById('watch-auto-btn').addEventListener('click', () => {
     if (autoPlayMode) {
         stopAutoPlay();
-    } else if (watchActive && !watchFinished) {
+    } else if (watchActive && !isAtEnd()) {
         startAutoPlay('game');
     }
 });
 
 document.getElementById('watch-end-btn').addEventListener('click', () => {
-    if (!watchActive || watchFinished || waitingForStep) return;
+    if (!watchActive || waitingForStep) return;
+    stopAutoPlay();
+    if (isAtEnd()) return;
     startAutoPlay('end');
 });
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+    // Only when watch panel is active and not focused on input elements
+    if (!document.getElementById('watch-panel').classList.contains('active')) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if (!watchActive) return;
+
+    if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stopAutoPlay();
+        goToPreviousMove();
+    } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stopAutoPlay();
+        goToNextMove();
+    }
+});
+
+function isAtEnd() {
+    // At end if we're at the last buffered entry and that entry is finished, or game is finished
+    if (historyIndex >= 0 && historyIndex === moveHistory.length - 1) {
+        const last = moveHistory[historyIndex];
+        if (last && last.finished) return true;
+    }
+    return watchFinished && historyIndex === moveHistory.length - 1;
+}
 
 function requestStep() {
     waitingForStep = true;
@@ -52,10 +101,12 @@ function requestStep() {
 function startAutoPlay(mode) {
     autoPlayMode = mode;
     if (mode === 'trick') {
-        trickCountBefore = getCurrentTrickCount();
+        trickCountBefore = historyIndex >= 0
+            ? (moveHistory[historyIndex].completed_tricks || []).length
+            : 0;
     }
     document.getElementById('watch-auto-btn').textContent = '\u23F8';
-    requestStep();
+    goToNextMove();
 }
 
 function stopAutoPlay() {
@@ -67,9 +118,142 @@ function stopAutoPlay() {
     document.getElementById('watch-auto-btn').textContent = '\u25B6';
 }
 
-function getCurrentTrickCount() {
-    const list = document.getElementById('watch-tricks-list');
-    return list ? list.children.length : 0;
+// Navigation functions
+function goToPreviousMove() {
+    if (historyIndex <= -1) return;
+    historyIndex--;
+    renderHistoryEntry(historyIndex);
+}
+
+function goToNextMove() {
+    if (historyIndex < moveHistory.length - 1) {
+        // We have buffered data ahead
+        historyIndex++;
+        renderHistoryEntry(historyIndex);
+        // Continue auto-play from buffer
+        if (autoPlayMode) {
+            continueAutoPlayFromBuffer();
+        }
+    } else if (!watchFinished && !isAtEnd()) {
+        // Need to request from server
+        requestStep();
+    } else if (autoPlayMode) {
+        stopAutoPlay();
+    }
+}
+
+function goToNextTrick() {
+    if (historyIndex < moveHistory.length - 1) {
+        // Try to advance within buffer until trick count increases
+        const startTricks = historyIndex >= 0
+            ? (moveHistory[historyIndex].completed_tricks || []).length
+            : 0;
+        while (historyIndex < moveHistory.length - 1) {
+            historyIndex++;
+            const curTricks = (moveHistory[historyIndex].completed_tricks || []).length;
+            if (curTricks > startTricks) {
+                renderHistoryEntry(historyIndex);
+                return;
+            }
+        }
+        renderHistoryEntry(historyIndex);
+        // If we exhausted the buffer without finding a trick boundary, request more
+        if (!watchFinished && !isAtEnd()) {
+            trickCountBefore = startTricks;
+            autoPlayMode = 'trick';
+            document.getElementById('watch-auto-btn').textContent = '\u23F8';
+            requestStep();
+        }
+    } else if (!watchFinished && !isAtEnd()) {
+        // Start auto-play in trick mode from server
+        startAutoPlay('trick');
+    }
+}
+
+function goToStart() {
+    historyIndex = -1;
+    renderHistoryEntry(-1);
+}
+
+function renderHistoryEntry(index) {
+    if (index < 0) {
+        // Render initial state
+        if (initialState) {
+            renderWatchState(initialState);
+            renderWatchBidHistory([]);
+            renderTricksHistory([]);
+            document.getElementById('watch-stats-header').innerHTML = '';
+            document.getElementById('watch-stats-body').innerHTML = '<div class="stats-placeholder">Cliquez sur un bouton pour avancer</div>';
+            renderCardAnnotations(null, initialState);
+        }
+    } else if (index < moveHistory.length) {
+        const data = moveHistory[index];
+        renderWatchState(data.state);
+        if (data.move) renderStats(data.move);
+        else {
+            document.getElementById('watch-stats-header').innerHTML = '';
+            document.getElementById('watch-stats-body').innerHTML = '';
+        }
+        renderWatchBidHistory(data.bid_history);
+        renderTricksHistory(data.completed_tricks);
+
+        if (data.finished) {
+            const state = data.state;
+            const header = document.getElementById('watch-stats-header');
+            const body = document.getElementById('watch-stats-body');
+            const nsWon = state.points[0] > state.points[1];
+            if (replaySession) {
+                header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
+            } else {
+                header.innerHTML = `<span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
+            }
+            body.innerHTML = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+        }
+
+        renderCardAnnotations(data, data.state);
+    }
+    updateTransportButtons();
+}
+
+function updateTransportButtons() {
+    const prevBtn = document.getElementById('watch-prev-btn');
+    const startBtn = document.getElementById('watch-start-btn');
+    const stepBtn = document.getElementById('watch-step-btn');
+    const trickBtn = document.getElementById('watch-trick-btn');
+    const endBtn = document.getElementById('watch-end-btn');
+
+    const canGoBack = historyIndex >= 0;
+    const canGoForward = !isAtEnd() || historyIndex < moveHistory.length - 1;
+
+    prevBtn.disabled = !canGoBack;
+    startBtn.disabled = !canGoBack;
+    stepBtn.disabled = !canGoForward || waitingForStep;
+    trickBtn.disabled = !canGoForward || waitingForStep;
+    endBtn.disabled = !canGoForward || waitingForStep;
+}
+
+function continueAutoPlayFromBuffer() {
+    if (!autoPlayMode) return;
+    const data = moveHistory[historyIndex];
+    if (!data) { stopAutoPlay(); return; }
+
+    if (data.finished) {
+        stopAutoPlay();
+        return;
+    }
+
+    if (autoPlayMode === 'trick') {
+        const currentTricks = (data.completed_tricks || []).length;
+        if (currentTricks > trickCountBefore) {
+            stopAutoPlay();
+            return;
+        }
+    }
+
+    const delay = autoPlayMode === 'end' ? 0 : 1000;
+    autoPlayTimer = setTimeout(() => {
+        if (autoPlayMode) goToNextMove();
+    }, delay);
 }
 
 function continueAutoPlay(data) {
@@ -86,10 +270,123 @@ function continueAutoPlay(data) {
         }
     }
 
-    const delay = autoPlayMode === 'end' ? 0 : parseInt(document.getElementById('watch-speed').value);
+    const delay = autoPlayMode === 'end' ? 0 : 1000;
     autoPlayTimer = setTimeout(() => {
-        if (autoPlayMode) requestStep();
+        if (autoPlayMode) goToNextMove();
     }, delay);
+}
+
+// Card point annotations during bidding
+function buildPointAnnotations(state) {
+    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+    const phase = state.phase !== undefined ? state.phase : (state.is_terminal ? 2 : -1);
+    // Only annotate during bidding phase
+    if (phase !== 0) return null;
+
+    const annotations = new Map();
+    for (let seat = 0; seat < 4; seat++) {
+        const hand = state.hands[seat];
+        if (!hand) continue;
+        for (const c of hand) {
+            const suit = cardSuit(c);
+            const rank = cardRank(c);
+            const pts = (suit === trumpSuit) ? TRUMP_POINTS[rank] : PLAIN_POINTS[rank];
+            if (pts > 0) {
+                annotations.set(c, { text: String(pts), cls: 'card-pts' });
+            }
+        }
+    }
+    return annotations.size > 0 ? annotations : null;
+}
+
+// Q-value annotations on cards
+function renderCardAnnotations(data, state) {
+    if (!data || !data.move || !data.move.stats) {
+        // During bidding, show point values
+        if (state && state.phase === 0) {
+            const annotations = buildPointAnnotations(state);
+            if (annotations) {
+                reRenderHandsWithAnnotations(state, annotations);
+            }
+        }
+        return;
+    }
+
+    const move = data.move;
+    const stats = move.stats;
+
+    // During bidding phase, show point values
+    if (state.phase === 0 || move.phase === 0) {
+        const annotations = buildPointAnnotations(state);
+        if (annotations) {
+            reRenderHandsWithAnnotations(state, annotations);
+        }
+        return;
+    }
+
+    // During play phase with DouDou Q-values
+    if (stats.q_values && stats.q_values.length > 0) {
+        const qMap = new Map();
+        const sorted = [...stats.q_values].sort((a, b) => b[1] - a[1]);
+        const bestAction = sorted[0] ? sorted[0][0] : -1;
+        const vals = sorted.map(x => x[1]);
+        const maxQ = Math.max(...vals);
+        const minQ = Math.min(...vals);
+        const range = maxQ - minQ || 1;
+
+        for (const [action, q] of stats.q_values) {
+            const norm = (q - minQ) / range;
+            const isBest = action === bestAction;
+            qMap.set(action, {
+                text: q.toFixed(2),
+                cls: 'card-qval' + (isBest ? ' best' : ''),
+                style: { opacity: String(0.5 + norm * 0.5) }
+            });
+        }
+
+        // Annotate the player's hand and the played card in trick area
+        const player = move.player;
+        const handEls = {
+            0: document.getElementById('watch-hand-north'),
+            1: document.getElementById('watch-hand-east'),
+            2: document.getElementById('watch-hand-south'),
+            3: document.getElementById('watch-hand-west'),
+        };
+        const handEl = handEls[player];
+        if (handEl) {
+            const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+            renderHand(handEl, state.hands[player], false, null, null, trumpSuit, qMap);
+        }
+
+        // Also annotate the just-played card in the trick area
+        const playedCard = move.action;
+        const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
+        const trickEl = document.getElementById(`watch-trick-${seatMap[player]}`);
+        if (trickEl && qMap.has(playedCard)) {
+            const cardDiv = trickEl.querySelector('.card');
+            if (cardDiv) {
+                const ann = qMap.get(playedCard);
+                const badge = document.createElement('span');
+                badge.className = `card-annotation ${ann.cls}`;
+                badge.textContent = ann.text;
+                if (ann.style) Object.assign(badge.style, ann.style);
+                cardDiv.appendChild(badge);
+            }
+        }
+    }
+}
+
+function reRenderHandsWithAnnotations(state, annotations) {
+    const handEls = {
+        0: document.getElementById('watch-hand-north'),
+        1: document.getElementById('watch-hand-east'),
+        2: document.getElementById('watch-hand-south'),
+        3: document.getElementById('watch-hand-west'),
+    };
+    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+    for (let seat = 0; seat < 4; seat++) {
+        renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit, annotations);
+    }
 }
 
 // Render state
@@ -298,6 +595,10 @@ onMessage('watch_started', (data) => {
     waitingForStep = false;
     autoPlayMode = null;
     replaySession = false;
+    moveHistory = [];
+    historyIndex = -1;
+    initialState = data.state;
+
     document.getElementById('watch-main').classList.remove('hidden');
     document.getElementById('watch-start').disabled = false;
     document.getElementById('watch-start').textContent = 'Relancer';
@@ -311,11 +612,7 @@ onMessage('watch_started', (data) => {
         });
     }
 
-    renderWatchState(data.state);
-    renderWatchBidHistory([]);
-    renderTricksHistory([]);
-    document.getElementById('watch-stats-header').innerHTML = '';
-    document.getElementById('watch-stats-body').innerHTML = '<div class="stats-placeholder">Cliquez sur un bouton pour avancer</div>';
+    renderHistoryEntry(-1);
 });
 
 onMessage('watch_move', (data) => {
@@ -324,13 +621,15 @@ onMessage('watch_move', (data) => {
     if (data.finished && !data.move) {
         watchFinished = true;
         stopAutoPlay();
+        updateTransportButtons();
         return;
     }
 
-    renderWatchState(data.state);
-    if (data.move) renderStats(data.move);
-    renderWatchBidHistory(data.bid_history);
-    renderTricksHistory(data.completed_tricks);
+    // Push to history buffer
+    moveHistory.push(data);
+    historyIndex = moveHistory.length - 1;
+
+    renderHistoryEntry(historyIndex);
 
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
@@ -340,13 +639,7 @@ onMessage('watch_move', (data) => {
     if (data.finished) {
         watchFinished = true;
         stopAutoPlay();
-        // Show result
-        const state = data.state;
-        const header = document.getElementById('watch-stats-header');
-        const body = document.getElementById('watch-stats-body');
-        const nsWon = state.points[0] > state.points[1];
-        header.innerHTML = `<span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
-        body.innerHTML = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+        updateTransportButtons();
         return;
     }
 

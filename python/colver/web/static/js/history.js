@@ -126,24 +126,22 @@ onMessage('replay_loaded', (data) => {
     currentActionIdx = 0;
     setWatchGameId(data.game_id);
 
-    // Reset watch state for replay
+    // Reset watch state and history buffer for replay
     watchActive = true;
     watchFinished = false;
     waitingForStep = false;
     autoPlayMode = null;
+    moveHistory = [];
+    historyIndex = -1;
+    initialState = data.state;
 
     document.getElementById('watch-main').classList.remove('hidden');
     document.getElementById('watch-start').disabled = false;
     document.getElementById('watch-start').textContent = 'Relancer';
 
-    renderWatchState(data.state);
-    renderWatchBidHistory([]);
-    renderTricksHistory([]);
-
+    renderHistoryEntry(-1);
     const header = document.getElementById('watch-stats-header');
-    const body = document.getElementById('watch-stats-body');
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-agent">${data.game_id}</span>`;
-    body.innerHTML = '<div class="stats-placeholder">Cliquez sur un bouton pour avancer</div>';
 });
 
 onMessage('replay_move', (data) => {
@@ -153,13 +151,15 @@ onMessage('replay_move', (data) => {
     if (data.finished && !data.move) {
         watchFinished = true;
         stopAutoPlay();
+        updateTransportButtons();
         return;
     }
 
-    renderWatchState(data.state);
-    if (data.move) renderStats(data.move);
-    renderWatchBidHistory(data.bid_history);
-    renderTricksHistory(data.completed_tricks);
+    // Push to history buffer
+    moveHistory.push(data);
+    historyIndex = moveHistory.length - 1;
+
+    renderHistoryEntry(historyIndex);
 
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
@@ -169,12 +169,7 @@ onMessage('replay_move', (data) => {
     if (data.finished) {
         watchFinished = true;
         stopAutoPlay();
-        const state = data.state;
-        const header = document.getElementById('watch-stats-header');
-        const body = document.getElementById('watch-stats-body');
-        const nsWon = state.points[0] > state.points[1];
-        header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
-        body.innerHTML = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+        updateTransportButtons();
         return;
     }
 

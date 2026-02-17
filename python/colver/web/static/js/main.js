@@ -34,6 +34,10 @@ function onMessage(type, handler) {
 // Card rendering
 const RANKS = ['7', '8', '9', 'V', 'D', 'R', '10', 'A'];
 const SUITS = ['\u2660', '\u2665', '\u2666', '\u2663']; // spade heart diamond club
+
+// Card point values per rank index: [7, 8, 9, J, Q, K, 10, A]
+const PLAIN_POINTS = [0, 0, 0, 2, 3, 4, 10, 11];
+const TRUMP_POINTS = [0, 0, 14, 20, 3, 4, 10, 11];
 const SUIT_NAMES_EN = ['spades', 'hearts', 'diamonds', 'clubs'];
 const RANK_NAMES_EN = ['7', '8', '9', 'jack', 'queen', 'king', '10', 'ace'];
 
@@ -49,7 +53,7 @@ function cardSvgPath(cardIdx) {
     return `cards/${RANK_NAMES_EN[rank]}_of_${SUIT_NAMES_EN[suit]}${suffix}.svg`;
 }
 
-function cardToHtml(cardIdx, clickable = false, onClick = null, illegal = false) {
+function cardToHtml(cardIdx, clickable = false, onClick = null, illegal = false, annotation = null) {
     const el = document.createElement('div');
     let cls = 'card';
     if (clickable) cls += ' clickable raised';
@@ -61,6 +65,14 @@ function cardToHtml(cardIdx, clickable = false, onClick = null, illegal = false)
     img.alt = `${RANKS[cardRank(cardIdx)]}${SUITS[cardSuit(cardIdx)]}`;
     img.draggable = false;
     el.appendChild(img);
+
+    if (annotation) {
+        const badge = document.createElement('span');
+        badge.className = `card-annotation ${annotation.cls || ''}`;
+        badge.textContent = annotation.text;
+        if (annotation.style) Object.assign(badge.style, annotation.style);
+        el.appendChild(badge);
+    }
 
     el.dataset.card = cardIdx;
     if (clickable && onClick) {
@@ -81,7 +93,7 @@ const PLAIN_ORDER = [7, 6, 5, 4, 3, 2, 1, 0]; // rank -> sort key
 // Trump: J > 9 > A > 10 > K > Q > 8 > 7
 const TRUMP_ORDER = [7, 6, 1, 0, 5, 4, 3, 2]; // rank -> sort key
 
-function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1) {
+function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1, annotations = null) {
     container.innerHTML = '';
     const sorted = [...cards].sort((a, b) => {
         const suitA = cardSuit(a), suitB = cardSuit(b);
@@ -94,7 +106,8 @@ function renderHand(container, cards, clickable = false, onClick = null, legalSe
         const isLegal = !legalSet || legalSet.has(c);
         const cardClickable = clickable && isLegal;
         const illegal = clickable && !isLegal;
-        container.appendChild(cardToHtml(c, cardClickable, onClick, illegal));
+        const ann = annotations ? annotations.get(c) : null;
+        container.appendChild(cardToHtml(c, cardClickable, onClick, illegal, ann));
     }
 }
 
@@ -222,9 +235,5 @@ document.querySelectorAll('.tab').forEach(btn => {
 document.getElementById('analysis-time').addEventListener('input', e => {
     document.getElementById('analysis-time-val').textContent = e.target.value;
 });
-document.getElementById('watch-speed').addEventListener('input', e => {
-    document.getElementById('watch-speed-val').textContent = e.target.value;
-});
-
 // Connect on load
 connect();

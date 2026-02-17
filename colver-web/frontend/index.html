@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css?v=4">
+    <link rel="stylesheet" href="static/styles.css?v=5">
 </head>
 <body>
     <header>
@@ -204,14 +204,16 @@
 
                 <div id="watch-right">
                     <div id="watch-transport">
-                        <button id="watch-step-btn" title="Prochain coup">&#9654;|</button>
-                        <button id="watch-trick-btn" title="Jouer le pli">&#9654;&#9654;</button>
-                        <button id="watch-auto-btn" title="Auto-play">&#9654;</button>
-                        <button id="watch-end-btn" title="Fin de partie">&#9654;&#9654;|</button>
-                        <label class="speed-label">Vitesse :
-                            <input type="range" id="watch-speed" min="100" max="2000" value="500" step="100">
-                            <span id="watch-speed-val">500</span>ms
-                        </label>
+                        <div class="transport-row">
+                            <button id="watch-prev-btn" title="Coup precedent">|&#9664;</button>
+                            <button id="watch-step-btn" title="Prochain coup">&#9654;|</button>
+                            <button id="watch-trick-btn" title="Jouer le pli">&#9654;&#9654;</button>
+                        </div>
+                        <div class="transport-row">
+                            <button id="watch-start-btn" title="Retour au debut">|&#9664;&#9664;</button>
+                            <button id="watch-auto-btn" title="Auto-play">&#9654;</button>
+                            <button id="watch-end-btn" title="Fin de partie">&#9654;&#9654;|</button>
+                        </div>
                     </div>
 
                     <div id="watch-stats-panel">
@@ -446,10 +448,10 @@
         </div>
     </div>
 
-    <script src="static/js/main.js?v=4"></script>
-    <script src="static/js/play.js?v=4"></script>
-    <script src="static/js/watch.js?v=4"></script>
-    <script src="static/js/history.js?v=4"></script>
-    <script src="static/js/analysis.js?v=4"></script>
+    <script src="static/js/main.js?v=5"></script>
+    <script src="static/js/play.js?v=5"></script>
+    <script src="static/js/watch.js?v=5"></script>
+    <script src="static/js/history.js?v=5"></script>
+    <script src="static/js/analysis.js?v=5"></script>
 </body>
 </html>

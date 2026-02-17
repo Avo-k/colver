@@ -687,12 +687,20 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 #watch-transport {
     display: flex;
+    flex-direction: column;
     gap: 4px;
-    align-items: center;
-    flex-wrap: wrap;
     background: rgba(0,0,0,0.3);
     border-radius: 6px;
     padding: 8px 10px;
+}
+
+.transport-row {
+    display: flex;
+    gap: 4px;
+}
+
+.transport-row button {
+    flex: 1;
 }
 
 #watch-transport button {
@@ -701,13 +709,8 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     min-width: 36px;
 }
 
-.speed-label {
-    font-size: 0.75rem;
-    margin-left: auto;
-}
-
-.speed-label input[type="range"] {
-    width: 80px;
+#watch-transport button:disabled {
+    opacity: 0.4;
 }
 
 /* Stats panel */
@@ -980,6 +983,38 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 .trick-history-row.team-ns .trick-winner { color: #a5d6a7; }
 .trick-history-row.team-ew .trick-winner { color: #ef9a9a; }
+
+/* ===== CARD ANNOTATIONS ===== */
+.card-annotation {
+    position: absolute;
+    pointer-events: none;
+    z-index: 5;
+    font-size: clamp(0.5rem, 0.7vw, 0.7rem);
+    font-weight: 700;
+    line-height: 1;
+    border-radius: 3px;
+    padding: 1px 3px;
+}
+
+.card-pts {
+    bottom: 2px;
+    right: 2px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+}
+
+.card-qval {
+    top: 2px;
+    left: 2px;
+    background: rgba(21, 101, 192, 0.75);
+    color: #e3f2fd;
+    font-size: clamp(0.45rem, 0.6vw, 0.6rem);
+}
+
+.card-qval.best {
+    background: rgba(184, 134, 11, 0.85);
+    color: #fff8e1;
+}
 
 /* Analysis */
 #analysis-panel {
