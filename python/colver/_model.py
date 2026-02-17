@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from urllib.request import urlretrieve
 
-_DEFAULT_URL = "https://github.com/avmusik/colver/releases/download/v0.2.0/dmc_final.bin"
+_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.2.0/dmc_final.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
