@@ -4,6 +4,7 @@ const HUMAN_SEAT = 2; // South
 
 let bidHistory = [];
 let playLocked = false; // Prevent double-clicks while waiting for server
+let _pendingPlayState = null; // Queued state during trick animation
 
 function getMoveDelay() {
     return parseInt(document.getElementById('move-delay').value);
@@ -18,6 +19,9 @@ document.getElementById('start-game').addEventListener('click', () => {
     const partnerAi = document.getElementById('partner-ai').value;
     bidHistory = [];
     playLocked = false;
+    _prevTrick['trick'] = [];
+    _animatingTrick = null;
+    _pendingPlayState = null;
     send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
@@ -25,6 +29,12 @@ document.getElementById('start-game').addEventListener('click', () => {
 });
 
 function renderPlayState(state) {
+    // Queue state if trick animation is running — render after it completes
+    if (_animatingTrick === 'trick') {
+        _pendingPlayState = state;
+        return;
+    }
+
     // Score
     document.getElementById('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
     document.getElementById('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
@@ -66,17 +76,39 @@ function renderPlayState(state) {
         }
     }
 
-    // Trick
-    renderTrick('trick', state.current_trick);
-
-    // Last completed trick (from server)
-    const lastTrickEl = document.getElementById('last-trick');
-    if (lastTrickEl) {
-        if (isPlayPhase && state.last_trick) {
-            renderLastTrick(lastTrickEl, state.last_trick, state.last_trick_winner, state.last_trick_points, HUMAN_SEAT);
-        } else {
-            lastTrickEl.classList.add('hidden');
-            lastTrickEl.innerHTML = '';
+    // Trick (with flush animation)
+    const completedCards = detectTrickCompletion('trick', state.current_trick);
+    if (completedCards && _animatingTrick !== 'trick') {
+        // Trick just completed: animate flush, then update last-trick
+        animateTrickFlush('trick', () => {
+            const lastTrickEl = document.getElementById('last-trick');
+            if (lastTrickEl && isPlayPhase && state.last_trick) {
+                renderLastTrick(lastTrickEl, state.last_trick, state.last_trick_winner, state.last_trick_points, HUMAN_SEAT);
+            }
+            // Flush any state that arrived during animation
+            if (_pendingPlayState) {
+                const pending = _pendingPlayState;
+                _pendingPlayState = null;
+                renderPlayState(pending);
+            }
+        });
+        // Render the new (empty/partial) trick underneath the overlay
+        renderTrick('trick', state.current_trick);
+    } else {
+        renderTrick('trick', state.current_trick);
+        // Last completed trick — skip update when 4 cards are showing
+        // (server sends last_trick early; wait for the flush animation instead)
+        const trickFull = state.current_trick && state.current_trick.filter(c => c >= 0 && c < 32).length === 4;
+        if (!trickFull) {
+            const lastTrickEl = document.getElementById('last-trick');
+            if (lastTrickEl) {
+                if (isPlayPhase && state.last_trick) {
+                    renderLastTrick(lastTrickEl, state.last_trick, state.last_trick_winner, state.last_trick_points, HUMAN_SEAT);
+                } else {
+                    lastTrickEl.classList.add('hidden');
+                    lastTrickEl.innerHTML = '';
+                }
+            }
         }
     }
 

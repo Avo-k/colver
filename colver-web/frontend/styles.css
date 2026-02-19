@@ -337,6 +337,17 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     box-shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
 
+/* Trick flush animation overlay */
+.trick-flush-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+}
+.trick-flush-overlay .card {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
 /* ===== BIDDING PANEL ===== */
 #bidding-panel {
     background: rgba(0,0,0,0.25);

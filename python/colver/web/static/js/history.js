@@ -141,6 +141,9 @@ onMessage('replay_loaded', (data) => {
     autoPlayMode = null;
     moveHistory = [];
     historyIndex = -1;
+    _prevHistoryIndex = -1;
+    _prevTrick['watch-trick'] = [];
+    _animatingTrick = null;
     initialState = data.state;
 
     document.getElementById('watch-main').classList.remove('hidden');

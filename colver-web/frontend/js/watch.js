@@ -10,6 +10,7 @@ let waitingForStep = false;
 let moveHistory = [];    // Array of all received watch_move/replay_move data
 let historyIndex = -1;   // Cursor (-1 = initial state before any move)
 let initialState = null; // State from watch_started/replay_loaded
+let _prevHistoryIndex = -1; // For detecting forward vs backward navigation
 
 const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 
@@ -126,11 +127,13 @@ function stopAutoPlay() {
 // Navigation functions
 function goToPreviousMove() {
     if (historyIndex <= -1) return;
+    if (_animatingTrick === 'watch-trick') return;
     historyIndex--;
     renderHistoryEntry(historyIndex);
 }
 
 function goToNextMove() {
+    if (_animatingTrick === 'watch-trick') return;
     if (historyIndex < moveHistory.length - 1) {
         // We have buffered data ahead
         historyIndex++;
@@ -153,8 +156,13 @@ function goToStart() {
 }
 
 function renderHistoryEntry(index) {
+    const isForward = index > _prevHistoryIndex;
+    const skipAnimation = autoPlayMode === 'end';
+    _prevHistoryIndex = index;
+
     if (index < 0) {
         // Render initial state
+        _prevTrick['watch-trick'] = [];
         if (initialState) {
             renderWatchState(initialState);
             renderWatchBidHistory([]);
@@ -165,6 +173,21 @@ function renderHistoryEntry(index) {
         }
     } else if (index < moveHistory.length) {
         const data = moveHistory[index];
+
+        // Detect trick completion for animation
+        const completedCards = detectTrickCompletion('watch-trick', data.state.current_trick);
+
+        if (completedCards && isForward && !skipAnimation && _animatingTrick !== 'watch-trick') {
+            // Animate the trick flush, then update the rest
+            animateTrickFlush('watch-trick', () => {
+                // Update last-trick after animation
+                const lastTrickEl = document.getElementById('watch-last-trick');
+                if (lastTrickEl && data.state.phase === 1 && data.state.last_trick) {
+                    renderLastTrick(lastTrickEl, data.state.last_trick, data.state.last_trick_winner, data.state.last_trick_points, 0);
+                }
+            });
+        }
+
         renderWatchState(data.state);
         if (data.move) renderStats(data.move);
         else {
@@ -219,7 +242,12 @@ function continueAutoPlayFromBuffer() {
 
     const delay = autoPlayMode === 'end' ? 0 : 1000;
     autoPlayTimer = setTimeout(() => {
-        if (autoPlayMode) goToNextMove();
+        if (!autoPlayMode) return;
+        if (_animatingTrick === 'watch-trick') {
+            continueAutoPlayFromBuffer(); // retry after animation
+            return;
+        }
+        goToNextMove();
     }, delay);
 }
 
@@ -231,7 +259,12 @@ function continueAutoPlay(data) {
 
     const delay = autoPlayMode === 'end' ? 0 : 1000;
     autoPlayTimer = setTimeout(() => {
-        if (autoPlayMode) goToNextMove();
+        if (!autoPlayMode) return;
+        if (_animatingTrick === 'watch-trick') {
+            continueAutoPlay(data); // retry after animation
+            return;
+        }
+        goToNextMove();
     }, delay);
 }
 
@@ -338,6 +371,17 @@ function renderWatchState(state) {
 
     // Trick
     renderTrick('watch-trick', state.current_trick);
+
+    // Last completed trick
+    const watchLastTrickEl = document.getElementById('watch-last-trick');
+    if (watchLastTrickEl && _animatingTrick !== 'watch-trick') {
+        if (state.phase === 1 && state.last_trick) {
+            renderLastTrick(watchLastTrickEl, state.last_trick, state.last_trick_winner, state.last_trick_points, 0);
+        } else {
+            watchLastTrickEl.classList.add('hidden');
+            watchLastTrickEl.innerHTML = '';
+        }
+    }
 
     // Highlight current player
     const labelMap = { 0: 'watch-label-n', 1: 'watch-label-e', 2: 'watch-label-s', 3: 'watch-label-w' };
@@ -528,6 +572,9 @@ onMessage('watch_started', (data) => {
     replaySession = false;
     moveHistory = [];
     historyIndex = -1;
+    _prevHistoryIndex = -1;
+    _prevTrick['watch-trick'] = [];
+    _animatingTrick = null;
     initialState = data.state;
 
     document.getElementById('watch-main').classList.remove('hidden');

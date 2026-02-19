@@ -31,6 +31,150 @@ function onMessage(type, handler) {
     messageHandlers[type] = handler;
 }
 
+// Trick flush animation state
+let _prevTrick = {};       // prefix -> array of 4 card indices from previous render
+let _animatingTrick = null; // prefix currently animating, or null
+
+function detectTrickCompletion(prefix, newTrick) {
+    const prev = _prevTrick[prefix];
+    _prevTrick[prefix] = newTrick ? [...newTrick] : [];
+    if (!prev) return null;
+    // Was previous trick full (4 valid cards)?
+    const prevFull = prev.filter(c => c >= 0 && c < 32).length === 4;
+    const newFull = newTrick ? newTrick.filter(c => c >= 0 && c < 32).length : 0;
+    if (prevFull && newFull < 4) {
+        return prev; // Return the 4 cards that were in the completed trick
+    }
+    return null;
+}
+
+function animateTrickFlush(prefix, onComplete) {
+    const trickAreaId = prefix === 'trick' ? 'trick-area' : 'watch-trick-area';
+    const lastTrickId = prefix === 'trick' ? 'last-trick' : 'watch-last-trick';
+    const trickArea = document.getElementById(trickAreaId);
+    if (!trickArea) { if (onComplete) onComplete(); return; }
+
+    _animatingTrick = prefix;
+
+    const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
+    const faceClones = [];
+    const backClones = [];
+    const rects = [];
+
+    for (let seat = 0; seat < 4; seat++) {
+        const slotEl = document.getElementById(`${prefix}-${seatMap[seat]}`);
+        const cardEl = slotEl ? slotEl.querySelector('.card') : null;
+        if (cardEl) {
+            const rect = cardEl.getBoundingClientRect();
+            rects.push(rect);
+
+            // Face clone (card image)
+            const face = cardEl.cloneNode(true);
+            face.style.position = 'absolute';
+            face.style.left = rect.left + 'px';
+            face.style.top = rect.top + 'px';
+            face.style.width = rect.width + 'px';
+            face.style.height = rect.height + 'px';
+            face.style.margin = '0';
+            faceClones.push(face);
+
+            // Back clone (face-down card)
+            const back = document.createElement('div');
+            back.className = 'card face-down';
+            back.style.position = 'absolute';
+            back.style.left = rect.left + 'px';
+            back.style.top = rect.top + 'px';
+            back.style.width = rect.width + 'px';
+            back.style.height = rect.height + 'px';
+            back.style.margin = '0';
+            backClones.push(back);
+        }
+    }
+
+    if (faceClones.length === 0) {
+        _animatingTrick = null;
+        if (onComplete) onComplete();
+        return;
+    }
+
+    // Create fixed overlay: backs behind, faces on top
+    const overlay = document.createElement('div');
+    overlay.className = 'trick-flush-overlay';
+    for (const c of backClones) overlay.appendChild(c);
+    for (const c of faceClones) overlay.appendChild(c);
+    document.body.appendChild(overlay);
+
+    // Clear original trick slots
+    for (let seat = 0; seat < 4; seat++) {
+        const slotEl = document.getElementById(`${prefix}-${seatMap[seat]}`);
+        if (slotEl) slotEl.innerHTML = '';
+    }
+
+    // Calculate center of trick area
+    const areaRect = trickArea.getBoundingClientRect();
+    const centerX = areaRect.left + areaRect.width / 2;
+    const centerY = areaRect.top + areaRect.height / 2;
+
+    // Calculate target position (last-trick box, fallback top-right)
+    const lastTrickEl = document.getElementById(lastTrickId);
+    let targetX, targetY;
+    if (lastTrickEl && !lastTrickEl.classList.contains('hidden')) {
+        const ltRect = lastTrickEl.getBoundingClientRect();
+        targetX = ltRect.left + ltRect.width / 2;
+        targetY = ltRect.top + ltRect.height / 2;
+    } else {
+        targetX = areaRect.right - 40;
+        targetY = areaRect.top + 20;
+    }
+
+    // Hide last-trick box during animation — revealed in onComplete callback
+    if (lastTrickEl) {
+        lastTrickEl.classList.add('hidden');
+        lastTrickEl.innerHTML = '';
+    }
+
+    const duration = 1600;
+    let finished = 0;
+    const totalAnims = faceClones.length * 2;
+    const rotations = ['-3deg', '4deg', '-2deg', '5deg'];
+
+    function onAnimFinish() {
+        finished++;
+        if (finished === totalAnims) {
+            overlay.remove();
+            _animatingTrick = null;
+            if (onComplete) onComplete();
+        }
+    }
+
+    for (let i = 0; i < faceClones.length; i++) {
+        const rect = rects[i];
+        const origX = rect.left;
+        const origY = rect.top;
+        const pileX = centerX - rect.width / 2;
+        const pileY = centerY - rect.height / 2;
+        const flyX = targetX - rect.width / 4;
+        const flyY = targetY - rect.height / 4;
+        const rot = rotations[i];
+
+        // Face: slides to pile, fades out at flip point
+        faceClones[i].animate([
+            { left: origX+'px', top: origY+'px', transform: 'scale(1) rotate(0deg)', opacity: 1 },
+            { left: pileX+'px', top: pileY+'px', transform: `scale(0.95) rotate(${rot})`, opacity: 1, offset: 0.30 },
+            { left: pileX+'px', top: pileY+'px', transform: `scale(0.95) rotate(${rot})`, opacity: 0, offset: 0.35 },
+            { left: flyX+'px', top: flyY+'px', transform: 'scale(0.5) rotate(0deg)', opacity: 0 },
+        ], { duration, easing: 'ease-in-out', fill: 'forwards' }).onfinish = onAnimFinish;
+
+        // Back: follows same path, fades in at flip point, flies to target
+        backClones[i].animate([
+            { left: origX+'px', top: origY+'px', transform: 'scale(1) rotate(0deg)', opacity: 0 },
+            { left: pileX+'px', top: pileY+'px', transform: `scale(0.95) rotate(${rot})`, opacity: 0, offset: 0.30 },
+            { left: pileX+'px', top: pileY+'px', transform: `scale(0.95) rotate(${rot})`, opacity: 1, offset: 0.35 },
+            { left: flyX+'px', top: flyY+'px', transform: 'scale(0.5) rotate(0deg)', opacity: 0 },
+        ], { duration, easing: 'ease-in-out', fill: 'forwards' }).onfinish = onAnimFinish;
+    }
+}
+
 // Card rendering
 const RANKS = ['7', '8', '9', 'V', 'D', 'R', '10', 'A'];
 const SUITS = ['\u2660', '\u2665', '\u2666', '\u2663']; // spade heart diamond club
