@@ -138,7 +138,7 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 ### Bidding Strategies (`bid_eval.rs`)
 
-Four fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`, `Roro`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
+Five fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`, `Roro`, `Maxi`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
 
 **Hand evaluation:** `evaluate_for_trump(hand, suit) -> u16` scores a hand assuming `suit` is trump. Trump honors (J=8, 9=6, A=4, 10=3, K=1, Q=1), trump length bonus ((count−2)×2 if count>2), side aces (+3 each), voids (+3), singletons (+1). Typical range 0–35.
 
@@ -152,6 +152,8 @@ Four fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improve
 **`smart_bid`** — Conservative convention-based. Requires J/9 for opening, J+9 signaling between partners. Very conservative (~10-13% contract take rate, ~78% success). Mostly historical.
 
 **`roro_bid`** — Expert convention-based strategy. Position-aware openings, highest-level-first scan (130→80), structured partner responses, intervention (+10 light / +20 "la barre"), Théorème 3 coinche.
+
+**`maxi_bid`** (`maxi.rs`) — Expert convention-linked bidding + structured card play (the "Maxi" agent). Hand classification into Cases A(80), B(90), C(100), D(110–130) based on J/9 honors, side strength, and loser count. 4 bidding phases: opening classification, partner response, suit change, competitive. Théorème 3 coinche (0 trumps in opponent's suit + 3 aces). Card play uses convention-aware leads, trump management, finesse patterns.
 
 **`parametric_bid` + `BidParams`** — Configurable bidder for strategy sweeps. `BidParams` has: score thresholds[6] (for 80–130), opening/overcall/response caps, overcall_min_score, quality_gate flag. Presets: `ultra_conservative`, `conservative`, `moderate`, `balanced`, `aggressive`, `very_aggressive`. Used by `bid_tournament` binary.
 
@@ -207,6 +209,8 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 - **`bid_tournament`**: Round-robin tournament of parameterized bidding strategies. Each pair plays both directions with Naive IS-MCTS for card play. Reports win matrix, margin matrix, rankings.
 - **`bid_debug`**: Prints detailed bidding rounds showing each player's hand, suit evaluations, and decisions for both heuristic and improved bidders side-by-side.
 - **`strength_experiment`**: Rollout policy comparison, D×I sweep, RAVE on/off.
+- **`maxi_diagnose`**: Diagnostic tool — plays individual deals showing Maxi (NS) vs DMC (EW) with full play-by-play: hand evals, bidding reasoning (Cases A/B/C/D), DMC Q-value rankings, trick-by-trick results. Usage: `cargo run --bin maxi_diagnose --release -- [num_deals] [seed]`.
+- **`v2_tournament`**: V2 bidding fine-tune tournament — compares `improved_bid` baseline vs `V2Config` variants using DMC + Oracle MCTS play in parallel. Round-robin match play with win/margin matrices.
 - **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
 - **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
 
@@ -228,6 +232,8 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 
 FastAPI + WebSocket backend with vanilla JS frontend. Bundled in the wheel under `colver[web]` optional dependency. Three modes: Play (human vs AI), Watch (spectate AI vs AI with thinking stats), Analysis (custom position setup + MCTS analysis).
 
+**Play tab UX:** Instant card play (optimistic update), configurable pause slider (1–8s), trick flush animation (cards pile → flip face-down → fly to last-trick box, 1.6s), end-of-game overlay (centered glassmorphism box with victory/defeat/draw theming, contract info, scores with belote annotation, confetti on victory, restart button). CFN box for copyable game state. Bug report button.
+
 **Package layout** (`python/colver/web/`):
 - `server.py` — FastAPI app, WebSocket handler, uses `colver.model_path()` for DMC weights.
 - `game_manager.py` — `PlaySession` (human vs AI), `WatchSession` (spectate), `ReplaySession` (replay), `AnalysisSession` (custom position + MCTS analysis).
@@ -243,7 +249,7 @@ FastAPI + WebSocket backend with vanilla JS frontend. Bundled in the wheel under
 
 ### Docker Deployment
 
-Multi-stage Dockerfile: `uv:python3.12-bookworm` builder (compiles PyO3 wheel with maturin) + `python:3.12-slim-bookworm` runtime. Web assets bundled in wheel (no separate COPY needed). No torch dependency — all inference is pure Rust (IS-MCTS + DMC Q-network). DouDou agent available if `models/dmc_final.bin` is present (auto-detected via `COLVER_MODEL_PATH` env var). `docker-compose.yml` for single-service deployment. Cross-builds for ARM64 (Raspberry Pi) via `docker buildx`. CMD: `python -m colver.web`.
+Multi-stage Dockerfile: `uv:python3.12-bookworm` builder (compiles PyO3 wheel with maturin) + `python:3.12-slim-bookworm` runtime. Web assets bundled in wheel (no separate COPY needed). No torch dependency — all inference is pure Rust (IS-MCTS + DMC Q-network). DouDou35 agent (35M-step checkpoint) available via `colver.model_path()` (auto-downloads to `~/.cache/colver/models/dmc_35.bin`). `docker-compose.yml` for single-service deployment. Cross-builds for ARM64 (Raspberry Pi) via `docker buildx`. CMD: `python -m colver.web`.
 
 ## Rules Reference
 
