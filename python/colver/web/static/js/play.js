@@ -25,6 +25,8 @@ document.getElementById('start-game').addEventListener('click', () => {
     send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
+    document.getElementById('game-result').innerHTML = '';
+    document.getElementById('confetti-container').innerHTML = '';
     document.getElementById('play-status').textContent = 'Lancement de la partie...';
 });
 
@@ -128,11 +130,7 @@ function renderPlayState(state) {
 
     // Status
     if (state.is_terminal) {
-        const resultEl = document.getElementById('game-result');
-        resultEl.classList.remove('hidden');
-        const ns = state.points[0], ew = state.points[1];
-        const winner = ns > ew ? 'NS gagne !' : ew > ns ? 'EO gagne !' : 'Egalite !';
-        resultEl.textContent = `Partie terminee ! NS : ${ns} - EO : ${ew}. ${winner}`;
+        showGameResult(state);
         document.getElementById('play-status').textContent = '';
     } else if (isHumanTurn) {
         document.getElementById('play-status').textContent = isBidPhase ? 'A vous d\'annoncer' : 'A vous de jouer';
@@ -324,3 +322,68 @@ onMessage('error', (data) => {
     console.error('Erreur serveur:', data.msg);
     document.getElementById('play-status').textContent = `Erreur : ${data.msg}`;
 });
+
+function showGameResult(state) {
+    const resultEl = document.getElementById('game-result');
+    resultEl.classList.remove('hidden');
+
+    const ns = state.points[0], ew = state.points[1];
+    // Human is South (NS team)
+    const isVictory = ns > ew;
+    const isDraw = ns === ew;
+    const titleText = isVictory ? 'Victoire' : isDraw ? 'Egalite' : 'Defaite';
+    const titleClass = isVictory ? 'victory' : isDraw ? 'draw' : 'defeat';
+
+    const contract = contractStr(state.contract);
+
+    // Belote info (state.belote[team] === 2 means belote+rebelote declared)
+    const beloteNS = (state.belote && state.belote[0] === 2) ? ' <span class="belote-note">(dont 20 belote)</span>' : '';
+    const beloteEW = (state.belote && state.belote[1] === 2) ? ' <span class="belote-note">(dont 20 belote)</span>' : '';
+
+    resultEl.innerHTML =
+        `<div class="result-title ${titleClass}">${titleText}</div>` +
+        (contract ? `<div class="result-contract">${contract}</div>` : '') +
+        `<div class="result-scores">` +
+            `<div class="team-ns">NS : ${ns}${beloteNS}</div>` +
+            `<div class="team-ew">EO : ${ew}${beloteEW}</div>` +
+        `</div>` +
+        `<button class="result-restart" onclick="document.getElementById('start-game').click()">Nouvelle partie</button>`;
+
+    if (isVictory) {
+        launchConfetti();
+    }
+}
+
+function launchConfetti() {
+    const container = document.getElementById('confetti-container');
+    container.innerHTML = '';
+    const colors = ['#d4af37', '#4caf50', '#42a5f5', '#ef5350', '#ab47bc', '#ff9800', '#e0e0e0'];
+    const count = 35;
+    const rect = container.getBoundingClientRect();
+    const fallDist = rect.height || 500;
+
+    for (let i = 0; i < count; i++) {
+        const el = document.createElement('div');
+        el.className = 'confetti-piece';
+        const color = colors[Math.floor(Math.random() * colors.length)];
+        const left = Math.random() * 100;
+        const delay = Math.random() * 0.8;
+        const duration = 1.8 + Math.random() * 1.4;
+        const spin = (Math.random() * 720 - 360) + 'deg';
+        const size = 5 + Math.random() * 6;
+        const shape = Math.random() > 0.5 ? '50%' : '2px';
+
+        el.style.cssText =
+            `left:${left}%;` +
+            `width:${size}px;height:${size}px;` +
+            `background:${color};` +
+            `border-radius:${shape};` +
+            `animation-duration:${duration}s;` +
+            `animation-delay:${delay}s;` +
+            `--fall-dist:${fallDist}px;` +
+            `--spin:${spin};`;
+
+        container.appendChild(el);
+        el.addEventListener('animationend', () => el.remove());
+    }
+}
