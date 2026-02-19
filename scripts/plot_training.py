@@ -14,7 +14,9 @@ import matplotlib
 import matplotlib.ticker as ticker
 matplotlib.use('TkAgg')
 
-LOG_FILE = "training.log"
+LOG_FILES = ["training.log"]
+if "--extra" in sys.argv:
+    LOG_FILES.append(sys.argv[sys.argv.index("--extra") + 1])
 INTERVAL = int(sys.argv[sys.argv.index("--interval") + 1]) if "--interval" in sys.argv else 10
 
 def parse_log(path):
@@ -24,7 +26,8 @@ def parse_log(path):
     last_step = 0
     detected_total = None
 
-    with open(path) as f:
+    for p in (path if isinstance(path, list) else [path]):
+      with open(p) as f:
         for line in f:
             # Detect new run boundary: the dashed separator before metric lines
             # When a new run starts, flush stale data from killed runs
@@ -94,7 +97,7 @@ fig.canvas.manager.window.wm_geometry("+100+100")
 
 while True:
     try:
-        steps, losses, speeds, eps_list, eval_steps, deal_wrs, rand_wrs, ckpt_wrs, detected_total = parse_log(LOG_FILE)
+        steps, losses, speeds, eps_list, eval_steps, deal_wrs, rand_wrs, ckpt_wrs, detected_total = parse_log(LOG_FILES)
     except (FileNotFoundError, ValueError):
         time.sleep(INTERVAL)
         continue

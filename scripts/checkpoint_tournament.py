@@ -557,6 +557,8 @@ def main():
                         help="Skip vs-naive section")
     parser.add_argument("--skip-matches", action="store_true",
                         help="Skip match sections (H2H matches + random matches)")
+    parser.add_argument("--skip-h2h", action="store_true",
+                        help="Skip H2H sections (deals and matches between checkpoints)")
     args = parser.parse_args()
 
     # Validate checkpoints exist
@@ -571,10 +573,11 @@ def main():
     total_start = time.time()
 
     # Section 1: H2H deals
-    run_h2h_deals(args.checkpoints, args)
+    if not args.skip_h2h:
+        run_h2h_deals(args.checkpoints, args)
 
     # Section 2: H2H matches
-    if not args.skip_matches:
+    if not args.skip_h2h and not args.skip_matches:
         run_h2h_matches(args.checkpoints, args)
 
     # Section 3: Vs random deals
