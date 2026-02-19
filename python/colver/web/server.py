@@ -172,6 +172,10 @@ async def websocket_endpoint(ws: WebSocket):
                     # Show completed trick (4 cards visible), pause, then clear
                     snapshot_state = dict(state)
                     snapshot_state["current_trick"] = state["last_trick"]
+                    # tricks_won already incremented; roll back so hand counts stay correct
+                    tw = list(snapshot_state["tricks_won"])
+                    tw[state["last_trick_winner"] % 2] = max(0, tw[state["last_trick_winner"] % 2] - 1)
+                    snapshot_state["tricks_won"] = tw
                     snapshot_msg = dict(msg)
                     snapshot_msg["state"] = snapshot_state
                     await ws.send_json(snapshot_msg)
@@ -421,6 +425,11 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             # Show completed trick (4 cards visible), pause, then clear
             snapshot = dict(state)
             snapshot["current_trick"] = state["last_trick"]
+            # tricks_won is already incremented; roll it back so hand counts stay correct
+            tw = list(snapshot["tricks_won"])
+            winner_team = state["last_trick_winner"] % 2
+            tw[winner_team] = max(0, tw[winner_team] - 1)
+            snapshot["tricks_won"] = tw
             await ws.send_json({"type": "game_state", "state": snapshot})
             await asyncio.sleep(move_delay)
             # Send cleared state — no delay after (next card arrives immediately)

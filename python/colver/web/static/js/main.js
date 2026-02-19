@@ -48,15 +48,17 @@ function detectTrickCompletion(prefix, newTrick) {
     return null;
 }
 
-function animateTrickFlush(prefix, onComplete) {
+function animateTrickFlush(prefix, onComplete, winner) {
     const trickAreaId = prefix === 'trick' ? 'trick-area' : 'watch-trick-area';
     const lastTrickId = prefix === 'trick' ? 'last-trick' : 'watch-last-trick';
+    const handPrefix = prefix === 'trick' ? 'hand' : 'watch-hand';
     const trickArea = document.getElementById(trickAreaId);
     if (!trickArea) { if (onComplete) onComplete(); return; }
 
     _animatingTrick = prefix;
 
     const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
+    const seatDirMap = { 0: 'north', 1: 'east', 2: 'south', 3: 'west' };
     const faceClones = [];
     const backClones = [];
     const rects = [];
@@ -115,19 +117,24 @@ function animateTrickFlush(prefix, onComplete) {
     const centerX = areaRect.left + areaRect.width / 2;
     const centerY = areaRect.top + areaRect.height / 2;
 
-    // Calculate target position (last-trick box, fallback top-right)
-    const lastTrickEl = document.getElementById(lastTrickId);
+    // Fly toward the winner's seat direction
     let targetX, targetY;
-    if (lastTrickEl && !lastTrickEl.classList.contains('hidden')) {
-        const ltRect = lastTrickEl.getBoundingClientRect();
-        targetX = ltRect.left + ltRect.width / 2;
-        targetY = ltRect.top + ltRect.height / 2;
-    } else {
+    if (winner !== undefined && winner >= 0 && winner < 4) {
+        const winnerEl = document.getElementById(`${handPrefix}-${seatDirMap[winner]}`);
+        if (winnerEl) {
+            const wRect = winnerEl.getBoundingClientRect();
+            targetX = wRect.left + wRect.width / 2;
+            targetY = wRect.top + wRect.height / 2;
+        }
+    }
+    if (targetX === undefined) {
+        // Fallback: top-right of trick area
         targetX = areaRect.right - 40;
         targetY = areaRect.top + 20;
     }
 
     // Hide last-trick box during animation — revealed in onComplete callback
+    const lastTrickEl = document.getElementById(lastTrickId);
     if (lastTrickEl) {
         lastTrickEl.classList.add('hidden');
         lastTrickEl.innerHTML = '';
@@ -256,6 +263,11 @@ function renderHand(container, cards, clickable = false, onClick = null, legalSe
 }
 
 function renderFaceDownHand(container, count) {
+    // Skip re-render if the count of face-down cards hasn't changed
+    const current = container.children.length;
+    if (current === count && count > 0 && container.firstChild && container.firstChild.classList.contains('face-down')) {
+        return;
+    }
     container.innerHTML = '';
     for (let i = 0; i < count; i++) {
         container.appendChild(faceDownCard());

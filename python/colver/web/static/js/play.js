@@ -102,7 +102,7 @@ function renderPlayState(state) {
                 _pendingPlayState = null;
                 renderPlayState(pending);
             }
-        });
+        }, state.last_trick_winner);
         // Render the new (empty/partial) trick underneath the overlay
         renderTrick('trick', state.current_trick);
     } else {
@@ -345,7 +345,14 @@ function showGameResult(state) {
     const resultEl = document.getElementById('game-result');
     resultEl.classList.remove('hidden');
 
-    const ns = state.points[0], ew = state.points[1];
+    let ns = state.points[0], ew = state.points[1];
+    // Add belote bonus (20 points) to displayed totals
+    const hasBeloteNS = state.belote && state.belote[0] === 2;
+    const hasBeloteEW = state.belote && state.belote[1] === 2;
+    if (hasBeloteNS) ns += 20;
+    if (hasBeloteEW) ew += 20;
+    const beloteNS = hasBeloteNS ? ' <span class="belote-note">(dont belote)</span>' : '';
+    const beloteEW = hasBeloteEW ? ' <span class="belote-note">(dont belote)</span>' : '';
     // Use rewards (contract-aware scoring) to determine victory/defeat
     const rewards = state.rewards;
     const isVictory = rewards ? rewards[0] > rewards[1] : ns > ew;
@@ -354,10 +361,6 @@ function showGameResult(state) {
     const titleClass = isVictory ? 'victory' : isDraw ? 'draw' : 'defeat';
 
     const contract = contractStr(state.contract);
-
-    // Belote info (state.belote[team] === 2 means belote+rebelote declared)
-    const beloteNS = (state.belote && state.belote[0] === 2) ? ' <span class="belote-note">(dont 20 belote)</span>' : '';
-    const beloteEW = (state.belote && state.belote[1] === 2) ? ' <span class="belote-note">(dont 20 belote)</span>' : '';
 
     resultEl.innerHTML =
         `<div class="result-title ${titleClass}">${titleText}</div>` +

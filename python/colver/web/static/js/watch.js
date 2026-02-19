@@ -185,7 +185,7 @@ function renderHistoryEntry(index) {
                 if (lastTrickEl && data.state.phase === 1 && data.state.last_trick) {
                     renderLastTrick(lastTrickEl, data.state.last_trick, data.state.last_trick_winner, data.state.last_trick_points, 0);
                 }
-            });
+            }, data.state.last_trick_winner);
         }
 
         renderWatchState(data.state);
