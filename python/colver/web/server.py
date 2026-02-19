@@ -150,26 +150,43 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 action = data["action"]
                 human_seat = data.get("human_seat", 2)
+
+                # Ignore duplicate clicks when it's not the human's turn
+                if play_session.env.current_player() != human_seat:
+                    continue
+
+                # Update move delay dynamically from slider
+                if "move_delay" in data:
+                    play_move_delay = max(1.0, min(8.0, float(data["move_delay"])))
+
                 state = play_session.play_action(action)
                 msg = {"type": "game_state", "state": state}
                 if play_session._belote_event:
                     msg["belote_event"] = play_session._belote_event
                     msg["belote_player"] = play_session._belote_player
-                await ws.send_json(msg)
 
-                # Save action to DB
-                if play_game_id:
-                    entry = play_session.history[-1]
-                    await db.append_action(play_game_id, entry)
-
-                # Check terminal after human move
-                if play_game_id and play_session.env.is_terminal():
-                    await _complete_game(play_game_id, play_session)
-
-                # Pause 2s when human plays the 4th card so the trick is visible
                 if play_session.trick_just_completed:
                     play_session.trick_just_completed = False
-                    await asyncio.sleep(2.0)
+                    # Show completed trick (4 cards visible), pause, then clear
+                    snapshot_state = dict(state)
+                    snapshot_state["current_trick"] = state["last_trick"]
+                    snapshot_msg = dict(msg)
+                    snapshot_msg["state"] = snapshot_state
+                    await ws.send_json(snapshot_msg)
+                    if play_game_id:
+                        await db.append_action(play_game_id, play_session.history[-1])
+                    if play_game_id and play_session.env.is_terminal():
+                        await _complete_game(play_game_id, play_session)
+                    await asyncio.sleep(play_move_delay)
+                    await ws.send_json({"type": "game_state", "state": state})
+                else:
+                    await ws.send_json(msg)
+                    if play_game_id:
+                        await db.append_action(play_game_id, play_session.history[-1])
+                    if play_game_id and play_session.env.is_terminal():
+                        await _complete_game(play_game_id, play_session)
+                    # Pause after human's card is visible (simulates next player thinking)
+                    await asyncio.sleep(play_move_delay)
 
                 await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
@@ -371,7 +388,6 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
     while not session.env.is_terminal() and session.env.current_player() != human_seat:
         action, name, state = session.play_ai_turn()
         player = session.history[-1]["player"]
-        phase = session.history[-1]["phase"]
         ai_msg = {
             "type": "ai_move",
             "player": player,
@@ -382,14 +398,22 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             ai_msg["belote_event"] = session._belote_event
             ai_msg["belote_player"] = session._belote_player
         await ws.send_json(ai_msg)
-        await ws.send_json({"type": "game_state", "state": state})
 
-        # Save action to DB
         if game_id:
             await db.append_action(game_id, session.history[-1])
 
-        session.trick_just_completed = False
-        await asyncio.sleep(move_delay)
+        if session.trick_just_completed:
+            session.trick_just_completed = False
+            # Show completed trick (4 cards visible), pause, then clear
+            snapshot = dict(state)
+            snapshot["current_trick"] = state["last_trick"]
+            await ws.send_json({"type": "game_state", "state": snapshot})
+            await asyncio.sleep(move_delay)
+            # Send cleared state — no delay after (next card arrives immediately)
+            await ws.send_json({"type": "game_state", "state": state})
+        else:
+            await ws.send_json({"type": "game_state", "state": state})
+            await asyncio.sleep(move_delay)
 
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():

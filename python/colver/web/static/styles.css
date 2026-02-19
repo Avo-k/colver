@@ -460,6 +460,32 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #9a9a8a;
 }
 
+/* Welcome state: center config when no game is running */
+#play-panel:not(:has(#play-table:not(.hidden))) #play-config {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    padding: 40px 32px;
+    margin-bottom: 0;
+    font-size: clamp(1rem, 1.1vw, 1.15rem);
+}
+#play-panel:not(:has(#play-table:not(.hidden))) #play-config label {
+    font-size: clamp(0.95rem, 1.05vw, 1.1rem);
+}
+#play-panel:not(:has(#play-table:not(.hidden))) #play-config select {
+    font-size: clamp(0.95rem, 1.05vw, 1.1rem);
+    padding: 7px 10px;
+}
+#play-panel:not(:has(#play-table:not(.hidden))) #play-config #start-game {
+    font-size: clamp(1.1rem, 1.3vw, 1.4rem);
+    padding: 14px 36px;
+    margin-top: 8px;
+    border-radius: 6px;
+    letter-spacing: 0.5px;
+}
+
 /* ===== WATCH MODE ===== */
 
 .watch-agents {

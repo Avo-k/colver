@@ -7,13 +7,16 @@ let replayTotalActions = 0;
 
 // ===== Game history sidebar =====
 
-async function loadGameHistory() {
+async function loadGameHistory(autoLoadFirst = false) {
     try {
         const base = document.querySelector('base')?.getAttribute('href') || '/';
         const resp = await fetch(`${base}api/games?limit=50`);
         if (!resp.ok) return;
         const games = await resp.json();
         renderGameHistory(games);
+        if (autoLoadFirst && games.length > 0) {
+            loadReplay(games[0].id);
+        }
     } catch (e) {
         console.error('Failed to load history:', e);
     }
@@ -84,11 +87,14 @@ document.getElementById('history-search-input').addEventListener('keydown', (e) 
     }
 });
 
-// Load history when Regarder tab is activated
+// Load history when Regarder tab is activated (auto-load first game on initial visit)
+let watchTabVisited = false;
 const watchTab = document.querySelector('.tab[data-tab="watch"]');
 if (watchTab) {
     watchTab.addEventListener('click', () => {
-        loadGameHistory();
+        const firstVisit = !watchTabVisited;
+        watchTabVisited = true;
+        loadGameHistory(firstVisit);
     });
 }
 

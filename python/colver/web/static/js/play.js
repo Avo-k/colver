@@ -3,6 +3,11 @@
 const HUMAN_SEAT = 2; // South
 
 let bidHistory = [];
+let playLocked = false; // Prevent double-clicks while waiting for server
+
+function getMoveDelay() {
+    return parseInt(document.getElementById('move-delay').value);
+}
 
 document.getElementById('move-delay').addEventListener('input', (e) => {
     document.getElementById('move-delay-val').textContent = `${e.target.value}s`;
@@ -11,9 +16,9 @@ document.getElementById('move-delay').addEventListener('input', (e) => {
 document.getElementById('start-game').addEventListener('click', () => {
     const opponentAi = document.getElementById('opponent-ai').value;
     const partnerAi = document.getElementById('partner-ai').value;
-    const moveDelay = parseInt(document.getElementById('move-delay').value);
     bidHistory = [];
-    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: moveDelay });
+    playLocked = false;
+    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
     document.getElementById('play-status').textContent = 'Lancement de la partie...';
@@ -54,7 +59,9 @@ function renderPlayState(state) {
             const clickable = isHumanTurn && isPlayPhase;
             renderHand(handEls[seat], cards, clickable, clickable ? playCard : null, legalSet, trumpSuit);
         } else {
-            const count = cards.length || Math.max(0, 8 - (state.tricks_won[0] + state.tricks_won[1]));
+            const tricksPlayed = state.tricks_won[0] + state.tricks_won[1];
+            const hasPlayedThisTrick = state.current_trick[seat] >= 0 && state.current_trick[seat] < 32;
+            const count = cards.length || Math.max(0, 8 - tricksPlayed - (hasPlayedThisTrick ? 1 : 0));
             renderFaceDownHand(handEls[seat], count);
         }
     }
@@ -166,14 +173,16 @@ function showBidControls(legalActions, state) {
         }
 
         bidSubmit.onclick = () => {
+            if (playLocked) return;
             const val = parseInt(bidValue.value);
             const suit = parseInt(bidSuit.value);
             if (isNaN(val)) return;
             const action = encodeBidAction(val, suit);
             if (action < 0 || !legalSet.has(action)) return;
+            playLocked = true;
             const name = actionName(action, 0);
             bidHistory.push({ player: HUMAN_SEAT, action, name });
-            send({ type: 'play', action, human_seat: HUMAN_SEAT });
+            send({ type: 'play', action, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
     }
 
@@ -183,8 +192,10 @@ function showBidControls(legalActions, state) {
         passBtn.classList.remove('hidden');
         passBtn.disabled = false;
         passBtn.onclick = () => {
+            if (playLocked) return;
+            playLocked = true;
             bidHistory.push({ player: HUMAN_SEAT, action: 0, name: 'Passe' });
-            send({ type: 'play', action: 0, human_seat: HUMAN_SEAT });
+            send({ type: 'play', action: 0, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
     } else {
         passBtn.classList.add('hidden');
@@ -195,8 +206,10 @@ function showBidControls(legalActions, state) {
     if (legalSet.has(41)) {
         coincheBtn.classList.remove('hidden');
         coincheBtn.onclick = () => {
+            if (playLocked) return;
+            playLocked = true;
             bidHistory.push({ player: HUMAN_SEAT, action: 41, name: 'Coinche' });
-            send({ type: 'play', action: 41, human_seat: HUMAN_SEAT });
+            send({ type: 'play', action: 41, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
     } else {
         coincheBtn.classList.add('hidden');
@@ -207,8 +220,10 @@ function showBidControls(legalActions, state) {
     if (legalSet.has(42)) {
         surcoincheBtn.classList.remove('hidden');
         surcoincheBtn.onclick = () => {
+            if (playLocked) return;
+            playLocked = true;
             bidHistory.push({ player: HUMAN_SEAT, action: 42, name: 'Surcoinche' });
-            send({ type: 'play', action: 42, human_seat: HUMAN_SEAT });
+            send({ type: 'play', action: 42, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
     } else {
         surcoincheBtn.classList.add('hidden');
@@ -223,12 +238,25 @@ function hideBidControls() {
 }
 
 function playCard(cardIdx) {
-    send({ type: 'play', action: cardIdx, human_seat: HUMAN_SEAT });
+    if (playLocked) return;
+    playLocked = true;
+    // Optimistic update: show card in trick area and remove from hand immediately
+    const trickEl = document.getElementById('trick-s');
+    trickEl.innerHTML = '';
+    trickEl.appendChild(cardToHtml(cardIdx));
+    const handEl = document.getElementById('hand-south');
+    const cardEl = handEl.querySelector(`[data-card="${cardIdx}"]`);
+    if (cardEl) cardEl.remove();
+    send({ type: 'play', action: cardIdx, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
 }
 
 // Message handlers
 onMessage('game_state', (data) => {
     renderPlayState(data.state);
+    // Unlock input when it's the human's turn or game is over
+    if (data.state.is_terminal || data.state.current_player === HUMAN_SEAT) {
+        playLocked = false;
+    }
     if (data.game_id) setPlayGameId(data.game_id);
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
