@@ -22,13 +22,13 @@ _WEB_DIR = os.path.dirname(__file__)
 FRONTEND_DIR = os.path.join(_WEB_DIR, "static")
 CARDS_DIR = os.path.join(_WEB_DIR, "cards")
 
-# DouDou model path (Rust inference, no PyTorch needed)
+# DouDou35 model path (Rust inference, no PyTorch needed)
 import colver as _colver_pkg
 
 _model = _colver_pkg.model_path()
 if _model is None:
     # Auto-download model if not found
-    print("[server] No DouDou model found, downloading...")
+    print("[server] No DouDou35 model found, downloading...")
     try:
         _model = _colver_pkg.download_model()
     except Exception as e:
@@ -38,9 +38,9 @@ if _model is None:
 DMC_MODEL_PATH = str(_model) if _model else None
 doudou_available = _model is not None
 if doudou_available:
-    print(f"[server] DouDou model available at {DMC_MODEL_PATH} (Rust inference)")
+    print(f"[server] DouDou35 model available at {DMC_MODEL_PATH} (Rust inference)")
 else:
-    print("[server] No DouDou model found and download failed")
+    print("[server] No DouDou35 model found and download failed")
 
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 

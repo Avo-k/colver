@@ -190,7 +190,7 @@ class PlaySession(TrickTracker):
 AGENT_NAMES = {
     "smart": "Smart IS-MCTS",
     "naive": "Naive IS-MCTS",
-    "doudou": "DouDou",
+    "doudou": "DouDou35",
     "oracle": "Oracle (MCTS)",
     "heuristic": "Heuristique",
     "maxi_bid": "Maxi Bid",

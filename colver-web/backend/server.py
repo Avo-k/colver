@@ -23,13 +23,13 @@ app = FastAPI(title="Colver")
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
-# DouDou model path (Rust inference, no PyTorch needed)
-DMC_MODEL_PATH = os.path.join(REPO_ROOT, "models", "dmc_final.bin")
+# DouDou35 model path (Rust inference, no PyTorch needed)
+DMC_MODEL_PATH = os.path.join(REPO_ROOT, "models", "dmc_35.bin")
 doudou_available = os.path.exists(DMC_MODEL_PATH)
 if doudou_available:
-    print(f"[server] DouDou model available at {DMC_MODEL_PATH} (Rust inference)")
+    print(f"[server] DouDou35 model available at {DMC_MODEL_PATH} (Rust inference)")
 else:
-    print(f"[server] No DouDou model at {DMC_MODEL_PATH}")
+    print(f"[server] No DouDou35 model at {DMC_MODEL_PATH}")
 
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 

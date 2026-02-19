@@ -539,7 +539,7 @@ onMessage('watch_started', (data) => {
     if (!data.doudou_available) {
         document.querySelectorAll('.agent-select option[value="doudou"]').forEach(opt => {
             opt.disabled = true;
-            opt.textContent = 'DouDou (non dispo)';
+            opt.textContent = 'DouDou35 (non dispo)';
         });
     }
 
