@@ -209,7 +209,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .seat.west .hand .card,
 .seat.east .hand .card {
     margin-left: 0;
-    margin-top: calc(var(--card-h) * -0.85);
+    margin-top: calc(var(--card-h) * -0.72);
 }
 .seat.west .hand .card:first-child,
 .seat.east .hand .card:first-child {
@@ -488,11 +488,28 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #d4af37;
 }
 
-.result-restart {
+.result-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.result-restart, .result-analyse {
     padding: 10px 28px;
     font-size: clamp(0.9rem, 1vw, 1rem);
     border-radius: 6px;
     letter-spacing: 0.5px;
+}
+
+.result-analyse {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #bbb;
+}
+.result-analyse:hover {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
 }
 
 /* Confetti */
@@ -524,7 +541,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     --card-overlap: calc(var(--card-w) * -0.2);
     display: grid;
     grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto 1fr auto;
+    grid-template-rows: auto auto 1fr;
     flex: 1;
     min-height: 0;
     gap: 0 12px;
@@ -539,14 +556,48 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     align-self: center;
     width: clamp(170px, 14vw, 220px);
 }
-#play-table #play-status { grid-column: 1 / -1; grid-row: 4; }
-
-#play-status {
-    text-align: center;
-    padding: 8px;
-    font-size: clamp(0.8rem, 0.9vw, 0.95rem);
-    color: #9a9a8a;
+#play-table #play-review {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: start;
+    width: clamp(200px, 18vw, 280px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    max-height: 100%;
 }
+#play-bid-history, #play-tricks-history {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+#play-bid-entries {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-height: 20px;
+}
+#play-tricks-list {
+    max-height: 250px;
+    overflow-y: auto;
+}
+#play-status {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 30;
+    text-align: center;
+    padding: 6px 16px;
+    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    color: #c0b890;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+#play-status:empty { display: none; }
 
 /* Welcome state: center config when no game is running */
 #play-panel:not(:has(#play-table:not(.hidden))) #play-config {
@@ -558,6 +609,17 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     padding: 40px 32px;
     margin-bottom: 0;
     font-size: clamp(1rem, 1.1vw, 1.15rem);
+}
+#play-intro {
+    display: none;
+    margin: 0;
+    text-align: center;
+    color: #b0b0a0;
+    line-height: 1.5;
+    max-width: 420px;
+}
+#play-panel:not(:has(#play-table:not(.hidden))) #play-intro {
+    display: block;
 }
 #play-panel:not(:has(#play-table:not(.hidden))) #play-config label {
     font-size: clamp(0.95rem, 1.05vw, 1.1rem);

@@ -136,12 +136,14 @@ async def websocket_endpoint(ws: WebSocket):
                     human_seat=human_seat,
                 )
 
-                await ws.send_json({
+                init_msg = {
                     "type": "game_state",
                     "state": play_session.get_state(human_seat),
                     "doudou_available": doudou_available,
                     "game_id": play_game_id,
-                })
+                    "initial_hands": play_session.initial_hands,
+                }
+                await ws.send_json(init_msg)
                 await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
             elif msg_type == "play":
@@ -178,8 +180,11 @@ async def websocket_endpoint(ws: WebSocket):
                     if play_game_id and play_session.env.is_terminal():
                         await _complete_game(play_game_id, play_session)
                     await asyncio.sleep(play_move_delay)
-                    await ws.send_json({"type": "game_state", "state": state})
+                    final_msg = {"type": "game_state", "state": state}
+                    _enrich_terminal_msg(final_msg, play_session)
+                    await ws.send_json(final_msg)
                 else:
+                    _enrich_terminal_msg(msg, play_session)
                     await ws.send_json(msg)
                     if play_game_id:
                         await db.append_action(play_game_id, play_session.history[-1])
@@ -376,6 +381,15 @@ async def websocket_endpoint(ws: WebSocket):
         pass
 
 
+def _enrich_terminal_msg(msg, play_session):
+    """Add review data (initial hands, bids, tricks) to terminal game_state messages."""
+    if play_session.env.is_terminal():
+        msg["initial_hands"] = play_session.initial_hands
+        msg["bid_history"] = play_session.bid_history
+        msg["completed_tricks"] = play_session.completed_tricks
+    return msg
+
+
 async def _complete_game(game_id, session):
     """Mark a game as complete in the database."""
     points = list(session.env.get_points())
@@ -410,9 +424,13 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             await ws.send_json({"type": "game_state", "state": snapshot})
             await asyncio.sleep(move_delay)
             # Send cleared state — no delay after (next card arrives immediately)
-            await ws.send_json({"type": "game_state", "state": state})
+            final_msg = {"type": "game_state", "state": state}
+            _enrich_terminal_msg(final_msg, session)
+            await ws.send_json(final_msg)
         else:
-            await ws.send_json({"type": "game_state", "state": state})
+            state_msg = {"type": "game_state", "state": state}
+            _enrich_terminal_msg(state_msg, session)
+            await ws.send_json(state_msg)
             await asyncio.sleep(move_delay)
 
     # Check terminal after AI turns

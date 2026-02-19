@@ -22,6 +22,7 @@
         <!-- PLAY MODE -->
         <div id="play-panel" class="panel active">
             <div id="play-config">
+                <p id="play-intro">Jouez à la Belote Contrée contre l'IA.</p>
                 <label>Adversaires :
                     <select id="opponent-ai">
                         <option value="doudou">DouDou35</option>
@@ -82,9 +83,21 @@
                     </div>
                     <div id="game-result" class="hidden"></div>
                     <div id="confetti-container"></div>
+                    <div id="play-status"></div>
                 </div>
 
                 <div id="last-trick" class="hidden"></div>
+
+                <div id="play-review" class="hidden">
+                    <div id="play-bid-history">
+                        <div class="section-title">Encheres</div>
+                        <div id="play-bid-entries"></div>
+                    </div>
+                    <div id="play-tricks-history">
+                        <div class="section-title">Plis</div>
+                        <div id="play-tricks-list"></div>
+                    </div>
+                </div>
 
                 <div id="bidding-panel" class="hidden">
                     <div id="bid-history"></div>
@@ -118,7 +131,6 @@
                         </div>
                     </div>
                 </div>
-                <div id="play-status"></div>
             </div>
         </div>
 

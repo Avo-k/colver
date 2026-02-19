@@ -5,6 +5,10 @@ const HUMAN_SEAT = 2; // South
 let bidHistory = [];
 let playLocked = false; // Prevent double-clicks while waiting for server
 let _pendingPlayState = null; // Queued state during trick animation
+let _initialHands = null; // Stored at game start for end-of-game review
+let _playGameId = null; // Current game ID for analyse button
+let _serverBidHistory = null; // Bid history from server (terminal message)
+let _serverCompletedTricks = null; // Completed tricks from server (terminal message)
 
 function getMoveDelay() {
     return parseInt(document.getElementById('move-delay').value);
@@ -22,11 +26,16 @@ document.getElementById('start-game').addEventListener('click', () => {
     _prevTrick['trick'] = [];
     _animatingTrick = null;
     _pendingPlayState = null;
+    _initialHands = null;
+    _playGameId = null;
+    _serverBidHistory = null;
+    _serverCompletedTricks = null;
     send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
     document.getElementById('game-result').innerHTML = '';
     document.getElementById('confetti-container').innerHTML = '';
+    document.getElementById('play-review').classList.add('hidden');
     document.getElementById('play-status').textContent = 'Lancement de la partie...';
 });
 
@@ -131,6 +140,7 @@ function renderPlayState(state) {
     // Status
     if (state.is_terminal) {
         showGameResult(state);
+        showEndOfGameReview(state);
         document.getElementById('play-status').textContent = '';
     } else if (isHumanTurn) {
         document.getElementById('play-status').textContent = isBidPhase ? 'A vous d\'annoncer' : 'A vous de jouer';
@@ -282,12 +292,20 @@ function playCard(cardIdx) {
 
 // Message handlers
 onMessage('game_state', (data) => {
+    // Store initial hands when first received (game start or terminal)
+    if (data.initial_hands) _initialHands = data.initial_hands;
+    // Store bid_history and completed_tricks from terminal messages
+    if (data.bid_history) _serverBidHistory = data.bid_history;
+    if (data.completed_tricks) _serverCompletedTricks = data.completed_tricks;
+    if (data.game_id) {
+        _playGameId = data.game_id;
+        setPlayGameId(data.game_id);
+    }
     renderPlayState(data.state);
     // Unlock input when it's the human's turn or game is over
     if (data.state.is_terminal || data.state.current_player === HUMAN_SEAT) {
         playLocked = false;
     }
-    if (data.game_id) setPlayGameId(data.game_id);
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
         showBeloteAnnouncement('trick-area', text);
@@ -328,9 +346,10 @@ function showGameResult(state) {
     resultEl.classList.remove('hidden');
 
     const ns = state.points[0], ew = state.points[1];
-    // Human is South (NS team)
-    const isVictory = ns > ew;
-    const isDraw = ns === ew;
+    // Use rewards (contract-aware scoring) to determine victory/defeat
+    const rewards = state.rewards;
+    const isVictory = rewards ? rewards[0] > rewards[1] : ns > ew;
+    const isDraw = rewards ? rewards[0] === rewards[1] : ns === ew;
     const titleText = isVictory ? 'Victoire' : isDraw ? 'Egalite' : 'Defaite';
     const titleClass = isVictory ? 'victory' : isDraw ? 'draw' : 'defeat';
 
@@ -347,10 +366,114 @@ function showGameResult(state) {
             `<div class="team-ns">NS : ${ns}${beloteNS}</div>` +
             `<div class="team-ew">EO : ${ew}${beloteEW}</div>` +
         `</div>` +
-        `<button class="result-restart" onclick="document.getElementById('start-game').click()">Nouvelle partie</button>`;
+        `<div class="result-buttons">` +
+            `<button class="result-restart" onclick="document.getElementById('start-game').click()">Nouvelle partie</button>` +
+            `<button class="result-analyse" id="result-analyse-btn">Analyser</button>` +
+        `</div>`;
+
+    document.getElementById('result-analyse-btn').addEventListener('click', () => {
+        if (!_playGameId) return;
+        // Switch to Watch tab and load the replay
+        document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        const watchTab = document.querySelector('.tab[data-tab="watch"]');
+        watchTab.classList.add('active');
+        document.getElementById('watch-panel').classList.add('active');
+        // Trigger history load and then load this game's replay
+        if (!watchTabVisited) {
+            watchTabVisited = true;
+            loadGameHistory(false);
+        } else {
+            loadGameHistory(false);
+        }
+        loadReplay(_playGameId);
+    });
 
     if (isVictory) {
         launchConfetti();
+    }
+}
+
+function showEndOfGameReview(state) {
+    // Clear trick area (no cards behind the result overlay)
+    renderTrick('trick', [-1, -1, -1, -1]);
+
+    // Hide last trick box
+    const lastTrickEl = document.getElementById('last-trick');
+    if (lastTrickEl) {
+        lastTrickEl.classList.add('hidden');
+        lastTrickEl.innerHTML = '';
+    }
+
+    // Show initial hands (all 4 face-up)
+    if (_initialHands) {
+        const handEls = {
+            0: document.getElementById('hand-north'),
+            1: document.getElementById('hand-east'),
+            2: document.getElementById('hand-south'),
+            3: document.getElementById('hand-west'),
+        };
+        const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+        for (let seat = 0; seat < 4; seat++) {
+            renderHand(handEls[seat], _initialHands[seat], false, null, null, trumpSuit);
+        }
+    }
+
+    // Show review panel with bid history and tricks
+    const reviewEl = document.getElementById('play-review');
+    reviewEl.classList.remove('hidden');
+
+    // Render bid history
+    const bidContainer = document.getElementById('play-bid-entries');
+    bidContainer.innerHTML = '';
+    const bids = _serverBidHistory || bidHistory.map(b => ({ player: b.player, action: b.action }));
+    for (const bid of bids) {
+        const el = document.createElement('span');
+        const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
+        el.className = `watch-bid-entry ${team}`;
+        const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
+        const name = actionName(bid.action, 0);
+        el.textContent = `${seatLetter}:${name}`;
+        bidContainer.appendChild(el);
+    }
+
+    // Render tricks history
+    const tricksContainer = document.getElementById('play-tricks-list');
+    tricksContainer.innerHTML = '';
+    const tricks = _serverCompletedTricks || [];
+    for (let i = 0; i < tricks.length; i++) {
+        const t = tricks[i];
+        const row = document.createElement('div');
+        const winnerTeam = t.winner % 2 === 0 ? 'team-ns' : 'team-ew';
+        row.className = `trick-history-row ${winnerTeam}`;
+
+        const SEAT_L = ['N', 'E', 'S', 'O'];
+        const leadSeat = t.lead !== undefined ? t.lead : -1;
+
+        let orderedCards = '';
+        if (leadSeat >= 0) {
+            for (let j = 0; j < 4; j++) {
+                const seat = (leadSeat + j) % 4;
+                const c = t.cards[seat];
+                if (c >= 0 && c < 32) {
+                    orderedCards += `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]} `;
+                }
+            }
+            orderedCards = orderedCards.trim();
+        } else {
+            orderedCards = t.cards.map(c => {
+                if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
+                return '?';
+            }).join(' ');
+        }
+
+        const leadLabel = leadSeat >= 0 ? SEAT_L[leadSeat] : '?';
+        const winnerName = SEAT_NAMES_FR[t.winner];
+        row.innerHTML = `<span class="trick-num">#${i + 1}</span>` +
+            `<span class="trick-lead-label">${leadLabel}</span>` +
+            `<span class="trick-cards">${orderedCards}</span>` +
+            `<span class="trick-winner">${winnerName} +${t.points}</span>`;
+        tricksContainer.appendChild(row);
     }
 }
 

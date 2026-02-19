@@ -92,8 +92,10 @@ class PlaySession(TrickTracker):
         self.ai_types = ai_types
         self.env = colver.Env()
         self.history = []
+        self.bid_history = []
         self._init_trick_tracking()
         self.env.reset()
+        self.initial_hands = [list(h) for h in self.env.get_hands()]
         self.uses_smart = any(t == "smart" for t in self.ai_types.values())
         if self.uses_smart:
             self.env.smart_ismcts_init()
@@ -126,6 +128,7 @@ class PlaySession(TrickTracker):
             "last_trick_points": self.last_trick_points,
             "belote": list(self.env.get_belote()),
             "cfn": self.env.to_cfn(),
+            "rewards": list(self.env.rewards()) if self.env.is_terminal() else None,
         }
         # During bidding, suggest the best trump suit for the human player
         if phase == 0:
@@ -138,6 +141,9 @@ class PlaySession(TrickTracker):
         phase = self.env.phase()
         belote_before = list(self.env.get_belote())
         self.history.append({"player": int(player), "action": int(action), "phase": int(phase)})
+        if phase == 0:
+            name = colver.Env.action_name(int(action), int(phase))
+            self.bid_history.append({"player": int(player), "action": int(action), "name": name})
         self._check_trick_completion(action)
         if self.uses_smart:
             self.env.smart_ismcts_step(action)
@@ -177,6 +183,8 @@ class PlaySession(TrickTracker):
         action = self.get_ai_action()
         name = colver.Env.action_name(action, phase)
         self.history.append({"player": int(player), "action": action, "phase": int(phase)})
+        if phase == 0:
+            self.bid_history.append({"player": int(player), "action": action, "name": name})
         self._check_trick_completion(action)
         if self.uses_smart:
             self.env.smart_ismcts_step(action)
