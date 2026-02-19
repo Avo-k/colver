@@ -4,11 +4,16 @@ const HUMAN_SEAT = 2; // South
 
 let bidHistory = [];
 
+document.getElementById('move-delay').addEventListener('input', (e) => {
+    document.getElementById('move-delay-val').textContent = `${e.target.value}s`;
+});
+
 document.getElementById('start-game').addEventListener('click', () => {
     const opponentAi = document.getElementById('opponent-ai').value;
     const partnerAi = document.getElementById('partner-ai').value;
+    const moveDelay = parseInt(document.getElementById('move-delay').value);
     bidHistory = [];
-    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT });
+    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: moveDelay });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
     document.getElementById('play-status').textContent = 'Lancement de la partie...';

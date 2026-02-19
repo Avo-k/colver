@@ -100,6 +100,7 @@ async def websocket_endpoint(ws: WebSocket):
     replay_session = None
     play_game_id = None
     watch_game_id = None
+    play_move_delay = 2.0
 
     try:
         while True:
@@ -110,6 +111,7 @@ async def websocket_endpoint(ws: WebSocket):
                 human_seat = data.get("human_seat", 2)
                 opponent_ai = data.get("opponent_ai", "doudou")
                 partner_ai = data.get("partner_ai", "doudou")
+                play_move_delay = max(1.0, min(8.0, float(data.get("move_delay", 2))))
                 # Build per-seat AI mapping (human excluded)
                 ai_types = {}
                 for seat in range(4):
@@ -140,7 +142,7 @@ async def websocket_endpoint(ws: WebSocket):
                     "doudou_available": doudou_available,
                     "game_id": play_game_id,
                 })
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
             elif msg_type == "play":
                 if play_session is None:
@@ -169,7 +171,7 @@ async def websocket_endpoint(ws: WebSocket):
                     play_session.trick_just_completed = False
                     await asyncio.sleep(2.0)
 
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
             elif msg_type == "watch_start":
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
@@ -364,12 +366,12 @@ async def _complete_game(game_id, session):
     await db.complete_game(game_id, points[0], points[1], contract)
 
 
-async def _run_ai_turns(ws, session, human_seat, game_id=None):
+async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
     """Auto-play AI turns until human's turn or game over."""
     while not session.env.is_terminal() and session.env.current_player() != human_seat:
-        await asyncio.sleep(0.3)
         action, name, state = session.play_ai_turn()
         player = session.history[-1]["player"]
+        phase = session.history[-1]["phase"]
         ai_msg = {
             "type": "ai_move",
             "player": player,
@@ -386,10 +388,8 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None):
         if game_id:
             await db.append_action(game_id, session.history[-1])
 
-        # Pause 2s when AI plays the 4th card so the trick is visible
-        if session.trick_just_completed:
-            session.trick_just_completed = False
-            await asyncio.sleep(2.0)
+        session.trick_just_completed = False
+        await asyncio.sleep(move_delay)
 
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():
