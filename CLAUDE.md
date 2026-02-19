@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Check compilation (both crates)
 cargo check
 
-# Run all core tests (238 tests, plus more with --features nn or dmc_train)
+# Run all core tests (281 tests, plus more with --features nn or dmc_train)
 cargo test -p colver-core
 
 # Run a single test
@@ -44,6 +44,9 @@ python scripts/train_value_net.py --data data/value_train.bin --output models/va
 
 # Run NN evaluation experiment
 cargo run -p colver-core --bin nn_experiment --release --features nn -- models/value_net.bin 50 --data data/value_train.bin
+
+# Run double-dummy solver benchmark
+cargo run -p colver-core --bin dd_bench --release -- 1000  # num_deals, default 1000
 
 # Build and install Python bindings (via uv, preferred)
 uv sync
@@ -167,6 +170,31 @@ Five fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improve
 
 **Smart IS-MCTS** (`smart_ismcts.rs` + `card_beliefs.rs`) — Belief-weighted IS-MCTS. `CardBeliefs` weight matrix updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. ~+7.5% win rate vs Naive IS-MCTS in match play. Has `search_parallel()` behind `parallel` feature and `search_with_nn()` behind `nn` feature.
 
+### Double-Dummy Solver (`solver.rs`)
+
+Alpha-beta solver for perfect-information Belote: given 4 known hands and a trump suit, computes the exact maximum trick points each team can score with optimal play. No feature gate — zero external dependencies, always compiled.
+
+**API:**
+- `solver::solve(state) -> [u8; 2]` — solve a playing-phase state, returns `[ns_points, ew_points]`
+- `solver::solve_for_trump(hands, dealer, trump) -> [u8; 2]` — convenience: creates DD state and solves
+- `solver::solve_best_card(state) -> u8` — returns the optimal card for the current player
+- `GameState::setup_dd(dealer, hands, trump)` — creates a playing-phase state for DD solving (bypasses bidding)
+
+**Performance:** ~13.5ms/solve average, median ~7ms, P90 ~31ms (500 random deals × 4 suits). All results satisfy `ns + ew == 162` (or 252 for capot).
+
+**Techniques (inspired by bridge DD solvers DDS/GIB):**
+- Alpha-beta with fail-soft
+- Transposition table: 256K entries (2MB, L2-cache friendly), packed u64 entries with relative future scores and hash move, always-replace
+- Principal Variation Search (null-window for non-PV moves)
+- Killer move heuristic (2 per ply, 32 plies)
+- History heuristic (depth² bonus on cutoff, indexed by `[team][card]`)
+- Card equivalence pruning — adjacent same-point cards with no outstanding card between them
+- Quick tricks bounds — guaranteed future points from consecutive top trumps + unruffable plain masters
+- Forced-move optimization for single legal cards
+- Move ordering: hash move → killers → history + static score
+
+**Benchmark:** `cargo run -p colver-core --bin dd_bench --release -- [num_deals]`
+
 ### DMC Q-Network Agent (`scripts/dmc_model.py`, `scripts/train_dmc.py`, `scripts/eval_dmc.py`)
 
 DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration.
@@ -211,6 +239,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 - **`strength_experiment`**: Rollout policy comparison, D×I sweep, RAVE on/off.
 - **`maxi_diagnose`**: Diagnostic tool — plays individual deals showing Maxi (NS) vs DMC (EW) with full play-by-play: hand evals, bidding reasoning (Cases A/B/C/D), DMC Q-value rankings, trick-by-trick results. Usage: `cargo run --bin maxi_diagnose --release -- [num_deals] [seed]`.
 - **`v2_tournament`**: V2 bidding fine-tune tournament — compares `improved_bid` baseline vs `V2Config` variants using DMC + Oracle MCTS play in parallel. Round-robin match play with win/margin matrices.
+- **`dd_bench`**: Double-dummy solver benchmark. Solves N random deals × 4 trump suits, reports timing distribution (percentiles, top-10% share), point totals, capot rates. Usage: `cargo run --bin dd_bench --release -- [num_deals]`.
 - **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
 - **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
 
@@ -232,7 +261,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 
 FastAPI + WebSocket backend with vanilla JS frontend. Bundled in the wheel under `colver[web]` optional dependency. Three modes: Play (human vs AI), Watch (spectate AI vs AI with thinking stats), Analysis (custom position setup + MCTS analysis).
 
-**Play tab UX:** Instant card play (optimistic update), configurable pause slider (1–8s), trick flush animation (cards pile → flip face-down → fly to last-trick box, 1.6s), end-of-game overlay (centered glassmorphism box with victory/defeat/draw theming, contract info, scores with belote annotation, confetti on victory, restart button). CFN box for copyable game state. Bug report button.
+**Play tab UX:** Instant card play (optimistic update), configurable pause slider (1–8s), trick flush animation (cards pile → flip face-down → fly toward winner's seat, 1.6s), end-of-game overlay (centered glassmorphism box with victory/defeat/draw theming, contract info, scores with belote annotation, confetti on victory, restart button). CFN box for copyable game state. Bug report button.
 
 **Package layout** (`python/colver/web/`):
 - `server.py` — FastAPI app, WebSocket handler, uses `colver.model_path()` for DMC weights.

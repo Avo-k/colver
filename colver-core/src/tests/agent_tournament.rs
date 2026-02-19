@@ -8,6 +8,7 @@
 use colver_core::bid_eval::BidFunction;
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::{EnvTracking, OBS_DIM};
+use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::mcts::{MctsConfig, MctsSearch, RolloutPolicy};
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
@@ -28,6 +29,8 @@ enum CardPlayMethod {
     SmartIsMcts,
     Oracle,
     Dmc(usize), // index into shared weights vec
+    IsDd,       // IS-DD (naive, no beliefs)
+    SmartIsDd,  // IS-DD with belief-weighted determinization
 }
 
 #[derive(Clone)]
@@ -107,6 +110,11 @@ fn play_match(
         rollout_policy: RolloutPolicy::HeuristicPlay,
         ..Default::default()
     };
+    let dd_config = IsDdConfig {
+        determinizations: 20,
+        time_limit_ms: Some(time_ms),
+        ..Default::default()
+    };
 
     // Pre-create thread-local DmcNet instances for each DMC model used
     let mut dmc_nets: Vec<Option<DmcNet>> = (0..dmc_models.len()).map(|_| None).collect();
@@ -131,6 +139,10 @@ fn play_match(
         let mut ew_naive = NaiveIsMctsSearch::new();
         let mut ns_smart = [SmartIsMctsSearch::new(), SmartIsMctsSearch::new()]; // p0, p2
         let mut ew_smart = [SmartIsMctsSearch::new(), SmartIsMctsSearch::new()]; // p1, p3
+        let mut ns_dd = IsDdSearch::new();
+        let mut ew_dd = IsDdSearch::new();
+        let mut ns_smart_dd = [IsDdSearch::new(), IsDdSearch::new()]; // p0, p2
+        let mut ew_smart_dd = [IsDdSearch::new(), IsDdSearch::new()]; // p1, p3
         let mut oracle = MctsSearch::new();
         let mut tracking = EnvTracking::new();
         tracking.reset(dealer);
@@ -145,6 +157,17 @@ fn play_match(
         if ew_is_smart {
             ew_smart[0].init_deal(&state, 1, true);
             ew_smart[1].init_deal(&state, 3, true);
+        }
+        // Init Smart IS-DD if needed
+        let ns_is_smart_dd = matches!(ns_agent.card_play, CardPlayMethod::SmartIsDd);
+        let ew_is_smart_dd = matches!(ew_agent.card_play, CardPlayMethod::SmartIsDd);
+        if ns_is_smart_dd {
+            ns_smart_dd[0].init_deal(&state, 0, true);
+            ns_smart_dd[1].init_deal(&state, 2, true);
+        }
+        if ew_is_smart_dd {
+            ew_smart_dd[0].init_deal(&state, 1, true);
+            ew_smart_dd[1].init_deal(&state, 3, true);
         }
 
         while !state.is_terminal() {
@@ -183,6 +206,22 @@ fn play_match(
                         let (action, _) = net.best_action(&obs_buf, legal_mask);
                         action
                     }
+                    CardPlayMethod::IsDd => {
+                        if is_ns {
+                            ns_dd.search(&state, &dd_config, rng)
+                        } else {
+                            ew_dd.search(&state, &dd_config, rng)
+                        }
+                    }
+                    CardPlayMethod::SmartIsDd => {
+                        if is_ns {
+                            let idx = if player == 0 { 0 } else { 1 };
+                            ns_smart_dd[idx].search(&state, &dd_config, rng)
+                        } else {
+                            let idx = if player == 1 { 0 } else { 1 };
+                            ew_smart_dd[idx].search(&state, &dd_config, rng)
+                        }
+                    }
                 }
             };
 
@@ -194,6 +233,14 @@ fn play_match(
             if ew_is_smart {
                 ew_smart[0].record_action(&state_before, player, action);
                 ew_smart[1].record_action(&state_before, player, action);
+            }
+            if ns_is_smart_dd {
+                ns_smart_dd[0].record_action(&state_before, player, action);
+                ns_smart_dd[1].record_action(&state_before, player, action);
+            }
+            if ew_is_smart_dd {
+                ew_smart_dd[0].record_action(&state_before, player, action);
+                ew_smart_dd[1].record_action(&state_before, player, action);
             }
             // Track for DMC obs
             tracking.track_action(&state_before, action);
@@ -315,6 +362,7 @@ fn main() {
     let mut time_ms: u32 = 20;
     let mut n_threads = default_threads();
     let mut use_dmc = false;
+    let mut use_dd_only = false;
     let mut oracle_iters: u32 = 2000;
 
     let mut i = 1;
@@ -326,6 +374,9 @@ fn main() {
             }
             "--dmc" => {
                 use_dmc = true;
+            }
+            "--dd" => {
+                use_dd_only = true;
             }
             "--oracle-iters" => {
                 i += 1;
@@ -346,12 +397,17 @@ fn main() {
 
     // Load DMC models
     let mut dmc_models: Vec<DmcWeights> = Vec::new();
-    let dmc_paths = [
-        ("models/dmc_2000000.bin", "DMC2M"),
-        ("models/dmc_6000000.bin", "DMC6M"),
-    ];
+    let dmc_paths: Vec<(&str, &str)> = if use_dd_only {
+        // For --dd mode, load best available model
+        vec![("models/dmc_35.bin", "DouDou35")]
+    } else {
+        vec![
+            ("models/dmc_2000000.bin", "DMC2M"),
+            ("models/dmc_6000000.bin", "DMC6M"),
+        ]
+    };
 
-    if use_dmc {
+    if use_dmc || use_dd_only {
         for (path, label) in &dmc_paths {
             match DmcWeights::load(path) {
                 Ok(w) => {
@@ -438,32 +494,60 @@ fn main() {
             bid_function: BidFunction::Roro,
             card_play: CardPlayMethod::Oracle,
         },
+        Agent {
+            name: "IsDd+ImV2".into(),
+            bid_function: BidFunction::ImprovedV2,
+            card_play: CardPlayMethod::IsDd,
+        },
+        Agent {
+            name: "SDD+ImV2".into(),
+            bid_function: BidFunction::ImprovedV2,
+            card_play: CardPlayMethod::SmartIsDd,
+        },
     ];
 
-    // Add DMC agents if models loaded
-    if dmc_models.len() >= 1 {
-        agents.push(Agent {
-            name: "DMC2M+Impr".into(),
-            bid_function: BidFunction::Improved,
-            card_play: CardPlayMethod::Dmc(0),
-        });
-        agents.push(Agent {
-            name: "DMC2M+Roro".into(),
-            bid_function: BidFunction::Roro,
-            card_play: CardPlayMethod::Dmc(0),
-        });
+    // If --dd flag, keep only DD-focused agents for quick comparison
+    if use_dd_only {
+        agents.retain(|a| matches!(a.card_play,
+            CardPlayMethod::SmartIsMcts | CardPlayMethod::NaiveIsMcts |
+            CardPlayMethod::IsDd | CardPlayMethod::SmartIsDd
+        ) && matches!(a.bid_function, BidFunction::ImprovedV2));
     }
-    if dmc_models.len() >= 2 {
-        agents.push(Agent {
-            name: "DMC6M+Impr".into(),
-            bid_function: BidFunction::Improved,
-            card_play: CardPlayMethod::Dmc(1),
-        });
-        agents.push(Agent {
-            name: "DMC6M+Roro".into(),
-            bid_function: BidFunction::Roro,
-            card_play: CardPlayMethod::Dmc(1),
-        });
+
+    // Add DMC agents if models loaded
+    if use_dd_only {
+        if !dmc_models.is_empty() {
+            agents.push(Agent {
+                name: "DMC+ImV2".into(),
+                bid_function: BidFunction::ImprovedV2,
+                card_play: CardPlayMethod::Dmc(0),
+            });
+        }
+    } else {
+        if dmc_models.len() >= 1 {
+            agents.push(Agent {
+                name: "DMC2M+Impr".into(),
+                bid_function: BidFunction::Improved,
+                card_play: CardPlayMethod::Dmc(0),
+            });
+            agents.push(Agent {
+                name: "DMC2M+Roro".into(),
+                bid_function: BidFunction::Roro,
+                card_play: CardPlayMethod::Dmc(0),
+            });
+        }
+        if dmc_models.len() >= 2 {
+            agents.push(Agent {
+                name: "DMC6M+Impr".into(),
+                bid_function: BidFunction::Improved,
+                card_play: CardPlayMethod::Dmc(1),
+            });
+            agents.push(Agent {
+                name: "DMC6M+Roro".into(),
+                bid_function: BidFunction::Roro,
+                card_play: CardPlayMethod::Dmc(1),
+            });
+        }
     }
 
     let n = agents.len();
@@ -487,6 +571,8 @@ fn main() {
             CardPlayMethod::SmartIsMcts => "Smart IS-MCTS".to_string(),
             CardPlayMethod::Oracle => format!("Oracle ({}it)", oracle_iters),
             CardPlayMethod::Dmc(idx) => format!("DMC ({})", dmc_paths.get(*idx).map(|p| p.1).unwrap_or("?")),
+            CardPlayMethod::IsDd => "IS-DD (naive)".to_string(),
+            CardPlayMethod::SmartIsDd => "Smart IS-DD".to_string(),
         };
         println!("  [{:>2}] {:<12}  bid={:<10}  play={}", i, a.name, format!("{:?}", a.bid_function), play_str);
     }
@@ -675,6 +761,8 @@ fn main() {
                 CardPlayMethod::SmartIsMcts => "Smart",
                 CardPlayMethod::Oracle => "Oracle",
                 CardPlayMethod::Dmc(_) => "DMC",
+                CardPlayMethod::IsDd => "IS-DD",
+                CardPlayMethod::SmartIsDd => "SmartDD",
             },
         );
     }

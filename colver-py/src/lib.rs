@@ -12,6 +12,7 @@ use colver_core::bidding;
 use colver_core::card;
 use colver_core::card::Suit;
 use colver_core::dmc_net::DmcNet;
+use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
@@ -233,6 +234,9 @@ struct Env {
     naive_search: Option<NaiveIsMctsSearch>,
     smart_searches: Option<[SmartIsMctsSearch; 4]>,
     smart_initialized: bool,
+    // IS-DD search objects (lazily initialized)
+    dede_searches: Option<[IsDdSearch; 4]>,
+    dede_initialized: bool,
     // Per-player card tracking for obs v2
     played_by: [u32; 4],
     // Chronological play order (card indices) for timing features
@@ -255,6 +259,8 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
+            dede_searches: None,
+            dede_initialized: false,
             played_by: [0; 4],
             play_order: Vec::with_capacity(32),
             bid_history: Vec::new(),
@@ -267,6 +273,7 @@ impl Env {
         let dealer = self.rng.gen_range(0..4u8);
         self.state = GameState::deal_random(dealer, &mut self.rng);
         self.smart_initialized = false;
+        self.dede_initialized = false;
         self.played_by = [0; 4];
         self.play_order.clear();
         self.bid_history.clear();
@@ -651,6 +658,8 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
+            dede_searches: None,
+            dede_initialized: false,
             played_by: [0; 4],
             play_order: Vec::new(),
             bid_history: Vec::new(),
@@ -813,6 +822,131 @@ impl Env {
         Ok(search.search(&self.state, &config, &mut self.rng))
     }
 
+    /// Initialize IS-DD (Dédé) beliefs for a new deal.
+    /// Must be called after reset() and before action_dede().
+    fn dede_init(&mut self) {
+        let searches = self.dede_searches.get_or_insert_with(|| {
+            [
+                IsDdSearch::new(),
+                IsDdSearch::new(),
+                IsDdSearch::new(),
+                IsDdSearch::new(),
+            ]
+        });
+        for (player, search) in searches.iter_mut().enumerate() {
+            search.init_deal(&self.state, player as u8, true);
+        }
+        self.dede_initialized = true;
+    }
+
+    /// Record an action for IS-DD beliefs, then step the game.
+    /// Returns (observation, reward, done, legal_actions) like step().
+    fn dede_step(&mut self, action: u8) -> PyResult<(Vec<f32>, f32, bool, Vec<u8>)> {
+        let player = self.state.current_player();
+        let team = GameState::player_team(player) as usize;
+
+        if self.state.phase == Phase::Bidding {
+            self.bid_history.push((player, action));
+        }
+        if self.state.phase == Phase::Playing {
+            self.play_order.push(action);
+        }
+        track_play(
+            &self.state,
+            action,
+            &mut self.played_by,
+        );
+
+        // Record action in all 4 belief models before stepping
+        if let Some(ref mut searches) = self.dede_searches {
+            for search in searches.iter_mut() {
+                search.record_action(&self.state, player, action);
+            }
+        }
+
+        self.state.step(action);
+
+        let done = self.state.is_terminal();
+        let reward = if done {
+            self.state.rewards()[team]
+        } else {
+            0.0
+        };
+
+        Ok((
+            make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
+            reward,
+            done,
+            legal_actions_list(&self.state),
+        ))
+    }
+
+    /// Get IS-DD (Dédé) action for current state. time_ms is the search budget in ms.
+    /// Must call dede_init() first and use dede_step() for all moves.
+    fn action_dede(&mut self, time_ms: u32) -> PyResult<u8> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        let player = self.state.current_player() as usize;
+        let config = IsDdConfig {
+            time_limit_ms: Some(time_ms),
+            ..Default::default()
+        };
+        let searches = self.dede_searches.as_mut().unwrap();
+        let action = searches[player].search(&self.state, &config, &mut self.rng);
+        Ok(action)
+    }
+
+    /// Get IS-DD (Dédé) action with search statistics.
+    /// Returns dict: {best_action, card_scores: [[card, avg_score]...], determinizations, elapsed_ms}
+    /// During bidding, returns bid_improved_v2() with minimal stats.
+    fn action_dede_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new_bound(py);
+
+        if self.state.phase == Phase::Bidding {
+            let action = bid_eval::improved_v2_bid(&self.state);
+            dict.set_item("best_action", action)?;
+            dict.set_item("card_scores", Vec::<(u8, f32)>::new())?;
+            dict.set_item("determinizations", 0u32)?;
+            dict.set_item("elapsed_ms", 0.0f64)?;
+            return Ok(dict);
+        }
+
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        let player = self.state.current_player() as usize;
+        let config = IsDdConfig {
+            time_limit_ms: Some(time_ms),
+            ..Default::default()
+        };
+        let searches = self.dede_searches.as_mut().unwrap();
+        let start = Instant::now();
+        let result = searches[player].search_with_stats(&self.state, &config, &mut self.rng);
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+
+        dict.set_item("best_action", result.best_action)?;
+        dict.set_item("card_scores", result.card_scores)?;
+        dict.set_item("determinizations", result.determinizations)?;
+        dict.set_item("elapsed_ms", elapsed)?;
+        Ok(dict)
+    }
+
+    /// Oracle DD: exact double-dummy solver. Returns optimal card for current player.
+    /// Only valid during play phase. No time budget needed (~7ms median).
+    fn action_oracle_dd(&self) -> PyResult<u8> {
+        if self.state.phase != Phase::Playing {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Oracle DD only valid during play phase",
+            ));
+        }
+        Ok(colver_core::solver::solve_best_card(&self.state))
+    }
+
     /// Get observation (415 floats) for current state.
     fn get_observation(&self) -> Vec<f32> {
         make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)
@@ -913,6 +1047,8 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
+            dede_searches: None,
+            dede_initialized: false,
             played_by,
             play_order,
             bid_history,

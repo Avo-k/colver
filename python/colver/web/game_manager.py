@@ -96,9 +96,9 @@ class PlaySession(TrickTracker):
         self._init_trick_tracking()
         self.env.reset()
         self.initial_hands = [list(h) for h in self.env.get_hands()]
-        self.uses_smart = any(t == "smart" for t in self.ai_types.values())
-        if self.uses_smart:
-            self.env.smart_ismcts_init()
+        self.uses_dede = any(t == "dede" for t in self.ai_types.values())
+        if self.uses_dede:
+            self.env.dede_init()
         if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
             self.env.load_dmc_model(dmc_model_path)
 
@@ -145,8 +145,8 @@ class PlaySession(TrickTracker):
             name = colver.Env.action_name(int(action), int(phase))
             self.bid_history.append({"player": int(player), "action": int(action), "name": name})
         self._check_trick_completion(action)
-        if self.uses_smart:
-            self.env.smart_ismcts_step(action)
+        if self.uses_dede:
+            self.env.dede_step(action)
         else:
             self.env.step(action)
         self._finalize_trick_completion()
@@ -165,16 +165,14 @@ class PlaySession(TrickTracker):
             if ai_type == "doudou" and self.env.has_dmc_model():
                 result = self.env.action_dmc_with_stats()
                 return int(result["best_action"])
-            elif ai_type == "smart":
-                return int(self.env.action_smart_ismcts(AI_TIME_MS))
-            elif ai_type == "naive":
-                return int(self.env.action_naive_ismcts(AI_TIME_MS))
-            elif ai_type == "oracle":
-                return int(self.env.action_oracle_mcts(AI_TIME_MS))
+            elif ai_type == "dede":
+                return int(self.env.action_dede(AI_TIME_MS))
+            elif ai_type == "oracle_dd":
+                return int(self.env.action_oracle_dd())
             elif ai_type == "maxi_bid":
                 return int(self.env.action_maxi_play())
             else:
-                return int(self.env.action_naive_ismcts(AI_TIME_MS))
+                return int(self.env.action_heuristic_play())
 
     def play_ai_turn(self):
         player = self.env.current_player()
@@ -186,8 +184,8 @@ class PlaySession(TrickTracker):
         if phase == 0:
             self.bid_history.append({"player": int(player), "action": action, "name": name})
         self._check_trick_completion(action)
-        if self.uses_smart:
-            self.env.smart_ismcts_step(action)
+        if self.uses_dede:
+            self.env.dede_step(action)
         else:
             self.env.step(action)
         self._finalize_trick_completion()
@@ -196,13 +194,12 @@ class PlaySession(TrickTracker):
 
 
 AGENT_NAMES = {
-    "smart": "Smart IS-MCTS",
-    "naive": "Naive IS-MCTS",
+    "dede": "Dédé (IS-DD)",
     "doudou": "DouDou35",
-    "oracle": "Oracle (MCTS)",
+    "oracle_dd": "Oracle (DD)",
     "heuristic": "Heuristique",
     "maxi_bid": "Maxi Bid",
-    "random": "Aleatoire",
+    "random": "Aléatoire",
 }
 
 SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
@@ -235,10 +232,10 @@ class WatchSession(TrickTracker):
         if dmc_model_path and any(a == "doudou" for a in agents.values()):
             self.env.load_dmc_model(dmc_model_path)
 
-        # Initialize Smart IS-MCTS if any seat uses it
-        self.uses_smart = any(a == "smart" for a in agents.values())
-        if self.uses_smart:
-            self.env.smart_ismcts_init()
+        # Initialize IS-DD if any seat uses Dédé
+        self.uses_dede = any(a == "dede" for a in agents.values())
+        if self.uses_dede:
+            self.env.dede_init()
 
     def get_state(self):
         """Full state with ALL hands visible."""
@@ -289,23 +286,16 @@ class WatchSession(TrickTracker):
         # Play phase: dispatch by agent type
         stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
 
-        if agent_type == "smart":
-            result = self.env.action_smart_ismcts_with_stats(AI_TIME_MS)
+        if agent_type == "dede":
+            result = self.env.action_dede_with_stats(AI_TIME_MS)
             action = int(result["best_action"])
-            stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
-            stats["root_visits"] = int(result["root_visits"])
+            stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
+            stats["determinizations"] = int(result["determinizations"])
             stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
 
-        elif agent_type == "naive":
-            result = self.env.action_naive_ismcts_with_stats(AI_TIME_MS)
-            action = int(result["best_action"])
-            stats["visit_counts"] = [[int(a), int(v)] for a, v in result["visit_counts"]]
-            stats["root_visits"] = int(result["root_visits"])
-            stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
-
-        elif agent_type == "oracle":
+        elif agent_type == "oracle_dd":
             t0 = time.monotonic()
-            action = int(self.env.action_oracle_mcts(AI_TIME_MS))
+            action = int(self.env.action_oracle_dd())
             stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 1)
 
         elif agent_type == "doudou" and self.env.has_dmc_model():
@@ -348,8 +338,8 @@ class WatchSession(TrickTracker):
         self.history.append({"player": player, "action": action, "phase": phase, "name": name})
         self._check_trick_completion(action)
 
-        if self.uses_smart:
-            self.env.smart_ismcts_step(action)
+        if self.uses_dede:
+            self.env.dede_step(action)
         else:
             self.env.step(action)
 

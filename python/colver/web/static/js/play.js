@@ -144,6 +144,7 @@ function renderPlayState(state) {
         document.getElementById('play-status').textContent = '';
     } else if (isHumanTurn) {
         document.getElementById('play-status').textContent = isBidPhase ? 'A vous d\'annoncer' : 'A vous de jouer';
+        SFX.yourTurn();
     } else {
         document.getElementById('play-status').textContent = `${SEAT_NAMES_FR[state.current_player]} reflechit...`;
     }
@@ -220,6 +221,7 @@ function showBidControls(legalActions, state) {
             const action = encodeBidAction(val, suit);
             if (action < 0 || !legalSet.has(action)) return;
             playLocked = true;
+            SFX.bid();
             const name = actionName(action, 0);
             bidHistory.push({ player: HUMAN_SEAT, action, name });
             send({ type: 'play', action, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
@@ -234,6 +236,7 @@ function showBidControls(legalActions, state) {
         passBtn.onclick = () => {
             if (playLocked) return;
             playLocked = true;
+            SFX.pass();
             bidHistory.push({ player: HUMAN_SEAT, action: 0, name: 'Passe' });
             send({ type: 'play', action: 0, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
@@ -248,6 +251,7 @@ function showBidControls(legalActions, state) {
         coincheBtn.onclick = () => {
             if (playLocked) return;
             playLocked = true;
+            SFX.coinche();
             bidHistory.push({ player: HUMAN_SEAT, action: 41, name: 'Coinche' });
             send({ type: 'play', action: 41, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
@@ -262,6 +266,7 @@ function showBidControls(legalActions, state) {
         surcoincheBtn.onclick = () => {
             if (playLocked) return;
             playLocked = true;
+            SFX.surcoinche();
             bidHistory.push({ player: HUMAN_SEAT, action: 42, name: 'Surcoinche' });
             send({ type: 'play', action: 42, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         };
@@ -280,6 +285,7 @@ function hideBidControls() {
 function playCard(cardIdx) {
     if (playLocked) return;
     playLocked = true;
+    SFX.cardPlay();
     // Optimistic update: show card in trick area and remove from hand immediately
     const trickEl = document.getElementById('trick-s');
     trickEl.innerHTML = '';
@@ -329,6 +335,7 @@ onMessage('ai_move', (data) => {
         // Use JS actionName for proper suit symbols instead of server-provided name
         const name = actionName(data.action, 0);
         bidHistory.push({ player: data.player, action: data.action, name });
+        SFX.playForAction(0, data.action);
     }
     if (data.belote_event) {
         const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
@@ -393,7 +400,10 @@ function showGameResult(state) {
     });
 
     if (isVictory) {
+        SFX.victory();
         launchConfetti();
+    } else if (!isDraw) {
+        SFX.defeat();
     }
 }
 

@@ -188,6 +188,11 @@ function renderHistoryEntry(index) {
             }, data.state.last_trick_winner);
         }
 
+        // Play sound on forward steps (not backward, not fast-forward)
+        if (isForward && !skipAnimation && data.move) {
+            SFX.playForAction(data.move.phase, data.move.action);
+        }
+
         renderWatchState(data.state);
         if (data.move) renderStats(data.move);
         else {
@@ -277,6 +282,56 @@ function renderCardAnnotations(data, state) {
 
     // No annotations during bidding phase
     if (state.phase === 0 || move.phase === 0) return;
+
+    // During play phase with IS-DD card scores
+    if (stats.card_scores && stats.card_scores.length > 0) {
+        const scoreMap = new Map();
+        const sorted = [...stats.card_scores].sort((a, b) => b[1] - a[1]);
+        const bestAction = sorted[0] ? sorted[0][0] : -1;
+        const vals = sorted.map(x => x[1]);
+        const maxS = Math.max(...vals);
+        const minS = Math.min(...vals);
+        const range = maxS - minS || 1;
+
+        for (const [action, score] of stats.card_scores) {
+            const norm = (score - minS) / range;
+            const isBest = action === bestAction;
+            scoreMap.set(action, {
+                text: score.toFixed(0),
+                cls: 'card-qval' + (isBest ? ' best' : ''),
+                style: { opacity: String(0.5 + norm * 0.5) }
+            });
+        }
+
+        const player = move.player;
+        const handEls = {
+            0: document.getElementById('watch-hand-north'),
+            1: document.getElementById('watch-hand-east'),
+            2: document.getElementById('watch-hand-south'),
+            3: document.getElementById('watch-hand-west'),
+        };
+        const handEl = handEls[player];
+        if (handEl) {
+            const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+            renderHand(handEl, state.hands[player], false, null, null, trumpSuit, scoreMap);
+        }
+
+        const playedCard = move.action;
+        const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
+        const trickEl = document.getElementById(`watch-trick-${seatMap[player]}`);
+        if (trickEl && scoreMap.has(playedCard)) {
+            const cardDiv = trickEl.querySelector('.card');
+            if (cardDiv) {
+                const ann = scoreMap.get(playedCard);
+                const badge = document.createElement('span');
+                badge.className = `card-annotation ${ann.cls}`;
+                badge.textContent = ann.text;
+                if (ann.style) Object.assign(badge.style, ann.style);
+                cardDiv.appendChild(badge);
+            }
+        }
+        return;
+    }
 
     // During play phase with DouDou Q-values
     if (stats.q_values && stats.q_values.length > 0) {
@@ -432,6 +487,12 @@ function renderStats(move) {
         return;
     }
 
+    // IS-DD (Dédé): card score bars
+    if (stats.card_scores && stats.card_scores.length > 0) {
+        renderDdScoreBars(body, stats.card_scores, move.action, stats.determinizations);
+        return;
+    }
+
     // IS-MCTS: visit count bars
     if (stats.visit_counts && stats.visit_counts.length > 0) {
         renderVisitBars(body, stats.visit_counts, move.action, stats.root_visits);
@@ -495,6 +556,38 @@ function renderQValueBars(container, qValues, bestAction) {
             `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
             `<span class="visit-count">${q.toFixed(3)}</span>`;
         div.appendChild(row);
+    }
+
+    container.appendChild(div);
+}
+
+function renderDdScoreBars(container, cardScores, bestAction, determinizations) {
+    const sorted = [...cardScores].sort((a, b) => b[1] - a[1]);
+    const vals = sorted.map(x => x[1]);
+    const maxS = Math.max(...vals);
+    const minS = Math.min(...vals);
+    const range = maxS - minS || 1;
+
+    const div = document.createElement('div');
+    div.className = 'visit-bars';
+
+    for (const [action, score] of sorted) {
+        const row = document.createElement('div');
+        const isBest = action === bestAction;
+        row.className = 'visit-row' + (isBest ? ' best' : '');
+        const pct = ((score - minS) / range * 100).toFixed(0);
+        const name = actionName(action, 1);
+        row.innerHTML = `<span class="visit-name">${name}</span>` +
+            `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
+            `<span class="visit-count">${score.toFixed(1)}</span>`;
+        div.appendChild(row);
+    }
+
+    if (determinizations) {
+        const total = document.createElement('div');
+        total.className = 'visit-total';
+        total.textContent = `${determinizations} déterminisations`;
+        div.appendChild(total);
     }
 
     container.appendChild(div);

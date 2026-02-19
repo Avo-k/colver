@@ -10,6 +10,7 @@ pub mod rollout;
 pub mod determinize;
 pub mod bid_eval;
 pub mod maxi;
+pub mod solver;
 pub mod dmc_net;
 pub mod dmc_obs;
 #[cfg(feature = "rand")]
@@ -26,6 +27,8 @@ pub mod card_beliefs;
 pub mod smart_ismcts;
 #[cfg(feature = "rand")]
 pub mod single_tree_ismcts;
+#[cfg(feature = "rand")]
+pub mod is_dd;
 #[cfg(feature = "dmc_train")]
 pub mod dmc_candle;
 #[cfg(feature = "nn")]

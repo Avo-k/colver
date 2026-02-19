@@ -99,6 +99,8 @@ function animateTrickFlush(prefix, onComplete, winner) {
         return;
     }
 
+    SFX.trickWon();
+
     // Create fixed overlay: backs behind, faces on top
     const overlay = document.createElement('div');
     overlay.className = 'trick-flush-overlay';
@@ -322,6 +324,7 @@ function renderLastTrick(container, trick, trickWinner, trickPoints, humanSeat) 
 const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 
 function showBeloteAnnouncement(trickAreaId, text) {
+    SFX.belote();
     const area = document.getElementById(trickAreaId);
     if (!area) return;
     const el = document.createElement('div');
@@ -421,3 +424,18 @@ document.querySelectorAll('.tab').forEach(btn => {
 connect();
 initCfnBox('play-cfn');
 initCfnBox('watch-cfn');
+
+// Sound toggle
+(function() {
+    const btn = document.getElementById('sound-toggle');
+    if (!btn) return;
+    function updateIcon() {
+        btn.textContent = SFX.muted ? '\u{1F507}' : '\u{1F50A}';
+        btn.classList.toggle('muted', SFX.muted);
+    }
+    updateIcon();
+    btn.addEventListener('click', () => {
+        SFX.toggleMute();
+        updateIcon();
+    });
+})();

@@ -173,6 +173,41 @@ impl GameState {
         self.phase == Phase::Done
     }
 
+    /// Create a playing-phase state for double-dummy solving.
+    /// Contract is a dummy 80 in the given trump suit, taker NS.
+    /// First player = (dealer + 1) % 4.
+    pub fn setup_dd(dealer: u8, hands: [CardSet; 4], trump: u8) -> Self {
+        let first = (dealer + 1) % 4;
+        GameState {
+            hands,
+            current_trick: [EMPTY; 4],
+            trick_lead: first,
+            trick_count: 0,
+            contract: Contract {
+                trump,
+                value: 8, // 80 points — irrelevant for solver
+                team: 0,  // NS taker — irrelevant for solver
+                coinche: 0,
+            },
+            points: [0; 2],
+            tricks_won: [0; 2],
+            last_bid_value: 0,
+            last_bid_suit: 0,
+            last_bidder: 0,
+            consecutive_passes: 0,
+            coinche_state: 0,
+            current_player: first,
+            phase: Phase::Playing,
+            dealer,
+            _pad: 0,
+            played_cards: 0,
+            voids: [0; 4],
+            belote: [0; 2],
+            belote_player: [0; 2],
+            trick_history: [[EMPTY; 4]; 8],
+        }
+    }
+
     #[inline(always)]
     pub fn current_player(&self) -> u8 {
         self.current_player
