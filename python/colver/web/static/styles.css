@@ -295,7 +295,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 /* ===== LAST TRICK PANEL ===== */
-#last-trick, #watch-last-trick, #replay-last-trick {
+#last-trick, #replay-last-trick {
     position: absolute;
     top: 42px;
     right: 8px;
@@ -338,7 +338,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .lt-s { grid-area: s; }
 .lt-w { grid-area: w; }
 
-#last-trick .card, #watch-last-trick .card, #replay-last-trick .card {
+#last-trick .card, #replay-last-trick .card {
     width: calc(var(--card-w) * 0.55);
     height: calc(var(--card-h) * 0.55);
 }
