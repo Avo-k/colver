@@ -1,482 +1,9 @@
-// Watch mode: AI vs AI spectating with thinking stats
+// Watch mode: live AI vs AI spectating with thinking stats
 
-let watchActive = false;
-let watchFinished = false;
-let autoPlayMode = null; // null, 'game', 'end'
-let autoPlayTimer = null;
-let waitingForStep = false;
-
-// History buffer for bidirectional navigation
-let moveHistory = [];    // Array of all received watch_move/replay_move data
-let historyIndex = -1;   // Cursor (-1 = initial state before any move)
-let initialState = null; // State from watch_started/replay_loaded
-let _prevHistoryIndex = -1; // For detecting forward vs backward navigation
-
-const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
-
-// Load from CFN
-document.getElementById('cfn-load').addEventListener('click', loadFromCfn);
-document.getElementById('cfn-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') loadFromCfn();
-});
-
-function loadFromCfn() {
-    const input = document.getElementById('cfn-input');
-    const cfn = input.value.trim();
-    if (!cfn) return;
-    const agents = {};
-    document.querySelectorAll('.agent-select').forEach(sel => {
-        agents[sel.dataset.seat] = sel.value;
-    });
-    send({ type: 'watch_cfn', cfn, agents });
-}
-
-// Start game
-document.getElementById('watch-start').addEventListener('click', () => {
-    const agents = {};
-    document.querySelectorAll('.agent-select').forEach(sel => {
-        agents[sel.dataset.seat] = sel.value;
-    });
-    send({ type: 'watch_start', agents });
-    document.getElementById('watch-start').disabled = true;
-    document.getElementById('watch-start').textContent = 'Demarrage...';
-});
-
-// Transport controls
-document.getElementById('watch-prev-btn').addEventListener('click', () => {
-    if (!watchActive) return;
-    stopAutoPlay();
-    goToPreviousMove();
-});
-
-document.getElementById('watch-step-btn').addEventListener('click', () => {
-    if (!watchActive || waitingForStep) return;
-    stopAutoPlay();
-    goToNextMove();
-});
-
-document.getElementById('watch-start-btn').addEventListener('click', () => {
-    if (!watchActive) return;
-    stopAutoPlay();
-    goToStart();
-});
-
-document.getElementById('watch-auto-btn').addEventListener('click', () => {
-    if (autoPlayMode) {
-        stopAutoPlay();
-    } else if (watchActive && !isAtEnd()) {
-        startAutoPlay('game');
-    }
-});
-
-document.getElementById('watch-end-btn').addEventListener('click', () => {
-    if (!watchActive || waitingForStep) return;
-    stopAutoPlay();
-    if (isAtEnd()) return;
-    startAutoPlay('end');
-});
-
-// Keyboard navigation
-document.addEventListener('keydown', (e) => {
-    // Only when watch panel is active and not focused on input elements
-    if (!document.getElementById('watch-panel').classList.contains('active')) return;
-    const tag = document.activeElement?.tagName;
-    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-    if (!watchActive) return;
-
-    if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        stopAutoPlay();
-        goToPreviousMove();
-    } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        stopAutoPlay();
-        goToNextMove();
-    }
-});
-
-function isAtEnd() {
-    // At end if we're at the last buffered entry and that entry is finished, or game is finished
-    if (historyIndex >= 0 && historyIndex === moveHistory.length - 1) {
-        const last = moveHistory[historyIndex];
-        if (last && last.finished) return true;
-    }
-    return watchFinished && historyIndex === moveHistory.length - 1;
-}
-
-function requestStep() {
-    waitingForStep = true;
-    send({ type: replaySession ? 'replay_step' : 'watch_step' });
-}
-
-function startAutoPlay(mode) {
-    autoPlayMode = mode;
-    document.getElementById('watch-auto-btn').textContent = '\u23F8';
-    goToNextMove();
-}
-
-function stopAutoPlay() {
-    autoPlayMode = null;
-    if (autoPlayTimer) {
-        clearTimeout(autoPlayTimer);
-        autoPlayTimer = null;
-    }
-    document.getElementById('watch-auto-btn').textContent = '\u25B6';
-}
-
-// Navigation functions
-function goToPreviousMove() {
-    if (historyIndex <= -1) return;
-    if (_animatingTrick === 'watch-trick') return;
-    historyIndex--;
-    renderHistoryEntry(historyIndex);
-}
-
-function goToNextMove() {
-    if (_animatingTrick === 'watch-trick') return;
-    if (historyIndex < moveHistory.length - 1) {
-        // We have buffered data ahead
-        historyIndex++;
-        renderHistoryEntry(historyIndex);
-        // Continue auto-play from buffer
-        if (autoPlayMode) {
-            continueAutoPlayFromBuffer();
-        }
-    } else if (!watchFinished && !isAtEnd()) {
-        // Need to request from server
-        requestStep();
-    } else if (autoPlayMode) {
-        stopAutoPlay();
-    }
-}
-
-function goToStart() {
-    historyIndex = -1;
-    renderHistoryEntry(-1);
-}
-
-function renderHistoryEntry(index) {
-    const isForward = index > _prevHistoryIndex;
-    const skipAnimation = autoPlayMode === 'end';
-    _prevHistoryIndex = index;
-
-    if (index < 0) {
-        // Render initial state
-        _prevTrick['watch-trick'] = [];
-        if (initialState) {
-            renderWatchState(initialState);
-            renderWatchBidHistory([]);
-            renderTricksHistory([]);
-            document.getElementById('watch-stats-header').innerHTML = '';
-            document.getElementById('watch-stats-body').innerHTML = '<div class="stats-placeholder">Cliquez sur un bouton pour avancer</div>';
-            renderCardAnnotations(null, initialState);
-        }
-    } else if (index < moveHistory.length) {
-        const data = moveHistory[index];
-
-        // Detect trick completion for animation
-        const completedCards = detectTrickCompletion('watch-trick', data.state.current_trick);
-
-        if (completedCards && isForward && !skipAnimation && _animatingTrick !== 'watch-trick') {
-            // Animate the trick flush, then update the rest
-            animateTrickFlush('watch-trick', () => {
-                // Update last-trick after animation
-                const lastTrickEl = document.getElementById('watch-last-trick');
-                if (lastTrickEl && data.state.phase === 1 && data.state.last_trick) {
-                    renderLastTrick(lastTrickEl, data.state.last_trick, data.state.last_trick_winner, data.state.last_trick_points, 0);
-                }
-            }, data.state.last_trick_winner);
-        }
-
-        // Play sound on forward steps (not backward, not fast-forward)
-        if (isForward && !skipAnimation && data.move) {
-            SFX.playForAction(data.move.phase, data.move.action);
-        }
-
-        renderWatchState(data.state);
-        if (data.move) renderStats(data.move);
-        else {
-            document.getElementById('watch-stats-header').innerHTML = '';
-            document.getElementById('watch-stats-body').innerHTML = '';
-        }
-        renderWatchBidHistory(data.bid_history);
-        renderTricksHistory(data.completed_tricks);
-
-        if (data.finished) {
-            const state = data.state;
-            const header = document.getElementById('watch-stats-header');
-            const body = document.getElementById('watch-stats-body');
-
-            // Use rewards (contract-aware) to determine winner
-            const rewards = state.rewards;
-            const nsWon = rewards ? rewards[0] > rewards[1] : state.points[0] > state.points[1];
-            const isDraw = rewards ? rewards[0] === rewards[1] : false;
-            const resultText = isDraw ? 'Egalite' : (nsWon ? 'NS gagne' : 'EO gagne');
-
-            if (replaySession) {
-                header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${resultText}</span>`;
-            } else {
-                header.innerHTML = `<span class="stats-result">${resultText}</span>`;
-            }
-
-            // Score breakdown
-            let bodyHtml = '';
-            const sd = state.score_detail;
-            if (sd) {
-                const teamNames = ['NS', 'EO'];
-                const contractTeamName = teamNames[sd.contract_team];
-                const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
-                const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
-                bodyHtml += `<div class="stats-contract-result ${contractClass}">${sd.contract_value}${SUIT_LABELS[state.contract.trump]} par ${contractTeamName} — ${contractResult}</div>`;
-                bodyHtml += `<div class="stats-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
-                if (sd.belote[0] > 0 || sd.belote[1] > 0) {
-                    const parts = [];
-                    if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote NS`);
-                    if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote EO`);
-                    bodyHtml += `<div class="stats-score-line">${parts.join(' / ')}</div>`;
-                }
-                bodyHtml += `<div class="stats-final-scores">Score : NS ${sd.final_scores[0]} — EO ${sd.final_scores[1]}</div>`;
-            } else {
-                bodyHtml = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
-            }
-            body.innerHTML = bodyHtml;
-        }
-
-        renderCardAnnotations(data, data.state);
-    }
-    updateTransportButtons();
-}
-
-function updateTransportButtons() {
-    const prevBtn = document.getElementById('watch-prev-btn');
-    const startBtn = document.getElementById('watch-start-btn');
-    const stepBtn = document.getElementById('watch-step-btn');
-    const endBtn = document.getElementById('watch-end-btn');
-
-    const canGoBack = historyIndex >= 0;
-    const canGoForward = !isAtEnd() || historyIndex < moveHistory.length - 1;
-
-    prevBtn.disabled = !canGoBack;
-    startBtn.disabled = !canGoBack;
-    stepBtn.disabled = !canGoForward || waitingForStep;
-    endBtn.disabled = !canGoForward || waitingForStep;
-}
-
-function continueAutoPlayFromBuffer() {
-    if (!autoPlayMode) return;
-    const data = moveHistory[historyIndex];
-    if (!data) { stopAutoPlay(); return; }
-
-    if (data.finished) {
-        stopAutoPlay();
-        return;
-    }
-
-    const delay = autoPlayMode === 'end' ? 0 : 1000;
-    autoPlayTimer = setTimeout(() => {
-        if (!autoPlayMode) return;
-        if (_animatingTrick === 'watch-trick') {
-            continueAutoPlayFromBuffer(); // retry after animation
-            return;
-        }
-        goToNextMove();
-    }, delay);
-}
-
-function continueAutoPlay(data) {
-    if (!autoPlayMode || data.finished) {
-        stopAutoPlay();
-        return;
-    }
-
-    const delay = autoPlayMode === 'end' ? 0 : 1000;
-    autoPlayTimer = setTimeout(() => {
-        if (!autoPlayMode) return;
-        if (_animatingTrick === 'watch-trick') {
-            continueAutoPlay(data); // retry after animation
-            return;
-        }
-        goToNextMove();
-    }, delay);
-}
-
-// Q-value annotations on cards
-function renderCardAnnotations(data, state) {
-    if (!data || !data.move || !data.move.stats) return;
-
-    const move = data.move;
-    const stats = move.stats;
-
-    // No annotations during bidding phase
-    if (state.phase === 0 || move.phase === 0) return;
-
-    // During play phase with IS-DD card scores
-    if (stats.card_scores && stats.card_scores.length > 0) {
-        const scoreMap = new Map();
-        const sorted = [...stats.card_scores].sort((a, b) => b[1] - a[1]);
-        const bestAction = sorted[0] ? sorted[0][0] : -1;
-        const vals = sorted.map(x => x[1]);
-        const maxS = Math.max(...vals);
-        const minS = Math.min(...vals);
-        const range = maxS - minS || 1;
-
-        for (const [action, score] of stats.card_scores) {
-            const norm = (score - minS) / range;
-            const isBest = action === bestAction;
-            scoreMap.set(action, {
-                text: score.toFixed(0),
-                cls: 'card-qval' + (isBest ? ' best' : ''),
-                style: { opacity: String(0.5 + norm * 0.5) }
-            });
-        }
-
-        const player = move.player;
-        const handEls = {
-            0: document.getElementById('watch-hand-north'),
-            1: document.getElementById('watch-hand-east'),
-            2: document.getElementById('watch-hand-south'),
-            3: document.getElementById('watch-hand-west'),
-        };
-        const handEl = handEls[player];
-        if (handEl) {
-            const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-            renderHand(handEl, state.hands[player], false, null, null, trumpSuit, scoreMap);
-        }
-
-        const playedCard = move.action;
-        const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
-        const trickEl = document.getElementById(`watch-trick-${seatMap[player]}`);
-        if (trickEl && scoreMap.has(playedCard)) {
-            const cardDiv = trickEl.querySelector('.card');
-            if (cardDiv) {
-                const ann = scoreMap.get(playedCard);
-                const badge = document.createElement('span');
-                badge.className = `card-annotation ${ann.cls}`;
-                badge.textContent = ann.text;
-                if (ann.style) Object.assign(badge.style, ann.style);
-                cardDiv.appendChild(badge);
-            }
-        }
-        return;
-    }
-
-    // During play phase with DouDou Q-values
-    if (stats.q_values && stats.q_values.length > 0) {
-        const qMap = new Map();
-        const sorted = [...stats.q_values].sort((a, b) => b[1] - a[1]);
-        const bestAction = sorted[0] ? sorted[0][0] : -1;
-        const vals = sorted.map(x => x[1]);
-        const maxQ = Math.max(...vals);
-        const minQ = Math.min(...vals);
-        const range = maxQ - minQ || 1;
-
-        for (const [action, q] of stats.q_values) {
-            const norm = (q - minQ) / range;
-            const isBest = action === bestAction;
-            qMap.set(action, {
-                text: q.toFixed(2),
-                cls: 'card-qval' + (isBest ? ' best' : ''),
-                style: { opacity: String(0.5 + norm * 0.5) }
-            });
-        }
-
-        // Annotate the player's hand and the played card in trick area
-        const player = move.player;
-        const handEls = {
-            0: document.getElementById('watch-hand-north'),
-            1: document.getElementById('watch-hand-east'),
-            2: document.getElementById('watch-hand-south'),
-            3: document.getElementById('watch-hand-west'),
-        };
-        const handEl = handEls[player];
-        if (handEl) {
-            const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-            renderHand(handEl, state.hands[player], false, null, null, trumpSuit, qMap);
-        }
-
-        // Also annotate the just-played card in the trick area
-        const playedCard = move.action;
-        const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
-        const trickEl = document.getElementById(`watch-trick-${seatMap[player]}`);
-        if (trickEl && qMap.has(playedCard)) {
-            const cardDiv = trickEl.querySelector('.card');
-            if (cardDiv) {
-                const ann = qMap.get(playedCard);
-                const badge = document.createElement('span');
-                badge.className = `card-annotation ${ann.cls}`;
-                badge.textContent = ann.text;
-                if (ann.style) Object.assign(badge.style, ann.style);
-                cardDiv.appendChild(badge);
-            }
-        }
-    }
-}
-
-function reRenderHandsWithAnnotations(state, annotations) {
-    const handEls = {
-        0: document.getElementById('watch-hand-north'),
-        1: document.getElementById('watch-hand-east'),
-        2: document.getElementById('watch-hand-south'),
-        3: document.getElementById('watch-hand-west'),
-    };
-    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-    for (let seat = 0; seat < 4; seat++) {
-        renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit, annotations);
-    }
-}
-
-// Render state
-function renderWatchState(state) {
-    // Score bar
-    document.getElementById('watch-score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
-    document.getElementById('watch-score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
-    document.getElementById('watch-contract-display').textContent = contractStr(state.contract);
-    updateCfnBox('watch-cfn', state.cfn);
-
-    // Belote badges
-    if (state.belote) {
-        renderBeloteBadge('watch-score-ns', state.belote[0]);
-        renderBeloteBadge('watch-score-ew', state.belote[1]);
-    }
-
-    // All 4 hands visible
-    const handEls = {
-        0: document.getElementById('watch-hand-north'),
-        1: document.getElementById('watch-hand-east'),
-        2: document.getElementById('watch-hand-south'),
-        3: document.getElementById('watch-hand-west'),
-    };
-    const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
-    for (let seat = 0; seat < 4; seat++) {
-        renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit);
-    }
-
-    // Trick
-    renderTrick('watch-trick', state.current_trick);
-
-    // Last completed trick
-    const watchLastTrickEl = document.getElementById('watch-last-trick');
-    if (watchLastTrickEl && _animatingTrick !== 'watch-trick') {
-        if (state.phase === 1 && state.last_trick) {
-            renderLastTrick(watchLastTrickEl, state.last_trick, state.last_trick_winner, state.last_trick_points, 0);
-        } else {
-            watchLastTrickEl.classList.add('hidden');
-            watchLastTrickEl.innerHTML = '';
-        }
-    }
-
-    // Highlight current player
-    const labelMap = { 0: 'watch-label-n', 1: 'watch-label-e', 2: 'watch-label-s', 3: 'watch-label-w' };
-    for (let s = 0; s < 4; s++) {
-        const el = document.getElementById(labelMap[s]);
-        if (el) el.classList.toggle('active-player', s === state.current_player && !state.is_terminal);
-    }
-}
-
-// Render stats panel
-function renderStats(move) {
-    const header = document.getElementById('watch-stats-header');
-    const body = document.getElementById('watch-stats-body');
+// Watch-specific stats rendering (full Q-values, visit bars, DD scores)
+function watchRenderMoveStats(move, state) {
+    const header = watchBoard.el('stats-header');
+    const body = watchBoard.el('stats-body');
 
     if (!move) {
         header.innerHTML = '';
@@ -486,7 +13,6 @@ function renderStats(move) {
 
     const stats = move.stats;
     const seatName = SEAT_NAMES_FR[move.player];
-    const team = move.player % 2 === 0 ? 'NS' : 'EO';
     const teamClass = move.player % 2 === 0 ? 'team-ns' : 'team-ew';
 
     header.innerHTML = `<span class="stats-player ${teamClass}">${seatName}</span>` +
@@ -524,7 +50,7 @@ function renderStats(move) {
         return;
     }
 
-    // IS-DD (Dédé): card score bars
+    // IS-DD (Dede): card score bars
     if (stats.card_scores && stats.card_scores.length > 0) {
         renderDdScoreBars(body, stats.card_scores, move.action, stats.determinizations);
         return;
@@ -543,10 +69,127 @@ function renderStats(move) {
     }
 }
 
+// Q-value annotations on cards (watch-only)
+function watchRenderCardAnnotations(data, state) {
+    if (!data || !data.move || !data.move.stats) return;
+
+    const move = data.move;
+    const stats = move.stats;
+
+    if (state.phase === 0 || move.phase === 0) return;
+
+    // IS-DD card scores
+    if (stats.card_scores && stats.card_scores.length > 0) {
+        const scoreMap = buildAnnotationMap(stats.card_scores);
+        annotatePlayerHand(move.player, state, scoreMap);
+        annotateTrickCard(move.player, move.action, scoreMap);
+        return;
+    }
+
+    // DouDou Q-values
+    if (stats.q_values && stats.q_values.length > 0) {
+        const qMap = buildAnnotationMap(stats.q_values);
+        annotatePlayerHand(move.player, state, qMap);
+        annotateTrickCard(move.player, move.action, qMap);
+    }
+}
+
+function buildAnnotationMap(entries) {
+    const map = new Map();
+    const sorted = [...entries].sort((a, b) => b[1] - a[1]);
+    const bestAction = sorted[0] ? sorted[0][0] : -1;
+    const vals = sorted.map(x => x[1]);
+    const maxV = Math.max(...vals);
+    const minV = Math.min(...vals);
+    const range = maxV - minV || 1;
+
+    for (const [action, val] of entries) {
+        const norm = (val - minV) / range;
+        const isBest = action === bestAction;
+        map.set(action, {
+            text: Number.isInteger(val) || Math.abs(val) >= 10 ? val.toFixed(0) : val.toFixed(2),
+            cls: 'card-qval' + (isBest ? ' best' : ''),
+            style: { opacity: String(0.5 + norm * 0.5) }
+        });
+    }
+    return map;
+}
+
+function annotatePlayerHand(player, state, annotationMap) {
+    const handEls = {
+        0: document.getElementById('watch-hand-north'),
+        1: document.getElementById('watch-hand-east'),
+        2: document.getElementById('watch-hand-south'),
+        3: document.getElementById('watch-hand-west'),
+    };
+    const handEl = handEls[player];
+    if (handEl) {
+        const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
+        renderHand(handEl, state.hands[player], false, null, null, trumpSuit, annotationMap);
+    }
+}
+
+function annotateTrickCard(player, playedCard, annotationMap) {
+    const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
+    const trickEl = document.getElementById(`watch-trick-${seatMap[player]}`);
+    if (trickEl && annotationMap.has(playedCard)) {
+        const cardDiv = trickEl.querySelector('.card');
+        if (cardDiv) {
+            const ann = annotationMap.get(playedCard);
+            const badge = document.createElement('span');
+            badge.className = `card-annotation ${ann.cls}`;
+            badge.textContent = ann.text;
+            if (ann.style) Object.assign(badge.style, ann.style);
+            cardDiv.appendChild(badge);
+        }
+    }
+}
+
+// Create the watch board renderer
+const watchBoard = new BoardRenderer({
+    prefix: 'watch',
+    isReplay: false,
+    renderMoveStats: watchRenderMoveStats,
+    renderCardAnnotations: watchRenderCardAnnotations,
+    onRequestStep: () => {
+        send({ type: 'watch_step' });
+    },
+});
+
+// Load from CFN
+document.getElementById('cfn-load').addEventListener('click', loadFromCfn);
+document.getElementById('cfn-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadFromCfn();
+});
+
+function loadFromCfn() {
+    const input = document.getElementById('cfn-input');
+    const cfn = input.value.trim();
+    if (!cfn) return;
+    const agents = {};
+    document.querySelectorAll('.agent-select').forEach(sel => {
+        agents[sel.dataset.seat] = sel.value;
+    });
+    send({ type: 'watch_cfn', cfn, agents });
+}
+
+// Start game
+document.getElementById('watch-start').addEventListener('click', () => {
+    const agents = {};
+    document.querySelectorAll('.agent-select').forEach(sel => {
+        agents[sel.dataset.seat] = sel.value;
+    });
+    send({ type: 'watch_start', agents });
+    document.getElementById('watch-start').disabled = true;
+    document.getElementById('watch-start').textContent = 'Demarrage...';
+});
+
+// Stats bar rendering functions
+
 function renderVisitBars(container, visitCounts, bestAction, rootVisits) {
     const sorted = [...visitCounts].sort((a, b) => b[1] - a[1]);
     const maxVisits = sorted[0] ? sorted[0][1] : 1;
-    const top = sorted.slice(0, 10); // Show top 10
+    const top = sorted.slice(0, 10);
 
     const div = document.createElement('div');
     div.className = 'visit-bars';
@@ -623,142 +266,12 @@ function renderDdScoreBars(container, cardScores, bestAction, determinizations) 
     if (determinizations) {
         const total = document.createElement('div');
         total.className = 'visit-total';
-        total.textContent = `${determinizations} déterminisations`;
+        total.textContent = `${determinizations} determinisations`;
         div.appendChild(total);
     }
 
     container.appendChild(div);
 }
-
-// Render bid history (watch mode)
-function renderWatchBidHistory(bidHistory) {
-    const container = document.getElementById('watch-bid-entries');
-    container.innerHTML = '';
-    if (!bidHistory || bidHistory.length === 0) return;
-
-    for (const bid of bidHistory) {
-        const el = document.createElement('span');
-        const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
-        el.className = `watch-bid-entry ${team}`;
-        const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-        const name = actionName(bid.action, 0);
-        el.textContent = `${seatLetter}:${name}`;
-        container.appendChild(el);
-    }
-}
-
-// Render tricks history
-function renderTricksHistory(tricks) {
-    const container = document.getElementById('watch-tricks-list');
-    container.innerHTML = '';
-    if (!tricks || tricks.length === 0) return;
-
-    for (let i = 0; i < tricks.length; i++) {
-        const t = tricks[i];
-        const row = document.createElement('div');
-        const winnerTeam = t.winner % 2 === 0 ? 'team-ns' : 'team-ew';
-        row.className = `trick-history-row ${winnerTeam}`;
-
-        const SEAT_L = ['N', 'E', 'S', 'O'];
-        const leadSeat = t.lead !== undefined ? t.lead : -1;
-
-        // Show cards in play order starting from lead
-        let orderedCards = '';
-        if (leadSeat >= 0) {
-            for (let j = 0; j < 4; j++) {
-                const seat = (leadSeat + j) % 4;
-                const c = t.cards[seat];
-                if (c >= 0 && c < 32) {
-                    orderedCards += `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]} `;
-                }
-            }
-            orderedCards = orderedCards.trim();
-        } else {
-            orderedCards = t.cards.map(c => {
-                if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
-                return '?';
-            }).join(' ');
-        }
-
-        const leadLabel = leadSeat >= 0 ? SEAT_L[leadSeat] : '?';
-        const winnerName = SEAT_NAMES_FR[t.winner];
-        row.innerHTML = `<span class="trick-num">#${i + 1}</span>` +
-            `<span class="trick-lead-label">${leadLabel}</span>` +
-            `<span class="trick-cards">${orderedCards}</span>` +
-            `<span class="trick-winner">${winnerName} +${t.points}</span>`;
-        container.appendChild(row);
-    }
-
-    // Auto-scroll to bottom
-    container.scrollTop = container.scrollHeight;
-}
-
-// Message handlers
-onMessage('watch_started', (data) => {
-    watchActive = true;
-    watchFinished = false;
-    waitingForStep = false;
-    autoPlayMode = null;
-    replaySession = false;
-    moveHistory = [];
-    historyIndex = -1;
-    _prevHistoryIndex = -1;
-    _prevTrick['watch-trick'] = [];
-    _animatingTrick = null;
-    initialState = data.state;
-
-    document.getElementById('watch-main').classList.remove('hidden');
-    document.getElementById('watch-start').disabled = false;
-    document.getElementById('watch-start').textContent = 'Relancer';
-    if (data.game_id) setWatchGameId(data.game_id);
-
-    // Render DD oracle box
-    renderDdOracleBox(data.dd_scores);
-
-    // Disable DouDou if not available
-    if (!data.doudou_available) {
-        document.querySelectorAll('.agent-select option[value="doudou"]').forEach(opt => {
-            opt.disabled = true;
-            opt.textContent = 'DouDou35 (non dispo)';
-        });
-    }
-
-    renderHistoryEntry(-1);
-});
-
-onMessage('watch_move', (data) => {
-    waitingForStep = false;
-
-    if (data.finished && !data.move) {
-        watchFinished = true;
-        stopAutoPlay();
-        updateTransportButtons();
-        return;
-    }
-
-    // Push to history buffer
-    moveHistory.push(data);
-    historyIndex = moveHistory.length - 1;
-
-    renderHistoryEntry(historyIndex);
-
-    if (data.belote_event) {
-        const text = data.belote_event === 'belote' ? 'Belote !' : 'Rebelote !';
-        showBeloteAnnouncement('watch-trick-area', text);
-    }
-
-    if (data.finished) {
-        watchFinished = true;
-        stopAutoPlay();
-        updateTransportButtons();
-        return;
-    }
-
-    // Continue auto-play if active
-    if (autoPlayMode) {
-        continueAutoPlay(data);
-    }
-});
 
 // DD Oracle box rendering
 function renderDdOracleBox(ddScores) {
@@ -774,3 +287,51 @@ function renderDdOracleBox(ddScores) {
         document.getElementById(`dd-${suitKeys[i]}-ew`).textContent = ddScores[i][1];
     }
 }
+
+// Message handlers
+onMessage('watch_started', (data) => {
+    watchBoard.reset(data.state);
+
+    document.getElementById('watch-main').classList.remove('hidden');
+    document.getElementById('watch-start').disabled = false;
+    document.getElementById('watch-start').textContent = 'Relancer';
+    if (data.game_id) setWatchGameId(data.game_id);
+
+    renderDdOracleBox(data.dd_scores);
+
+    // Disable DouDou if not available
+    if (!data.doudou_available) {
+        document.querySelectorAll('.agent-select option[value="doudou"]').forEach(opt => {
+            opt.disabled = true;
+            opt.textContent = 'DouDou35 (non dispo)';
+        });
+    }
+
+    watchBoard.renderHistoryEntry(-1);
+});
+
+onMessage('watch_move', (data) => {
+    watchBoard.waitingForStep = false;
+
+    if (data.finished && !data.move) {
+        watchBoard.finished = true;
+        watchBoard.stopAutoPlay();
+        watchBoard.updateTransportButtons();
+        return;
+    }
+
+    watchBoard.pushMove(data);
+    watchBoard.renderHistoryEntry(watchBoard.historyIndex);
+    watchBoard.handleBeloteEvent(data);
+
+    if (data.finished) {
+        watchBoard.finished = true;
+        watchBoard.stopAutoPlay();
+        watchBoard.updateTransportButtons();
+        return;
+    }
+
+    if (watchBoard.autoPlayMode) {
+        watchBoard.continueAutoPlay(data);
+    }
+});

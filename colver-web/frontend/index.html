@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css?v=8">
+    <link rel="stylesheet" href="static/styles.css?v=9">
 </head>
 <body>
     <header>
@@ -13,6 +13,7 @@
         <nav>
             <button class="tab active" data-tab="play">Jouer</button>
             <button class="tab" data-tab="watch">Regarder</button>
+            <button class="tab" data-tab="replay">Rejouer</button>
             <button class="tab" data-tab="deal">Donner</button>
             <button class="tab" data-tab="docs">Docs</button>
             <button id="sound-toggle" class="sound-toggle" title="Son on/off">&#128266;</button>
@@ -26,15 +27,15 @@
                 <p id="play-intro">Jouez à la Belote Contrée contre l'IA.</p>
                 <label>Adversaires :
                     <select id="opponent-ai">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select>
                 </label>
                 <label>Partenaire :
                     <select id="partner-ai">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select>
                 </label>
@@ -136,23 +137,23 @@
             <div id="watch-config">
                 <div class="watch-agents">
                     <label>N : <select class="agent-select" data-seat="0">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select></label>
                     <label>E : <select class="agent-select" data-seat="1">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select></label>
                     <label>S : <select class="agent-select" data-seat="2">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select></label>
                     <label>O : <select class="agent-select" data-seat="3">
-                        <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
+                        <option value="doudou">DouDou35</option>
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select></label>
                 </div>
@@ -163,15 +164,6 @@
             </div>
 
             <div id="watch-main" class="hidden">
-                <div id="watch-history">
-                    <div class="section-title">Historique</div>
-                    <div id="history-search">
-                        <input type="text" id="history-search-input" placeholder="ID..." maxlength="4">
-                        <button id="history-search-btn">Charger</button>
-                    </div>
-                    <div id="history-list"></div>
-                </div>
-
                 <div id="watch-left">
                     <div id="watch-score-bar">
                         <span id="watch-score-ns">NS : 0</span>
@@ -246,6 +238,87 @@
                     <div id="watch-tricks-history">
                         <div class="section-title">Plis</div>
                         <div id="watch-tricks-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- REPLAY MODE -->
+        <div id="replay-panel" class="panel">
+            <div id="replay-main">
+                <div id="replay-history">
+                    <div class="section-title">Historique</div>
+                    <div id="replay-search">
+                        <input type="text" id="replay-search-input" placeholder="ID..." maxlength="4">
+                        <button id="replay-search-btn">Charger</button>
+                    </div>
+                    <div id="replay-list"></div>
+                </div>
+
+                <div id="replay-left">
+                    <div id="replay-score-bar">
+                        <span id="replay-score-ns">NS : 0</span>
+                        <span id="replay-game-id" class="game-id-tag hidden"></span>
+                        <span id="replay-contract-display"></span>
+                        <span id="replay-score-ew">EO : 0</span>
+                        <button id="replay-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+                    </div>
+                    <div id="replay-cfn" class="cfn-box hidden" title="Cliquer pour copier"></div>
+
+                    <div class="seats">
+                        <div class="seat north">
+                            <div class="seat-label" id="replay-label-n">Nord</div>
+                            <div class="hand" id="replay-hand-north"></div>
+                        </div>
+                        <div class="seat west">
+                            <div class="seat-label" id="replay-label-w">Ouest</div>
+                            <div class="hand" id="replay-hand-west"></div>
+                        </div>
+                        <div id="replay-trick-area">
+                            <div class="trick-card" id="replay-trick-n"></div>
+                            <div class="trick-card" id="replay-trick-w"></div>
+                            <div class="trick-card" id="replay-trick-e"></div>
+                            <div class="trick-card" id="replay-trick-s"></div>
+                        </div>
+                        <div class="seat east">
+                            <div class="seat-label" id="replay-label-e">Est</div>
+                            <div class="hand" id="replay-hand-east"></div>
+                        </div>
+                        <div class="seat south">
+                            <div class="seat-label" id="replay-label-s">Sud</div>
+                            <div class="hand" id="replay-hand-south"></div>
+                        </div>
+                    </div>
+
+                    <div id="replay-last-trick" class="hidden"></div>
+                </div>
+
+                <div id="replay-right">
+                    <div id="replay-transport">
+                        <div class="transport-row">
+                            <button id="replay-prev-btn" title="Coup precedent">|&#9664;</button>
+                            <button id="replay-step-btn" title="Prochain coup">&#9654;|</button>
+                        </div>
+                        <div class="transport-row">
+                            <button id="replay-start-btn" title="Retour au debut">|&#9664;&#9664;</button>
+                            <button id="replay-auto-btn" title="Auto-play">&#9654;</button>
+                            <button id="replay-end-btn" title="Fin de partie">&#9654;&#9654;|</button>
+                        </div>
+                    </div>
+
+                    <div id="replay-stats-panel">
+                        <div id="replay-stats-header"></div>
+                        <div id="replay-stats-body"></div>
+                    </div>
+
+                    <div id="replay-bid-history">
+                        <div class="section-title">Encheres</div>
+                        <div id="replay-bid-entries"></div>
+                    </div>
+
+                    <div id="replay-tricks-history">
+                        <div class="section-title">Plis</div>
+                        <div id="replay-tricks-list"></div>
                     </div>
                 </div>
             </div>
@@ -350,11 +423,16 @@
                         Spectate AI vs AI matches with full visibility of all hands.
                         Assign a different agent to each of the 4 seats, then step through actions one by one,
                         play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision.
+                        Paste a <strong>CFN</strong> string to load a specific position and watch the AI play from there.
                     </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Rejouer</h4>
                     <p>
-                        The <strong>game history</strong> sidebar lists past games (played or watched).
-                        Click any entry to replay it step by step. The most recent game loads automatically on first visit.
-                        You can also paste a <strong>CFN</strong> string to load a specific position and watch the AI play from there.
+                        Browse and replay past games (played or watched). The game history sidebar lists recent games &mdash;
+                        click any entry to replay it step by step with full transport controls.
+                        Search by game ID to find a specific game. Incomplete games are clearly marked.
                     </p>
                 </div>
 
@@ -436,11 +514,12 @@
         </div>
     </div>
 
-    <script src="static/js/sounds.js?v=8"></script>
-    <script src="static/js/main.js?v=8"></script>
-    <script src="static/js/play.js?v=8"></script>
-    <script src="static/js/watch.js?v=8"></script>
-    <script src="static/js/history.js?v=8"></script>
-    <script src="static/js/deal.js?v=8"></script>
+    <script src="static/js/sounds.js?v=9"></script>
+    <script src="static/js/main.js?v=9"></script>
+    <script src="static/js/board.js?v=9"></script>
+    <script src="static/js/play.js?v=9"></script>
+    <script src="static/js/watch.js?v=9"></script>
+    <script src="static/js/replay.js?v=9"></script>
+    <script src="static/js/deal.js?v=9"></script>
 </body>
 </html>

@@ -399,19 +399,13 @@ function showGameResult(state) {
 
     document.getElementById('result-analyse-btn').addEventListener('click', () => {
         if (!_playGameId) return;
-        // Switch to Watch tab and load the replay
+        // Switch to Replay tab and load the replay
         document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-        const watchTab = document.querySelector('.tab[data-tab="watch"]');
-        watchTab.classList.add('active');
-        document.getElementById('watch-panel').classList.add('active');
-        // Trigger history load and then load this game's replay
-        if (!watchTabVisited) {
-            watchTabVisited = true;
-            loadGameHistory(false);
-        } else {
-            loadGameHistory(false);
-        }
+        const replayTab = document.querySelector('.tab[data-tab="replay"]');
+        replayTab.classList.add('active');
+        document.getElementById('replay-panel').classList.add('active');
+        loadGameHistory(false);
         loadReplay(_playGameId);
     });
 

@@ -49,9 +49,18 @@ function detectTrickCompletion(prefix, newTrick) {
 }
 
 function animateTrickFlush(prefix, onComplete, winner) {
-    const trickAreaId = prefix === 'trick' ? 'trick-area' : 'watch-trick-area';
-    const lastTrickId = prefix === 'trick' ? 'last-trick' : 'watch-last-trick';
-    const handPrefix = prefix === 'trick' ? 'hand' : 'watch-hand';
+    let trickAreaId, lastTrickId, handPrefix;
+    if (prefix === 'trick') {
+        trickAreaId = 'trick-area';
+        lastTrickId = 'last-trick';
+        handPrefix = 'hand';
+    } else {
+        // prefix is 'watch-trick' or 'replay-trick'
+        trickAreaId = prefix + '-area';
+        const tabPrefix = prefix.replace('-trick', '');
+        lastTrickId = tabPrefix + '-last-trick';
+        handPrefix = tabPrefix + '-hand';
+    }
     const trickArea = document.getElementById(trickAreaId);
     if (!trickArea) { if (onComplete) onComplete(); return; }
 
@@ -410,6 +419,84 @@ function initCfnBox(elementId) {
     });
 }
 
+// ===== Game ID & Bug report (shared across tabs) =====
+
+let currentGameId = null;
+let currentActionIdx = 0;
+
+function setPlayGameId(id) {
+    currentGameId = id;
+    const el = document.getElementById('play-game-id');
+    if (id) {
+        el.textContent = id;
+        el.classList.remove('hidden');
+        document.getElementById('play-report-btn').classList.remove('hidden');
+    } else {
+        el.classList.add('hidden');
+        document.getElementById('play-report-btn').classList.add('hidden');
+    }
+}
+
+function setWatchGameId(id) {
+    currentGameId = id;
+    const el = document.getElementById('watch-game-id');
+    if (id) {
+        el.textContent = id;
+        el.classList.remove('hidden');
+        document.getElementById('watch-report-btn').classList.remove('hidden');
+    } else {
+        el.classList.add('hidden');
+        document.getElementById('watch-report-btn').classList.add('hidden');
+    }
+}
+
+function openBugReport() {
+    if (!currentGameId) return;
+    document.getElementById('report-game-label').textContent = `Partie : ${currentGameId}`;
+    document.getElementById('report-message').value = '';
+    document.getElementById('report-status').textContent = '';
+    document.getElementById('report-modal').classList.remove('hidden');
+    document.getElementById('report-message').focus();
+}
+
+document.getElementById('play-report-btn').addEventListener('click', openBugReport);
+document.getElementById('watch-report-btn').addEventListener('click', openBugReport);
+
+document.getElementById('report-cancel').addEventListener('click', () => {
+    document.getElementById('report-modal').classList.add('hidden');
+});
+
+document.getElementById('report-submit').addEventListener('click', async () => {
+    const message = document.getElementById('report-message').value.trim();
+    if (!message) return;
+    const statusEl = document.getElementById('report-status');
+    statusEl.textContent = 'Envoi...';
+    try {
+        const base = document.querySelector('base')?.getAttribute('href') || '/';
+        const resp = await fetch(`${base}api/games/${currentGameId}/report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, action_idx: currentActionIdx }),
+        });
+        if (resp.ok) {
+            statusEl.textContent = 'Envoye !';
+            setTimeout(() => {
+                document.getElementById('report-modal').classList.add('hidden');
+            }, 1000);
+        } else {
+            statusEl.textContent = 'Erreur';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Erreur reseau';
+    }
+});
+
+document.getElementById('report-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        document.getElementById('report-modal').classList.add('hidden');
+    }
+});
+
 // Tab switching
 document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -423,6 +510,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 // Connect on load
 connect();
 initCfnBox('watch-cfn');
+initCfnBox('replay-cfn');
 
 // Sound toggle
 (function() {

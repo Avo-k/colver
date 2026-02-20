@@ -82,7 +82,8 @@ main {
 .panel { display: none; }
 .panel.active { display: block; }
 #play-panel.active,
-#watch-panel.active {
+#watch-panel.active,
+#replay-panel.active {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -133,7 +134,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     position: relative;
 }
 
-#score-bar, #watch-score-bar {
+#score-bar, #watch-score-bar, #replay-score-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -144,7 +145,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     font-size: clamp(0.85rem, 1vw, 1.05rem);
 }
 
-#contract-display, #watch-contract-display {
+#contract-display, #watch-contract-display, #replay-contract-display {
     color: #d4af37;
     font-weight: 600;
     font-size: clamp(0.9rem, 1.1vw, 1.15rem);
@@ -183,7 +184,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     text-shadow: 0 0 6px rgba(212, 175, 55, 0.5);
 }
 
-#trick-area, #watch-trick-area {
+#trick-area, #watch-trick-area, #replay-trick-area {
     grid-area: trick;
     display: grid;
     grid-template-areas:
@@ -198,10 +199,10 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     min-height: calc(var(--card-h) * 1.4);
 }
 
-#trick-n, #watch-trick-n { grid-area: n; }
-#trick-s, #watch-trick-s { grid-area: s; }
-#trick-w, #watch-trick-w { grid-area: w; }
-#trick-e, #watch-trick-e { grid-area: e; }
+#trick-n, #watch-trick-n, #replay-trick-n { grid-area: n; }
+#trick-s, #watch-trick-s, #replay-trick-s { grid-area: s; }
+#trick-w, #watch-trick-w, #replay-trick-w { grid-area: w; }
+#trick-e, #watch-trick-e, #replay-trick-e { grid-area: e; }
 
 /* ===== PLAYING CARDS (SVG) ===== */
 .hand {
@@ -294,7 +295,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 /* ===== LAST TRICK PANEL ===== */
-#last-trick, #watch-last-trick {
+#last-trick, #watch-last-trick, #replay-last-trick {
     position: absolute;
     top: 42px;
     right: 8px;
@@ -337,7 +338,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 .lt-s { grid-area: s; }
 .lt-w { grid-area: w; }
 
-#last-trick .card, #watch-last-trick .card {
+#last-trick .card, #watch-last-trick .card, #replay-last-trick .card {
     width: calc(var(--card-w) * 0.55);
     height: calc(var(--card-h) * 0.55);
 }
@@ -673,14 +674,16 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     --card-overlap: calc(var(--card-w) * -0.2);
 }
 
-/* Watch tab: looser E/W vertical stacking than play tab */
+/* Watch/Replay tab: looser E/W vertical stacking than play tab */
 #watch-main .seat.west .hand .card,
-#watch-main .seat.east .hand .card {
+#watch-main .seat.east .hand .card,
+#replay-main .seat.west .hand .card,
+#replay-main .seat.east .hand .card {
     margin-top: calc(var(--card-h) * -0.7);
 }
 
-/* History sidebar */
-#watch-history {
+/* History sidebar (replay tab) */
+#replay-history {
     width: 200px;
     flex-shrink: 0;
     display: flex;
@@ -692,12 +695,12 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     padding: 8px;
 }
 
-#history-search {
+#replay-search {
     display: flex;
     gap: 4px;
 }
 
-#history-search-input {
+#replay-search-input {
     width: 70px;
     background: #1a1a1a;
     color: #d4af37;
@@ -709,17 +712,17 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     letter-spacing: 2px;
     text-transform: lowercase;
 }
-#history-search-input::placeholder {
+#replay-search-input::placeholder {
     color: #555;
     letter-spacing: 0;
 }
 
-#history-search-btn {
+#replay-search-btn {
     padding: 4px 8px;
     font-size: 0.75rem;
 }
 
-#history-list {
+#replay-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -950,7 +953,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     min-height: 18px;
 }
 
-#watch-left {
+#watch-left, #replay-left {
     flex: 1;
     position: relative;
     min-width: 0;
@@ -960,12 +963,12 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     overflow: hidden;
 }
 
-#watch-left .seats {
+#watch-left .seats, #replay-left .seats {
     flex: 1;
     min-height: 0;
 }
 
-#watch-right {
+#watch-right, #replay-right {
     width: 320px;
     display: flex;
     flex-direction: column;
@@ -974,7 +977,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     flex-shrink: 0;
 }
 
-#watch-transport {
+#watch-transport, #replay-transport {
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -992,25 +995,25 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     flex: 1;
 }
 
-#watch-transport button {
+#watch-transport button, #replay-transport button {
     padding: 6px 10px;
     font-size: 0.85rem;
     min-width: 36px;
 }
 
-#watch-transport button:disabled {
+#watch-transport button:disabled, #replay-transport button:disabled {
     opacity: 0.4;
 }
 
 /* Stats panel */
-#watch-stats-panel {
+#watch-stats-panel, #replay-stats-panel {
     background: rgba(0,0,0,0.3);
     border-radius: 6px;
     padding: 10px;
     min-height: 80px;
 }
 
-#watch-stats-header {
+#watch-stats-header, #replay-stats-header {
     display: flex;
     gap: 8px;
     align-items: center;
@@ -1195,7 +1198,8 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 /* Bid & tricks history sections */
-#watch-bid-history, #watch-tricks-history {
+#watch-bid-history, #watch-tricks-history,
+#replay-bid-history, #replay-tricks-history {
     background: rgba(0,0,0,0.3);
     border-radius: 6px;
     padding: 8px 10px;
@@ -1210,7 +1214,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     margin-bottom: 6px;
 }
 
-#watch-bid-entries {
+#watch-bid-entries, #replay-bid-entries {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
@@ -1232,7 +1236,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #ef9a9a;
 }
 
-#watch-tricks-list {
+#watch-tricks-list, #replay-tricks-list {
     max-height: 200px;
     overflow-y: auto;
 }
@@ -1614,9 +1618,30 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 .docs-footer a:hover { text-decoration: underline; }
 
+/* Replay main: 3-column with history sidebar */
+#replay-main {
+    display: flex;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    --card-w: clamp(60px, min(6.3vw, 10.5vh), 135px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
+}
+
+/* Incomplete game indicator */
+.stats-incomplete {
+    color: #d4af37;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    padding: 12px 8px;
+    font-style: italic;
+}
+
 /* ===== RESPONSIVE: small screens ===== */
 @media (max-width: 900px) {
-    #watch-history { display: none; }
+    #replay-history { display: none; }
 }
 
 /* DD Oracle box */
@@ -1747,11 +1772,11 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
         grid-template-columns: 80px 1fr 80px;
     }
     main { padding: 8px; }
-    #watch-main {
+    #watch-main, #replay-main {
         flex-direction: column;
         height: auto;
     }
-    #watch-right {
+    #watch-right, #replay-right {
         width: 100%;
     }
 }
