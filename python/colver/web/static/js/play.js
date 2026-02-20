@@ -50,7 +50,6 @@ function renderPlayState(state) {
     document.getElementById('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
     document.getElementById('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
     document.getElementById('contract-display').textContent = contractStr(state.contract);
-    updateCfnBox('play-cfn', state.cfn);
 
     // Belote badges
     if (state.belote) {

@@ -422,7 +422,6 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 // Connect on load
 connect();
-initCfnBox('play-cfn');
 initCfnBox('watch-cfn');
 
 // Sound toggle
