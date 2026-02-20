@@ -15,7 +15,7 @@
             <button class="tab" data-tab="watch">Regarder</button>
             <button class="tab" data-tab="replay">Rejouer</button>
             <button class="tab" data-tab="deal">Donner</button>
-            <button class="tab" data-tab="docs">Docs</button>
+            <button class="tab" data-tab="docs">À propos</button>
             <button id="sound-toggle" class="sound-toggle" title="Son on/off">&#128266;</button>
         </nav>
     </header>
@@ -390,108 +390,108 @@
         <!-- DOCS -->
         <div id="docs-panel" class="panel">
             <div id="docs-content">
-                <h2>Colver <span class="docs-subtitle">Belote Contree Engine</span></h2>
+                <h2>Colver <span class="docs-subtitle">Moteur de Belote Contrée</span></h2>
                 <p class="docs-intro">
-                    Colver is a high-performance Belote Contree game environment built for reinforcement learning research.
-                    The core engine is written in Rust, capable of over 1 million rollouts per second.
-                    This web interface lets you play against various AI agents, watch them compete, and create custom deals.
+                    Colver est un environnement de Belote Contrée haute performance conçu pour la recherche en apprentissage par renforcement.
+                    Le moteur est écrit en Rust, capable de plus d'un million de simulations par seconde.
+                    Cette interface web permet de jouer contre différents agents IA, de les observer s'affronter et de créer des donnes personnalisées.
                 </p>
                 <p class="docs-link">
-                    Source code: <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
+                    Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
                 </p>
 
-                <h3>Game Modes</h3>
+                <h3>Modes de jeu</h3>
 
                 <div class="docs-section">
                     <h4>Jouer</h4>
                     <p>
-                        Play as South against AI opponents. Choose the AI for your opponents (East/West) and your partner (North) independently.
-                        The game follows official FFB Belote Contree rules: bidding phase with coinche/surcoinche, then 8 tricks of play.
+                        Jouez en Sud contre des adversaires IA. Choisissez l'IA pour vos adversaires (Est/Ouest) et votre partenaire (Nord) indépendamment.
+                        La partie suit les règles officielles FFB de la Belote Contrée : phase d'enchères avec coinche/surcoinche, puis 8 plis de jeu.
                     </p>
                     <p>
-                        The <strong>Pause</strong> slider (1&ndash;8s) controls the delay between cards &mdash;
-                        you can adjust it at any time during the game. Your card plays instantly on click;
-                        the pause simulates opponents thinking before their turn.
-                        Click the CFN box below the score bar to copy the current position for sharing or bug reports.
+                        Le curseur <strong>Pause</strong> (1&ndash;8s) contrôle le délai entre les cartes &mdash;
+                        ajustable à tout moment pendant la partie. Vos cartes sont jouées instantanément au clic ;
+                        la pause simule le temps de réflexion des adversaires.
+                        Cliquez sur la zone CFN sous la barre de score pour copier la position actuelle (partage ou signalement de bug).
                     </p>
                 </div>
 
                 <div class="docs-section">
                     <h4>Regarder</h4>
                     <p>
-                        Spectate AI vs AI matches with full visibility of all hands.
-                        Assign a different agent to each of the 4 seats, then step through actions one by one,
-                        play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision.
-                        Paste a <strong>CFN</strong> string to load a specific position and watch the AI play from there.
+                        Assistez à des parties IA contre IA avec visibilité totale sur toutes les mains.
+                        Assignez un agent différent à chacune des 4 places, puis avancez action par action,
+                        pli par pli, ou utilisez la lecture automatique. Le panneau de stats affiche les Q-values, scores DD ou évaluations de main pour chaque décision.
+                        Collez une chaîne <strong>CFN</strong> pour charger une position spécifique et observer l'IA jouer à partir de là.
                     </p>
                 </div>
 
                 <div class="docs-section">
                     <h4>Rejouer</h4>
                     <p>
-                        Browse and replay past games (played or watched). The game history sidebar lists recent games &mdash;
-                        click any entry to replay it step by step with full transport controls.
-                        Search by game ID to find a specific game. Incomplete games are clearly marked.
+                        Parcourez et rejouez les parties passées (jouées ou observées). L'historique liste les parties récentes &mdash;
+                        cliquez sur une entrée pour la rejouer pas à pas avec les contrôles de navigation.
+                        Recherchez par identifiant de partie pour en retrouver une spécifique. Les parties incomplètes sont clairement signalées.
                     </p>
                 </div>
 
                 <div class="docs-section">
                     <h4>Donner</h4>
                     <p>
-                        Create a custom deal by dragging cards from the palette into 4 player drop zones
-                        (or use "Donne aleatoire" for a random deal). Pick the dealer and assign an AI agent
-                        to each seat, then save the deal. Load it in Regarder to watch the AI play it live.
+                        Créez une donne personnalisée en glissant les cartes de la palette vers les 4 zones joueurs
+                        (ou utilisez « Donne aléatoire » pour une distribution au hasard). Choisissez le donneur et assignez un agent IA
+                        à chaque place, puis enregistrez la donne. Chargez-la dans Regarder pour observer l'IA la jouer en direct.
                     </p>
                 </div>
 
-                <h3>AI Agents</h3>
+                <h3>Agents IA</h3>
                 <p class="docs-intro">
-                    All agents are named after French nicknames. Bidding uses a DD-trained neural network (Le Bide a Dede).
-                    Card play is where they differ: neural network, exact solver, or belief-weighted search.
+                    Tous les agents portent des surnoms français. Les enchères utilisent un réseau de neurones entraîné par double-dummy (Le Bide à Dédé).
+                    C'est le jeu de la carte qui les différencie : réseau de neurones, solveur exact, ou recherche pondérée par croyances.
                 </p>
 
                 <div class="docs-section">
-                    <h4>DouDou35 <span class="docs-tag best">Recommended</span></h4>
+                    <h4>DouDou35 <span class="docs-tag best">Recommandé</span></h4>
                     <p>
-                        <em>DouDou</em> = French for a child's comfort toy &mdash; because it learns by playing with itself.
-                        <em>35</em> = trained for 35 million steps.
+                        <em>DouDou</em> = le doudou de l'enfant &mdash; parce qu'il apprend en jouant avec lui-même.
+                        <em>35</em> = entraîné pendant 35 millions d'étapes.
                     </p>
                     <p>
-                        Deep Monte-Carlo Q-network trained via self-play (DouZero-style).
-                        A 3-layer MLP (1024 hidden units, ~2.6M parameters) takes a 415-dimensional observation
-                        and outputs Q-values for all 32 cards in a single forward pass &mdash; no search tree needed.
-                        Inference runs in pure Rust at ~1ms per decision. Strongest overall agent.
+                        Réseau Q Deep Monte-Carlo entraîné par self-play (style DouZero).
+                        Un MLP à 3 couches (1024 unités cachées, ~2.6M paramètres) prend une observation de dimension 415
+                        et produit les Q-values des 32 cartes en une seule passe &mdash; aucun arbre de recherche nécessaire.
+                        L'inférence tourne en Rust pur à ~1ms par décision. Agent le plus fort dans l'ensemble.
                     </p>
                 </div>
 
                 <div class="docs-section">
-                    <h4>Dédé (IS-DD) <span class="docs-tag">Strong</span></h4>
+                    <h4>Dédé (IS-DD) <span class="docs-tag">Fort</span></h4>
                     <p>
-                        <em>Dédé</em> = short for <em>Double-Dummy</em> (DD &rarr; Dédé), a classic French nickname.
+                        <em>Dédé</em> = diminutif de <em>Double-Dummy</em> (DD &rarr; Dédé), un surnom français classique.
                         IS-DD = Information Set Double-Dummy.
                     </p>
                     <p>
-                        Maintains a probabilistic belief model over hidden cards, updated after every action
-                        using hard constraints (void inference, trump ceiling) and soft signals (bidding patterns, play conventions).
-                        Samples plausible opponent hands biased by these beliefs, then solves each world exactly
-                        with an alpha-beta double-dummy solver &mdash; provably optimal per determinization.
-                        Crushes the older IS-MCTS agents (~65% win rate).
+                        Maintient un modèle probabiliste de croyances sur les cartes cachées, mis à jour après chaque action
+                        via des contraintes dures (inférence de coupes, plafond d'atout) et des signaux faibles (patterns d'enchères, conventions de jeu).
+                        Échantillonne des mains adverses plausibles pondérées par ces croyances, puis résout chaque monde exactement
+                        avec un solveur alpha-bêta double-dummy &mdash; optimal par déterminisation.
+                        Écrase les anciens agents IS-MCTS (~65% de victoires).
                     </p>
                 </div>
 
                 <div class="docs-section">
                     <h4>Oracle (DD)</h4>
                     <p>
-                        Perfect-information double-dummy solver that sees all 4 hands &mdash; it <em>cheats</em>.
-                        Uses alpha-beta search with transposition tables, PVS, and killer moves to compute
-                        the exact optimal card in ~7ms (median). Useful as an upper bound for evaluating
-                        other agents' play quality: no realistic agent should beat the Oracle consistently.
+                        Solveur double-dummy en information parfaite qui voit les 4 mains &mdash; il <em>triche</em>.
+                        Utilise une recherche alpha-bêta avec tables de transposition, PVS et coups tueurs pour calculer
+                        la carte optimale exacte en ~7ms (médiane). Utile comme borne supérieure pour évaluer
+                        la qualité de jeu des autres agents : aucun agent réaliste ne devrait battre l'Oracle de manière régulière.
                     </p>
                 </div>
 
                 <div class="docs-footer">
                     <p>
-                        Created by <a href="https://github.com/Avo-k" target="_blank" rel="noopener">Avo-k</a>
+                        Créé par <a href="https://github.com/Avo-k" target="_blank" rel="noopener">Avo-k</a>
                         &amp; <a href="https://claude.ai" target="_blank" rel="noopener">Claude Opus 4.6</a>
                     </p>
                 </div>
