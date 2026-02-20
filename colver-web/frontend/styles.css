@@ -1619,6 +1619,125 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     #watch-history { display: none; }
 }
 
+/* DD Oracle box */
+.dd-oracle-box {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(212,175,55,0.3);
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+.dd-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #d4af37;
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.dd-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+
+.dd-table th {
+    color: #999;
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-align: center;
+    padding: 1px 6px;
+}
+
+.dd-table td {
+    text-align: center;
+    padding: 1px 6px;
+    color: #ccc;
+}
+
+.dd-table td:first-child {
+    font-size: 1rem;
+    width: 24px;
+}
+
+.dd-table td.red {
+    color: #ef5350;
+}
+
+/* Score breakdown in end-of-game */
+.stats-contract-result {
+    text-align: center;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 4px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.stats-contract-result.contract-made {
+    color: #a5d6a7;
+    background: rgba(76, 175, 80, 0.15);
+}
+
+.stats-contract-result.contract-failed {
+    color: #ef9a9a;
+    background: rgba(229, 115, 115, 0.15);
+}
+
+.stats-score-line {
+    text-align: center;
+    font-size: 0.8rem;
+    color: #bbb;
+    padding: 1px 0;
+}
+
+.stats-final-scores {
+    text-align: center;
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #d4af37;
+    padding: 4px 0 2px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    margin-top: 4px;
+}
+
+/* Play tab score breakdown */
+.result-contract-detail {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.result-contract-detail.contract-made {
+    color: #a5d6a7;
+    background: rgba(76, 175, 80, 0.15);
+}
+
+.result-contract-detail.contract-failed {
+    color: #ef9a9a;
+    background: rgba(229, 115, 115, 0.15);
+}
+
+.result-score-line {
+    font-size: 0.85rem;
+    color: #bbb;
+    padding: 2px 0;
+}
+
+.result-final-scores {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #d4af37;
+    padding: 4px 0 2px;
+    border-top: 1px solid rgba(255,255,255,0.15);
+    margin-top: 4px;
+}
+
 @media (max-width: 600px) {
     :root {
         --card-w: 48px;

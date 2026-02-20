@@ -132,10 +132,35 @@ class PlaySession(TrickTracker):
             "cfn": self.env.to_cfn(),
             "rewards": list(self.env.rewards()) if self.env.is_terminal() else None,
         }
+        if self.env.is_terminal():
+            rewards = state["rewards"]
+            contract = self.env.get_contract()
+            points = list(self.env.get_points())
+            belote = list(self.env.get_belote())
+            contract_team = contract.get("team", 0)
+            state["score_detail"] = {
+                "trick_points": points,
+                "belote": [20 if b == 2 else 0 for b in belote],
+                "contract_value": contract.get("value", 0),
+                "contract_team": contract_team,
+                "contract_made": rewards[contract_team] > 0,
+                "final_scores": rewards,
+            }
         # During bidding, suggest the best trump suit for the human player
         if phase == 0:
-            eval_result = self.env.evaluate_hand(human_seat)
-            state["best_trump_suit"] = int(eval_result["best_suit"])
+            if self.env.has_bid_model():
+                nn_result = self.env.action_bid_nn()
+                best_action = int(nn_result["best_action"])
+                # Extract best suit from NN's top bid action (actions 1-36: suit = (action-1)%4)
+                if 1 <= best_action <= 40:
+                    state["best_trump_suit"] = (best_action - 1) % 4
+                else:
+                    # Pass or coinche — fall back to heuristic
+                    eval_result = self.env.evaluate_hand(human_seat)
+                    state["best_trump_suit"] = int(eval_result["best_suit"])
+            else:
+                eval_result = self.env.evaluate_hand(human_seat)
+                state["best_trump_suit"] = int(eval_result["best_suit"])
         return state
 
     def play_action(self, action):
@@ -160,8 +185,6 @@ class PlaySession(TrickTracker):
         player = int(self.env.current_player())
         ai_type = self.ai_types.get(player, "doudou")
         if phase == 0:
-            if ai_type == "maxi_bid":
-                return int(self.env.bid_maxi())
             return int(self.env.bid_a_dd())
         else:
             if ai_type == "doudou" and self.env.has_dmc_model():
@@ -171,10 +194,12 @@ class PlaySession(TrickTracker):
                 return int(self.env.action_dede(AI_TIME_MS))
             elif ai_type == "oracle_dd":
                 return int(self.env.action_oracle_dd())
-            elif ai_type == "maxi_bid":
-                return int(self.env.action_maxi_play())
             else:
-                return int(self.env.action_heuristic_play())
+                # Default fallback to doudou
+                if self.env.has_dmc_model():
+                    result = self.env.action_dmc_with_stats()
+                    return int(result["best_action"])
+                return int(self.env.action_dede(AI_TIME_MS))
 
     def play_ai_turn(self):
         player = self.env.current_player()
@@ -199,9 +224,6 @@ AGENT_NAMES = {
     "dede": "Dédé (IS-DD)",
     "doudou": "DouDou35",
     "oracle_dd": "Oracle (DD)",
-    "heuristic": "Heuristique",
-    "maxi_bid": "Maxi Bid",
-    "random": "Aléatoire",
 }
 
 SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
@@ -244,9 +266,18 @@ class WatchSession(TrickTracker):
         if self.uses_dede:
             self.env.dede_init()
 
+        # Compute DD oracle scores at deal start (all hands visible in watch mode)
+        try:
+            dd_result = self.env.solve_all_suits()
+            self.dd_scores = dd_result["suits"]
+            self.dd_elapsed_ms = round(dd_result["elapsed_ms"], 1)
+        except Exception:
+            self.dd_scores = None
+            self.dd_elapsed_ms = None
+
     def get_state(self):
         """Full state with ALL hands visible."""
-        return {
+        state = {
             "phase": int(self.env.phase()),
             "current_player": int(self.env.current_player()),
             "hands": self.env.get_hands(),
@@ -264,30 +295,44 @@ class WatchSession(TrickTracker):
             "belote": list(self.env.get_belote()),
             "cfn": self.env.to_cfn(),
         }
+        if self.env.is_terminal():
+            rewards = list(self.env.rewards())
+            contract = self.env.get_contract()
+            points = list(self.env.get_points())
+            belote = list(self.env.get_belote())
+            contract_team = contract.get("team", 0)
+            state["rewards"] = rewards
+            state["score_detail"] = {
+                "trick_points": points,
+                "belote": [20 if b == 2 else 0 for b in belote],
+                "contract_value": contract.get("value", 0),
+                "contract_team": contract_team,
+                "contract_made": rewards[contract_team] > 0,
+                "final_scores": rewards,
+            }
+        return state
 
     def compute_next_action(self):
         """Compute next action with thinking stats. Returns move dict."""
         player = int(self.env.current_player())
         phase = int(self.env.phase())
-        agent_type = self.agents.get(player, "random")
+        agent_type = self.agents.get(player, "doudou")
 
-        # Bidding phase: maxi uses its own bidding, others use bid_a_dd (NN if loaded, else improved_v2)
+        # Bidding phase: all agents use bid_a_dd (NN if loaded, else improved_v2)
         if phase == 0:
-            if agent_type == "maxi_bid":
-                action = int(self.env.bid_maxi())
-            else:
-                action = int(self.env.bid_a_dd())
+            action = int(self.env.bid_a_dd())
             name = colver.Env.action_name(action, phase)
-            bid_eval = self.env.evaluate_hand(player)
             stats = {
                 "agent": agent_type,
                 "agent_label": AGENT_NAMES.get(agent_type, agent_type),
-                "bid_eval": {
-                    "scores": list(bid_eval["scores"]),
-                    "best_suit": int(bid_eval["best_suit"]),
-                    "best_score": int(bid_eval["best_score"]),
-                },
             }
+            # Show NN Q-values if bid model is loaded
+            if self.env.has_bid_model():
+                nn_result = self.env.action_bid_nn()
+                stats["bid_nn"] = {
+                    "q_values": [[int(a), round(float(q), 3)] for a, q in nn_result["q_values"]],
+                    "best_action": int(nn_result["best_action"]),
+                }
             return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
 
         # Play phase: dispatch by agent type
@@ -311,19 +356,19 @@ class WatchSession(TrickTracker):
             stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
             stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
 
-        elif agent_type == "heuristic":
-            t0 = time.monotonic()
-            action = int(self.env.action_heuristic_play())
-            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 2)
-
-        elif agent_type == "maxi_bid":
-            t0 = time.monotonic()
-            action = int(self.env.action_maxi_play())
-            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 2)
-
-        else:  # random or fallback
-            action = int(self.env.action_random())
-            stats["elapsed_ms"] = 0.0
+        else:
+            # Fallback to doudou or dede
+            if self.env.has_dmc_model():
+                result = self.env.action_dmc_with_stats()
+                action = int(result["best_action"])
+                stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
+                stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
+            else:
+                result = self.env.action_dede_with_stats(AI_TIME_MS)
+                action = int(result["best_action"])
+                stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
+                stats["determinizations"] = int(result["determinizations"])
+                stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
 
         name = colver.Env.action_name(action, phase)
         return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
@@ -373,7 +418,7 @@ class ReplaySession(TrickTracker):
 
     def get_state(self):
         """Full state with ALL hands visible (same as WatchSession)."""
-        return {
+        state = {
             "phase": int(self.env.phase()),
             "current_player": int(self.env.current_player()),
             "hands": self.env.get_hands(),
@@ -391,6 +436,22 @@ class ReplaySession(TrickTracker):
             "belote": list(self.env.get_belote()),
             "cfn": self.env.to_cfn(),
         }
+        if self.env.is_terminal():
+            rewards = list(self.env.rewards())
+            contract = self.env.get_contract()
+            points = list(self.env.get_points())
+            belote = list(self.env.get_belote())
+            contract_team = contract.get("team", 0)
+            state["rewards"] = rewards
+            state["score_detail"] = {
+                "trick_points": points,
+                "belote": [20 if b == 2 else 0 for b in belote],
+                "contract_value": contract.get("value", 0),
+                "contract_team": contract_team,
+                "contract_made": rewards[contract_team] > 0,
+                "final_scores": rewards,
+            }
+        return state
 
     def step(self):
         """Apply next stored action. Returns (move_info, state, completed_tricks, finished)."""

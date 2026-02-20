@@ -235,14 +235,18 @@ async def websocket_endpoint(ws: WebSocket):
                     agents=agents_map,
                 )
 
-                await ws.send_json({
+                watch_started_msg = {
                     "type": "watch_started",
                     "state": watch_session.get_state(),
                     "doudou_available": doudou_available,
                     "bid_history": [],
                     "completed_tricks": [],
                     "game_id": watch_game_id,
-                })
+                }
+                if watch_session.dd_scores is not None:
+                    watch_started_msg["dd_scores"] = watch_session.dd_scores
+                    watch_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(watch_started_msg)
 
             elif msg_type == "watch_step":
                 if watch_session is None:
@@ -362,14 +366,18 @@ async def websocket_endpoint(ws: WebSocket):
                 replay_session = None
                 watch_game_id = None
 
-                await ws.send_json({
+                cfn_started_msg = {
                     "type": "watch_started",
                     "state": watch_session.get_state(),
                     "doudou_available": doudou_available,
                     "bid_history": [],
                     "completed_tricks": [],
                     "game_id": watch_game_id,
-                })
+                }
+                if watch_session.dd_scores is not None:
+                    cfn_started_msg["dd_scores"] = watch_session.dd_scores
+                    cfn_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(cfn_started_msg)
 
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
@@ -388,14 +396,18 @@ async def websocket_endpoint(ws: WebSocket):
                 replay_session = None
                 watch_game_id = game_id
 
-                await ws.send_json({
+                custom_started_msg = {
                     "type": "watch_started",
                     "state": watch_session.get_state(),
                     "doudou_available": doudou_available,
                     "bid_history": [],
                     "completed_tricks": [],
                     "game_id": watch_game_id,
-                })
+                }
+                if watch_session.dd_scores is not None:
+                    custom_started_msg["dd_scores"] = watch_session.dd_scores
+                    custom_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(custom_started_msg)
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})

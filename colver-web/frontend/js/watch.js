@@ -206,13 +206,40 @@ function renderHistoryEntry(index) {
             const state = data.state;
             const header = document.getElementById('watch-stats-header');
             const body = document.getElementById('watch-stats-body');
-            const nsWon = state.points[0] > state.points[1];
+
+            // Use rewards (contract-aware) to determine winner
+            const rewards = state.rewards;
+            const nsWon = rewards ? rewards[0] > rewards[1] : state.points[0] > state.points[1];
+            const isDraw = rewards ? rewards[0] === rewards[1] : false;
+            const resultText = isDraw ? 'Egalite' : (nsWon ? 'NS gagne' : 'EO gagne');
+
             if (replaySession) {
-                header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
+                header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${resultText}</span>`;
             } else {
-                header.innerHTML = `<span class="stats-result">${nsWon ? 'NS gagne' : 'EO gagne'} ${state.points[0]}-${state.points[1]}</span>`;
+                header.innerHTML = `<span class="stats-result">${resultText}</span>`;
             }
-            body.innerHTML = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+
+            // Score breakdown
+            let bodyHtml = '';
+            const sd = state.score_detail;
+            if (sd) {
+                const teamNames = ['NS', 'EO'];
+                const contractTeamName = teamNames[sd.contract_team];
+                const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
+                const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
+                bodyHtml += `<div class="stats-contract-result ${contractClass}">${sd.contract_value}${SUIT_LABELS[state.contract.trump]} par ${contractTeamName} — ${contractResult}</div>`;
+                bodyHtml += `<div class="stats-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
+                if (sd.belote[0] > 0 || sd.belote[1] > 0) {
+                    const parts = [];
+                    if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote NS`);
+                    if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote EO`);
+                    bodyHtml += `<div class="stats-score-line">${parts.join(' / ')}</div>`;
+                }
+                bodyHtml += `<div class="stats-final-scores">Score : NS ${sd.final_scores[0]} — EO ${sd.final_scores[1]}</div>`;
+            } else {
+                bodyHtml = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+            }
+            body.innerHTML = bodyHtml;
         }
 
         renderCardAnnotations(data, data.state);
@@ -469,21 +496,31 @@ function renderStats(move) {
 
     body.innerHTML = '';
 
-    // Bidding: show hand evaluation
-    if (move.phase === 0 && stats.bid_eval) {
-        const eval_ = stats.bid_eval;
-        const evalDiv = document.createElement('div');
-        evalDiv.className = 'bid-eval-stats';
-        for (let s = 0; s < 4; s++) {
+    // Bidding: show NN Q-values
+    if (move.phase === 0 && stats.bid_nn) {
+        const nn = stats.bid_nn;
+        const sorted = [...nn.q_values].sort((a, b) => b[1] - a[1]);
+        const top = sorted.slice(0, 8);
+        const vals = top.map(x => x[1]);
+        const maxQ = Math.max(...vals);
+        const minQ = Math.min(...vals);
+        const range = maxQ - minQ || 1;
+
+        const div = document.createElement('div');
+        div.className = 'visit-bars';
+
+        for (const [action, q] of top) {
             const row = document.createElement('div');
-            row.className = 'eval-row' + (s === eval_.best_suit ? ' best' : '');
-            const barWidth = Math.min(100, eval_.scores[s] * 3.5);
-            row.innerHTML = `<span class="eval-suit">${SUIT_LABELS[s]}</span>` +
-                `<div class="eval-bar-bg"><div class="eval-bar-fill" style="width:${barWidth}%"></div></div>` +
-                `<span class="eval-score">${eval_.scores[s]}</span>`;
-            evalDiv.appendChild(row);
+            const isBest = action === nn.best_action;
+            row.className = 'visit-row' + (isBest ? ' best' : '');
+            const pct = ((q - minQ) / range * 100).toFixed(0);
+            const name = actionName(action, 0);
+            row.innerHTML = `<span class="visit-name">${name}</span>` +
+                `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
+                `<span class="visit-count">${q.toFixed(3)}</span>`;
+            div.appendChild(row);
         }
-        body.appendChild(evalDiv);
+        body.appendChild(div);
         return;
     }
 
@@ -675,6 +712,9 @@ onMessage('watch_started', (data) => {
     document.getElementById('watch-start').textContent = 'Relancer';
     if (data.game_id) setWatchGameId(data.game_id);
 
+    // Render DD oracle box
+    renderDdOracleBox(data.dd_scores);
+
     // Disable DouDou if not available
     if (!data.doudou_available) {
         document.querySelectorAll('.agent-select option[value="doudou"]').forEach(opt => {
@@ -719,3 +759,18 @@ onMessage('watch_move', (data) => {
         continueAutoPlay(data);
     }
 });
+
+// DD Oracle box rendering
+function renderDdOracleBox(ddScores) {
+    const box = document.getElementById('watch-dd-box');
+    if (!ddScores || ddScores.length !== 4) {
+        box.classList.add('hidden');
+        return;
+    }
+    box.classList.remove('hidden');
+    const suitKeys = ['s', 'h', 'd', 'c'];
+    for (let i = 0; i < 4; i++) {
+        document.getElementById(`dd-${suitKeys[i]}-ns`).textContent = ddScores[i][0];
+        document.getElementById(`dd-${suitKeys[i]}-ew`).textContent = ddScores[i][1];
+    }
+}

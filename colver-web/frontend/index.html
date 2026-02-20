@@ -29,7 +29,6 @@
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="maxi_bid">Maxi Bid</option>
                     </select>
                 </label>
                 <label>Partenaire :
@@ -37,7 +36,6 @@
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="maxi_bid">Maxi Bid</option>
                     </select>
                 </label>
                 <label>Pause :
@@ -141,33 +139,21 @@
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="heuristic">Heuristique</option>
-                        <option value="maxi_bid">Maxi Bid</option>
-                        <option value="random">Aléatoire</option>
                     </select></label>
                     <label>E : <select class="agent-select" data-seat="1">
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="heuristic">Heuristique</option>
-                        <option value="maxi_bid">Maxi Bid</option>
-                        <option value="random">Aléatoire</option>
                     </select></label>
                     <label>S : <select class="agent-select" data-seat="2">
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="heuristic">Heuristique</option>
-                        <option value="maxi_bid">Maxi Bid</option>
-                        <option value="random">Aléatoire</option>
                     </select></label>
                     <label>O : <select class="agent-select" data-seat="3">
                         <option value="doudou">DouDou35</option>
                         <option value="dede">Dédé (IS-DD)</option>
                         <option value="oracle_dd">Oracle (DD)</option>
-                        <option value="heuristic">Heuristique</option>
-                        <option value="maxi_bid">Maxi Bid</option>
-                        <option value="random">Aléatoire</option>
                     </select></label>
                 </div>
                 <button id="watch-start">Lancer</button>
@@ -225,6 +211,16 @@
                 </div>
 
                 <div id="watch-right">
+                    <div id="watch-dd-box" class="dd-oracle-box hidden">
+                        <div class="dd-title">DD Oracle</div>
+                        <table class="dd-table">
+                            <tr><th></th><th>NS</th><th>EO</th></tr>
+                            <tr><td>&spades;</td><td id="dd-s-ns">-</td><td id="dd-s-ew">-</td></tr>
+                            <tr><td class="red">&hearts;</td><td id="dd-h-ns">-</td><td id="dd-h-ew">-</td></tr>
+                            <tr><td class="red">&diams;</td><td id="dd-d-ns">-</td><td id="dd-d-ew">-</td></tr>
+                            <tr><td>&clubs;</td><td id="dd-c-ns">-</td><td id="dd-c-ew">-</td></tr>
+                        </table>
+                    </div>
                     <div id="watch-transport">
                         <div class="transport-row">
                             <button id="watch-prev-btn" title="Coup precedent">|&#9664;</button>
@@ -294,33 +290,21 @@
                             <option value="doudou">DouDou35</option>
                             <option value="dede">Dédé (IS-DD)</option>
                             <option value="oracle_dd">Oracle (DD)</option>
-                            <option value="heuristic">Heuristique</option>
-                            <option value="maxi_bid">Maxi Bid</option>
-                            <option value="random">Aléatoire</option>
                         </select></label>
                         <label>E : <select class="deal-agent-select" data-seat="1">
                             <option value="doudou">DouDou35</option>
                             <option value="dede">Dédé (IS-DD)</option>
                             <option value="oracle_dd">Oracle (DD)</option>
-                            <option value="heuristic">Heuristique</option>
-                            <option value="maxi_bid">Maxi Bid</option>
-                            <option value="random">Aléatoire</option>
                         </select></label>
                         <label>S : <select class="deal-agent-select" data-seat="2">
                             <option value="doudou">DouDou35</option>
                             <option value="dede">Dédé (IS-DD)</option>
                             <option value="oracle_dd">Oracle (DD)</option>
-                            <option value="heuristic">Heuristique</option>
-                            <option value="maxi_bid">Maxi Bid</option>
-                            <option value="random">Aléatoire</option>
                         </select></label>
                         <label>O : <select class="deal-agent-select" data-seat="3">
                             <option value="doudou">DouDou35</option>
                             <option value="dede">Dédé (IS-DD)</option>
                             <option value="oracle_dd">Oracle (DD)</option>
-                            <option value="heuristic">Heuristique</option>
-                            <option value="maxi_bid">Maxi Bid</option>
-                            <option value="random">Aléatoire</option>
                         </select></label>
                     </div>
                 </div>
@@ -385,8 +369,8 @@
 
                 <h3>AI Agents</h3>
                 <p class="docs-intro">
-                    All agents are named after French nicknames. Bidding uses hand-tuned heuristics (ImprovedV2) for all agents except Maxi Bid.
-                    Card play is where they differ: neural network, exact solver, conventions, or simple heuristics.
+                    All agents are named after French nicknames. Bidding uses a DD-trained neural network (Le Bide a Dede).
+                    Card play is where they differ: neural network, exact solver, or belief-weighted search.
                 </p>
 
                 <div class="docs-section">
@@ -425,34 +409,6 @@
                         Uses alpha-beta search with transposition tables, PVS, and killer moves to compute
                         the exact optimal card in ~7ms (median). Useful as an upper bound for evaluating
                         other agents' play quality: no realistic agent should beat the Oracle consistently.
-                    </p>
-                </div>
-
-                <div class="docs-section">
-                    <h4>Maxi Bid</h4>
-                    <p>
-                        Convention-linked bidding and play agent inspired by expert French Belote players.
-                        Uses structured bidding conventions
-                        (J/9 signaling, partnership responses, Case A/B/C/D classification) paired with a deterministic
-                        card play strategy (leads, trump management, finesse patterns).
-                        A mid-range opponent that plays a recognizable human-like style.
-                    </p>
-                </div>
-
-                <div class="docs-section">
-                    <h4>Heuristique <span class="docs-tag subtle">Watch only</span></h4>
-                    <p>
-                        A fast deterministic strategy with no search. Follows a handcrafted decision tree:
-                        safe leads, partner feeding, minimum winning card, cheapest trump cut.
-                        Runs at ~769K games/sec. Useful as a weak baseline.
-                    </p>
-                </div>
-
-                <div class="docs-section">
-                    <h4>Aléatoire <span class="docs-tag subtle">Watch only</span></h4>
-                    <p>
-                        Plays uniformly random legal moves. Useful as a baseline for measuring other agents' strength.
-                        Runs at ~1.3M rollouts/sec.
                     </p>
                 </div>
 

@@ -8,6 +8,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::bid_eval;
+use crate::bid_net::BidNet;
+use crate::bid_obs;
 use crate::dmc_obs::{self, EnvTracking, OBS_DIM};
 use crate::rollout;
 use crate::state::{GameState, Phase};
@@ -81,8 +83,13 @@ pub struct VecTrainingEnv {
     pub obs_buf: Vec<f32>,
     /// Flat mask buffer: n_envs * MASK_DIM.
     pub mask_buf: Vec<f32>,
-    /// Per-env bidding strategy: 0=improved, 1-6=BidParams presets, 7=heuristic.
-    bid_strategies: Vec<u8>,
+    /// Per-env bidding strategy per team: (NS strategy, EW strategy).
+    /// 0=improved_v2, 1-6=BidParams presets, 7=heuristic, 8=NN bid.
+    bid_strategies: Vec<(u8, u8)>,
+    /// Optional NN bid model for strategy 8.
+    bid_net: Option<BidNet>,
+    /// Scratch buffer for bid observations (avoids allocation per call).
+    bid_obs_buf: Vec<f32>,
     pub rng: StdRng,
 }
 
@@ -92,13 +99,15 @@ impl VecTrainingEnv {
         let envs: Vec<TrainingEnv> = (0..n_envs).map(|_| TrainingEnv::new(&mut rng)).collect();
         let obs_buf = vec![0.0f32; n_envs * OBS_DIM];
         let mask_buf = vec![0.0f32; n_envs * MASK_DIM];
-        let bid_strategies = vec![0u8; n_envs];
+        let bid_strategies = vec![(0u8, 0u8); n_envs];
 
         let mut vec_env = VecTrainingEnv {
             envs,
             obs_buf,
             mask_buf,
             bid_strategies,
+            bid_net: None,
+            bid_obs_buf: vec![0.0f32; bid_obs::BID_OBS_DIM],
             rng,
         };
         vec_env.refresh_observations();
@@ -111,13 +120,15 @@ impl VecTrainingEnv {
         let envs: Vec<TrainingEnv> = (0..n_envs).map(|_| TrainingEnv::new(&mut rng)).collect();
         let obs_buf = vec![0.0f32; n_envs * OBS_DIM];
         let mask_buf = vec![0.0f32; n_envs * MASK_DIM];
-        let bid_strategies = vec![0u8; n_envs];
+        let bid_strategies = vec![(0u8, 0u8); n_envs];
 
         let mut vec_env = VecTrainingEnv {
             envs,
             obs_buf,
             mask_buf,
             bid_strategies,
+            bid_net: None,
+            bid_obs_buf: vec![0.0f32; bid_obs::BID_OBS_DIM],
             rng,
         };
         vec_env.refresh_observations();
@@ -130,10 +141,25 @@ impl VecTrainingEnv {
         self.envs.len()
     }
 
-    /// Set bidding strategies per environment.
+    /// Set bidding strategies per environment (same strategy for both teams).
     pub fn set_bid_strategies(&mut self, strategies: &[u8]) {
         assert_eq!(strategies.len(), self.envs.len());
+        for (i, &s) in strategies.iter().enumerate() {
+            self.bid_strategies[i] = (s, s);
+        }
+    }
+
+    /// Set bidding strategies per team per environment.
+    pub fn set_bid_strategies_per_team(&mut self, strategies: &[(u8, u8)]) {
+        assert_eq!(strategies.len(), self.envs.len());
         self.bid_strategies.copy_from_slice(strategies);
+    }
+
+    /// Load NN bid model for strategy 8.
+    pub fn load_bid_model(&mut self, path: &str) -> std::io::Result<()> {
+        let net = BidNet::load(path)?;
+        self.bid_net = Some(net);
+        Ok(())
     }
 
     /// Get current player for each environment.
@@ -146,24 +172,54 @@ impl VecTrainingEnv {
         self.envs.iter().map(|e| e.state.phase).collect()
     }
 
-    /// Get bid action for each environment using its assigned strategy.
-    pub fn bid_actions(&self) -> Vec<u8> {
-        let presets = bid_eval::BidParams::all_presets();
-        self.envs
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                if e.state.phase != Phase::Bidding {
-                    return 0;
+    /// Dispatch a single bid action given a strategy index.
+    fn dispatch_bid(&mut self, env_idx: usize, strategy: u8) -> u8 {
+        match strategy {
+            0 => bid_eval::improved_v2_bid(&self.envs[env_idx].state),
+            idx @ 1..=6 => {
+                let presets = bid_eval::BidParams::all_presets();
+                bid_eval::parametric_bid(&self.envs[env_idx].state, &presets[(idx - 1) as usize])
+            }
+            7 => bid_eval::heuristic_bid(&self.envs[env_idx].state),
+            8 => {
+                // NN bid: use BidNet if loaded, else fallback to improved_v2
+                if self.bid_net.is_some() {
+                    // Copy state data to avoid borrow conflicts with bid_net
+                    let state = self.envs[env_idx].state;
+                    let bid_history = self.envs[env_idx].tracking.bid_history.clone();
+                    bid_obs::write_bid_observation(
+                        &mut self.bid_obs_buf, 0, &state, &bid_history,
+                    );
+                    let legal = state.legal_actions();
+                    let net = self.bid_net.as_mut().unwrap();
+                    let (action, _) = net.best_action(&self.bid_obs_buf, legal);
+                    action
+                } else {
+                    bid_eval::improved_v2_bid(&self.envs[env_idx].state)
                 }
-                match self.bid_strategies[i] {
-                    0 => bid_eval::improved_v2_bid(&e.state),
-                    idx @ 1..=6 => bid_eval::parametric_bid(&e.state, &presets[(idx - 1) as usize]),
-                    7 => bid_eval::heuristic_bid(&e.state),
-                    _ => bid_eval::improved_v2_bid(&e.state),
-                }
-            })
-            .collect()
+            }
+            _ => bid_eval::improved_v2_bid(&self.envs[env_idx].state),
+        }
+    }
+
+    /// Get bid action for each environment using its assigned per-team strategy.
+    pub fn bid_actions(&mut self) -> Vec<u8> {
+        let n = self.envs.len();
+        let mut actions = vec![0u8; n];
+        for i in 0..n {
+            if self.envs[i].state.phase != Phase::Bidding {
+                continue;
+            }
+            let player = self.envs[i].state.current_player();
+            let team = GameState::player_team(player);
+            let strategy = if team == 0 {
+                self.bid_strategies[i].0
+            } else {
+                self.bid_strategies[i].1
+            };
+            actions[i] = self.dispatch_bid(i, strategy);
+        }
+        actions
     }
 
     /// Step all environments. Auto-resets terminals.
@@ -323,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_vec_env_bid_actions() {
-        let vec_env = VecTrainingEnv::new_with_seed(4, 42);
+        let mut vec_env = VecTrainingEnv::new_with_seed(4, 42);
         let bid_actions = vec_env.bid_actions();
         assert_eq!(bid_actions.len(), 4);
         // All envs start in bidding phase, so all actions should be valid
@@ -344,5 +400,41 @@ mod tests {
         vec_env.set_bid_strategies(&[0, 7, 3, 5]); // improved, heuristic, moderate, aggressive
         let bid_actions = vec_env.bid_actions();
         assert_eq!(bid_actions.len(), 4);
+    }
+
+    #[test]
+    fn test_vec_env_bid_strategies_per_team() {
+        let mut vec_env = VecTrainingEnv::new_with_seed(4, 42);
+        // NS=improved, EW=heuristic for first two; NS=heuristic, EW=improved for last two
+        vec_env.set_bid_strategies_per_team(&[(0, 7), (0, 7), (7, 0), (7, 0)]);
+        let bid_actions = vec_env.bid_actions();
+        assert_eq!(bid_actions.len(), 4);
+        for (i, &action) in bid_actions.iter().enumerate() {
+            let legal = vec_env.envs[i].state.legal_actions();
+            assert!(
+                legal & (1u64 << action) != 0,
+                "bid action {} illegal for env {}",
+                action,
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_vec_env_nn_bid_fallback() {
+        // Strategy 8 without loaded model should fallback to improved_v2
+        let mut vec_env = VecTrainingEnv::new_with_seed(4, 42);
+        vec_env.set_bid_strategies_per_team(&[(8, 8), (8, 8), (8, 8), (8, 8)]);
+        let bid_actions = vec_env.bid_actions();
+        assert_eq!(bid_actions.len(), 4);
+        for (i, &action) in bid_actions.iter().enumerate() {
+            let legal = vec_env.envs[i].state.legal_actions();
+            assert!(
+                legal & (1u64 << action) != 0,
+                "bid action {} illegal for env {}",
+                action,
+                i
+            );
+        }
     }
 }

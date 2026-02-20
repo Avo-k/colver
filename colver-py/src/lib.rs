@@ -968,6 +968,25 @@ impl Env {
         Ok(colver_core::solver::solve_best_card(&self.state))
     }
 
+    /// Solve all 4 trump suits with the DD solver.
+    /// Returns dict: {suits: [[ns_pts, ew_pts], ...4], elapsed_ms: f64}
+    fn solve_all_suits<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let start = Instant::now();
+        let hands = self.state.hands;
+        let dealer = self.state.dealer;
+        let mut tt_buf = colver_core::solver::new_tt_buffer();
+        let mut suits = Vec::with_capacity(4);
+        for suit in 0..4u8 {
+            let [ns, ew] = colver_core::solver::solve_for_trump_reuse_tt(hands, dealer, suit, &mut tt_buf);
+            suits.push(vec![ns, ew]);
+        }
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+        let dict = PyDict::new_bound(py);
+        dict.set_item("suits", suits)?;
+        dict.set_item("elapsed_ms", elapsed)?;
+        Ok(dict)
+    }
+
     /// Get observation (415 floats) for current state.
     fn get_observation(&self) -> Vec<f32> {
         make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer)

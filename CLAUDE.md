@@ -92,7 +92,7 @@ Colver is a Belote Contrée game engine optimized for millions of RL rollouts/se
 
 **Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `colver-web` (FastAPI/WebSocket frontend)
 
-**Features:** `rand` (default), `parallel` (rayon parallel determinization), `nn` (neural network value function — features, value_net, NN-guided MCTS)
+**Features:** `rand` (default), `parallel` (rayon parallel determinization), `nn` (neural network value function — features, value_net, NN-guided MCTS), `dmc_train` (candle GPU training for DMC + bid NN)
 
 ### Card Representation (`card.rs`)
 
@@ -141,7 +141,7 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 ### Bidding Strategies (`bid_eval.rs`)
 
-Five fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`, `Roro`, `Maxi`) plus a configurable `parametric_bid(state, &BidParams)`. All are deterministic, ~200 ops, suitable for millions of rollouts/sec.
+Six fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improved`, `Roro`, `Maxi`, `BidADd`) plus a configurable `parametric_bid(state, &BidParams)`. All except `BidADd` are deterministic, ~200 ops, suitable for millions of rollouts/sec. `BidADd` uses DD determinization (~300ms/opening).
 
 **Hand evaluation:** `evaluate_for_trump(hand, suit) -> u16` scores a hand assuming `suit` is trump. Trump honors (J=8, 9=6, A=4, 10=3, K=1, Q=1), trump length bonus ((count−2)×2 if count>2), side aces (+3 each), voids (+3), singletons (+1). Typical range 0–35.
 
@@ -159,6 +159,55 @@ Five fixed bidding functions (`BidFunction` enum: `Heuristic`, `Smart`, `Improve
 **`maxi_bid`** (`maxi.rs`) — Expert convention-linked bidding + structured card play (the "Maxi" agent). Hand classification into Cases A(80), B(90), C(100), D(110–130) based on J/9 honors, side strength, and loser count. 4 bidding phases: opening classification, partner response, suit change, competitive. Théorème 3 coinche (0 trumps in opponent's suit + 3 aces). Card play uses convention-aware leads, trump management, finesse patterns.
 
 **`parametric_bid` + `BidParams`** — Configurable bidder for strategy sweeps. `BidParams` has: score thresholds[6] (for 80–130), opening/overcall/response caps, overcall_min_score, quality_gate flag. Presets: `ultra_conservative`, `conservative`, `moderate`, `balanced`, `aggressive`, `very_aggressive`. Used by `bid_tournament` binary.
+
+### DD-Based Bidding (`dd_bid.rs`, feature `rand`)
+
+Uses the double-dummy solver with determinization to estimate expected team points for each candidate trump suit. Replaces heuristic score→value mapping with principled point estimation.
+
+**`DdBidder`** — Holds a pre-allocated TT buffer (2MB). `DdBidConfig` controls: determinizations per position (opening=8, response=4, overcall=4), confidence margin (15 pts), prefilter threshold (heuristic score≥6), quality gate, caps (120/120/130). ~300ms/opening on x86.
+
+**Algorithm:** Pre-filter candidate suits (heuristic score + quality gate) → determinize opponent hands → DD-solve each suit per determinization → average NS points → map expected points to bid value (bid X if expected ≥ X + margin). Coinche uses heuristic logic (fast, well-validated).
+
+### NN Bidding Agent — "Le Bide à Dédé" (`bid_net.rs`, `bid_obs.rs`, `bid_candle.rs`, `bid_train_env.rs`)
+
+DD-oracle-trained Dueling DQN for bidding. Trained on 1M pre-solved deals with DD rewards. **Default bidder for all web bots** (replaces `improved_v2`). Beats `improved_v2` 70–76% in match play across all play engines (Smart IS-DD, DD oracle, DMC).
+
+**Tournament results** (50 matches/pair, 20ms/move, 6 agents round-robin):
+- NN vs V2 head-to-head: 70% (Smart IS-DD), 76% (DD oracle), 71% (DMC) — consistent +460-590 margin
+- Rankings: NN+DD 89.8% > V2+DD 70.8% > NN+SDD 51.0% > NN+DMC 39.6% > V2+SDD 27.6% > V2+DMC 21.2%
+- Play method hierarchy: DD >> Smart IS-DD >> DMC. NN bidding helps at every play level
+- NN bidding partially compensates for weaker play engines (NN+SDD competitive with V2+DD)
+
+**Architecture:** 114→256→256→43 Dueling DQN with LayerNorm. Q(s,a) = V(s) + A(s,a) - mean(A). ~421KB weights, ~0.1ms/eval (CPU).
+
+**Observation** (`bid_obs.rs`, 114 floats): hand (32) + bid history (72, 12 slots × 6 floats, player-relative) + dealer-relative position (4) + auction state (6: bid_value/160, suit one-hot, coinche/2). `write_bid_observation()` is zero-allocation (writes into buffer at offset).
+
+**Rust inference** (`bid_net.rs`) — Pure Rust forward pass, zero dependencies. Auto-detects standard vs dueling architecture from weight file size. `BidNet::load(path)` / `BidNet::evaluate(&mut self, obs) -> [f32; 43]` / `BidNet::best_action(&mut self, obs, legal_mask) -> (u8, Vec<(u8, f32)>)`.
+
+**Training infrastructure:**
+- `DealPool` (`bid_train_env.rs`): Pre-solves N deals × 4 suits using all CPU cores in parallel (~5 min for 1M deals on 16 cores). Binary format (`COLVDD01`), ~21B/deal. `load_or_generate()` caches to disk.
+- `BidTrainingEnv`: Per-deal env that runs bidding in microseconds using pre-solved DD points. Buffers transitions, flushes with reward = (my_team_score - opp_score) / 500.0 on episode end.
+- `VecBidEnv`: Vectorized multi-env with flat obs/mask buffers for GPU batching.
+- `BidReplayBuffer`: SumTree-based PER buffer (same design as DMC replay).
+- `BiddingQNet` / `BiddingTrainer` (`bid_candle.rs`): Candle-based Dueling DQN. `export_binary()` writes raw f32 weights compatible with `BidNet` CPU inference.
+
+**Opponent diversity:** Configurable mix annealing from 40% → 15% non-self-play. Within non-self-play: improved_v2 (20%), aggressive (20%), conservative (20%), random (40%). Ensures the NN learns to exploit diverse bidding styles.
+
+**Training command:**
+```bash
+cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
+  --num-envs 64 --steps 5000000 --pool-size 1000000
+```
+
+**Inline evaluation:** vs improved_v2 bidding with DD oracle scoring (both sides, alternating). Reports win rate + average margin.
+
+**Python API:**
+- `Env.bid_a_dd() -> int` — NN bid if model loaded, else `improved_v2` fallback. **Default for all web bots.**
+- `Env.load_bid_model(path)` / `Env.has_bid_model()` — load/check NN weights.
+- `Env.action_bid_nn() -> dict` — NN bid with Q-value statistics.
+- `colver.bid_model_path()` / `colver.download_bid_model()` — model discovery/download (same pattern as DMC).
+
+**Model distribution:** `models/bid_nn_final.bin` (421KB), auto-downloaded from GitHub releases at web server startup.
 
 ### Card Play Strategies
 
@@ -197,7 +246,7 @@ Alpha-beta solver for perfect-information Belote: given 4 known hands and a trum
 
 ### DMC Q-Network Agent (`scripts/dmc_model.py`, `scripts/train_dmc.py`, `scripts/eval_dmc.py`)
 
-DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid`. Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration.
+DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single forward pass — no search tree. Bidding uses `improved_bid` (Python) or configurable strategies including NN bid (Rust). Trained with binary deal outcomes (win=1.0, loss=0.0, void=0.5), ε-greedy exploration.
 
 **v3 architecture:** 444→1024→1024→1024→32 MLP with LayerNorm (~2.6M params). v3 observation extends v2 with 72-float bid history encoding (12 chronological slots in player-relative order, 6 floats each: action_type, bid_value, suit one-hot). Player-relative with per-player card tracking, trump ceiling inference, tactical features (master cards, partner winning, void info), and richer scoring context.
 
@@ -207,10 +256,33 @@ DouZero-style Deep Monte-Carlo agent. A Q-network picks card plays with a single
 
 **Training features:** Prioritized Experience Replay (SumTree-based PER), opponent pool (70% self-play, 20% past checkpoints, 10% random), 2M replay buffer, 20M steps default.
 
-**Inline evaluation** (every `--eval-freq` steps): deal win rate vs random (200 deals both sides), match play to 2000 vs random (100 matches), vs naive IS-MCTS (10 matches, 20ms), vs smart IS-MCTS (10 matches, 20ms). Output: `[EVAL] deals 67% | rand 72% | naive 40% | smart 30% (45s)`.
+**Inline evaluation** (every `--eval-freq` steps, default 1M):
+- Python trainer: deal win rate vs random (200 deals), match play vs random (100), vs naive IS-MCTS (10, 20ms), vs smart IS-MCTS (10, 20ms). Output: `[EVAL] deals 67% | rand 72% | naive 40% | smart 30% (45s)`.
+- Rust trainer: match play vs random (100), vs frozen checkpoint (50), vs IS-DD (10, 20ms/move). Output: `[EVAL] rand 85% | ckpt 55% | isdd 35% | nn_bid 80% (210s)`.
 
-**Training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
+**Python training:** `PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000`
 **Eval:** `PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --games 200 --baseline smart --time-ms 20 --both-sides`
+
+**Rust training** (candle, feature `dmc_train`):
+```bash
+cargo run -p colver-core --bin train_dmc --features dmc_train --release -- \
+  --num-envs 256 --steps 35000000 \
+  --bid-model models/bid_nn_final.bin \
+  --nn-bid-start 0.75 --nn-bid-end 0.95 --nn-bid-anneal-steps 20000000 \
+  --eval-freq 1000000 \
+  --eval-random-matches 100 \
+  --eval-isdd-matches 10 --eval-isdd-time-ms 20 \
+  --eval-checkpoint models/dmc_35.bin --eval-checkpoint-matches 50
+```
+- ~474 steps/s with 64 envs on 4090 (3x+ Python speedup)
+- Dueling DQN: Q(s,a) = V(s) + A(s,a) - mean(A)
+- **NN bid support**: `--bid-model` loads BidNet for training bidding (strategy 8). Bid fraction anneals linearly from `--nn-bid-start` (75%) to `--nn-bid-end` (95%) over `--nn-bid-anneal-steps`. Non-NN fraction split: 40% improved_v2 / 30% heuristic / 30% BidParams presets. Per-team assignment: each team independently draws a strategy.
+- **IS-DD eval**: `--eval-isdd-matches` matches with `IsDdSearch` (belief tracking, `--eval-isdd-time-ms` per move). Replaces naive/smart IS-MCTS evals from earlier versions.
+- **Checkpoint eval**: `--eval-checkpoint` loads a frozen DmcNet baseline for regression tracking.
+- `dmc_candle.rs`: ManualLayerNorm, DuelingQNet, DuelingTrainer
+- `dmc_obs.rs`: zero-alloc obs builder (writes into buffer at offset), EnvTracking struct
+- `dmc_replay.rs`: SumTree + PER buffer (pure Rust)
+- `dmc_env.rs`: VecTrainingEnv with pre-allocated obs_buf/mask_buf, per-team bid strategies `Vec<(u8, u8)>`, optional `BidNet` for NN bidding (strategy 8, falls back to improved_v2 if no model loaded)
 
 **Python API (Env):** `action_naive_ismcts(time_ms)`, `action_smart_ismcts(time_ms)`, `smart_ismcts_init()`, `smart_ismcts_step(action)`, `bid_improved()`, `bid_roro()`, `deal_outcome()`, `rewards()`, `load_dmc_model(path)`, `action_dmc_with_stats()`, `get_bid_history()`, `get_observation()`.
 
@@ -240,6 +312,12 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 - **`maxi_diagnose`**: Diagnostic tool — plays individual deals showing Maxi (NS) vs DMC (EW) with full play-by-play: hand evals, bidding reasoning (Cases A/B/C/D), DMC Q-value rankings, trick-by-trick results. Usage: `cargo run --bin maxi_diagnose --release -- [num_deals] [seed]`.
 - **`v2_tournament`**: V2 bidding fine-tune tournament — compares `improved_bid` baseline vs `V2Config` variants using DMC + Oracle MCTS play in parallel. Round-robin match play with win/margin matrices.
 - **`dd_bench`**: Double-dummy solver benchmark. Solves N random deals × 4 trump suits, reports timing distribution (percentiles, top-10% share), point totals, capot rates. Usage: `cargo run --bin dd_bench --release -- [num_deals]`.
+- **`dd_calibrate`**: DD bidding calibration — generates pre-solved deal pools and analyzes DD-based bid value thresholds.
+- **`train_bid_nn`** (feature `dmc_train`): NN bidding training with DD oracle rewards + Dueling DQN. Phase 1: pre-solve deal pool (1M deals). Phase 2: train with PER + opponent diversity. Usage: `cargo run --bin train_bid_nn --features dmc_train --release -- --num-envs 64 --steps 5000000`.
+- **`train_dmc`** (feature `dmc_train`): DMC card play training with Dueling DQN. Supports NN bidding (`--bid-model`) with annealing, per-team bid strategies, IS-DD eval, checkpoint regression tracking. Usage: `cargo run --bin train_dmc --features dmc_train --release -- --num-envs 256 --steps 35000000 --bid-model models/bid_nn_final.bin`.
+- **`bid_compare`**: Head-to-head comparison of bidding strategies using DD oracle for evaluation.
+- **`bid_nn_eval`**: Evaluate a trained bid NN model against heuristic bidders with DD scoring.
+- **`bid_nn_tournament`**: Round-robin tournament — NN bid vs improved_v2 across play methods (Smart IS-DD, DD oracle, DMC). Multi-threaded match play. Usage: `cargo run --bin bid_nn_tournament --release -- models/bid_nn_final.bin --dmc-model models/dmc_35.bin --matches 100`.
 - **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
 - **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
 

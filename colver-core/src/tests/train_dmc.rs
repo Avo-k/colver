@@ -1,11 +1,12 @@
 /// Pure Rust DMC training binary using Candle + Dueling DQN.
 ///
-/// Replicates the functionality of `scripts/train_dmc.py`:
+/// Features:
 /// - VecEnv with auto-reset and diverse bidding strategies
+/// - NN bidding (BidNet) with annealing from mixed to NN-dominant
 /// - Dueling Q-network (Candle GPU) with ε-greedy exploration
 /// - Prioritized Experience Replay (PER)
 /// - Opponent diversity: self-play, pool (CPU DmcNet), random
-/// - Inline evaluation: deal win rate + match play vs random/naive/smart IS-MCTS
+/// - Inline evaluation: match play vs random, frozen checkpoint, IS-DD
 /// - Checkpoint saving (safetensors + binary export)
 
 use std::time::Instant;
@@ -17,18 +18,18 @@ use rand::{Rng, SeedableRng};
 use candle_core::Device;
 
 use colver_core::bid_eval;
+use colver_core::bid_net::BidNet;
+use colver_core::bid_obs;
 use colver_core::dmc_candle::{DuelingTrainer, PoolNet};
 use colver_core::dmc_env::VecTrainingEnv;
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::OBS_DIM;
 use colver_core::dmc_replay::PrioritizedReplayBuffer;
-use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
+use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::rollout;
-use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{GameState, Phase};
 
 const NUM_ACTIONS: usize = 32;
-const NUM_BID_STRATEGIES: u8 = 8;
 
 #[derive(Parser)]
 #[command(name = "train_dmc", about = "Pure Rust DMC training with Candle + Dueling DQN")]
@@ -55,16 +56,14 @@ struct Args {
     min_buffer: usize,
     #[arg(long, default_value_t = 4)]
     train_freq: usize,
-    #[arg(long, default_value_t = 100_000)]
+    #[arg(long, default_value_t = 1_000_000)]
     eval_freq: usize,
     #[arg(long, default_value_t = 100)]
     eval_random_matches: usize,
     #[arg(long, default_value_t = 10)]
-    eval_naive_matches: usize,
-    #[arg(long, default_value_t = 10)]
-    eval_smart_matches: usize,
+    eval_isdd_matches: usize,
     #[arg(long, default_value_t = 20)]
-    eval_time_ms: u32,
+    eval_isdd_time_ms: u32,
     #[arg(long, default_value_t = 500_000)]
     save_freq: usize,
     #[arg(long, default_value = "models")]
@@ -87,7 +86,7 @@ struct Args {
     pool_save_freq: usize,
     #[arg(long, default_value_t = 10)]
     pool_size: usize,
-    /// Path to a frozen .bin model to evaluate against (e.g. a strong checkpoint).
+    /// Path to a frozen .bin model to evaluate against (e.g. DouDou35).
     #[arg(long)]
     eval_checkpoint: Option<String>,
     /// Number of matches to play against the frozen checkpoint.
@@ -96,6 +95,18 @@ struct Args {
     /// Offset added to step counter for logging and checkpoint filenames (for resumed runs).
     #[arg(long, default_value_t = 0)]
     step_offset: usize,
+    /// Path to NN bid model (bid_nn_final.bin). Enables strategy 8 = NN bid.
+    #[arg(long)]
+    bid_model: Option<String>,
+    /// NN bid fraction at start of training.
+    #[arg(long, default_value_t = 0.75)]
+    nn_bid_start: f32,
+    /// NN bid fraction at end of annealing.
+    #[arg(long, default_value_t = 0.95)]
+    nn_bid_end: f32,
+    /// Steps over which to anneal NN bid fraction.
+    #[arg(long, default_value_t = 20_000_000)]
+    nn_bid_anneal_steps: usize,
 }
 
 /// Opponent type per environment.
@@ -113,12 +124,57 @@ struct EpisodeTransition {
 
 /// Evaluation results.
 struct EvalResult {
-    deal_wr: f64,
     rand_wr: f64,
-    naive_wr: f64,
-    smart_wr: f64,
     ckpt_wr: f64,
+    isdd_wr: f64,
     elapsed: f64,
+}
+
+/// Pick a bid strategy for one team at the current step, given NN bid annealing params.
+fn pick_bid_strategy(
+    rng: &mut StdRng,
+    step: usize,
+    has_bid_model: bool,
+    nn_bid_start: f32,
+    nn_bid_end: f32,
+    nn_bid_anneal_steps: usize,
+) -> u8 {
+    if !has_bid_model {
+        return rng.gen_range(0..8u8); // strategies 0-7 only
+    }
+    let progress = (step as f32 / nn_bid_anneal_steps as f32).min(1.0);
+    let nn_frac = nn_bid_start + (nn_bid_end - nn_bid_start) * progress;
+    let roll: f32 = rng.gen();
+    if roll < nn_frac {
+        8 // NN bid
+    } else {
+        // Distribute among heuristic bidders:
+        // ~40% improved_v2 (0), ~30% heuristic (7), ~30% BidParams presets (1-6)
+        let r: f32 = rng.gen();
+        if r < 0.4 {
+            0 // improved_v2
+        } else if r < 0.7 {
+            7 // heuristic
+        } else {
+            rng.gen_range(1..=6u8) // BidParams presets
+        }
+    }
+}
+
+/// Get bid action using NN or heuristic for eval deals.
+fn eval_bid_action(
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    bid_net: &mut Option<BidNet>,
+) -> u8 {
+    if let Some(ref mut net) = bid_net {
+        let obs = bid_obs::make_bid_observation(state, bid_history);
+        let legal = state.legal_actions();
+        let (action, _) = net.best_action(&obs, legal);
+        action
+    } else {
+        bid_eval::improved_v2_bid(state)
+    }
 }
 
 /// Evaluate the Q-network vs various baselines.
@@ -126,11 +182,11 @@ fn evaluate(
     trainer: &DuelingTrainer,
     hidden: usize,
     random_matches: usize,
-    naive_matches: usize,
-    smart_matches: usize,
     checkpoint_matches: usize,
-    time_ms: u32,
-    baseline_net: Option<&mut DmcNet>,
+    isdd_matches: usize,
+    isdd_time_ms: u32,
+    baseline_net: &mut Option<DmcNet>,
+    eval_bid_net: &mut Option<BidNet>,
 ) -> EvalResult {
     let start = Instant::now();
 
@@ -139,36 +195,26 @@ fn evaluate(
         Ok(w) => w,
         Err(e) => {
             eprintln!("Failed to snapshot weights: {}", e);
-            return EvalResult { deal_wr: 0.0, rand_wr: 0.0, naive_wr: 0.0, smart_wr: 0.0, ckpt_wr: 0.0, elapsed: 0.0 };
+            return EvalResult { rand_wr: 0.0, ckpt_wr: 0.0, isdd_wr: 0.0, elapsed: 0.0 };
         }
     };
     let mut q_net = match DmcNet::from_floats(&weights, hidden, OBS_DIM, true) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to load eval net: {}", e);
-            return EvalResult { deal_wr: 0.0, rand_wr: 0.0, naive_wr: 0.0, smart_wr: 0.0, ckpt_wr: 0.0, elapsed: 0.0 };
+            return EvalResult { rand_wr: 0.0, ckpt_wr: 0.0, isdd_wr: 0.0, elapsed: 0.0 };
         }
     };
 
     let mut rng = StdRng::seed_from_u64(12345);
 
-    // 1. Deal-level vs random (both sides, 100 per side)
-    let mut deal_wins = 0;
-    for q_team in 0..2u8 {
-        for _ in 0..100 {
-            let won = play_deal_eval(&mut q_net, q_team, "random", 0, None, &mut rng);
-            if won { deal_wins += 1; }
-        }
-    }
-    let deal_wr = deal_wins as f64 / 200.0;
-
-    // 2. Match play vs random
+    // 1. Match play vs random
     let rand_wr = if random_matches > 0 {
         let mut wins = 0;
         let per_side = random_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "random", 0, None, &mut rng) {
+                if play_match_eval(&mut q_net, q_team, "random", &mut None, eval_bid_net, &mut rng) {
                     wins += 1;
                 }
             }
@@ -178,160 +224,50 @@ fn evaluate(
         0.0
     };
 
-    // 3. Match play vs naive IS-MCTS
-    let naive_wr = if naive_matches > 0 {
+    // 2. Match play vs frozen checkpoint
+    let ckpt_wr = if checkpoint_matches > 0 && baseline_net.is_some() {
         let mut wins = 0;
-        let per_side = naive_matches / 2;
+        let per_side = checkpoint_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "naive", time_ms, None, &mut rng) {
+                if play_match_eval(&mut q_net, q_team, "checkpoint", baseline_net, eval_bid_net, &mut rng) {
                     wins += 1;
                 }
             }
         }
-        wins as f64 / naive_matches as f64
+        wins as f64 / checkpoint_matches as f64
     } else {
         0.0
     };
 
-    // 4. Match play vs smart IS-MCTS
-    let smart_wr = if smart_matches > 0 {
+    // 3. Match play vs IS-DD
+    let isdd_wr = if isdd_matches > 0 {
         let mut wins = 0;
-        let per_side = smart_matches / 2;
+        let per_side = isdd_matches / 2;
         for q_team in 0..2u8 {
             for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "smart", time_ms, None, &mut rng) {
+                if play_match_eval_isdd(&mut q_net, q_team, isdd_time_ms, eval_bid_net, &mut rng) {
                     wins += 1;
                 }
             }
         }
-        wins as f64 / smart_matches as f64
-    } else {
-        0.0
-    };
-
-    // 5. Match play vs frozen checkpoint
-    let ckpt_wr = if checkpoint_matches > 0 {
-        if let Some(ref_net) = baseline_net {
-            let mut wins = 0;
-            let per_side = checkpoint_matches / 2;
-            for q_team in 0..2u8 {
-                for _ in 0..per_side {
-                    if play_match_eval(&mut q_net, q_team, "checkpoint", 0, Some(ref_net), &mut rng) {
-                        wins += 1;
-                    }
-                }
-            }
-            wins as f64 / checkpoint_matches as f64
-        } else {
-            0.0
-        }
+        wins as f64 / isdd_matches as f64
     } else {
         0.0
     };
 
     let elapsed = start.elapsed().as_secs_f64();
-    EvalResult { deal_wr, rand_wr, naive_wr, smart_wr, ckpt_wr, elapsed }
+    EvalResult { rand_wr, ckpt_wr, isdd_wr, elapsed }
 }
 
-/// Play a single deal for evaluation. Returns true if Q-team wins.
-fn play_deal_eval(
-    q_net: &mut DmcNet,
-    q_team: u8,
-    baseline: &str,
-    time_ms: u32,
-    mut baseline_net: Option<&mut DmcNet>,
-    rng: &mut StdRng,
-) -> bool {
-    let dealer = rng.gen_range(0..4u8);
-    let mut state = GameState::deal_random(dealer, rng);
-    let mut tracking = colver_core::dmc_obs::EnvTracking::new();
-    tracking.dealer = dealer;
-
-    let use_smart = baseline == "smart";
-    let mut naive_search = NaiveIsMctsSearch::new();
-    let mut smart_searches: Option<[SmartIsMctsSearch; 4]> = if use_smart {
-        let mut s = [
-            SmartIsMctsSearch::new(), SmartIsMctsSearch::new(),
-            SmartIsMctsSearch::new(), SmartIsMctsSearch::new(),
-        ];
-        for (p, search) in s.iter_mut().enumerate() {
-            search.init_deal(&state, p as u8, true);
-        }
-        Some(s)
-    } else {
-        None
-    };
-
-    while !state.is_terminal() {
-        let player = state.current_player();
-        let team = GameState::player_team(player);
-
-        let action = if state.phase == Phase::Bidding {
-            bid_eval::improved_bid(&state)
-        } else if team == q_team {
-            // Q-network action
-            let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
-            let legal_mask = state.legal_actions() as u32;
-            let (best, _) = q_net.best_action(&obs, legal_mask);
-            best
-        } else {
-            // Baseline action
-            match baseline {
-                "random" => {
-                    let mask = state.legal_actions();
-                    let count = mask.count_ones();
-                    let idx = rng.gen_range(0..count);
-                    rollout::select_nth_bit(mask, idx)
-                }
-                "naive" => {
-                    let config = NaiveIsMctsConfig {
-                        time_limit_ms: Some(time_ms),
-                        ..Default::default()
-                    };
-                    naive_search.search(&state, &config, rng)
-                }
-                "smart" => {
-                    let config = SmartIsMctsConfig {
-                        time_limit_ms: Some(time_ms),
-                        ..Default::default()
-                    };
-                    let searches = smart_searches.as_mut().unwrap();
-                    searches[player as usize].search(&state, &config, rng)
-                }
-                "checkpoint" => {
-                    let net = baseline_net.as_deref_mut().unwrap();
-                    let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
-                    let legal_mask = state.legal_actions() as u32;
-                    let (best, _) = net.best_action(&obs, legal_mask);
-                    best
-                }
-                _ => unreachable!(),
-            }
-        };
-
-        // Record action for Smart IS-MCTS beliefs
-        if let Some(ref mut searches) = smart_searches {
-            for search in searches.iter_mut() {
-                search.record_action(&state, player, action);
-            }
-        }
-
-        tracking.track_action(&state, action);
-        state.step(action);
-    }
-
-    let rewards = state.rewards();
-    rewards[q_team as usize] > rewards[1 - q_team as usize]
-}
-
-/// Play a match to 2000 for evaluation.
+/// Play a match to 2000 for evaluation (vs random or checkpoint).
+/// Both Q-net team and opponent use NN bid if available, else improved_v2.
 fn play_match_eval(
     q_net: &mut DmcNet,
     q_team: u8,
     baseline: &str,
-    time_ms: u32,
-    mut baseline_net: Option<&mut DmcNet>,
+    baseline_net: &mut Option<DmcNet>,
+    bid_net: &mut Option<BidNet>,
     rng: &mut StdRng,
 ) -> bool {
     let mut q_total = 0.0f32;
@@ -342,27 +278,12 @@ fn play_match_eval(
         let mut tracking = colver_core::dmc_obs::EnvTracking::new();
         tracking.dealer = dealer;
 
-        let use_smart = baseline == "smart";
-        let mut naive_search = NaiveIsMctsSearch::new();
-        let mut smart_searches: Option<[SmartIsMctsSearch; 4]> = if use_smart {
-            let mut s = [
-                SmartIsMctsSearch::new(), SmartIsMctsSearch::new(),
-                SmartIsMctsSearch::new(), SmartIsMctsSearch::new(),
-            ];
-            for (p, search) in s.iter_mut().enumerate() {
-                search.init_deal(&state, p as u8, true);
-            }
-            Some(s)
-        } else {
-            None
-        };
-
         while !state.is_terminal() {
             let player = state.current_player();
             let team = GameState::player_team(player);
 
             let action = if state.phase == Phase::Bidding {
-                bid_eval::improved_bid(&state)
+                eval_bid_action(&state, &tracking.bid_history, bid_net)
             } else if team == q_team {
                 let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
                 let legal_mask = state.legal_actions() as u32;
@@ -376,23 +297,8 @@ fn play_match_eval(
                         let idx = rng.gen_range(0..count);
                         rollout::select_nth_bit(mask, idx)
                     }
-                    "naive" => {
-                        let config = NaiveIsMctsConfig {
-                            time_limit_ms: Some(time_ms),
-                            ..Default::default()
-                        };
-                        naive_search.search(&state, &config, rng)
-                    }
-                    "smart" => {
-                        let config = SmartIsMctsConfig {
-                            time_limit_ms: Some(time_ms),
-                            ..Default::default()
-                        };
-                        let searches = smart_searches.as_mut().unwrap();
-                        searches[player as usize].search(&state, &config, rng)
-                    }
                     "checkpoint" => {
-                        let net = baseline_net.as_deref_mut().unwrap();
+                        let net = baseline_net.as_mut().unwrap();
                         let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
                         let legal_mask = state.legal_actions() as u32;
                         let (best, _) = net.best_action(&obs, legal_mask);
@@ -402,11 +308,70 @@ fn play_match_eval(
                 }
             };
 
-            if let Some(ref mut searches) = smart_searches {
-                for search in searches.iter_mut() {
-                    search.record_action(&state, player, action);
-                }
+            tracking.track_action(&state, action);
+            state.step(action);
+        }
+
+        let rewards = state.rewards();
+        q_total += rewards[q_team as usize];
+        opp_total += rewards[1 - q_team as usize];
+        if q_total >= 2000.0 || opp_total >= 2000.0 {
+            break;
+        }
+    }
+    q_total >= 2000.0
+}
+
+/// Play a match to 2000 vs IS-DD opponent.
+fn play_match_eval_isdd(
+    q_net: &mut DmcNet,
+    q_team: u8,
+    time_ms: u32,
+    bid_net: &mut Option<BidNet>,
+    rng: &mut StdRng,
+) -> bool {
+    let isdd_config = IsDdConfig {
+        time_limit_ms: Some(time_ms),
+        ..Default::default()
+    };
+
+    let mut q_total = 0.0f32;
+    let mut opp_total = 0.0f32;
+    for _ in 0..50 {
+        let dealer = rng.gen_range(0..4u8);
+        let mut state = GameState::deal_random(dealer, rng);
+        let mut tracking = colver_core::dmc_obs::EnvTracking::new();
+        tracking.dealer = dealer;
+
+        // Initialize IS-DD searches for all 4 players
+        let mut isdd_searches = [
+            IsDdSearch::new(), IsDdSearch::new(),
+            IsDdSearch::new(), IsDdSearch::new(),
+        ];
+        for (p, search) in isdd_searches.iter_mut().enumerate() {
+            search.init_deal(&state, p as u8, true);
+        }
+
+        while !state.is_terminal() {
+            let player = state.current_player();
+            let team = GameState::player_team(player);
+
+            let action = if state.phase == Phase::Bidding {
+                eval_bid_action(&state, &tracking.bid_history, bid_net)
+            } else if team == q_team {
+                let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
+                let legal_mask = state.legal_actions() as u32;
+                let (best, _) = q_net.best_action(&obs, legal_mask);
+                best
+            } else {
+                isdd_searches[player as usize].search(&state, &isdd_config, rng)
+            };
+
+            // Record action for IS-DD beliefs
+            for search in isdd_searches.iter_mut() {
+                search.record_action(&state, player, action);
             }
+
             tracking.track_action(&state, action);
             state.step(action);
         }
@@ -444,6 +409,34 @@ fn main() {
         (1.0 - args.pool_frac - args.random_frac) * 100.0,
         args.pool_frac * 100.0,
         args.random_frac * 100.0);
+
+    // Load bid model
+    let has_bid_model = if let Some(ref path) = args.bid_model {
+        println!("Bid model: {}", path);
+        true
+    } else {
+        println!("Bid model: none (using improved_v2 for all bidding)");
+        false
+    };
+    if has_bid_model {
+        println!("Bid annealing: {:.0}% -> {:.0}% NN bid over {}M steps",
+            args.nn_bid_start * 100.0, args.nn_bid_end * 100.0,
+            args.nn_bid_anneal_steps / 1_000_000);
+    }
+
+    // Print eval config
+    let mut eval_parts = Vec::new();
+    if args.eval_random_matches > 0 {
+        eval_parts.push(format!("{} rand", args.eval_random_matches));
+    }
+    if args.eval_checkpoint.is_some() && args.eval_checkpoint_matches > 0 {
+        eval_parts.push(format!("{} ckpt", args.eval_checkpoint_matches));
+    }
+    if args.eval_isdd_matches > 0 {
+        eval_parts.push(format!("{} isdd ({}ms/move)", args.eval_isdd_matches, args.eval_isdd_time_ms));
+    }
+    println!("Eval (every {}): {}", args.eval_freq, eval_parts.join(" + "));
+
     if args.step_offset > 0 {
         println!("Step offset: {} (steps will display as {}..{})",
             args.step_offset, args.step_offset + 1, args.step_offset + args.steps);
@@ -465,6 +458,11 @@ fn main() {
         net
     });
 
+    // Load bid model for eval (separate instance to avoid borrow conflicts with training env)
+    let mut eval_bid_net: Option<BidNet> = args.bid_model.as_ref().and_then(|path| {
+        BidNet::load(path).ok()
+    });
+
     // Initialize replay buffer
     let mut replay_buffer = PrioritizedReplayBuffer::new(args.buffer_size, args.per_alpha);
 
@@ -472,10 +470,22 @@ fn main() {
     let mut vec_env = VecTrainingEnv::new_with_seed(args.num_envs, args.seed);
     let mut rng = StdRng::seed_from_u64(args.seed);
 
-    // Randomize bid strategies
-    let bid_strategies: Vec<u8> = (0..args.num_envs).map(|_| rng.gen_range(0..NUM_BID_STRATEGIES)).collect();
-    vec_env.set_bid_strategies(&bid_strategies);
-    let mut bid_strategies = bid_strategies;
+    // Load bid model into VecTrainingEnv for training bidding
+    if let Some(ref path) = args.bid_model {
+        if let Err(e) = vec_env.load_bid_model(path) {
+            eprintln!("WARNING: Failed to load bid model for training: {}", e);
+        }
+    }
+
+    // Initialize per-team bid strategies
+    let mut bid_strategies: Vec<(u8, u8)> = (0..args.num_envs)
+        .map(|_| {
+            let ns = pick_bid_strategy(&mut rng, 0, has_bid_model, args.nn_bid_start, args.nn_bid_end, args.nn_bid_anneal_steps);
+            let ew = pick_bid_strategy(&mut rng, 0, has_bid_model, args.nn_bid_start, args.nn_bid_end, args.nn_bid_anneal_steps);
+            (ns, ew)
+        })
+        .collect();
+    vec_env.set_bid_strategies_per_team(&bid_strategies);
 
     // Opponent tracking
     let mut opp_type = vec![OPP_SELF; args.num_envs];
@@ -662,8 +672,10 @@ fn main() {
                 }
                 total_episodes += 1;
 
-                // Re-randomize bid strategy
-                bid_strategies[i] = rng.gen_range(0..NUM_BID_STRATEGIES);
+                // Re-randomize bid strategy per team with annealing
+                let ns_strat = pick_bid_strategy(&mut rng, step, has_bid_model, args.nn_bid_start, args.nn_bid_end, args.nn_bid_anneal_steps);
+                let ew_strat = pick_bid_strategy(&mut rng, step, has_bid_model, args.nn_bid_start, args.nn_bid_end, args.nn_bid_anneal_steps);
+                bid_strategies[i] = (ns_strat, ew_strat);
 
                 // Assign opponent type for new deal
                 let roll: f32 = rng.gen();
@@ -679,7 +691,7 @@ fn main() {
             }
         }
         if dones.iter().any(|&d| d) {
-            vec_env.set_bid_strategies(&bid_strategies);
+            vec_env.set_bid_strategies_per_team(&bid_strategies);
         }
 
         // --- Train ---
@@ -749,24 +761,27 @@ fn main() {
             let er = evaluate(
                 &trainer, args.hidden,
                 args.eval_random_matches,
-                args.eval_naive_matches,
-                args.eval_smart_matches,
                 args.eval_checkpoint_matches,
-                args.eval_time_ms,
-                eval_baseline.as_mut(),
+                args.eval_isdd_matches,
+                args.eval_isdd_time_ms,
+                &mut eval_baseline,
+                &mut eval_bid_net,
             );
-            let mut parts = vec![format!("deals {:.0}%", er.deal_wr * 100.0)];
+            let mut parts = Vec::new();
             if args.eval_random_matches > 0 {
                 parts.push(format!("rand {:.0}%", er.rand_wr * 100.0));
             }
-            if args.eval_naive_matches > 0 {
-                parts.push(format!("naive {:.0}%", er.naive_wr * 100.0));
-            }
-            if args.eval_smart_matches > 0 {
-                parts.push(format!("smart {:.0}%", er.smart_wr * 100.0));
-            }
             if eval_baseline.is_some() && args.eval_checkpoint_matches > 0 {
                 parts.push(format!("ckpt {:.0}%", er.ckpt_wr * 100.0));
+            }
+            if args.eval_isdd_matches > 0 {
+                parts.push(format!("isdd {:.0}%", er.isdd_wr * 100.0));
+            }
+            // Log current NN bid fraction
+            if has_bid_model {
+                let nn_progress = (step as f32 / args.nn_bid_anneal_steps as f32).min(1.0);
+                let nn_frac = args.nn_bid_start + (args.nn_bid_end - args.nn_bid_start) * nn_progress;
+                parts.push(format!("nn_bid {:.0}%", nn_frac * 100.0));
             }
             println!("  [EVAL] {} ({:.0}s)", parts.join(" | "), er.elapsed);
         }
@@ -796,24 +811,20 @@ fn main() {
     let er = evaluate(
         &trainer, args.hidden,
         args.eval_random_matches,
-        args.eval_naive_matches,
-        args.eval_smart_matches,
         args.eval_checkpoint_matches,
-        args.eval_time_ms,
-        eval_baseline.as_mut(),
+        args.eval_isdd_matches,
+        args.eval_isdd_time_ms,
+        &mut eval_baseline,
+        &mut eval_bid_net,
     );
-    println!("Deals vs random: {:.1}%", er.deal_wr * 100.0);
     if args.eval_random_matches > 0 {
         println!("Matches vs random: {:.1}%", er.rand_wr * 100.0);
     }
-    if args.eval_naive_matches > 0 {
-        println!("Matches vs naive IS-MCTS: {:.1}%", er.naive_wr * 100.0);
-    }
-    if args.eval_smart_matches > 0 {
-        println!("Matches vs smart IS-MCTS: {:.1}%", er.smart_wr * 100.0);
-    }
     if eval_baseline.is_some() && args.eval_checkpoint_matches > 0 {
         println!("Matches vs checkpoint: {:.1}%", er.ckpt_wr * 100.0);
+    }
+    if args.eval_isdd_matches > 0 {
+        println!("Matches vs IS-DD: {:.1}%", er.isdd_wr * 100.0);
     }
     println!("Eval time: {:.0}s", er.elapsed);
     println!("Total training time: {:.0}s", step_start.elapsed().as_secs_f64());

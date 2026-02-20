@@ -351,30 +351,47 @@ function showGameResult(state) {
     const resultEl = document.getElementById('game-result');
     resultEl.classList.remove('hidden');
 
-    let ns = state.points[0], ew = state.points[1];
-    // Add belote bonus (20 points) to displayed totals
-    const hasBeloteNS = state.belote && state.belote[0] === 2;
-    const hasBeloteEW = state.belote && state.belote[1] === 2;
-    if (hasBeloteNS) ns += 20;
-    if (hasBeloteEW) ew += 20;
-    const beloteNS = hasBeloteNS ? ' <span class="belote-note">(dont belote)</span>' : '';
-    const beloteEW = hasBeloteEW ? ' <span class="belote-note">(dont belote)</span>' : '';
     // Use rewards (contract-aware scoring) to determine victory/defeat
     const rewards = state.rewards;
-    const isVictory = rewards ? rewards[0] > rewards[1] : ns > ew;
-    const isDraw = rewards ? rewards[0] === rewards[1] : ns === ew;
+    const isVictory = rewards ? rewards[0] > rewards[1] : state.points[0] > state.points[1];
+    const isDraw = rewards ? rewards[0] === rewards[1] : state.points[0] === state.points[1];
     const titleText = isVictory ? 'Victoire' : isDraw ? 'Egalite' : 'Defaite';
     const titleClass = isVictory ? 'victory' : isDraw ? 'draw' : 'defeat';
 
     const contract = contractStr(state.contract);
+    const sd = state.score_detail;
+
+    let scoresHtml = '';
+    if (sd) {
+        const teamNames = ['NS', 'EO'];
+        const contractTeamName = teamNames[sd.contract_team];
+        const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
+        const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
+        const suitSymbols = ['\u2660', '\u2665', '\u2666', '\u2663'];
+        scoresHtml += `<div class="result-contract-detail ${contractClass}">${sd.contract_value}${suitSymbols[state.contract.trump]} par ${contractTeamName} — ${contractResult}</div>`;
+        scoresHtml += `<div class="result-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
+        if (sd.belote[0] > 0 || sd.belote[1] > 0) {
+            const parts = [];
+            if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote NS`);
+            if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote EO`);
+            scoresHtml += `<div class="result-score-line">${parts.join(' / ')}</div>`;
+        }
+        scoresHtml += `<div class="result-final-scores">Score : NS ${sd.final_scores[0]} — EO ${sd.final_scores[1]}</div>`;
+    } else {
+        let ns = state.points[0], ew = state.points[1];
+        const hasBeloteNS = state.belote && state.belote[0] === 2;
+        const hasBeloteEW = state.belote && state.belote[1] === 2;
+        if (hasBeloteNS) ns += 20;
+        if (hasBeloteEW) ew += 20;
+        const beloteNS = hasBeloteNS ? ' <span class="belote-note">(dont belote)</span>' : '';
+        const beloteEW = hasBeloteEW ? ' <span class="belote-note">(dont belote)</span>' : '';
+        scoresHtml = `<div class="team-ns">NS : ${ns}${beloteNS}</div><div class="team-ew">EO : ${ew}${beloteEW}</div>`;
+    }
 
     resultEl.innerHTML =
         `<div class="result-title ${titleClass}">${titleText}</div>` +
         (contract ? `<div class="result-contract">${contract}</div>` : '') +
-        `<div class="result-scores">` +
-            `<div class="team-ns">NS : ${ns}${beloteNS}</div>` +
-            `<div class="team-ew">EO : ${ew}${beloteEW}</div>` +
-        `</div>` +
+        `<div class="result-scores">${scoresHtml}</div>` +
         `<div class="result-buttons">` +
             `<button class="result-restart" onclick="document.getElementById('start-game').click()">Nouvelle partie</button>` +
             `<button class="result-analyse" id="result-analyse-btn">Analyser</button>` +
