@@ -48,10 +48,42 @@ pub fn solve(state: &GameState) -> [u8; 2] {
     [ns_pts as u8, ew_pts as u8]
 }
 
+/// Solve a playing-phase state using an external TT buffer (avoids repeated 2MB allocations).
+/// The TT is cleared at the start of each call. History and killers are stack-allocated.
+pub fn solve_reuse_tt(state: &GameState, tt_buf: &mut [u64]) -> [u8; 2] {
+    debug_assert_eq!(state.phase, Phase::Playing);
+
+    // Clear TT for this solve
+    tt_buf.iter_mut().for_each(|x| *x = 0);
+
+    let mut history = [[0u32; 32]; 2];
+    let mut killers = [[EMPTY; 2]; 32];
+    let ns_pts = alphabeta(state, 0, 252, tt_buf, &mut history, &mut killers);
+
+    let ew_pts = if ns_pts == 252 || ns_pts == 0 {
+        252 - ns_pts
+    } else {
+        162 - ns_pts
+    };
+
+    [ns_pts as u8, ew_pts as u8]
+}
+
 /// Convenience: create DD state and solve for a specific trump suit.
 pub fn solve_for_trump(hands: [CardSet; 4], dealer: u8, trump: u8) -> [u8; 2] {
     let state = GameState::setup_dd(dealer, hands, trump);
     solve(&state)
+}
+
+/// Convenience: solve for trump using an external TT buffer.
+pub fn solve_for_trump_reuse_tt(
+    hands: [CardSet; 4],
+    dealer: u8,
+    trump: u8,
+    tt_buf: &mut [u64],
+) -> [u8; 2] {
+    let state = GameState::setup_dd(dealer, hands, trump);
+    solve_reuse_tt(&state, tt_buf)
 }
 
 /// Allocate a fresh TT buffer for reuse across multiple `solve_with_scores` calls.
@@ -942,6 +974,24 @@ mod tests {
         assert_eq!(s1.count, s2.count);
         for i in 0..s1.count {
             assert_eq!(s1.scores[i], s2.scores[i]);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_solve_reuse_tt_matches_solve() {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(123);
+        let mut tt = new_tt_buffer();
+
+        for _ in 0..10 {
+            let state = GameState::deal_random(0, &mut rng);
+            let hands = state.hands;
+            for trump in 0..4u8 {
+                let expected = solve_for_trump(hands, 0, trump);
+                let actual = solve_for_trump_reuse_tt(hands, 0, trump, &mut tt);
+                assert_eq!(expected, actual, "Mismatch for trump={}", trump);
+            }
         }
     }
 

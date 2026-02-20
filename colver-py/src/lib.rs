@@ -11,6 +11,7 @@ use colver_core::bid_eval;
 use colver_core::bidding;
 use colver_core::card;
 use colver_core::card::Suit;
+use colver_core::bid_net::BidNet;
 use colver_core::dmc_net::DmcNet;
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
@@ -245,6 +246,8 @@ struct Env {
     bid_history: Vec<(u8, u8)>,
     // DMC Q-network (loaded lazily)
     dmc_net: Option<DmcNet>,
+    // Bid Q-network (loaded lazily)
+    bid_net: Option<BidNet>,
 }
 
 #[pymethods]
@@ -265,6 +268,7 @@ impl Env {
             play_order: Vec::with_capacity(32),
             bid_history: Vec::new(),
             dmc_net: None,
+            bid_net: None,
         }
     }
 
@@ -384,6 +388,22 @@ impl Env {
     /// Get maxi_bid action for current state (only valid during bidding phase).
     fn bid_maxi(&self) -> u8 {
         colver_core::maxi::maxi_bid(&self.state)
+    }
+
+    /// Get "Bid à DD" action: NN bidder if model loaded, else improved_v2 fallback.
+    /// Only valid during bidding phase.
+    fn bid_a_dd(&mut self) -> u8 {
+        if self.state.phase != Phase::Bidding {
+            return 0;
+        }
+        if let Some(ref mut net) = self.bid_net {
+            let obs = colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history);
+            let legal = self.state.legal_actions();
+            let (action, _) = net.best_action(&obs, legal);
+            action
+        } else {
+            bid_eval::improved_v2_bid(&self.state)
+        }
     }
 
     /// Get maxi play action (perfect-info convention-linked heuristic).
@@ -664,6 +684,7 @@ impl Env {
             play_order: Vec::new(),
             bid_history: Vec::new(),
             dmc_net: None,
+            bid_net: None,
         })
     }
 
@@ -998,6 +1019,58 @@ impl Env {
         Ok(dict)
     }
 
+    /// Load NN bid model weights from a raw binary file.
+    /// Call once, then use action_bid_nn() for inference.
+    #[pyo3(signature = (path, hidden=None))]
+    fn load_bid_model(&mut self, path: &str, hidden: Option<usize>) -> PyResult<()> {
+        let h = hidden.unwrap_or(256);
+        let net = BidNet::load_with_hidden(path, h).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to load bid model: {}", e))
+        })?;
+        self.bid_net = Some(net);
+        Ok(())
+    }
+
+    /// Check if bid model is loaded.
+    fn has_bid_model(&self) -> bool {
+        self.bid_net.is_some()
+    }
+
+    /// Get NN bid action with Q-value statistics.
+    /// Returns dict: {best_action, q_values: [(action, q)...]}
+    /// Only valid during bidding phase. Requires load_bid_model() first.
+    fn action_bid_nn<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        if self.state.phase != Phase::Bidding {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Bid NN only valid during bidding phase",
+            ));
+        }
+        let net = self.bid_net.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Call load_bid_model() first")
+        })?;
+
+        let obs = colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history);
+        let legal = self.state.legal_actions();
+        let (best_action, q_values) = net.best_action(&obs, legal);
+
+        let dict = PyDict::new_bound(py);
+        dict.set_item("best_action", best_action)?;
+        dict.set_item("q_values", q_values)?;
+        Ok(dict)
+    }
+
+    /// Get the 114-float bidding observation vector.
+    fn get_bid_observation(&self) -> Vec<f32> {
+        colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history)
+    }
+
+    /// Get the 43-float legal bid action mask.
+    fn get_bid_mask(&self) -> Vec<f32> {
+        let mut mask = vec![0.0f32; 43];
+        colver_core::bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+        mask
+    }
+
     /// Convert game state to CFN (Contrée FEN Notation) string.
     fn to_cfn(&self) -> String {
         self.state.to_cfn()
@@ -1053,6 +1126,7 @@ impl Env {
             play_order,
             bid_history,
             dmc_net: None,
+            bid_net: None,
         })
     }
 

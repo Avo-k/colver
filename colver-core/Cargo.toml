@@ -104,6 +104,27 @@ path = "src/tests/train_dmc.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
+name = "train_bid_nn"
+path = "src/tests/train_bid_nn.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
+name = "bid_compare"
+path = "src/tests/bid_compare.rs"
+
+[[bin]]
+name = "dd_calibrate"
+path = "src/tests/dd_calibrate.rs"
+
+[[bin]]
+name = "bid_nn_eval"
+path = "src/tests/bid_nn_eval.rs"
+
+[[bin]]
+name = "bid_nn_tournament"
+path = "src/tests/bid_nn_tournament.rs"
+
+[[bin]]
 name = "dd_bench"
 path = "src/tests/dd_bench.rs"
 

@@ -83,7 +83,7 @@ AI_TIME_MS = 100  # Fixed time budget for all search-based AIs
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "doudou"
         self.human_seat = human_seat
@@ -101,6 +101,8 @@ class PlaySession(TrickTracker):
             self.env.dede_init()
         if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
             self.env.load_dmc_model(dmc_model_path)
+        if bid_model_path:
+            self.env.load_bid_model(bid_model_path)
 
     def get_state(self, human_seat=2):
         phase = self.env.phase()
@@ -160,7 +162,7 @@ class PlaySession(TrickTracker):
         if phase == 0:
             if ai_type == "maxi_bid":
                 return int(self.env.bid_maxi())
-            return int(self.env.bid_improved())
+            return int(self.env.bid_a_dd())
         else:
             if ai_type == "doudou" and self.env.has_dmc_model():
                 result = self.env.action_dmc_with_stats()
@@ -208,10 +210,11 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None, dealer=None, hands=None, env=None):
+    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, dealer=None, hands=None, env=None):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
+        bid_model_path: path to .bin weights file for Bid à DD (NN bidder)
         dealer: optional dealer seat (for custom deals)
         hands: optional list of 4 hands (for custom deals)
         env: optional pre-built Env (e.g. from CFN), takes priority over dealer/hands
@@ -231,6 +234,10 @@ class WatchSession(TrickTracker):
         # Load DMC model if any seat uses DouDou
         if dmc_model_path and any(a == "doudou" for a in agents.values()):
             self.env.load_dmc_model(dmc_model_path)
+
+        # Load bid NN model (Bid à DD)
+        if bid_model_path:
+            self.env.load_bid_model(bid_model_path)
 
         # Initialize IS-DD if any seat uses Dédé
         self.uses_dede = any(a == "dede" for a in agents.values())
@@ -264,12 +271,12 @@ class WatchSession(TrickTracker):
         phase = int(self.env.phase())
         agent_type = self.agents.get(player, "random")
 
-        # Bidding phase: maxi uses its own bidding, others use improved_bid
+        # Bidding phase: maxi uses its own bidding, others use bid_a_dd (NN if loaded, else improved_v2)
         if phase == 0:
             if agent_type == "maxi_bid":
                 action = int(self.env.bid_maxi())
             else:
-                action = int(self.env.bid_improved())
+                action = int(self.env.bid_a_dd())
             name = colver.Env.action_name(action, phase)
             bid_eval = self.env.evaluate_hand(player)
             stats = {

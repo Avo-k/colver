@@ -13,6 +13,10 @@ pub enum BidFunction {
     PetitBide,
     Moelleux,
     Maxi,
+    /// DD-based bidding ("bid à DD") — uses solver + determinization.
+    /// Creates a temporary DdBidder per call (requires `rand` feature).
+    #[cfg(feature = "rand")]
+    BidADd,
 }
 
 impl BidFunction {
@@ -27,6 +31,13 @@ impl BidFunction {
             BidFunction::PetitBide => petit_bide_bid(state),
             BidFunction::Moelleux => moelleux_bid(state),
             BidFunction::Maxi => crate::maxi::maxi_bid(state),
+            #[cfg(feature = "rand")]
+            BidFunction::BidADd => {
+                let mut bidder =
+                    crate::dd_bid::DdBidder::new(crate::dd_bid::DdBidConfig::default());
+                let mut rng = rand::thread_rng();
+                bidder.bid(state, &mut rng)
+            }
         }
     }
 }
@@ -1483,7 +1494,7 @@ fn roro_intervene(state: &GameState, hand: CardSet, legal: &u64) -> u8 {
 // ---------------------------------------------------------------------------
 
 /// Quality gate: suit must have at least one of J, 9, A, 10, or 3+ cards.
-fn quality_ok(hand: CardSet, suit: Suit) -> bool {
+pub fn quality_ok(hand: CardSet, suit: Suit) -> bool {
     let bits = suit_bits(hand, suit);
     let has_j = bits & (1 << 3) != 0;
     let has_9 = bits & (1 << 2) != 0;

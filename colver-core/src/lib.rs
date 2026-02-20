@@ -13,6 +13,8 @@ pub mod maxi;
 pub mod solver;
 pub mod dmc_net;
 pub mod dmc_obs;
+pub mod bid_obs;
+pub mod bid_net;
 #[cfg(feature = "rand")]
 pub mod dmc_replay;
 #[cfg(feature = "rand")]
@@ -29,8 +31,14 @@ pub mod smart_ismcts;
 pub mod single_tree_ismcts;
 #[cfg(feature = "rand")]
 pub mod is_dd;
+#[cfg(feature = "rand")]
+pub mod dd_bid;
+#[cfg(feature = "rand")]
+pub mod bid_train_env;
 #[cfg(feature = "dmc_train")]
 pub mod dmc_candle;
+#[cfg(feature = "dmc_train")]
+pub mod bid_candle;
 #[cfg(feature = "nn")]
 pub mod features;
 #[cfg(feature = "nn")]

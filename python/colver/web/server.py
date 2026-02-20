@@ -42,6 +42,21 @@ if doudou_available:
 else:
     print("[server] No DouDou35 model found and download failed")
 
+# Bid NN model path (DD-trained bidder)
+_bid_model = _colver_pkg.bid_model_path()
+if _bid_model is None:
+    try:
+        _bid_model = _colver_pkg.download_bid_model()
+    except Exception as e:
+        print(f"[server] Bid model download failed: {e}")
+        _bid_model = None
+
+BID_MODEL_PATH = str(_bid_model) if _bid_model else None
+if _bid_model:
+    print(f"[server] Bid à DD model available at {BID_MODEL_PATH}")
+else:
+    print("[server] No Bid à DD model found, using improved_v2 fallback")
+
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
 
@@ -123,7 +138,8 @@ async def websocket_endpoint(ws: WebSocket):
                         ai_types[seat] = opponent_ai
                 needs_dmc = any(t == "doudou" for t in ai_types.values())
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path)
+                bid_path = BID_MODEL_PATH
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -206,6 +222,7 @@ async def websocket_endpoint(ws: WebSocket):
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
                 )
                 replay_session = None
 
@@ -339,6 +356,7 @@ async def websocket_endpoint(ws: WebSocket):
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
                     env=cfn_env,
                 )
                 replay_session = None
@@ -363,6 +381,7 @@ async def websocket_endpoint(ws: WebSocket):
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
                     dealer=game_data["dealer"],
                     hands=game_data["hands"],
                 )

@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 _DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.0/dmc_35.bin"
+_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.0/bid_nn_final.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
@@ -16,6 +17,23 @@ def model_path(name: str = "dmc_35.bin") -> Path | None:
     Returns *None* if the file is not found.
     """
     env = os.environ.get("COLVER_MODEL_PATH")
+    if env:
+        p = Path(env)
+        if p.is_file():
+            return p
+    p = _CACHE_DIR / name
+    if p.is_file():
+        return p
+    return None
+
+
+def bid_model_path(name: str = "bid_nn_final.bin") -> Path | None:
+    """Find a bid model weights file.
+
+    Checks ``COLVER_BID_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``.
+    Returns *None* if the file is not found.
+    """
+    env = os.environ.get("COLVER_BID_MODEL_PATH")
     if env:
         p = Path(env)
         if p.is_file():
@@ -51,6 +69,36 @@ def download_model(
         return dest
 
     url = url or _DEFAULT_URL
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading {url}")
+    fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
+    os.close(fd)
+    try:
+        urlretrieve(url, tmp, reporthook=_progress_hook)
+        print()  # newline after progress
+        os.replace(tmp, dest)
+    except Exception:
+        os.unlink(tmp)
+        raise
+    print(f"Saved to {dest}")
+    return dest
+
+
+def download_bid_model(
+    url: str | None = None,
+    name: str = "bid_nn_final.bin",
+    force: bool = False,
+) -> Path:
+    """Download bid model weights to ``~/.cache/colver/models/``.
+
+    Returns the local path to the downloaded file.
+    """
+    dest = _CACHE_DIR / name
+    if dest.is_file() and not force:
+        print(f"Bid model already cached at {dest}")
+        return dest
+
+    url = url or _DEFAULT_BID_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Downloading {url}")
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
