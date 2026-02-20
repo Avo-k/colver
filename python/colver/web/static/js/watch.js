@@ -166,6 +166,7 @@ function loadFromCfn() {
     const input = document.getElementById('cfn-input');
     const cfn = input.value.trim();
     if (!cfn) return;
+    watchAutoStarted = true;
     const agents = {};
     document.querySelectorAll('.agent-select').forEach(sel => {
         agents[sel.dataset.seat] = sel.value;
@@ -287,6 +288,18 @@ function renderDdOracleBox(ddScores) {
         document.getElementById(`dd-${suitKeys[i]}-ew`).textContent = ddScores[i][1];
     }
 }
+
+// Auto-start a game when the Regarder tab is first activated
+let watchAutoStarted = false;
+document.querySelector('[data-tab="watch"]').addEventListener('click', () => {
+    if (!watchAutoStarted) {
+        watchAutoStarted = true;
+        setTimeout(() => {
+            const btn = document.getElementById('watch-start');
+            if (btn && !btn.disabled) btn.click();
+        }, 100);
+    }
+});
 
 // Message handlers
 onMessage('watch_started', (data) => {
