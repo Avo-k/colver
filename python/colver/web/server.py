@@ -383,13 +383,50 @@ async def websocket_endpoint(ws: WebSocket):
                     cfn_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
                 await ws.send_json(cfn_started_msg)
 
+            elif msg_type == "bid_eval":
+                hand = data.get("hand", [])
+                prior_passes = min(3, max(0, int(data.get("prior_passes", 0))))
+                if len(hand) != 8:
+                    await ws.send_json({"type": "bid_eval_result", "error": "8 cartes requises"})
+                    continue
+                if not BID_MODEL_PATH:
+                    await ws.send_json({"type": "bid_eval_result", "error": "Modèle d'enchères non disponible"})
+                    continue
+                try:
+                    import random as _random
+                    remaining = list(set(range(32)) - set(hand))
+                    _random.shuffle(remaining)
+                    hands = [None] * 4
+                    seat = 2  # always evaluate as Sud (seat 2)
+                    hands[seat] = sorted(hand)
+                    others = [s for s in range(4) if s != seat]
+                    for i, p in enumerate(others):
+                        hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
+                    dealer = (seat - 1 - prior_passes + 16) % 4
+                    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+                    env.load_bid_model(BID_MODEL_PATH)
+                    for _ in range(prior_passes):
+                        env.step(0)  # PASS
+                    result = env.action_bid_nn()
+                    await ws.send_json({
+                        "type": "bid_eval_result",
+                        "q_values": [[int(a), round(float(q), 3)] for a, q in result["q_values"]],
+                        "best_action": int(result["best_action"]),
+                    })
+                except Exception as e:
+                    await ws.send_json({"type": "bid_eval_result", "error": str(e)})
+
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
                 game_data = await db.get_game(game_id)
                 if not game_data:
                     await ws.send_json({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
                     continue
-                agents = {int(k): v for k, v in game_data["agents"].items()}
+                # Client may override agents (e.g. from Watch tab's dropdowns)
+                if "agents" in data:
+                    agents = {int(k): v for k, v in data["agents"].items()}
+                else:
+                    agents = {int(k): v for k, v in game_data["agents"].items()}
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,

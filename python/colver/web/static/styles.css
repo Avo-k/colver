@@ -1328,53 +1328,94 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #fff8e1;
 }
 
-/* Deal mode */
-#deal-panel {
+/* ===== DEAL MODE ===== */
+#deal-panel, #annonces-panel {
     overflow-y: auto;
     max-height: calc(100vh - 60px);
 }
 
-#deal-config {
+#deal-config, #annonces-config {
     flex-direction: column;
     align-items: stretch;
 }
 
-#hand-editor {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+/* Card palette: 4-row grid (one per suit) with suit label column */
+#card-palette, #annonces-palette {
+    display: grid;
+    grid-template-columns: 28px repeat(8, var(--palette-w));
+    gap: 3px 2px;
+    align-items: center;
 }
 
-#card-palette {
-    display: flex;
-    gap: 2px;
-    flex-wrap: wrap;
-    max-width: 800px;
+.palette-suit-label {
+    font-size: 1.1rem;
+    text-align: center;
+    font-weight: 700;
+    user-select: none;
+    line-height: 1;
 }
 
-#card-palette .card {
+#card-palette .card, #annonces-palette .card {
     width: var(--palette-w);
     height: var(--palette-h);
-    cursor: grab;
 }
+
+#card-palette .card { cursor: grab; }
 #card-palette .card.assigned { opacity: 0.25; }
 #card-palette .card.dragging { opacity: 0.4; }
 #card-palette.drag-over { background: rgba(212, 175, 55, 0.1); border-radius: 6px; }
 
-/* Drop zones: 2x2 grid */
-#drop-zones {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    max-width: 800px;
+/* Annonces palette: clickable cards */
+#annonces-palette .card {
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+#annonces-palette .card.ann-selected {
+    outline: 2.5px solid #d4af37;
+    outline-offset: -1px;
+    transform: translateY(-5px);
+    box-shadow: 0 6px 14px rgba(212, 175, 55, 0.4);
+    z-index: 2;
+}
+#annonces-palette .card.ann-faded {
+    opacity: 0.22;
+    cursor: default;
 }
 
+/* Deal table: cardinal direction layout */
+#deal-table {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.deal-row {
+    display: flex;
+    justify-content: center;
+}
+
+.deal-row-middle {
+    align-items: center;
+    gap: 10px;
+}
+
+#deal-center-area {
+    width: clamp(60px, 8vw, 100px);
+    height: clamp(60px, 8vw, 100px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px;
+    background: rgba(0,0,0,0.15);
+}
+
+/* Drop zones */
 .drop-zone {
     background: rgba(0, 0, 0, 0.25);
     border: 2px dashed rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     padding: 6px 8px;
-    min-height: 80px;
+    min-height: var(--dz-card-h);
+    min-width: calc(var(--dz-card-w) + 16px);
     transition: border-color 0.2s, background 0.2s;
 }
 
@@ -1405,6 +1446,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-bottom: 4px;
+    white-space: nowrap;
 }
 
 .drop-zone.ns .drop-zone-label { color: #a5d6a7; }
@@ -1417,61 +1459,71 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     letter-spacing: 0;
 }
 
-.drop-zone-cards {
+/* N/S drop zone cards: horizontal stacking */
+.drop-zone.ns .drop-zone-cards {
     display: flex;
     flex-wrap: nowrap;
     gap: 0;
     min-height: var(--dz-card-h);
     align-items: flex-end;
 }
-
-.drop-zone-cards .card {
+.drop-zone.ns .drop-zone-cards .card {
     width: var(--dz-card-w);
     height: var(--dz-card-h);
     margin-left: var(--dz-card-overlap);
     cursor: pointer;
     transition: transform 0.15s, box-shadow 0.15s;
 }
-
-.drop-zone-cards .card:first-child {
-    margin-left: 0;
-}
-
-.drop-zone-cards .card:hover {
+.drop-zone.ns .drop-zone-cards .card:first-child { margin-left: 0; }
+.drop-zone.ns .drop-zone-cards .card:hover {
     transform: translateY(-4px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     z-index: 10;
 }
 
-#deal-options {
+/* E/W drop zone cards: vertical stacking */
+.drop-zone.ew .drop-zone-cards {
     display: flex;
-    gap: 16px;
-    align-items: flex-start;
-    flex-wrap: wrap;
-    margin-top: 8px;
+    flex-direction: column;
+    gap: 0;
+    min-width: var(--dz-card-w);
+    min-height: var(--dz-card-h);
+    align-items: center;
+}
+.drop-zone.ew .drop-zone-cards .card {
+    width: var(--dz-card-w);
+    height: var(--dz-card-h);
+    margin-top: calc(var(--dz-card-h) * -0.6);
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.drop-zone.ew .drop-zone-cards .card:first-child { margin-top: 0; }
+.drop-zone.ew .drop-zone-cards .card:hover {
+    transform: translateX(4px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    z-index: 10;
 }
 
-.deal-agents {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-
-.deal-agents select {
-    min-width: 120px;
-}
-
-#deal-buttons {
+/* Deal bottom bar */
+#deal-bottom-bar {
     display: flex;
     gap: 10px;
-    margin-top: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 4px;
 }
+
+/* Secondary/neutral button style */
+.secondary-btn {
+    background: #4a4a4a;
+    color: #ddd;
+}
+.secondary-btn:hover { background: #5a5a5a; }
 
 #deal-feedback {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-top: 10px;
     padding: 10px 14px;
     background: rgba(76, 175, 80, 0.15);
     border: 1px solid rgba(76, 175, 80, 0.4);
@@ -1482,6 +1534,73 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 .deal-watch-btn {
     margin-left: auto;
+}
+
+/* ===== ANNONCES MODE ===== */
+#annonces-config {
+    max-width: 700px;
+    padding: 16px;
+}
+
+#annonces-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 4px;
+}
+
+.annonces-title {
+    font-size: clamp(1rem, 1.2vw, 1.1rem);
+    font-weight: 600;
+    color: #d4af37;
+}
+
+#annonces-count {
+    font-size: 0.9rem;
+    color: #aaa;
+    font-family: monospace;
+}
+
+#annonces-options {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+#annonces-loading {
+    color: #aaa;
+    font-style: italic;
+    font-size: 0.9rem;
+    padding: 8px 0;
+}
+
+#annonces-results {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-top: 8px;
+    max-width: 380px;
+}
+
+#annonces-results-header {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: #d4af37;
+    margin-bottom: 8px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.annonces-error {
+    color: #ef9a9a;
+    font-size: 0.85rem;
+}
+
+/* Wider visit-name for bid action labels */
+#annonces-results .visit-name {
+    width: 64px;
 }
 
 /* ===== BELOTE ANNOUNCEMENTS ===== */

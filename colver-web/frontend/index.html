@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Colver - Belote Contree</title>
     <base href="/">
-    <link rel="stylesheet" href="static/styles.css?v=9">
+    <link rel="stylesheet" href="static/styles.css?v=10">
 </head>
 <body>
     <header>
@@ -15,6 +15,7 @@
             <button class="tab" data-tab="watch">Regarder</button>
             <button class="tab" data-tab="replay">Rejouer</button>
             <button class="tab" data-tab="deal">Donner</button>
+            <button class="tab" data-tab="annonces">Annonces</button>
             <button class="tab" data-tab="docs">À propos</button>
             <button id="sound-toggle" class="sound-toggle" title="Son on/off">&#128266;</button>
         </nav>
@@ -344,29 +345,33 @@
         <!-- DEAL MODE -->
         <div id="deal-panel" class="panel">
             <div id="deal-config">
-                <h3>Configurer la donne</h3>
-                <div id="hand-editor">
-                    <div id="card-palette"></div>
-                    <div id="drop-zones">
+                <div id="card-palette"></div>
+                <div id="deal-table">
+                    <div class="deal-row">
                         <div class="drop-zone ns" data-player="0">
                             <div class="drop-zone-label">Nord <span class="dz-count">(0/8)</span></div>
                             <div class="drop-zone-cards"></div>
                         </div>
-                        <div class="drop-zone ew" data-player="1">
-                            <div class="drop-zone-label">Est <span class="dz-count">(0/8)</span></div>
-                            <div class="drop-zone-cards"></div>
-                        </div>
-                        <div class="drop-zone ns" data-player="2">
-                            <div class="drop-zone-label">Sud <span class="dz-count">(0/8)</span></div>
-                            <div class="drop-zone-cards"></div>
-                        </div>
+                    </div>
+                    <div class="deal-row deal-row-middle">
                         <div class="drop-zone ew" data-player="3">
                             <div class="drop-zone-label">Ouest <span class="dz-count">(0/8)</span></div>
                             <div class="drop-zone-cards"></div>
                         </div>
+                        <div id="deal-center-area"></div>
+                        <div class="drop-zone ew" data-player="1">
+                            <div class="drop-zone-label">Est <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
+                    </div>
+                    <div class="deal-row">
+                        <div class="drop-zone ns" data-player="2">
+                            <div class="drop-zone-label">Sud <span class="dz-count">(0/8)</span></div>
+                            <div class="drop-zone-cards"></div>
+                        </div>
                     </div>
                 </div>
-                <div id="deal-options">
+                <div id="deal-bottom-bar">
                     <label>Donneur :
                         <select id="deal-dealer">
                             <option value="0">Nord</option>
@@ -375,36 +380,42 @@
                             <option value="3">Ouest</option>
                         </select>
                     </label>
-                    <div class="deal-agents">
-                        <label>N : <select class="deal-agent-select" data-seat="0">
-                            <option value="doudou">DouDou35</option>
-                            <option value="dede">Dédé (IS-DD)</option>
-                            <option value="oracle_dd">Oracle (DD)</option>
-                        </select></label>
-                        <label>E : <select class="deal-agent-select" data-seat="1">
-                            <option value="doudou">DouDou35</option>
-                            <option value="dede">Dédé (IS-DD)</option>
-                            <option value="oracle_dd">Oracle (DD)</option>
-                        </select></label>
-                        <label>S : <select class="deal-agent-select" data-seat="2">
-                            <option value="doudou">DouDou35</option>
-                            <option value="dede">Dédé (IS-DD)</option>
-                            <option value="oracle_dd">Oracle (DD)</option>
-                        </select></label>
-                        <label>O : <select class="deal-agent-select" data-seat="3">
-                            <option value="doudou">DouDou35</option>
-                            <option value="dede">Dédé (IS-DD)</option>
-                            <option value="oracle_dd">Oracle (DD)</option>
-                        </select></label>
-                    </div>
-                </div>
-                <div id="deal-buttons">
-                    <button id="random-deal">Donne aleatoire</button>
+                    <button id="random-deal">Donne aléatoire</button>
+                    <button id="clear-deal" class="secondary-btn">Vider</button>
                     <button id="save-deal">Enregistrer</button>
                 </div>
                 <div id="deal-feedback" class="hidden"></div>
             </div>
         </div>
+
+        <!-- ANNONCES MODE -->
+        <div id="annonces-panel" class="panel">
+            <div id="annonces-config">
+                <div id="annonces-header">
+                    <span class="annonces-title">Évaluation des annonces</span>
+                    <span id="annonces-count">0/8 cartes</span>
+                    <button id="annonces-clear-btn" class="secondary-btn">Vider</button>
+                </div>
+                <div id="annonces-palette"></div>
+                <div id="annonces-options">
+                    <label>Passes avant vous :
+                        <select id="annonces-passes">
+                            <option value="0">0 — premier à parler</option>
+                            <option value="1">1 — deuxième</option>
+                            <option value="2">2 — troisième</option>
+                            <option value="3">3 — dernier</option>
+                        </select>
+                    </label>
+                    <button id="annonces-eval-btn" disabled>Évaluer</button>
+                </div>
+                <div id="annonces-loading" class="hidden">Calcul en cours…</div>
+                <div id="annonces-results" class="hidden">
+                    <div id="annonces-results-header" class="section-title"></div>
+                    <div id="annonces-results-body"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- DOCS -->
         <div id="docs-panel" class="panel">
             <div id="docs-content">
@@ -457,8 +468,17 @@
                     <h4>Donner</h4>
                     <p>
                         Créez une donne personnalisée en glissant les cartes de la palette vers les 4 zones joueurs
-                        (ou utilisez « Donne aléatoire » pour une distribution au hasard). Choisissez le donneur et assignez un agent IA
-                        à chaque place, puis enregistrez la donne. Chargez-la dans Regarder pour observer l'IA la jouer en direct.
+                        (ou utilisez « Donne aléatoire » pour compléter la distribution). Choisissez le donneur,
+                        enregistrez la donne, puis cliquez « Regarder » pour observer l'IA la jouer en direct.
+                    </p>
+                </div>
+
+                <div class="docs-section">
+                    <h4>Annonces</h4>
+                    <p>
+                        Composez une main de 8 cartes en cliquant sur la palette, choisissez votre position dans le tour d'enchères
+                        (combien de passes ont précédé votre tour), puis cliquez « Évaluer » pour voir ce que
+                        <em>Le Bide à Dédé</em> annoncerait — avec les Q-values du réseau de neurones pour chaque action possible.
                     </p>
                 </div>
 
@@ -531,12 +551,13 @@
         </div>
     </div>
 
-    <script src="static/js/sounds.js?v=9"></script>
-    <script src="static/js/main.js?v=9"></script>
-    <script src="static/js/board.js?v=9"></script>
-    <script src="static/js/play.js?v=9"></script>
-    <script src="static/js/watch.js?v=9"></script>
-    <script src="static/js/replay.js?v=9"></script>
-    <script src="static/js/deal.js?v=9"></script>
+    <script src="static/js/sounds.js?v=10"></script>
+    <script src="static/js/main.js?v=10"></script>
+    <script src="static/js/board.js?v=10"></script>
+    <script src="static/js/play.js?v=10"></script>
+    <script src="static/js/watch.js?v=10"></script>
+    <script src="static/js/replay.js?v=10"></script>
+    <script src="static/js/deal.js?v=10"></script>
+    <script src="static/js/annonces.js?v=10"></script>
 </body>
 </html>

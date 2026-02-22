@@ -35,7 +35,6 @@ function createDraggableCard(cardIdx, source) {
         el.classList.remove('dragging');
         dragCardIdx = null;
         dragSource = null;
-        // Clean up all drag-over highlights
         document.querySelectorAll('.drag-over').forEach(z => z.classList.remove('drag-over'));
     });
 
@@ -54,6 +53,13 @@ function initCardPalette() {
     const palette = document.getElementById('card-palette');
     palette.innerHTML = '';
     for (let suit = 0; suit < 4; suit++) {
+        // Suit row label
+        const label = document.createElement('div');
+        label.className = 'palette-suit-label';
+        label.textContent = SUITS[suit];
+        label.style.color = (suit === 1 || suit === 2) ? '#ef9a9a' : '#ddd';
+        palette.appendChild(label);
+
         for (let rank = 0; rank < 8; rank++) {
             const idx = suit * 8 + rank;
             const card = createDraggableCard(idx, 'palette');
@@ -65,7 +71,6 @@ function initCardPalette() {
 }
 
 function initDropZones() {
-    // Drop zones accept cards
     document.querySelectorAll('.drop-zone').forEach(zone => {
         zone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -74,7 +79,6 @@ function initDropZones() {
         });
 
         zone.addEventListener('dragleave', (e) => {
-            // Only remove if leaving the zone itself (not entering a child)
             if (!zone.contains(e.relatedTarget)) {
                 zone.classList.remove('drag-over');
             }
@@ -88,22 +92,18 @@ function initDropZones() {
             const playerIdx = parseInt(zone.dataset.player);
 
             if (dragSource === 'palette') {
-                // From palette to drop zone
                 assignCardToPlayer(cardIdx, playerIdx);
             } else {
-                // From one drop zone to another (or same)
                 const srcPlayer = parseInt(dragSource);
                 if (srcPlayer === playerIdx) return;
-                // Remove from source player
                 removeCardFromPlayer(cardIdx);
-                // Add to target player
                 assignCardToPlayer(cardIdx, playerIdx);
             }
             updateCardDisplay();
         });
     });
 
-    // Palette accepts cards back (drag from drop zone to palette = remove)
+    // Palette: drag from drop zone back = remove
     const palette = document.getElementById('card-palette');
     palette.addEventListener('dragover', (e) => {
         if (dragSource !== 'palette') {
@@ -150,7 +150,7 @@ function removeCardFromPlayer(cardIdx) {
 }
 
 function updateCardDisplay() {
-    // Update palette: fade assigned cards
+    // Palette: fade assigned cards
     for (let i = 0; i < 32; i++) {
         const el = document.getElementById(`palette-card-${i}`);
         if (el) {
@@ -159,16 +159,17 @@ function updateCardDisplay() {
         }
     }
 
-    // Update each drop zone
+    // Drop zones
     document.querySelectorAll('.drop-zone').forEach(zone => {
         const playerIdx = parseInt(zone.dataset.player);
         const cards = dealHands[playerIdx];
         const countEl = zone.querySelector('.dz-count');
-        countEl.textContent = `(${cards.length}/8)`;
+        if (countEl) countEl.textContent = `(${cards.length}/8)`;
 
         zone.classList.toggle('full', cards.length === 8);
 
         const container = zone.querySelector('.drop-zone-cards');
+        if (!container) return;
         container.innerHTML = '';
         const sorted = [...cards].sort((a, b) => a - b);
         for (const c of sorted) {
@@ -177,23 +178,41 @@ function updateCardDisplay() {
     });
 }
 
+// Random deal: only fill cards not yet assigned
 document.getElementById('random-deal').addEventListener('click', () => {
-    const cards = Array.from({ length: 32 }, (_, i) => i);
-    for (let i = cards.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [cards[i], cards[j]] = [cards[j], cards[i]];
+    const undealt = [];
+    for (let i = 0; i < 32; i++) {
+        if (!assignedCards.has(i)) undealt.push(i);
     }
-    dealHands = [
-        cards.slice(0, 8),
-        cards.slice(8, 16),
-        cards.slice(16, 24),
-        cards.slice(24, 32),
-    ];
-    assignedCards = new Set(cards);
+    // Shuffle undealt cards
+    for (let i = undealt.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [undealt[i], undealt[j]] = [undealt[j], undealt[i]];
+    }
+    // Distribute remaining cards to fill each player's hand to 8
+    let idx = 0;
+    for (let p = 0; p < 4; p++) {
+        const needed = 8 - dealHands[p].length;
+        for (let k = 0; k < needed && idx < undealt.length; k++) {
+            dealHands[p].push(undealt[idx]);
+            assignedCards.add(undealt[idx]);
+            idx++;
+        }
+    }
     initCardPalette();
     updateCardDisplay();
 });
 
+// Clear all hands
+document.getElementById('clear-deal').addEventListener('click', () => {
+    dealHands = [[], [], [], []];
+    assignedCards = new Set();
+    initCardPalette();
+    updateCardDisplay();
+    document.getElementById('deal-feedback').classList.add('hidden');
+});
+
+// Save deal
 document.getElementById('save-deal').addEventListener('click', () => {
     for (let p = 0; p < 4; p++) {
         if (dealHands[p].length !== 8) {
@@ -203,10 +222,8 @@ document.getElementById('save-deal').addEventListener('click', () => {
     }
 
     const dealer = parseInt(document.getElementById('deal-dealer').value);
-    const agents = {};
-    document.querySelectorAll('.deal-agent-select').forEach(sel => {
-        agents[sel.dataset.seat] = sel.value;
-    });
+    // Default agents: all dede
+    const agents = { 0: 'dede', 1: 'dede', 2: 'dede', 3: 'dede' };
 
     send({
         type: 'save_custom_deal',
@@ -223,7 +240,7 @@ onMessage('deal_saved', (data) => {
     feedback.innerHTML = '';
 
     const msg = document.createElement('span');
-    msg.textContent = `Donne enregistree : `;
+    msg.textContent = 'Donne enregistrée : ';
     feedback.appendChild(msg);
 
     const idTag = document.createElement('span');
@@ -235,14 +252,18 @@ onMessage('deal_saved', (data) => {
     watchBtn.textContent = 'Regarder';
     watchBtn.className = 'deal-watch-btn';
     watchBtn.addEventListener('click', () => {
-        // Switch to watch tab
+        // Use agents from the Watch tab's dropdowns
+        const agents = {};
+        document.querySelectorAll('.agent-select').forEach(sel => {
+            agents[sel.dataset.seat] = sel.value;
+        });
+
         document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         document.querySelector('[data-tab="watch"]').classList.add('active');
         document.getElementById('watch-panel').classList.add('active');
 
-        // Send watch_custom to start a live session with this deal
-        send({ type: 'watch_custom', game_id: data.game_id });
+        send({ type: 'watch_custom', game_id: data.game_id, agents });
     });
     feedback.appendChild(watchBtn);
 });
