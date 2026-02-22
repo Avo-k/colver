@@ -219,6 +219,9 @@ export function mount(container) {
 
     onMessage('play_problem_ready', handleProblemReady);
     onMessage('play_problem_correction', handleCorrection);
+
+    // Auto-load first problem
+    document.getElementById('pj-generate-btn').click();
 }
 
 export function unmount() {

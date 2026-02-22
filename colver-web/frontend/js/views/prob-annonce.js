@@ -217,6 +217,9 @@ export function mount(container) {
 
     onMessage('bid_problem_ready', handleProblemReady);
     onMessage('bid_problem_correction', handleCorrection);
+
+    // Auto-load first problem
+    document.getElementById('pa-generate-btn').click();
 }
 
 export function unmount() {
