@@ -2151,7 +2151,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 }
 
 /* ===== PROBLEMES PANELS ===== */
-#prob-annonce-panel, #prob-jeu-panel {
+#prob-annonce-panel.active, #prob-jeu-panel.active {
     overflow-y: auto;
     display: flex;
     flex-direction: column;
