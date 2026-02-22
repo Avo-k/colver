@@ -141,13 +141,15 @@ function renderPlayState(state) {
     const biddingPanel = document.getElementById('bidding-panel');
     const bidHistoryPanel = document.getElementById('bid-history-panel');
     if (isBidPhase) {
-        bidHistoryPanel.classList.remove('hidden');
+        biddingPanel.classList.remove('hidden');
+        bidHistoryPanel.classList.add('hidden');
         renderBidHistory();
+        const bidControls = document.getElementById('bid-controls');
         if (isHumanTurn) {
-            biddingPanel.classList.remove('hidden');
+            bidControls.classList.remove('hidden');
             showBidControls(state.legal_actions, state);
         } else {
-            biddingPanel.classList.add('hidden');
+            bidControls.classList.add('hidden');
             hideBidControls();
         }
     } else {

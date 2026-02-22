@@ -378,6 +378,9 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
     padding: 16px 20px;
     min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 #bid-history {
