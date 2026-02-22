@@ -129,7 +129,9 @@ async def list_games(limit=50, offset=0):
     db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT id, mode, created_at, dealer, agents, human_seat, is_complete, "
-        "points_ns, points_ew, contract FROM games ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        "points_ns, points_ew, contract FROM games "
+        "WHERE mode = 'play' AND is_complete = 1 "
+        "ORDER BY created_at DESC LIMIT ? OFFSET ?",
         (limit, offset),
     )
     result = []

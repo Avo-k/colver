@@ -68,22 +68,11 @@ function renderGameHistory(games) {
         id.className = 'history-id';
         id.textContent = g.id;
 
-        const mode = document.createElement('span');
-        mode.className = 'history-mode';
-        const modeMap = { play: 'J', watch: 'R', custom: 'D' };
-        const titleMap = { play: 'Jouer', watch: 'Regarder', custom: 'Donner' };
-        mode.textContent = modeMap[g.mode] || 'R';
-        mode.title = titleMap[g.mode] || g.mode;
-
         const info = document.createElement('span');
         info.className = 'history-info';
-        if (g.is_complete && g.points_ns !== null) {
-            const nsWon = g.points_ns > g.points_ew;
-            info.textContent = `${g.points_ns}-${g.points_ew}`;
-            info.classList.add(nsWon ? 'ns-won' : 'ew-won');
-        } else {
-            info.textContent = '...';
-        }
+        const nsWon = g.points_ns > g.points_ew;
+        info.textContent = `${g.points_ns}-${g.points_ew}`;
+        info.classList.add(nsWon ? 'ns-won' : 'ew-won');
 
         const date = document.createElement('span');
         date.className = 'history-date';
@@ -92,7 +81,6 @@ function renderGameHistory(games) {
         date.title = d.toLocaleString();
 
         row.appendChild(id);
-        row.appendChild(mode);
         row.appendChild(info);
         row.appendChild(date);
         list.appendChild(row);
