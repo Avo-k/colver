@@ -1,0 +1,542 @@
+/* ===== WATCH MODE ===== */
+.watch-agents {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.watch-agents select {
+    min-width: 120px;
+}
+
+#watch-main {
+    display: flex;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    /* Scope card sizes for watch: board shares viewport with sidebars */
+    --card-w: clamp(60px, min(6.3vw, 10.5vh), 135px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
+}
+
+/* Watch/Replay: looser E/W vertical stacking */
+#watch-main .seat.west .hand .card,
+#watch-main .seat.east .hand .card,
+#replay-main .seat.west .hand .card,
+#replay-main .seat.east .hand .card {
+    margin-top: calc(var(--card-h) * -0.7);
+}
+
+/* ===== REPLAY HISTORY SIDEBAR ===== */
+#replay-history {
+    width: 200px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    background: rgba(0,0,0,0.25);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+#replay-search {
+    display: flex;
+    gap: 4px;
+}
+
+#replay-search-input {
+    width: 70px;
+    background: #1a1a1a;
+    color: #d4af37;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    letter-spacing: 2px;
+    text-transform: lowercase;
+}
+#replay-search-input::placeholder {
+    color: #555;
+    letter-spacing: 0;
+}
+
+#replay-search-btn {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+}
+
+#replay-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.history-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-size: 0.75rem;
+}
+.history-row:hover {
+    background: rgba(212, 175, 55, 0.12);
+}
+
+.history-id {
+    font-family: monospace;
+    color: #d4af37;
+    font-weight: 600;
+    letter-spacing: 1px;
+    font-size: 0.8rem;
+}
+
+.history-mode {
+    color: #777;
+    font-size: 0.65rem;
+    font-weight: 600;
+    width: 12px;
+    text-align: center;
+}
+
+.history-info {
+    flex: 1;
+    text-align: right;
+    font-family: monospace;
+    color: #999;
+    font-size: 0.7rem;
+}
+.history-info.ns-won { color: #a5d6a7; }
+.history-info.ew-won { color: #ef9a9a; }
+
+.history-date {
+    color: #666;
+    font-size: 0.65rem;
+    white-space: nowrap;
+}
+
+.history-empty {
+    color: #555;
+    font-size: 0.75rem;
+    text-align: center;
+    padding: 12px 0;
+}
+
+/* ===== WATCH/REPLAY LAYOUT ===== */
+#watch-left, #replay-left {
+    flex: 1;
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#watch-left .seats, #replay-left .seats {
+    flex: 1;
+    min-height: 0;
+}
+
+#watch-right, #replay-right {
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+/* ===== TRANSPORT CONTROLS ===== */
+#watch-transport, #replay-transport {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+.transport-row {
+    display: flex;
+    gap: 4px;
+}
+
+.transport-row button {
+    flex: 1;
+}
+
+#watch-transport button, #replay-transport button {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    min-width: 36px;
+}
+
+#watch-transport button:disabled, #replay-transport button:disabled {
+    opacity: 0.4;
+}
+
+/* ===== STATS PANEL ===== */
+#watch-stats-panel, #replay-stats-panel {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 10px;
+    min-height: 80px;
+}
+
+#watch-stats-header, #replay-stats-header {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+}
+
+.stats-player {
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+}
+.stats-player.team-ns {
+    background: rgba(76, 175, 80, 0.3);
+    color: #a5d6a7;
+}
+.stats-player.team-ew {
+    background: rgba(229, 115, 115, 0.25);
+    color: #ef9a9a;
+}
+
+.stats-agent {
+    color: #999;
+    font-size: 0.75rem;
+}
+
+.stats-action {
+    color: #d4af37;
+    font-weight: 600;
+}
+
+.stats-time {
+    color: #888;
+    font-size: 0.75rem;
+    margin-left: auto;
+}
+
+.stats-result {
+    font-weight: 700;
+    color: #d4af37;
+    font-size: 1rem;
+}
+
+.stats-final {
+    color: #bbb;
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 4px;
+}
+
+.stats-placeholder {
+    color: #666;
+    font-size: 0.8rem;
+    text-align: center;
+    padding: 12px;
+}
+
+/* ===== VISIT COUNT BARS ===== */
+.visit-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.visit-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+}
+
+.visit-name {
+    width: 36px;
+    text-align: right;
+    font-family: monospace;
+    color: #bbb;
+    flex-shrink: 0;
+}
+
+.visit-bar-bg {
+    flex: 1;
+    height: 14px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.visit-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2e7d32, #4caf50);
+    border-radius: 2px;
+    transition: width 0.2s;
+}
+
+.visit-row.best .visit-bar-fill {
+    background: linear-gradient(90deg, #b8860b, #d4af37);
+}
+
+.visit-row.best .visit-name {
+    color: #d4af37;
+    font-weight: 700;
+}
+
+.q-fill {
+    background: linear-gradient(90deg, #1565c0, #42a5f5);
+}
+
+.visit-row.best .q-fill {
+    background: linear-gradient(90deg, #b8860b, #d4af37);
+}
+
+.visit-count {
+    width: 50px;
+    text-align: right;
+    font-family: monospace;
+    color: #999;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+}
+
+.visit-total {
+    text-align: right;
+    font-size: 0.7rem;
+    color: #666;
+    margin-top: 2px;
+}
+
+/* ===== BID EVAL BARS ===== */
+.bid-eval-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.eval-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+}
+
+.eval-suit {
+    width: 20px;
+    text-align: center;
+    font-size: 1rem;
+}
+
+.eval-bar-bg {
+    flex: 1;
+    height: 16px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.eval-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2e7d32, #4caf50);
+    border-radius: 2px;
+    transition: width 0.2s;
+}
+
+.eval-row.best .eval-bar-fill {
+    background: linear-gradient(90deg, #b8860b, #d4af37);
+}
+
+.eval-row.best .eval-suit {
+    color: #d4af37;
+}
+
+.eval-score {
+    width: 30px;
+    text-align: right;
+    font-family: monospace;
+    color: #bbb;
+}
+
+.eval-row.best .eval-score {
+    color: #d4af37;
+    font-weight: 700;
+}
+
+/* ===== BID & TRICKS HISTORY ===== */
+#watch-bid-history, #watch-tricks-history,
+#replay-bid-history, #replay-tricks-history {
+    background: rgba(0,0,0,0.3);
+    border-radius: 6px;
+    padding: 8px 10px;
+}
+
+#watch-bid-entries, #replay-bid-entries {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-height: 20px;
+}
+
+.watch-bid-entry {
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+.watch-bid-entry.team-ns {
+    background: rgba(76, 175, 80, 0.2);
+    color: #a5d6a7;
+}
+.watch-bid-entry.team-ew {
+    background: rgba(229, 115, 115, 0.15);
+    color: #ef9a9a;
+}
+
+#watch-tricks-list, #replay-tricks-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.trick-history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 4px;
+    font-size: 0.75rem;
+    border-radius: 2px;
+}
+
+.trick-history-row.team-ns {
+    background: rgba(76, 175, 80, 0.08);
+}
+.trick-history-row.team-ew {
+    background: rgba(229, 115, 115, 0.08);
+}
+
+.trick-num {
+    color: #666;
+    width: 20px;
+    font-weight: 600;
+}
+
+.trick-lead-label {
+    color: #999;
+    width: 12px;
+    font-weight: 600;
+    font-size: 0.7rem;
+}
+
+.trick-cards {
+    flex: 1;
+    font-family: monospace;
+    color: #bbb;
+}
+
+.trick-winner {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.trick-history-row.team-ns .trick-winner { color: #a5d6a7; }
+.trick-history-row.team-ew .trick-winner { color: #ef9a9a; }
+
+/* ===== DD ORACLE BOX ===== */
+.dd-oracle-box {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(212,175,55,0.3);
+    border-radius: 6px;
+    padding: 6px 10px;
+}
+
+.dd-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #d4af37;
+    font-weight: 600;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.dd-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+    font-family: monospace;
+}
+
+.dd-table th {
+    color: #999;
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-align: center;
+    padding: 1px 6px;
+}
+
+.dd-table td {
+    text-align: center;
+    padding: 1px 6px;
+    color: #ccc;
+}
+
+.dd-table td:first-child {
+    font-size: 1rem;
+    width: 24px;
+}
+
+.dd-table td.red {
+    color: #ef5350;
+}
+
+/* ===== REPLAY MAIN ===== */
+#replay-main {
+    display: flex;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    --card-w: clamp(60px, min(6.3vw, 10.5vh), 135px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
+}
+
+/* Incomplete game indicator */
+.stats-incomplete {
+    color: #d4af37;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+    padding: 12px 8px;
+    font-style: italic;
+}
+
+/* Highlight player's pick in bar charts */
+.visit-row.prob-player-pick .visit-name { color:#82cfff; font-weight:700; }
+.visit-row.prob-player-pick .visit-bar-fill { background: linear-gradient(90deg,#1a5276,#5dade2); }
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 900px) {
+    #replay-history { display: none; }
+}
+
+@media (max-width: 600px) {
+    #watch-main, #replay-main {
+        flex-direction: column;
+        height: auto;
+    }
+    #watch-right, #replay-right {
+        width: 100%;
+    }
+}

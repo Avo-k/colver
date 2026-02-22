@@ -1,0 +1,89 @@
+/* ===== RESET & CSS VARIABLES ===== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    /* Card sizes: scale with both vw and vh, pick the smaller to always fit */
+    --card-w: clamp(50px, min(5.5vw, 8vh), 100px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.2);
+    --card-hover: calc(var(--card-w) * -0.17);
+    --card-radius: clamp(4px, 0.5vw, 8px);
+
+    /* Palette cards (deal mode) */
+    --palette-w: clamp(40px, 4vw, 70px);
+    --palette-h: calc(var(--palette-w) * 1.43);
+
+    /* Drop zone cards (smaller) */
+    --dz-card-w: clamp(34px, 3.4vw, 58px);
+    --dz-card-h: calc(var(--dz-card-w) * 1.43);
+    --dz-card-overlap: calc(var(--dz-card-w) * -0.3);
+}
+
+/* ===== BODY ===== */
+body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: radial-gradient(ellipse at center, #2d6b28 0%, #183a15 70%, #0f2a0d 100%);
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ===== FORM ELEMENTS ===== */
+label { font-size: clamp(0.8rem, 0.9vw, 0.95rem); display: flex; align-items: center; gap: 6px; }
+
+select, input[type="range"] {
+    background: #1a1a1a;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: clamp(0.8rem, 0.9vw, 0.95rem);
+}
+select:focus, input:focus { outline: 1px solid #d4af37; border-color: #d4af37; }
+
+button {
+    background: #d4af37;
+    color: #1a1a1a;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: clamp(0.8rem, 0.9vw, 0.95rem);
+    transition: background 0.2s, transform 0.1s;
+}
+button:hover { background: #e5c349; }
+button:active { transform: scale(0.97); }
+button:disabled { background: #555; color: #888; cursor: default; transform: none; }
+
+.secondary-btn {
+    background: #4a4a4a;
+    color: #ddd;
+}
+.secondary-btn:hover { background: #5a5a5a; }
+
+/* ===== UTILITY CLASSES ===== */
+.hidden { display: none !important; }
+
+.suit-red { color: #ef9a9a; }
+.suit-black { color: #ddd; }
+
+.section-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #777;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    :root {
+        --card-w: 48px;
+        --palette-w: 36px;
+    }
+    .seats {
+        grid-template-columns: 80px 1fr 80px;
+    }
+}

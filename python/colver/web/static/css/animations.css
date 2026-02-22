@@ -1,0 +1,47 @@
+/* ===== TRICK FLUSH ANIMATION ===== */
+.trick-flush-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+}
+.trick-flush-overlay .card {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+/* ===== BELOTE ANNOUNCEMENTS ===== */
+.belote-announcement {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: clamp(1.4rem, 2.5vw, 2rem);
+    font-weight: 700;
+    font-style: italic;
+    color: #d4af37;
+    text-shadow: 0 0 12px rgba(212, 175, 55, 0.6), 0 2px 4px rgba(0, 0, 0, 0.5);
+    pointer-events: none;
+    z-index: 50;
+    animation: belote-fade 1.8s ease-out forwards;
+}
+
+@keyframes belote-fade {
+    0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.7); }
+    15%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+    25%  { transform: translate(-50%, -50%) scale(1); }
+    70%  { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -60%); }
+}
+
+.belote-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 7px;
+    font-size: clamp(0.6rem, 0.75vw, 0.8rem);
+    font-weight: 600;
+    color: #d4af37;
+    background: rgba(212, 175, 55, 0.15);
+    border: 1px solid rgba(212, 175, 55, 0.4);
+    border-radius: 10px;
+    vertical-align: middle;
+}
