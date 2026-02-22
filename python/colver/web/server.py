@@ -423,6 +423,19 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     await ws.send_json({"type": "bid_eval_result", "error": str(e)})
 
+            elif msg_type == "dd_sim":
+                hand = data.get("hand", [])
+                num_sims = max(1, min(200, int(data.get("num_sims", 50))))
+                if len(hand) != 8:
+                    await ws.send_json({"type": "dd_sim_result", "error": "8 cartes requises"})
+                    continue
+                try:
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(None, _run_dd_sim, hand, num_sims)
+                    await ws.send_json(result)
+                except Exception as e:
+                    await ws.send_json({"type": "dd_sim_result", "error": str(e)})
+
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
                 game_data = await db.get_game(game_id)
@@ -525,3 +538,43 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():
         await _complete_game(game_id, session)
+
+
+def _run_dd_sim(hand, num_sims):
+    """Run DD simulation: deal random opponent hands and solve all 4 suits."""
+    import random
+    import time
+
+    start = time.monotonic()
+    remaining = list(set(range(32)) - set(hand))
+    seat = 2  # Sud
+    others = [s for s in range(4) if s != seat]
+    totals = [[0.0, 0.0] for _ in range(4)]  # per-suit [ns_sum, ew_sum]
+
+    for _ in range(num_sims):
+        random.shuffle(remaining)
+        hands = [None] * 4
+        hands[seat] = sorted(hand)
+        for i, p in enumerate(others):
+            hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
+        env = _colver_pkg.Env.deal_with_hands(0, hands)
+        result = env.solve_all_suits()
+        for suit_idx, (ns, ew) in enumerate(result["suits"]):
+            totals[suit_idx][0] += ns
+            totals[suit_idx][1] += ew
+
+    elapsed_ms = (time.monotonic() - start) * 1000.0
+    suits = []
+    for suit_idx in range(4):
+        suits.append({
+            "suit": suit_idx,
+            "avg_ns": round(totals[suit_idx][0] / num_sims, 1),
+            "avg_ew": round(totals[suit_idx][1] / num_sims, 1),
+        })
+
+    return {
+        "type": "dd_sim_result",
+        "suits": suits,
+        "num_sims": num_sims,
+        "elapsed_ms": round(elapsed_ms, 1),
+    }

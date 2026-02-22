@@ -91,6 +91,7 @@ function updateAnnoncesDisplay() {
     }
     document.getElementById('annonces-count').textContent = `${count}/8 cartes`;
     document.getElementById('annonces-eval-btn').disabled = count !== 8;
+    document.getElementById('annonces-dd-btn').disabled = count !== 8;
 
     // Update hand preview
     const handEl = document.getElementById('annonces-hand-display');
@@ -177,6 +178,7 @@ document.getElementById('annonces-clear-btn').addEventListener('click', () => {
     annoncesHand.clear();
     updateAnnoncesDisplay();
     document.getElementById('annonces-results').classList.add('hidden');
+    document.getElementById('annonces-dd-results').classList.add('hidden');
 });
 
 document.getElementById('annonces-eval-btn').addEventListener('click', () => {
@@ -221,6 +223,63 @@ onMessage('bid_eval_result', (data) => {
     }
     html += '</div>';
     document.getElementById('annonces-results-body').innerHTML = html;
+});
+
+// DD simulation
+document.getElementById('annonces-dd-btn').addEventListener('click', () => {
+    const hand = Array.from(annoncesHand);
+    const numSims = Math.max(1, Math.min(200, parseInt(document.getElementById('annonces-sim-count').value) || 50));
+    document.getElementById('annonces-dd-results').classList.add('hidden');
+    document.getElementById('annonces-loading').classList.remove('hidden');
+    send({ type: 'dd_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
+});
+
+const DD_SUIT_SYMBOLS = ['♠', '♥', '♦', '♣'];
+const DD_SUIT_CLASSES = ['', 'red', 'red', ''];
+
+function ddSuggestedBid(avgNs) {
+    const thresholds = [160, 150, 140, 130, 120, 110, 100, 90, 80];
+    for (const t of thresholds) {
+        if (avgNs >= t) return t;
+    }
+    return null;
+}
+
+onMessage('dd_sim_result', (data) => {
+    document.getElementById('annonces-loading').classList.add('hidden');
+    const ddEl = document.getElementById('annonces-dd-results');
+    ddEl.classList.remove('hidden');
+
+    if (data.error) {
+        document.getElementById('annonces-dd-body').innerHTML =
+            `<div class="annonces-error">${data.error}</div>`;
+        document.getElementById('annonces-dd-header').textContent = 'Erreur';
+        return;
+    }
+
+    const suits = data.suits; // [{suit, avg_ns, avg_ew}, ...]
+    const elapsed = data.elapsed_ms;
+    const numSims = data.num_sims;
+
+    document.getElementById('annonces-dd-header').textContent =
+        `Simulation DD (${numSims} donnes, ${(elapsed / 1000).toFixed(1)}s)`;
+
+    let html = '<table class="dd-sim-table"><tr><th>Atout</th><th>Moy. NS</th><th>Moy. EO</th><th>Annonce</th></tr>';
+    for (const s of suits) {
+        const suitClass = DD_SUIT_CLASSES[s.suit];
+        const symbol = DD_SUIT_SYMBOLS[s.suit];
+        const bid = ddSuggestedBid(s.avg_ns);
+        const bidText = bid ? `${bid} ${symbol}` : '—';
+        const bidClass = bid ? (bid >= 100 ? 'dd-bid-high' : 'dd-bid-ok') : 'dd-bid-none';
+        html += `<tr>
+            <td class="${suitClass}">${symbol}</td>
+            <td>${s.avg_ns.toFixed(1)}</td>
+            <td>${s.avg_ew.toFixed(1)}</td>
+            <td class="${bidClass}">${bidText}</td>
+        </tr>`;
+    }
+    html += '</table>';
+    document.getElementById('annonces-dd-body').innerHTML = html;
 });
 
 // Init

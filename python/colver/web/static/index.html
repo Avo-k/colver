@@ -409,11 +409,20 @@
                 </div>
                 <div id="annonces-eval-row">
                     <button id="annonces-eval-btn" disabled>Évaluer</button>
+                    <span class="annonces-separator">|</span>
+                    <label class="annonces-sim-label">Simulations :
+                        <input type="number" id="annonces-sim-count" value="50" min="1" max="200" style="width:55px">
+                    </label>
+                    <button id="annonces-dd-btn" disabled>Simuler DD</button>
                 </div>
                 <div id="annonces-loading" class="hidden">Calcul en cours…</div>
                 <div id="annonces-results" class="hidden">
                     <div id="annonces-results-header" class="section-title"></div>
                     <div id="annonces-results-body"></div>
+                </div>
+                <div id="annonces-dd-results" class="hidden">
+                    <div id="annonces-dd-header" class="section-title"></div>
+                    <div id="annonces-dd-body"></div>
                 </div>
             </div>
             <div id="annonces-hand-preview">
