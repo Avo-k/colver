@@ -124,8 +124,8 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "start_game":
                 human_seat = data.get("human_seat", 2)
-                opponent_ai = data.get("opponent_ai", "doudou")
-                partner_ai = data.get("partner_ai", "doudou")
+                opponent_ai = data.get("opponent_ai", "dede")
+                partner_ai = data.get("partner_ai", "dede")
                 play_move_delay = max(1.0, min(8.0, float(data.get("move_delay", 2))))
                 # Build per-seat AI mapping (human excluded)
                 ai_types = {}
@@ -139,7 +139,8 @@ async def websocket_endpoint(ws: WebSocket):
                 needs_dmc = any(t == "doudou" for t in ai_types.values())
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
                 bid_path = BID_MODEL_PATH
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path)
+                difficulty = data.get("difficulty", "difficile")
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, difficulty=difficulty)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -219,10 +220,12 @@ async def websocket_endpoint(ws: WebSocket):
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
                 # Convert string keys from JSON to int
                 agents = {int(k): v for k, v in agents.items()}
+                difficulty = data.get("difficulty", "difficile")
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
+                    difficulty=difficulty,
                 )
                 replay_session = None
 
@@ -355,13 +358,14 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     await ws.send_json({"type": "error", "msg": f"CFN invalide : {e}"})
                     continue
-                agents = data.get("agents", {0: "doudou", 1: "doudou", 2: "doudou", 3: "doudou"})
+                agents = data.get("agents", {0: "dede", 1: "dede", 2: "dede", 3: "dede"})
                 agents = {int(k): v for k, v in agents.items()}
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
                     env=cfn_env,
+                    difficulty=data.get("difficulty", "difficile"),
                 )
                 replay_session = None
                 watch_game_id = None
@@ -392,6 +396,7 @@ async def websocket_endpoint(ws: WebSocket):
                     bid_model_path=BID_MODEL_PATH,
                     dealer=game_data["dealer"],
                     hands=game_data["hands"],
+                    difficulty=data.get("difficulty", "difficile"),
                 )
                 replay_session = None
                 watch_game_id = game_id

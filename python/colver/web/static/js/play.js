@@ -18,6 +18,20 @@ document.getElementById('move-delay').addEventListener('input', (e) => {
     document.getElementById('move-delay-val').textContent = `${e.target.value}s`;
 });
 
+// Show difficulty selector only when at least one agent is IS-DD
+function updateDifficultyVisibility() {
+    const opp = document.getElementById('opponent-ai').value;
+    const par = document.getElementById('partner-ai').value;
+    const label = document.getElementById('difficulty-label');
+    const sel = document.getElementById('difficulty');
+    const hasDede = opp === 'dede' || par === 'dede';
+    label.classList.toggle('hidden', !hasDede);
+    if (!hasDede) sel.value = 'difficile';
+}
+document.getElementById('opponent-ai').addEventListener('change', updateDifficultyVisibility);
+document.getElementById('partner-ai').addEventListener('change', updateDifficultyVisibility);
+updateDifficultyVisibility();
+
 document.getElementById('start-game').addEventListener('click', () => {
     const opponentAi = document.getElementById('opponent-ai').value;
     const partnerAi = document.getElementById('partner-ai').value;
@@ -30,7 +44,8 @@ document.getElementById('start-game').addEventListener('click', () => {
     _playGameId = null;
     _serverBidHistory = null;
     _serverCompletedTricks = null;
-    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
+    const difficulty = document.getElementById('difficulty').value;
+    send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay(), difficulty });
     document.getElementById('play-table').classList.remove('hidden');
     document.getElementById('game-result').classList.add('hidden');
     document.getElementById('game-result').innerHTML = '';

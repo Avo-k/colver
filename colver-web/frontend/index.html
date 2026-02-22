@@ -39,6 +39,14 @@
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select>
                 </label>
+                <label id="difficulty-label">Niveau :
+                    <select id="difficulty">
+                        <option value="facile">Facile</option>
+                        <option value="normal">Normal</option>
+                        <option value="difficile" selected>Difficile</option>
+                        <option value="expert">Expert</option>
+                    </select>
+                </label>
                 <label>Pause :
                     <input type="range" id="move-delay" min="1" max="8" value="2" step="1" style="width:80px">
                     <span id="move-delay-val">2s</span>
@@ -157,6 +165,14 @@
                         <option value="oracle_dd">Oracle (DD)</option>
                     </select></label>
                 </div>
+                <label id="watch-difficulty-label">Niveau :
+                    <select id="watch-difficulty">
+                        <option value="facile">Facile</option>
+                        <option value="normal">Normal</option>
+                        <option value="difficile" selected>Difficile</option>
+                        <option value="expert">Expert</option>
+                    </select>
+                </label>
                 <button id="watch-start">Lancer</button>
                 <span class="config-separator">|</span>
                 <input type="text" id="cfn-input" placeholder="Coller un CFN..." spellcheck="false">

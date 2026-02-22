@@ -80,16 +80,24 @@ class TrickTracker:
 
 AI_TIME_MS = 100  # Fixed time budget for all search-based AIs
 
+DIFFICULTY_TIME_MS = {
+    "facile": 20,
+    "normal": 50,
+    "difficile": 100,
+    "expert": 300,
+}
+
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, difficulty="difficile"):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
-        # If not provided, default all AI seats to "doudou"
+        # If not provided, default all AI seats to "dede"
         self.human_seat = human_seat
         if ai_types is None:
             ai_types = {}
         self.ai_types = ai_types
+        self.dede_time_ms = DIFFICULTY_TIME_MS.get(difficulty, AI_TIME_MS)
         self.env = colver.Env()
         self.history = []
         self.bid_history = []
@@ -183,7 +191,7 @@ class PlaySession(TrickTracker):
     def get_ai_action(self):
         phase = self.env.phase()
         player = int(self.env.current_player())
-        ai_type = self.ai_types.get(player, "doudou")
+        ai_type = self.ai_types.get(player, "dede")
         if phase == 0:
             return int(self.env.bid_a_dd())
         else:
@@ -191,7 +199,7 @@ class PlaySession(TrickTracker):
                 result = self.env.action_dmc_with_stats()
                 return int(result["best_action"])
             elif ai_type == "dede":
-                return int(self.env.action_dede(AI_TIME_MS))
+                return int(self.env.action_dede(self.dede_time_ms))
             elif ai_type == "oracle_dd":
                 return int(self.env.action_oracle_dd())
             else:
@@ -199,7 +207,7 @@ class PlaySession(TrickTracker):
                 if self.env.has_dmc_model():
                     result = self.env.action_dmc_with_stats()
                     return int(result["best_action"])
-                return int(self.env.action_dede(AI_TIME_MS))
+                return int(self.env.action_dede(self.dede_time_ms))
 
     def play_ai_turn(self):
         player = self.env.current_player()
@@ -232,7 +240,7 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, dealer=None, hands=None, env=None):
+    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, dealer=None, hands=None, env=None, difficulty="difficile"):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
@@ -240,8 +248,10 @@ class WatchSession(TrickTracker):
         dealer: optional dealer seat (for custom deals)
         hands: optional list of 4 hands (for custom deals)
         env: optional pre-built Env (e.g. from CFN), takes priority over dealer/hands
+        difficulty: IS-DD difficulty level ("facile", "normal", "difficile", "expert")
         """
         self.agents = agents
+        self.dede_time_ms = DIFFICULTY_TIME_MS.get(difficulty, AI_TIME_MS)
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()
@@ -316,7 +326,7 @@ class WatchSession(TrickTracker):
         """Compute next action with thinking stats. Returns move dict."""
         player = int(self.env.current_player())
         phase = int(self.env.phase())
-        agent_type = self.agents.get(player, "doudou")
+        agent_type = self.agents.get(player, "dede")
 
         # Bidding phase: all agents use bid_a_dd (NN if loaded, else improved_v2)
         if phase == 0:
@@ -339,7 +349,7 @@ class WatchSession(TrickTracker):
         stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
 
         if agent_type == "dede":
-            result = self.env.action_dede_with_stats(AI_TIME_MS)
+            result = self.env.action_dede_with_stats(self.dede_time_ms)
             action = int(result["best_action"])
             stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
             stats["determinizations"] = int(result["determinizations"])
@@ -364,7 +374,7 @@ class WatchSession(TrickTracker):
                 stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
                 stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
             else:
-                result = self.env.action_dede_with_stats(AI_TIME_MS)
+                result = self.env.action_dede_with_stats(self.dede_time_ms)
                 action = int(result["best_action"])
                 stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
                 stats["determinizations"] = int(result["determinizations"])

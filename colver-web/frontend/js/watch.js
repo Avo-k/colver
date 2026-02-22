@@ -171,8 +171,22 @@ function loadFromCfn() {
     document.querySelectorAll('.agent-select').forEach(sel => {
         agents[sel.dataset.seat] = sel.value;
     });
-    send({ type: 'watch_cfn', cfn, agents });
+    const difficulty = document.getElementById('watch-difficulty').value;
+    send({ type: 'watch_cfn', cfn, agents, difficulty });
 }
+
+// Show difficulty selector only when at least one agent is IS-DD
+function updateWatchDifficultyVisibility() {
+    const hasDede = Array.from(document.querySelectorAll('.agent-select')).some(sel => sel.value === 'dede');
+    const label = document.getElementById('watch-difficulty-label');
+    const sel = document.getElementById('watch-difficulty');
+    label.classList.toggle('hidden', !hasDede);
+    if (!hasDede) sel.value = 'difficile';
+}
+document.querySelectorAll('.agent-select').forEach(sel => {
+    sel.addEventListener('change', updateWatchDifficultyVisibility);
+});
+updateWatchDifficultyVisibility();
 
 // Start game
 document.getElementById('watch-start').addEventListener('click', () => {
@@ -180,7 +194,8 @@ document.getElementById('watch-start').addEventListener('click', () => {
     document.querySelectorAll('.agent-select').forEach(sel => {
         agents[sel.dataset.seat] = sel.value;
     });
-    send({ type: 'watch_start', agents });
+    const difficulty = document.getElementById('watch-difficulty').value;
+    send({ type: 'watch_start', agents, difficulty });
     document.getElementById('watch-start').disabled = true;
     document.getElementById('watch-start').textContent = 'Demarrage...';
 });
