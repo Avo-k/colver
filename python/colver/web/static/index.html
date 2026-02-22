@@ -393,18 +393,21 @@
                 <div id="annonces-header">
                     <span class="annonces-title">Évaluation des annonces</span>
                     <span id="annonces-count">0/8 cartes</span>
-                    <button id="annonces-clear-btn" class="secondary-btn">Vider</button>
+                    <button id="annonces-clear-btn" class="secondary-btn">Vider la main</button>
                 </div>
                 <div id="annonces-palette"></div>
-                <div id="annonces-options">
-                    <label>Passes avant vous :
-                        <select id="annonces-passes">
-                            <option value="0">0 — premier à parler</option>
-                            <option value="1">1 — deuxième</option>
-                            <option value="2">2 — troisième</option>
-                            <option value="3">3 — dernier</option>
-                        </select>
-                    </label>
+                <div id="annonces-history-section">
+                    <div id="annonces-history-header">
+                        <span class="annonces-subtitle">Enchères précédentes</span>
+                        <button id="annonces-history-clear-btn" class="secondary-btn">Vider</button>
+                    </div>
+                    <div id="annonces-history-list"></div>
+                    <div id="annonces-history-add">
+                        <select id="annonces-action-select"></select>
+                        <button id="annonces-history-add-btn">+ Ajouter</button>
+                    </div>
+                </div>
+                <div id="annonces-eval-row">
                     <button id="annonces-eval-btn" disabled>Évaluer</button>
                 </div>
                 <div id="annonces-loading" class="hidden">Calcul en cours…</div>

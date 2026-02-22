@@ -385,7 +385,13 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "bid_eval":
                 hand = data.get("hand", [])
-                prior_passes = min(3, max(0, int(data.get("prior_passes", 0))))
+                # Accept prior_actions (list of action indices) or fall back to prior_passes
+                prior_actions_raw = data.get("prior_actions", None)
+                if prior_actions_raw is not None:
+                    prior_actions = [int(a) for a in prior_actions_raw]
+                else:
+                    prior_passes = min(3, max(0, int(data.get("prior_passes", 0))))
+                    prior_actions = [0] * prior_passes
                 if len(hand) != 8:
                     await ws.send_json({"type": "bid_eval_result", "error": "8 cartes requises"})
                     continue
@@ -402,11 +408,12 @@ async def websocket_endpoint(ws: WebSocket):
                     others = [s for s in range(4) if s != seat]
                     for i, p in enumerate(others):
                         hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
-                    dealer = (seat - 1 - prior_passes + 16) % 4
+                    n_prior = len(prior_actions)
+                    dealer = (seat - 1 - n_prior + 32) % 4
                     env = _colver_pkg.Env.deal_with_hands(dealer, hands)
                     env.load_bid_model(BID_MODEL_PATH)
-                    for _ in range(prior_passes):
-                        env.step(0)  # PASS
+                    for action in prior_actions:
+                        env.step(action)
                     result = env.action_bid_nn()
                     await ws.send_json({
                         "type": "bid_eval_result",

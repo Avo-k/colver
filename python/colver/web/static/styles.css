@@ -1623,6 +1623,101 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     width: 64px;
 }
 
+/* Bid history editor */
+#annonces-history-section {
+    margin-top: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: rgba(0,0,0,0.15);
+    max-width: 400px;
+}
+
+#annonces-history-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.annonces-subtitle {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex: 1;
+}
+
+#annonces-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 8px;
+}
+
+.ann-history-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.82rem;
+    padding: 2px 0;
+}
+
+.ann-seat-badge {
+    width: 20px;
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    padding: 1px 3px;
+}
+
+.ann-action-name {
+    flex: 1;
+    color: #ccc;
+}
+
+.ann-your-turn .ann-action-name {
+    color: #d4af37;
+    font-style: italic;
+}
+
+.ann-del-btn {
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0 2px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.ann-del-btn:hover {
+    color: #ef9a9a;
+}
+
+#annonces-history-add {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    border-top: 1px solid rgba(255,255,255,0.06);
+    padding-top: 8px;
+}
+
+#annonces-history-add select {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.82rem;
+}
+
+#annonces-eval-row {
+    margin-top: 10px;
+}
+
 /* ===== BELOTE ANNOUNCEMENTS ===== */
 .belote-announcement {
     position: absolute;

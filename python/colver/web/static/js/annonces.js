@@ -1,12 +1,25 @@
 // Annonces tab — hand builder + bidding NN evaluation
 
 let annoncesHand = new Set();
+let annoncesHistory = []; // array of action indices (prior bids before our turn)
+
+const SEAT_NAMES = ['N', 'E', 'S', 'O'];
+// N=light blue, E=light green, S=gold, O=orange
+const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
+
+function annoncesPlayerSeat(turnIdx, historyLen) {
+    // Compute which seat (0=N,1=E,2=S,3=O) speaks at turnIdx within a history of historyLen turns.
+    // The user is always Sud (seat 2) and speaks after all prior turns.
+    // For historyLen=1: turn 0 → seat 1 (Est)
+    // For historyLen=2: turn 0 → seat 0 (Nord), turn 1 → seat 1 (Est)
+    // For historyLen=3: turn 0 → seat 3 (Ouest), turn 1 → seat 0, turn 2 → seat 1
+    return (2 - historyLen + turnIdx + 32) % 4;
+}
 
 function initAnnoncesGrid() {
     const palette = document.getElementById('annonces-palette');
     palette.innerHTML = '';
     for (let suit = 0; suit < 4; suit++) {
-        // Suit label
         const label = document.createElement('div');
         label.className = 'palette-suit-label';
         label.textContent = SUITS[suit];
@@ -29,6 +42,31 @@ function initAnnoncesGrid() {
             palette.appendChild(el);
         }
     }
+}
+
+function initActionSelect() {
+    const select = document.getElementById('annonces-action-select');
+    select.innerHTML = '';
+
+    const addOpt = (value, text) => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = text;
+        select.appendChild(opt);
+    };
+
+    addOpt(0, 'Passe');
+    for (let valIdx = 0; valIdx < 9; valIdx++) {
+        const value = 80 + valIdx * 10;
+        for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
+            addOpt(valIdx * 4 + suitIdx + 1, `${value} ${SUITS[suitIdx]}`);
+        }
+    }
+    for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
+        addOpt(37 + suitIdx, `Capot ${SUITS[suitIdx]}`);
+    }
+    addOpt(41, 'Coinche');
+    addOpt(42, 'Surcoinche');
 }
 
 function toggleAnnoncesCard(idx) {
@@ -59,6 +97,55 @@ function updateAnnoncesDisplay() {
     renderHand(handEl, Array.from(annoncesHand));
 }
 
+function renderAnnoncesHistory() {
+    const list = document.getElementById('annonces-history-list');
+    list.innerHTML = '';
+    const n = annoncesHistory.length;
+
+    annoncesHistory.forEach((action, i) => {
+        const seat = annoncesPlayerSeat(i, n);
+        const row = document.createElement('div');
+        row.className = 'ann-history-row';
+
+        const badge = document.createElement('span');
+        badge.className = 'ann-seat-badge';
+        badge.textContent = SEAT_NAMES[seat];
+        badge.style.color = SEAT_COLORS[seat];
+
+        const actionSpan = document.createElement('span');
+        actionSpan.className = 'ann-action-name';
+        actionSpan.textContent = bidActionName(action);
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'ann-del-btn';
+        delBtn.textContent = '×';
+        delBtn.title = 'Supprimer';
+        delBtn.addEventListener('click', () => {
+            annoncesHistory.splice(i, 1);
+            renderAnnoncesHistory();
+        });
+
+        row.appendChild(badge);
+        row.appendChild(actionSpan);
+        row.appendChild(delBtn);
+        list.appendChild(row);
+    });
+
+    // "Your turn" row always at end
+    const yourRow = document.createElement('div');
+    yourRow.className = 'ann-history-row ann-your-turn';
+    const yourBadge = document.createElement('span');
+    yourBadge.className = 'ann-seat-badge';
+    yourBadge.textContent = 'S';
+    yourBadge.style.color = SEAT_COLORS[2];
+    const yourLabel = document.createElement('span');
+    yourLabel.className = 'ann-action-name';
+    yourLabel.textContent = 'Votre tour';
+    yourRow.appendChild(yourBadge);
+    yourRow.appendChild(yourLabel);
+    list.appendChild(yourRow);
+}
+
 function bidActionName(action) {
     if (action === 0) return 'Passe';
     if (action >= 37 && action <= 40) return `Capot ${SUITS[action - 37]}`;
@@ -74,6 +161,18 @@ function bidActionName(action) {
     return `Action ${action}`;
 }
 
+document.getElementById('annonces-history-add-btn').addEventListener('click', () => {
+    const select = document.getElementById('annonces-action-select');
+    const action = parseInt(select.value);
+    annoncesHistory.push(action);
+    renderAnnoncesHistory();
+});
+
+document.getElementById('annonces-history-clear-btn').addEventListener('click', () => {
+    annoncesHistory = [];
+    renderAnnoncesHistory();
+});
+
 document.getElementById('annonces-clear-btn').addEventListener('click', () => {
     annoncesHand.clear();
     updateAnnoncesDisplay();
@@ -81,11 +180,10 @@ document.getElementById('annonces-clear-btn').addEventListener('click', () => {
 });
 
 document.getElementById('annonces-eval-btn').addEventListener('click', () => {
-    const priorPasses = parseInt(document.getElementById('annonces-passes').value);
     const hand = Array.from(annoncesHand);
     document.getElementById('annonces-results').classList.add('hidden');
     document.getElementById('annonces-loading').classList.remove('hidden');
-    send({ type: 'bid_eval', hand, prior_passes: priorPasses });
+    send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
 });
 
 onMessage('bid_eval_result', (data) => {
@@ -127,4 +225,6 @@ onMessage('bid_eval_result', (data) => {
 
 // Init
 initAnnoncesGrid();
+initActionSelect();
+renderAnnoncesHistory();
 updateAnnoncesDisplay();
