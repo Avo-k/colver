@@ -365,16 +365,25 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 /* ===== BIDDING PANEL ===== */
 #bidding-panel {
-    background: rgba(0,0,0,0.25);
-    border-radius: 8px;
-    padding: 10px 12px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 35;
+    background: rgba(10, 10, 10, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 16px 20px;
+    min-width: 220px;
 }
 
 #bid-history {
     display: flex;
     gap: 4px;
     flex-wrap: wrap;
-    margin-bottom: 8px;
     min-height: 24px;
     font-size: clamp(0.75rem, 0.85vw, 0.95rem);
 }
@@ -565,11 +574,14 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 #play-table #score-bar { grid-column: 1 / -1; grid-row: 1; }
 #play-table .cfn-box { grid-column: 1 / -1; grid-row: 2; }
 #play-table .seats { grid-column: 1; grid-row: 3; min-height: 0; }
-#play-table #bidding-panel {
+#play-table #bid-history-panel {
     grid-column: 2;
     grid-row: 3;
-    align-self: center;
+    align-self: start;
     width: clamp(170px, 14vw, 220px);
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 10px 12px;
 }
 #play-table #play-review {
     grid-column: 2;

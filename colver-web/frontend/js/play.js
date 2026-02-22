@@ -139,16 +139,20 @@ function renderPlayState(state) {
 
     // Bidding panel
     const biddingPanel = document.getElementById('bidding-panel');
+    const bidHistoryPanel = document.getElementById('bid-history-panel');
     if (isBidPhase) {
-        biddingPanel.classList.remove('hidden');
+        bidHistoryPanel.classList.remove('hidden');
         renderBidHistory();
         if (isHumanTurn) {
+            biddingPanel.classList.remove('hidden');
             showBidControls(state.legal_actions, state);
         } else {
+            biddingPanel.classList.add('hidden');
             hideBidControls();
         }
     } else {
         biddingPanel.classList.add('hidden');
+        bidHistoryPanel.classList.add('hidden');
     }
 
     // Status
@@ -157,7 +161,7 @@ function renderPlayState(state) {
         showEndOfGameReview(state);
         document.getElementById('play-status').textContent = '';
     } else if (isHumanTurn) {
-        document.getElementById('play-status').textContent = isBidPhase ? 'A vous d\'annoncer' : 'A vous de jouer';
+        document.getElementById('play-status').textContent = isBidPhase ? '' : 'A vous de jouer';
         SFX.yourTurn();
     } else {
         document.getElementById('play-status').textContent = `${SEAT_NAMES_FR[state.current_player]} reflechit...`;

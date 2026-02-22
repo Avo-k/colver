@@ -90,9 +90,44 @@
                     <div id="game-result" class="hidden"></div>
                     <div id="confetti-container"></div>
                     <div id="play-status"></div>
+                    <div id="bidding-panel" class="hidden">
+                        <div id="bid-controls">
+                            <div id="bid-selectors">
+                                <select id="bid-value">
+                                    <option value="">Valeur...</option>
+                                    <option value="80">80</option>
+                                    <option value="90">90</option>
+                                    <option value="100">100</option>
+                                    <option value="110">110</option>
+                                    <option value="120">120</option>
+                                    <option value="130">130</option>
+                                    <option value="140">140</option>
+                                    <option value="150">150</option>
+                                    <option value="160">160</option>
+                                    <option value="250">Capot</option>
+                                </select>
+                                <select id="bid-suit">
+                                    <option value="0">&spades; Pique</option>
+                                    <option value="1">&hearts; Coeur</option>
+                                    <option value="2">&diams; Carreau</option>
+                                    <option value="3">&clubs; Trefle</option>
+                                </select>
+                                <button id="bid-submit" class="bid-btn bid-action">Annoncer</button>
+                            </div>
+                            <div id="bid-special">
+                                <button id="bid-pass" class="bid-btn pass">Passe</button>
+                                <button id="bid-coinche" class="bid-btn coinche hidden">Coinche</button>
+                                <button id="bid-surcoinche" class="bid-btn coinche hidden">Surcoinche</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="last-trick" class="hidden"></div>
+
+                <div id="bid-history-panel" class="hidden">
+                    <div id="bid-history"></div>
+                </div>
 
                 <div id="play-review" class="hidden">
                     <div id="play-bid-history">
@@ -102,39 +137,6 @@
                     <div id="play-tricks-history">
                         <div class="section-title">Plis</div>
                         <div id="play-tricks-list"></div>
-                    </div>
-                </div>
-
-                <div id="bidding-panel" class="hidden">
-                    <div id="bid-history"></div>
-                    <div id="bid-controls">
-                        <div id="bid-selectors">
-                            <select id="bid-value">
-                                <option value="">Valeur...</option>
-                                <option value="80">80</option>
-                                <option value="90">90</option>
-                                <option value="100">100</option>
-                                <option value="110">110</option>
-                                <option value="120">120</option>
-                                <option value="130">130</option>
-                                <option value="140">140</option>
-                                <option value="150">150</option>
-                                <option value="160">160</option>
-                                <option value="250">Capot</option>
-                            </select>
-                            <select id="bid-suit">
-                                <option value="0">&spades; Pique</option>
-                                <option value="1">&hearts; Coeur</option>
-                                <option value="2">&diams; Carreau</option>
-                                <option value="3">&clubs; Trefle</option>
-                            </select>
-                            <button id="bid-submit" class="bid-btn bid-action">Annoncer</button>
-                        </div>
-                        <div id="bid-special">
-                            <button id="bid-pass" class="bid-btn pass">Passe</button>
-                            <button id="bid-coinche" class="bid-btn coinche hidden">Coinche</button>
-                            <button id="bid-surcoinche" class="bid-btn coinche hidden">Surcoinche</button>
-                        </div>
                     </div>
                 </div>
             </div>
