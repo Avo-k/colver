@@ -415,6 +415,164 @@ class WatchSession(TrickTracker):
         return move, self.get_state(), self.completed_tricks
 
 
+class BidProblemSession:
+    """Single-bid practice problem: run auction until South's turn, ask player to bid."""
+
+    def __init__(self, bid_model_path=None, dmc_model_path=None):
+        self.env = None
+        self.hands = None
+        self.bid_history = []
+        self.bid_model_path = bid_model_path
+        self.dmc_model_path = dmc_model_path
+
+    def generate(self) -> dict:
+        """Run auction with bid_improved() until South (seat 2) must bid. Retries on void deals."""
+        for _ in range(20):
+            env = colver.Env()
+            env.reset()
+            if self.bid_model_path:
+                env.load_bid_model(self.bid_model_path)
+            hands = [list(h) for h in env.get_hands()]
+            bid_history = []
+            void = False
+            while env.phase() == 0 and int(env.current_player()) != 2:
+                player = int(env.current_player())
+                action = int(env.bid_improved())
+                bid_history.append({"player": player, "action": action,
+                                     "name": colver.Env.action_name(action, 0)})
+                env.step(action)
+                if env.phase() != 0:
+                    void = True
+                    break
+            if void or env.phase() != 0:
+                continue
+            self.env = env
+            self.hands = hands
+            self.bid_history = bid_history
+            return {
+                "south_hand": hands[2],
+                "bid_history": bid_history,
+                "legal_actions": list(env.legal_actions()),
+                "dealer": int(env.get_dealer()),
+            }
+        raise RuntimeError("Could not generate bid problem")
+
+    def evaluate(self, player_action: int) -> dict:
+        """Evaluate without advancing env. Returns correction dict."""
+        env = self.env
+        nn_result = None
+        if env.has_bid_model():
+            nn_result = env.action_bid_nn()
+        heuristic_action = int(env.bid_improved())
+        dd_result = env.solve_all_suits()
+        return {
+            "player_action": player_action,
+            "player_action_name": colver.Env.action_name(player_action, 0),
+            "nn_action": int(nn_result["best_action"]) if nn_result else None,
+            "nn_action_name": colver.Env.action_name(int(nn_result["best_action"]), 0) if nn_result else None,
+            "nn_q_values": [[int(a), round(float(q), 3)] for a, q in nn_result["q_values"]] if nn_result else [],
+            "heuristic_action": heuristic_action,
+            "heuristic_action_name": colver.Env.action_name(heuristic_action, 0),
+            "dd_suits": dd_result["suits"],
+            "dd_elapsed_ms": round(dd_result["elapsed_ms"], 1),
+        }
+
+
+class PlayProblemSession:
+    """Single-card practice problem: play heuristic until South's turn, ask player to choose."""
+
+    def __init__(self, bid_model_path=None, dmc_model_path=None):
+        self.env = None
+        self.hands = None
+        self.bid_history = []
+        self.bid_model_path = bid_model_path
+        self.dmc_model_path = dmc_model_path
+
+    def generate(self) -> dict:
+        """Bid with bid_improved(), then play heuristic until South's turn. Retry if trivial (<2 choices)."""
+        for _ in range(50):
+            env = colver.Env()
+            env.reset()
+            if self.bid_model_path:
+                env.load_bid_model(self.bid_model_path)
+            if self.dmc_model_path:
+                env.load_dmc_model(self.dmc_model_path)
+            hands = [list(h) for h in env.get_hands()]
+            bid_history = []
+            env.dede_init()
+
+            # Bidding phase
+            void = False
+            while env.phase() == 0:
+                player = int(env.current_player())
+                action = int(env.bid_improved())
+                bid_history.append({"player": player, "action": action,
+                                     "name": colver.Env.action_name(action, 0)})
+                env.dede_step(action)
+                if env.is_terminal():
+                    void = True
+                    break
+
+            if void or env.phase() != 1:
+                continue
+
+            # Play phase: advance with heuristic until South's turn
+            while env.phase() == 1 and not env.is_terminal() and int(env.current_player()) != 2:
+                action = int(env.action_heuristic_play())
+                env.dede_step(action)
+
+            if env.is_terminal() or int(env.current_player()) != 2:
+                continue
+            if len(env.legal_actions()) < 2:
+                continue
+
+            self.env = env
+            self.hands = hands
+            self.bid_history = bid_history
+            return {
+                "south_hand": hands[2],
+                "bid_history": bid_history,
+                "contract": env.get_contract(),
+                "current_trick": env.get_current_trick(),
+                "tricks_won": list(env.get_tricks_won()),
+                "points": list(env.get_points()),
+                "legal_actions": list(env.legal_actions()),
+                "dealer": int(env.get_dealer()),
+                "trick_lead": int(env.get_trick_lead()),
+            }
+        raise RuntimeError("Could not generate play problem")
+
+    def evaluate(self, player_action: int) -> dict:
+        """Evaluate player's card. IS-DD beliefs are warm from generate()."""
+        env = self.env
+        t0 = time.monotonic()
+        oracle_action = int(env.action_oracle_dd())
+        oracle_elapsed = round((time.monotonic() - t0) * 1000, 1)
+
+        dmc_result = None
+        if env.has_dmc_model():
+            dmc_result = env.action_dmc_with_stats()
+
+        isdd_result = env.action_dede_with_stats(100)
+
+        return {
+            "player_action": player_action,
+            "player_action_name": colver.Env.action_name(player_action, 1),
+            "oracle_action": oracle_action,
+            "oracle_action_name": colver.Env.action_name(oracle_action, 1),
+            "oracle_elapsed_ms": oracle_elapsed,
+            "dmc_action": int(dmc_result["best_action"]) if dmc_result else None,
+            "dmc_action_name": colver.Env.action_name(int(dmc_result["best_action"]), 1) if dmc_result else None,
+            "dmc_q_values": [[int(c), round(float(q), 4)] for c, q in dmc_result["q_values"]] if dmc_result else [],
+            "isdd_action": int(isdd_result["best_action"]),
+            "isdd_action_name": colver.Env.action_name(int(isdd_result["best_action"]), 1),
+            "isdd_card_scores": [[int(c), round(float(s), 1)] for c, s in isdd_result["card_scores"]],
+            "isdd_determinizations": int(isdd_result["determinizations"]),
+            "isdd_elapsed_ms": round(isdd_result["elapsed_ms"], 1),
+            "all_hands": self.hands,
+        }
+
+
 class ReplaySession(TrickTracker):
     """Replay a stored game from the database step-by-step."""
 

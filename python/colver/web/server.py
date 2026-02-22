@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession
 import colver.web.database as db
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -113,6 +113,8 @@ async def websocket_endpoint(ws: WebSocket):
     play_session = None
     watch_session = None
     replay_session = None
+    bid_problem_session = None
+    play_problem_session = None
     play_game_id = None
     watch_game_id = None
     play_move_delay = 2.0
@@ -470,6 +472,54 @@ async def websocket_endpoint(ws: WebSocket):
                     custom_started_msg["dd_scores"] = watch_session.dd_scores
                     custom_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
                 await ws.send_json(custom_started_msg)
+
+            elif msg_type == "bid_problem_generate":
+                loop = asyncio.get_event_loop()
+                bid_problem_session = BidProblemSession(
+                    bid_model_path=BID_MODEL_PATH,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                )
+                try:
+                    result = await loop.run_in_executor(None, bid_problem_session.generate)
+                    await ws.send_json({"type": "bid_problem_ready", **result,
+                                        "has_bid_model": bool(BID_MODEL_PATH)})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
+
+            elif msg_type == "bid_problem_submit":
+                if bid_problem_session is None or bid_problem_session.env is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de problème en cours"})
+                    continue
+                try:
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        None, bid_problem_session.evaluate, int(data["action"]))
+                    await ws.send_json({"type": "bid_problem_correction", **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Évaluation échouée : {e}"})
+
+            elif msg_type == "play_problem_generate":
+                loop = asyncio.get_event_loop()
+                play_problem_session = PlayProblemSession(
+                    bid_model_path=BID_MODEL_PATH,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                )
+                try:
+                    result = await loop.run_in_executor(None, play_problem_session.generate)
+                    await ws.send_json({"type": "play_problem_ready", **result,
+                                        "has_dmc_model": doudou_available})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
+
+            elif msg_type == "play_problem_submit":
+                if play_problem_session is None or play_problem_session.env is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de problème en cours"})
+                    continue
+                try:
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        None, play_problem_session.evaluate, int(data["action"]))
+                    await ws.send_json({"type": "play_problem_correction", **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Évaluation échouée : {e}"})
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})
