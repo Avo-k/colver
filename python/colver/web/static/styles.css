@@ -1798,6 +1798,40 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     color: #666;
 }
 
+.dd-loader {
+    text-align: center;
+    padding: 16px 8px;
+}
+
+.dd-loader-text {
+    color: #aaa;
+    font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+
+.dd-progress-bar {
+    height: 6px;
+    background: #222;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0 auto;
+    max-width: 200px;
+}
+
+.dd-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3a6a5a, #82e0aa);
+    border-radius: 3px;
+    transition: width 0.1s linear;
+}
+
+.dd-loader-pct {
+    color: #82e0aa;
+    font-size: 0.8rem;
+    margin-top: 4px;
+}
+
 /* ===== BELOTE ANNOUNCEMENTS ===== */
 .belote-announcement {
     position: absolute;
@@ -2106,3 +2140,131 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
         width: 100%;
     }
 }
+
+/* ===== PROBLEMES PANELS ===== */
+#prob-annonce-panel, #prob-jeu-panel {
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+#pa-config, #pj-config {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+#pa-main, #pj-main {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+#pa-left, #pj-left {
+    flex: 1;
+    min-width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.prob-correction {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: rgba(0,0,0,0.25);
+    border-radius: 8px;
+    padding: 14px 16px;
+}
+.prob-box {
+    background: rgba(0,0,0,0.2);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+#pj-info-bar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+}
+#pj-trick-area {
+    display: grid;
+    grid-template-areas: ". n ." "w . e" ". s .";
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 4px;
+    align-items: center;
+    justify-items: center;
+    padding: 4px 0;
+}
+#pj-trick-n { grid-area: n; }
+#pj-trick-s { grid-area: s; }
+#pj-trick-w { grid-area: w; }
+#pj-trick-e { grid-area: e; }
+.prob-badge {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: .9rem;
+    font-weight: 700;
+    text-align: center;
+}
+.prob-badge-correct {
+    background: rgba(76,175,80,.2);
+    border: 1px solid rgba(76,175,80,.5);
+    color: #a5d6a7;
+}
+.prob-badge-wrong {
+    background: rgba(229,115,115,.2);
+    border: 1px solid rgba(229,115,115,.4);
+    color: #ef9a9a;
+}
+.prob-section {
+    background: rgba(0,0,0,0.2);
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.prob-label {
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #666;
+    font-weight: 600;
+}
+.prob-best {
+    font-size: .95rem;
+    font-weight: 700;
+    color: #d4af37;
+}
+.prob-next-btn {
+    background: #4a4a4a;
+    color: #ddd;
+    align-self: stretch;
+    margin-top: 4px;
+}
+.prob-next-btn:hover { background: #5a5a5a; }
+#pj-all-hands {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.pj-reveal-seat {
+    background: rgba(0,0,0,.15);
+    border-radius: 4px;
+    padding: 5px 7px;
+}
+/* Highlight player's pick in bar charts */
+.visit-row.prob-player-pick .visit-name { color:#82cfff; font-weight:700; }
+.visit-row.prob-player-pick .visit-bar-fill { background: linear-gradient(90deg,#1a5276,#5dade2); }
+/* Wide visit-name for bid action labels in prob panels */
+#pa-nn-bars .visit-name { width: 64px; }

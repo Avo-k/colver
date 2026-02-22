@@ -2,18 +2,15 @@
 
 let annoncesHand = new Set();
 let annoncesHistory = []; // array of action indices (prior bids before our turn)
-let annoncesPending = 0; // track how many responses we're waiting for
+let ddTimerId = null;
+let ddStartTime = 0;
+let ddEstimatedMs = 0;
 
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
 // N=light blue, E=light green, S=gold, O=orange
 const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
 
 function annoncesPlayerSeat(turnIdx, historyLen) {
-    // Compute which seat (0=N,1=E,2=S,3=O) speaks at turnIdx within a history of historyLen turns.
-    // The user is always Sud (seat 2) and speaks after all prior turns.
-    // For historyLen=1: turn 0 → seat 1 (Est)
-    // For historyLen=2: turn 0 → seat 0 (Nord), turn 1 → seat 1 (Est)
-    // For historyLen=3: turn 0 → seat 3 (Ouest), turn 1 → seat 0, turn 2 → seat 1
     return (2 - historyLen + turnIdx + 32) % 4;
 }
 
@@ -178,35 +175,67 @@ document.getElementById('annonces-clear-btn').addEventListener('click', () => {
     annoncesHand.clear();
     updateAnnoncesDisplay();
     document.getElementById('annonces-results-row').classList.add('hidden');
+    stopDdTimer();
 });
+
+// DD loading progress
+function startDdTimer(numSims) {
+    ddEstimatedMs = numSims * 150; // ~150ms per sim estimate
+    ddStartTime = Date.now();
+    const estSec = (ddEstimatedMs / 1000).toFixed(1);
+    document.getElementById('annonces-dd-header').textContent = `Oracle DD`;
+    document.getElementById('annonces-dd-body').innerHTML =
+        `<div class="dd-loader">
+            <div class="dd-loader-text">Résolution de ${numSims} donnes (~${estSec}s)…</div>
+            <div class="dd-progress-bar"><div class="dd-progress-fill" id="dd-progress-fill"></div></div>
+            <div class="dd-loader-pct" id="dd-loader-pct">0%</div>
+        </div>`;
+    ddTimerId = setInterval(updateDdProgress, 100);
+}
+
+function updateDdProgress() {
+    const elapsed = Date.now() - ddStartTime;
+    // Allow progress to go slightly past 100% (cap display at 99% until done)
+    const pct = Math.min(99, Math.round((elapsed / ddEstimatedMs) * 100));
+    const fill = document.getElementById('dd-progress-fill');
+    const label = document.getElementById('dd-loader-pct');
+    if (fill) fill.style.width = pct + '%';
+    if (label) label.textContent = pct + '%';
+}
+
+function stopDdTimer() {
+    if (ddTimerId) {
+        clearInterval(ddTimerId);
+        ddTimerId = null;
+    }
+}
 
 // Eval button fires both NN eval and DD simulation
 document.getElementById('annonces-eval-btn').addEventListener('click', () => {
     const hand = Array.from(annoncesHand);
     const numSims = Math.max(1, Math.min(200, parseInt(document.getElementById('annonces-sim-count').value) || 10));
-    document.getElementById('annonces-results-row').classList.add('hidden');
-    document.getElementById('annonces-results-body').innerHTML = '';
-    document.getElementById('annonces-dd-body').innerHTML = '';
-    document.getElementById('annonces-loading').classList.remove('hidden');
-    annoncesPending = 2;
+
+    // Show results row immediately with loading state in DD column
+    document.getElementById('annonces-results-row').classList.remove('hidden');
+    document.getElementById('annonces-loading').classList.add('hidden');
+
+    // Clear Q-values column — instant result incoming
+    document.getElementById('annonces-results-header').textContent = 'Le Bide à Dédé';
+    document.getElementById('annonces-results-body').innerHTML =
+        '<div class="dd-loader"><div class="dd-loader-text">Calcul…</div></div>';
+
+    // Start DD loader with progress bar
+    startDdTimer(numSims);
+
     send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
     send({ type: 'dd_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
 });
-
-function annoncesCheckDone() {
-    annoncesPending--;
-    if (annoncesPending <= 0) {
-        document.getElementById('annonces-loading').classList.add('hidden');
-        document.getElementById('annonces-results-row').classList.remove('hidden');
-    }
-}
 
 onMessage('bid_eval_result', (data) => {
     if (data.error) {
         document.getElementById('annonces-results-body').innerHTML =
             `<div class="annonces-error">${data.error}</div>`;
         document.getElementById('annonces-results-header').textContent = 'Erreur';
-        annoncesCheckDone();
         return;
     }
 
@@ -233,7 +262,6 @@ onMessage('bid_eval_result', (data) => {
     }
     html += '</div>';
     document.getElementById('annonces-results-body').innerHTML = html;
-    annoncesCheckDone();
 });
 
 // DD simulation result
@@ -249,11 +277,12 @@ function ddSuggestedBid(avgNs) {
 }
 
 onMessage('dd_sim_result', (data) => {
+    stopDdTimer();
+
     if (data.error) {
         document.getElementById('annonces-dd-body').innerHTML =
             `<div class="annonces-error">${data.error}</div>`;
         document.getElementById('annonces-dd-header').textContent = 'Erreur';
-        annoncesCheckDone();
         return;
     }
 
@@ -280,7 +309,6 @@ onMessage('dd_sim_result', (data) => {
     }
     html += '</table>';
     document.getElementById('annonces-dd-body').innerHTML = html;
-    annoncesCheckDone();
 });
 
 // Init

@@ -16,6 +16,8 @@
             <button class="tab" data-tab="replay">Rejouer</button>
             <button class="tab" data-tab="deal">Donner</button>
             <button class="tab" data-tab="annonces">Annonces</button>
+            <button class="tab" data-tab="prob-annonce">Problèmes annonce</button>
+            <button class="tab" data-tab="prob-jeu">Problèmes jeu</button>
             <button class="tab" data-tab="docs">À propos</button>
             <button id="sound-toggle" class="sound-toggle" title="Son on/off">&#128266;</button>
         </nav>
@@ -431,6 +433,135 @@
             </div>
         </div>
 
+        <!-- PROBLEMES ANNONCE -->
+        <div id="prob-annonce-panel" class="panel">
+            <div id="pa-config">
+                <span class="annonces-title">Problèmes d'annonce</span>
+                <button id="pa-generate-btn">Nouveau problème</button>
+                <span id="pa-loading" class="hidden" style="color:#888;font-size:.85rem">Génération…</span>
+            </div>
+            <div id="pa-main" class="hidden">
+                <div id="pa-left">
+                    <div class="prob-box">
+                        <div class="section-title">Enchères précédentes</div>
+                        <div id="pa-bid-history-entries" style="display:flex;gap:4px;flex-wrap:wrap;min-height:20px"></div>
+                    </div>
+                    <div class="prob-box">
+                        <div class="section-title">Votre main (Sud)</div>
+                        <div class="hand" id="pa-hand-display"></div>
+                    </div>
+                    <div class="prob-box" id="pa-bid-panel">
+                        <div id="pa-bid-selectors" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                            <select id="pa-bid-value">
+                                <option value="">Valeur...</option>
+                                <option value="80">80</option><option value="90">90</option>
+                                <option value="100">100</option><option value="110">110</option>
+                                <option value="120">120</option><option value="130">130</option>
+                                <option value="140">140</option><option value="150">150</option>
+                                <option value="160">160</option><option value="250">Capot</option>
+                            </select>
+                            <select id="pa-bid-suit">
+                                <option value="0">&spades;</option><option value="1">&hearts;</option>
+                                <option value="2">&diams;</option><option value="3">&clubs;</option>
+                            </select>
+                            <button id="pa-bid-submit" class="bid-btn bid-action">Annoncer</button>
+                        </div>
+                        <div style="display:flex;gap:6px;margin-top:6px">
+                            <button id="pa-pass-btn" class="bid-btn pass hidden">Passe</button>
+                            <button id="pa-coinche-btn" class="bid-btn coinche hidden">Coinche</button>
+                            <button id="pa-surcoinche-btn" class="bid-btn coinche hidden">Surcoinche</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="pa-correction" class="prob-correction hidden">
+                    <div class="section-title">Correction</div>
+                    <div id="pa-player-badge" class="prob-badge"></div>
+                    <div class="prob-section">
+                        <div class="prob-label">Le Bide à Dédé (NN)</div>
+                        <div id="pa-nn-best" class="prob-best"></div>
+                        <div id="pa-nn-bars"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="prob-label">Heuristique (amélioré)</div>
+                        <div id="pa-heuristic-best" class="prob-best"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="prob-label">Analyse Double-Dummy</div>
+                        <table class="dd-table">
+                            <tr><th></th><th>NS</th><th>EO</th></tr>
+                            <tr><td>&spades;</td><td id="pa-dd-s-ns">-</td><td id="pa-dd-s-ew">-</td></tr>
+                            <tr><td class="red">&hearts;</td><td id="pa-dd-h-ns">-</td><td id="pa-dd-h-ew">-</td></tr>
+                            <tr><td class="red">&diams;</td><td id="pa-dd-d-ns">-</td><td id="pa-dd-d-ew">-</td></tr>
+                            <tr><td>&clubs;</td><td id="pa-dd-c-ns">-</td><td id="pa-dd-c-ew">-</td></tr>
+                        </table>
+                        <div id="pa-dd-elapsed" class="visit-total"></div>
+                    </div>
+                    <button id="pa-next-btn" class="prob-next-btn">Problème suivant</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PROBLEMES JEU -->
+        <div id="prob-jeu-panel" class="panel">
+            <div id="pj-config">
+                <span class="annonces-title">Problèmes de jeu</span>
+                <button id="pj-generate-btn">Nouveau problème</button>
+                <span id="pj-loading" class="hidden" style="color:#888;font-size:.85rem">Génération…</span>
+            </div>
+            <div id="pj-main" class="hidden">
+                <div id="pj-left">
+                    <div class="prob-box" id="pj-info-bar">
+                        <span id="pj-contract-display" style="color:#d4af37;font-weight:600"></span>
+                        <span id="pj-score-ns">NS : 0</span>
+                        <span id="pj-score-ew">EO : 0</span>
+                        <span id="pj-tricks-info" style="color:#888"></span>
+                    </div>
+                    <div class="prob-box">
+                        <div class="section-title">Enchères</div>
+                        <div id="pj-bid-history-entries" style="display:flex;gap:4px;flex-wrap:wrap;min-height:20px"></div>
+                    </div>
+                    <div class="prob-box">
+                        <div class="section-title">Pli en cours</div>
+                        <div id="pj-trick-area">
+                            <div class="trick-card" id="pj-trick-n"></div>
+                            <div class="trick-card" id="pj-trick-w"></div>
+                            <div class="trick-card" id="pj-trick-e"></div>
+                            <div class="trick-card" id="pj-trick-s"></div>
+                        </div>
+                    </div>
+                    <div class="prob-box">
+                        <div class="section-title">Votre main (Sud) — cliquez une carte</div>
+                        <div class="hand" id="pj-hand-display"></div>
+                    </div>
+                </div>
+                <div id="pj-correction" class="prob-correction hidden">
+                    <div class="section-title">Correction</div>
+                    <div id="pj-player-badge" class="prob-badge"></div>
+                    <div class="prob-section">
+                        <div class="prob-label">Oracle DD (information parfaite)</div>
+                        <div id="pj-oracle-best" class="prob-best"></div>
+                        <div id="pj-oracle-elapsed" class="visit-total"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="prob-label">IS-DD (Dédé)</div>
+                        <div id="pj-isdd-best" class="prob-best"></div>
+                        <div id="pj-isdd-bars"></div>
+                        <div id="pj-isdd-meta" class="visit-total"></div>
+                    </div>
+                    <div id="pj-dmc-section" class="prob-section hidden">
+                        <div class="prob-label">DouDou (DMC)</div>
+                        <div id="pj-dmc-best" class="prob-best"></div>
+                        <div id="pj-dmc-bars"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="section-title" style="margin-bottom:6px">Distribution complète</div>
+                        <div id="pj-all-hands"></div>
+                    </div>
+                    <button id="pj-next-btn" class="prob-next-btn">Problème suivant</button>
+                </div>
+            </div>
+        </div>
+
         <!-- DOCS -->
         <div id="docs-panel" class="panel">
             <div id="docs-content">
@@ -574,5 +705,7 @@
     <script src="static/js/replay.js?v=11"></script>
     <script src="static/js/deal.js?v=11"></script>
     <script src="static/js/annonces.js?v=11"></script>
+    <script src="static/js/problemes_annonce.js?v=12"></script>
+    <script src="static/js/problemes_jeu.js?v=12"></script>
 </body>
 </html>
