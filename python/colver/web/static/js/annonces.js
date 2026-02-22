@@ -10,6 +10,28 @@ const SEAT_NAMES = ['N', 'E', 'S', 'O'];
 // N=light blue, E=light green, S=gold, O=orange
 const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
 
+const SUIT_SYMBOLS = ['♠', '♥', '♦', '♣'];
+
+function suitHtml(suitIdx) {
+    const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
+    return `<span class="${cls}">${SUIT_SYMBOLS[suitIdx]}</span>`;
+}
+
+function bidActionHtml(action) {
+    if (action === 0) return 'Passe';
+    if (action >= 37 && action <= 40) return `Capot ${suitHtml(action - 37)}`;
+    if (action === 41) return 'Coinche';
+    if (action === 42) return 'Surcoinche';
+    if (action >= 1 && action <= 36) {
+        const bidIdx = action - 1;
+        const valueIdx = Math.floor(bidIdx / 4);
+        const suitIdx = bidIdx % 4;
+        const value = 80 + valueIdx * 10;
+        return `${value} ${suitHtml(suitIdx)}`;
+    }
+    return `Action ${action}`;
+}
+
 function annoncesPlayerSeat(turnIdx, historyLen) {
     return (2 - historyLen + turnIdx + 32) % 4;
 }
@@ -20,8 +42,7 @@ function initAnnoncesGrid() {
     for (let suit = 0; suit < 4; suit++) {
         const label = document.createElement('div');
         label.className = 'palette-suit-label';
-        label.textContent = SUITS[suit];
-        label.style.color = (suit === 1 || suit === 2) ? '#ef9a9a' : '#ddd';
+        label.innerHTML = suitHtml(suit);
         palette.appendChild(label);
 
         for (let rank = 0; rank < 8; rank++) {
@@ -57,11 +78,11 @@ function initActionSelect() {
     for (let valIdx = 0; valIdx < 9; valIdx++) {
         const value = 80 + valIdx * 10;
         for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
-            addOpt(valIdx * 4 + suitIdx + 1, `${value} ${SUITS[suitIdx]}`);
+            addOpt(valIdx * 4 + suitIdx + 1, `${value} ${SUIT_SYMBOLS[suitIdx]}`);
         }
     }
     for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
-        addOpt(37 + suitIdx, `Capot ${SUITS[suitIdx]}`);
+        addOpt(37 + suitIdx, `Capot ${SUIT_SYMBOLS[suitIdx]}`);
     }
     addOpt(41, 'Coinche');
     addOpt(42, 'Surcoinche');
@@ -112,7 +133,7 @@ function renderAnnoncesHistory() {
 
         const actionSpan = document.createElement('span');
         actionSpan.className = 'ann-action-name';
-        actionSpan.textContent = bidActionName(action);
+        actionSpan.innerHTML = bidActionHtml(action);
 
         const delBtn = document.createElement('button');
         delBtn.className = 'ann-del-btn';
@@ -195,7 +216,6 @@ function startDdTimer(numSims) {
 
 function updateDdProgress() {
     const elapsed = Date.now() - ddStartTime;
-    // Allow progress to go slightly past 100% (cap display at 99% until done)
     const pct = Math.min(99, Math.round((elapsed / ddEstimatedMs) * 100));
     const fill = document.getElementById('dd-progress-fill');
     const label = document.getElementById('dd-loader-pct');
@@ -239,21 +259,20 @@ onMessage('bid_eval_result', (data) => {
         return;
     }
 
-    const qValues = data.q_values;
+    const qValues = data.q_values; // already sorted by Q descending
     const bestAction = data.best_action;
-    const top = qValues.slice(0, 10);
-    const minQ = Math.min(...top.map(([, q]) => q));
-    const maxQ = Math.max(...top.map(([, q]) => q));
+    const minQ = Math.min(...qValues.map(([, q]) => q));
+    const maxQ = Math.max(...qValues.map(([, q]) => q));
     const range = maxQ - minQ || 1;
 
-    document.getElementById('annonces-results-header').textContent =
-        `Le Bide à Dédé : ${bidActionName(bestAction)}`;
+    document.getElementById('annonces-results-header').innerHTML =
+        `Le Bide à Dédé : ${bidActionHtml(bestAction)}`;
 
-    let html = '<div class="visit-bars">';
-    for (const [action, q] of top) {
+    let html = '<div class="visit-bars ann-qvalues-scroll">';
+    for (const [action, q] of qValues) {
         const pct = ((q - minQ) / range * 100).toFixed(0);
         const isBest = action === bestAction;
-        const name = bidActionName(action);
+        const name = bidActionHtml(action);
         html += `<div class="visit-row${isBest ? ' best' : ''}">
             <span class="visit-name">${name}</span>
             <div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>
@@ -265,9 +284,6 @@ onMessage('bid_eval_result', (data) => {
 });
 
 // DD simulation result
-const DD_SUIT_SYMBOLS = ['♠', '♥', '♦', '♣'];
-const DD_SUIT_CLASSES = ['', 'red', 'red', ''];
-
 function ddSuggestedBid(avgNs) {
     const thresholds = [160, 150, 140, 130, 120, 110, 100, 90, 80];
     for (const t of thresholds) {
@@ -295,13 +311,12 @@ onMessage('dd_sim_result', (data) => {
 
     let html = '<table class="dd-sim-table"><tr><th>Atout</th><th>Moy. NS</th><th>Moy. EO</th><th>Annonce</th></tr>';
     for (const s of suits) {
-        const suitClass = DD_SUIT_CLASSES[s.suit];
-        const symbol = DD_SUIT_SYMBOLS[s.suit];
+        const symbol = suitHtml(s.suit);
         const bid = ddSuggestedBid(s.avg_ns);
-        const bidText = bid ? `${bid} ${symbol}` : '—';
+        const bidText = bid ? `${bid} ${suitHtml(s.suit)}` : '—';
         const bidClass = bid ? (bid >= 100 ? 'dd-bid-high' : 'dd-bid-ok') : 'dd-bid-none';
         html += `<tr>
-            <td class="${suitClass}">${symbol}</td>
+            <td>${symbol}</td>
             <td>${s.avg_ns.toFixed(1)}</td>
             <td>${s.avg_ew.toFixed(1)}</td>
             <td class="${bidClass}">${bidText}</td>
