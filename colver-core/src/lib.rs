@@ -15,6 +15,10 @@ pub mod dmc_net;
 pub mod dmc_obs;
 pub mod bid_obs;
 pub mod bid_net;
+pub mod belief_obs;
+pub mod belief_net;
+#[cfg(feature = "rand")]
+pub mod dmc_eval;
 #[cfg(feature = "rand")]
 pub mod dmc_replay;
 #[cfg(feature = "rand")]
@@ -39,6 +43,8 @@ pub mod bid_train_env;
 pub mod dmc_candle;
 #[cfg(feature = "dmc_train")]
 pub mod bid_candle;
+#[cfg(feature = "dmc_train")]
+pub mod belief_candle;
 #[cfg(feature = "nn")]
 pub mod features;
 #[cfg(feature = "nn")]

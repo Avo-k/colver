@@ -172,33 +172,16 @@ impl VecTrainingEnv {
         self.envs.iter().map(|e| e.state.phase).collect()
     }
 
-    /// Dispatch a single bid action given a strategy index.
-    fn dispatch_bid(&mut self, env_idx: usize, strategy: u8) -> u8 {
+    /// Dispatch a heuristic bid action (strategies 0-7, no &mut self needed).
+    fn dispatch_heuristic_bid(state: &GameState, strategy: u8) -> u8 {
         match strategy {
-            0 => bid_eval::improved_v2_bid(&self.envs[env_idx].state),
+            0 => bid_eval::improved_v2_bid(state),
             idx @ 1..=6 => {
                 let presets = bid_eval::BidParams::all_presets();
-                bid_eval::parametric_bid(&self.envs[env_idx].state, &presets[(idx - 1) as usize])
+                bid_eval::parametric_bid(state, &presets[(idx - 1) as usize])
             }
-            7 => bid_eval::heuristic_bid(&self.envs[env_idx].state),
-            8 => {
-                // NN bid: use BidNet if loaded, else fallback to improved_v2
-                if self.bid_net.is_some() {
-                    // Copy state data to avoid borrow conflicts with bid_net
-                    let state = self.envs[env_idx].state;
-                    let bid_history = self.envs[env_idx].tracking.bid_history.clone();
-                    bid_obs::write_bid_observation(
-                        &mut self.bid_obs_buf, 0, &state, &bid_history,
-                    );
-                    let legal = state.legal_actions();
-                    let net = self.bid_net.as_mut().unwrap();
-                    let (action, _) = net.best_action(&self.bid_obs_buf, legal);
-                    action
-                } else {
-                    bid_eval::improved_v2_bid(&self.envs[env_idx].state)
-                }
-            }
-            _ => bid_eval::improved_v2_bid(&self.envs[env_idx].state),
+            7 => bid_eval::heuristic_bid(state),
+            _ => bid_eval::improved_v2_bid(state),
         }
     }
 
@@ -217,7 +200,21 @@ impl VecTrainingEnv {
             } else {
                 self.bid_strategies[i].1
             };
-            actions[i] = self.dispatch_bid(i, strategy);
+            if strategy == 8 {
+                if let Some(ref mut net) = self.bid_net {
+                    // Split borrows: env for state/history, bid_obs_buf for obs, net for inference
+                    let env = &self.envs[i];
+                    bid_obs::write_bid_observation(
+                        &mut self.bid_obs_buf, 0, &env.state, &env.tracking.bid_history,
+                    );
+                    let legal = env.state.legal_actions();
+                    actions[i] = net.best_action_fast(&self.bid_obs_buf, legal);
+                } else {
+                    actions[i] = bid_eval::improved_v2_bid(&self.envs[i].state);
+                }
+            } else {
+                actions[i] = Self::dispatch_heuristic_bid(&self.envs[i].state, strategy);
+            }
         }
         actions
     }

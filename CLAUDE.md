@@ -320,6 +320,13 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 - **`bid_nn_tournament`**: Round-robin tournament — NN bid vs improved_v2 across play methods (Smart IS-DD, DD oracle, DMC). Multi-threaded match play. Usage: `cargo run --bin bid_nn_tournament --release -- models/bid_nn_final.bin --dmc-model models/dmc_35.bin --matches 100`.
 - **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
 - **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
+- **`isdd_sweep`** (feature `rand`): IS-DD parameter sweep experiment. Three sections: count-based (D=1–64), time-based (5–50ms), soft inference comparison (D=8/16 hard vs soft). Each config plays N deals twice (IS-DD as NS vs random, and vs DouDou35 DMC), reporting win%, avg NS/EW points, ms/deal, and avg dets. Usage: `cargo run --bin isdd_sweep --release -- --dmc-model models/dmc_35.bin --deals 200 --threads 8`.
+
+**IS-DD sweep results** (200 deals, 8 threads, vs DouDou35):
+- Count sweep: D=1→44.5%, D=8→49%, D=16→52%, D=32→51.5%, D=64→50.5%. Gains plateau sharply after D=8 (~339ms/deal).
+- Time sweep: 5ms→50.5% (24 dets), 10ms→46%, 20ms→48%, 50ms→**57%** (264 dets). 50ms is the clear sweet spot.
+- Soft inference: at D=8, hard vs soft is a wash (46% vs 49%). At D=16, soft adds +3.5% (50.5%→54%) for only 7% more compute (704→752ms). Soft inference is worth it at D≥16.
+- **Recommended web config**: 20ms time-limited with soft inference (~48% vs DouDou35, ~230ms/deal). For higher quality: 50ms (~57%, 515ms/deal).
 
 ### Performance-Critical Path
 

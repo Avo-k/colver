@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Live training monitor — reads training.log and plots metrics.
 
+Handles both old-style eval (deals/rand/ckpt) and new v5 eval (rand/ckpt/isdd/nn_bid).
 Handles multiple concatenated runs with overlapping steps by deduplicating
 (keeps last occurrence for each step).
 
@@ -22,7 +23,7 @@ INTERVAL = int(sys.argv[sys.argv.index("--interval") + 1]) if "--interval" in sy
 def parse_log(path):
     # Raw data — may have duplicates from overlapping runs
     raw_metrics = {}  # step -> (eps, loss, speed)
-    raw_evals = {}    # step -> (deal_wr, rand_wr, ckpt_wr)
+    raw_evals = {}    # step -> dict of metric_name -> value
     last_step = 0
     detected_total = None
 
@@ -30,9 +31,7 @@ def parse_log(path):
       with open(p) as f:
         for line in f:
             # Detect new run boundary: the dashed separator before metric lines
-            # When a new run starts, flush stale data from killed runs
             if re.match(r'^-{40,}', line):
-                # Peek at what step the new run will start at — flush on first metric
                 continue
 
             # Detect total from step-offset header: "steps will display as 32000001..47000000"
@@ -40,14 +39,12 @@ def parse_log(path):
             if m:
                 run_start = int(m.group(1))
                 detected_total = int(m.group(2))
-                # New run starting at run_start: discard stale data from previous killed runs
                 raw_metrics = {s: v for s, v in raw_metrics.items() if s < run_start}
                 raw_evals = {s: v for s, v in raw_evals.items() if s < run_start}
 
-            # Detect resumed run without step-offset (overnight run style)
+            # Detect resumed run without step-offset
             m = re.search(r'Resumed from', line)
             if m and detected_total is None:
-                # Will be handled by first metric line being lower than last_step
                 pass
 
             # Metric lines: "   10000 | 0.250 | 0.400 | 1403378 |   0.0725 |    68749 |     425"
@@ -57,22 +54,33 @@ def parse_log(path):
                 eps = float(m.group(2))
                 loss = float(m.group(3))
                 speed = float(m.group(4))
-                # Detect run restart: step jumped backward — flush stale future data
                 if step < last_step:
                     raw_metrics = {s: v for s, v in raw_metrics.items() if s < step}
                     raw_evals = {s: v for s, v in raw_evals.items() if s < step}
                 raw_metrics[step] = (eps, loss, speed)
                 last_step = step
 
-            # Eval lines: "  [EVAL] deals 67% | rand 88% | ckpt 55% (20s)"
-            m = re.match(r'\s*\[EVAL\]\s*deals\s+(\d+)%(?:\s*\|\s*rand\s+(\d+)%)?(?:\s*\|\s*ckpt\s+(\d+)%)?', line)
-            if m:
-                deal = int(m.group(1))
-                rand_wr = int(m.group(2)) if m.group(2) else None
-                ckpt_wr = int(m.group(3)) if m.group(3) else None
-                raw_evals[last_step] = (deal, rand_wr, ckpt_wr)
+            # Eval lines — flexible parser for both old and new formats:
+            #   Old: "  [EVAL] deals 67% | rand 88% | ckpt 55% (20s)"
+            #   New: "  [EVAL] rand 85% | ckpt 55% | isdd 35% | nn_bid 80% (210s)"
+            #   Retro: "1000000 [EVAL] rand 88% | ckpt 55% | isdd 45% (210s)"
+            if '[EVAL]' in line:
+                # Check for step-prefixed format (from retro_eval)
+                m = re.match(r'\s*(\d+)\s+\[EVAL\]', line)
+                if m:
+                    eval_step = int(m.group(1))
+                else:
+                    eval_step = last_step
+                evals = {}
+                for em in re.finditer(r'(\w+)\s+(\d+)%', line):
+                    name = em.group(1)
+                    if name == 'nn':  # skip "nn" from "nn_bid"
+                        continue
+                    evals[name] = int(em.group(2))
+                if evals:
+                    raw_evals[eval_step] = evals
 
-    # Sort by step (dedup already handled by dict — last write wins)
+    # Sort by step
     sorted_steps = sorted(raw_metrics.keys())
     steps = sorted_steps
     eps_list = [raw_metrics[s][0] for s in sorted_steps]
@@ -81,14 +89,26 @@ def parse_log(path):
 
     sorted_eval_steps = sorted(raw_evals.keys())
     eval_steps = sorted_eval_steps
-    deal_wrs = [raw_evals[s][0] for s in sorted_eval_steps]
-    rand_wrs = [raw_evals[s][1] for s in sorted_eval_steps]
-    ckpt_wrs = [raw_evals[s][2] for s in sorted_eval_steps]
+    eval_data = [raw_evals[s] for s in sorted_eval_steps]
 
-    return steps, losses, speeds, eps_list, eval_steps, deal_wrs, rand_wrs, ckpt_wrs, detected_total
+    return steps, losses, speeds, eps_list, eval_steps, eval_data, detected_total
 
 def millions_formatter(x, pos):
-    return f'{x/1e6:.0f}M'
+    if abs(x) >= 1e6:
+        return f'{x/1e6:.0f}M'
+    elif abs(x) >= 1e3:
+        return f'{x/1e3:.0f}K'
+    else:
+        return f'{x:.0f}'
+
+# Eval metric display config: (key, label, marker, color)
+EVAL_METRICS = [
+    ('deals',   'Deal WR%',       'o', '#2ecc71'),
+    ('rand',    'Match vs Rand%',  's', '#e67e22'),
+    ('ckpt',    'Match vs Ckpt%',  'D', '#e74c3c'),
+    ('isdd',    'Match vs IS-DD%', '^', '#8e44ad'),
+    ('nn_bid',  'NN Bid %',        'v', '#3498db'),
+]
 
 plt.ion()
 fig, axes = plt.subplots(2, 2, figsize=(14, 8))
@@ -97,7 +117,7 @@ fig.canvas.manager.window.wm_geometry("+100+100")
 
 while True:
     try:
-        steps, losses, speeds, eps_list, eval_steps, deal_wrs, rand_wrs, ckpt_wrs, detected_total = parse_log(LOG_FILES)
+        steps, losses, speeds, eps_list, eval_steps, eval_data, detected_total = parse_log(LOG_FILES)
     except (FileNotFoundError, ValueError):
         time.sleep(INTERVAL)
         continue
@@ -129,34 +149,42 @@ while True:
     ax.xaxis.set_major_formatter(fmt)
     ax.grid(True, alpha=0.3)
 
-    # Bottom-left: Eval win rates
+    # Bottom-left: Eval win rates (all except nn_bid)
     ax = axes[1, 0]
-    if eval_steps:
-        ax.plot(eval_steps, deal_wrs, 'o-', color='#2ecc71', label='Deal WR%', markersize=6)
-        valid_rand = [(s, r) for s, r in zip(eval_steps, rand_wrs) if r is not None]
-        if valid_rand:
-            ax.plot([s for s, _ in valid_rand], [r for _, r in valid_rand],
-                    's-', color='#e67e22', label='Match vs Rand%', markersize=6)
-        valid_ckpt = [(s, r) for s, r in zip(eval_steps, ckpt_wrs) if r is not None]
-        if valid_ckpt:
-            ax.plot([s for s, _ in valid_ckpt], [r for _, r in valid_ckpt],
-                    'D-', color='#e74c3c', label='Match vs Ckpt%', markersize=6)
+    has_eval = False
+    for key, label, marker, color in EVAL_METRICS:
+        if key == 'nn_bid':
+            continue  # plotted separately in bottom-right
+        valid = [(s, d[key]) for s, d in zip(eval_steps, eval_data) if key in d]
+        if valid:
+            ax.plot([s for s, _ in valid], [v for _, v in valid],
+                    f'{marker}-', color=color, label=label, markersize=6)
+            has_eval = True
+    if has_eval:
         ax.axhline(y=50, color='gray', linestyle='--', alpha=0.5, label='50% baseline')
         ax.legend(fontsize=8)
+    else:
+        ax.text(0.5, 0.5, 'Waiting for first eval...', transform=ax.transAxes,
+                ha='center', va='center', fontsize=11, color='gray')
     ax.set_title("Eval Win Rates")
     ax.set_xlabel("Step")
     ax.set_ylabel("Win %")
-    ax.set_ylim(40, 100)
+    ax.set_ylim(0, 100)
     ax.xaxis.set_major_formatter(fmt)
     ax.grid(True, alpha=0.3)
 
-    # Bottom-right: Epsilon
+    # Bottom-right: Epsilon + NN bid fraction
     ax = axes[1, 1]
-    ax.plot(steps, eps_list, color='#9b59b6', linewidth=0.8)
-    ax.set_title("Epsilon (exploration)")
+    ax.plot(steps, eps_list, color='#9b59b6', linewidth=0.8, label='Epsilon')
+    nn_bid_data = [(s, d['nn_bid'] / 100.0) for s, d in zip(eval_steps, eval_data) if 'nn_bid' in d]
+    if nn_bid_data:
+        ax.plot([s for s, _ in nn_bid_data], [v for _, v in nn_bid_data],
+                'v-', color='#3498db', label='NN Bid frac', markersize=5)
+    ax.set_title("Epsilon & NN Bid Fraction")
     ax.set_xlabel("Step")
-    ax.set_ylabel("Epsilon")
+    ax.set_ylabel("Value")
     ax.xaxis.set_major_formatter(fmt)
+    ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
     # Progress info
@@ -166,7 +194,7 @@ while True:
     elif detected_total:
         total = detected_total
     else:
-        total = current  # no target known, just show current
+        total = current
 
     avg_speed = sum(speeds[-10:]) / len(speeds[-10:])
     if current < total:

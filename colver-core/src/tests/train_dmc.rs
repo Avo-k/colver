@@ -17,15 +17,13 @@ use rand::{Rng, SeedableRng};
 
 use candle_core::Device;
 
-use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs;
 use colver_core::dmc_candle::{DuelingTrainer, PoolNet};
 use colver_core::dmc_env::VecTrainingEnv;
+use colver_core::dmc_eval::{self, EvalConfig, EvalResult};
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::OBS_DIM;
 use colver_core::dmc_replay::PrioritizedReplayBuffer;
-use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::rollout;
 use colver_core::state::{GameState, Phase};
 
@@ -60,7 +58,7 @@ struct Args {
     eval_freq: usize,
     #[arg(long, default_value_t = 100)]
     eval_random_matches: usize,
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 30)]
     eval_isdd_matches: usize,
     #[arg(long, default_value_t = 20)]
     eval_isdd_time_ms: u32,
@@ -122,14 +120,6 @@ struct EpisodeTransition {
     team: u8,        // 0=NS, 1=EW
 }
 
-/// Evaluation results.
-struct EvalResult {
-    rand_wr: f64,
-    ckpt_wr: f64,
-    isdd_wr: f64,
-    elapsed: f64,
-}
-
 /// Pick a bid strategy for one team at the current step, given NN bid annealing params.
 fn pick_bid_strategy(
     rng: &mut StdRng,
@@ -161,23 +151,7 @@ fn pick_bid_strategy(
     }
 }
 
-/// Get bid action using NN or heuristic for eval deals.
-fn eval_bid_action(
-    state: &GameState,
-    bid_history: &[(u8, u8)],
-    bid_net: &mut Option<BidNet>,
-) -> u8 {
-    if let Some(ref mut net) = bid_net {
-        let obs = bid_obs::make_bid_observation(state, bid_history);
-        let legal = state.legal_actions();
-        let (action, _) = net.best_action(&obs, legal);
-        action
-    } else {
-        bid_eval::improved_v2_bid(state)
-    }
-}
-
-/// Evaluate the Q-network vs various baselines.
+/// Evaluate the Q-network vs various baselines using duplicate matching.
 fn evaluate(
     trainer: &DuelingTrainer,
     hidden: usize,
@@ -188,8 +162,6 @@ fn evaluate(
     baseline_net: &mut Option<DmcNet>,
     eval_bid_net: &mut Option<BidNet>,
 ) -> EvalResult {
-    let start = Instant::now();
-
     // Export current weights for CPU inference
     let weights = match trainer.snapshot_weights() {
         Ok(w) => w,
@@ -206,184 +178,14 @@ fn evaluate(
         }
     };
 
-    let mut rng = StdRng::seed_from_u64(12345);
-
-    // 1. Match play vs random
-    let rand_wr = if random_matches > 0 {
-        let mut wins = 0;
-        let per_side = random_matches / 2;
-        for q_team in 0..2u8 {
-            for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "random", &mut None, eval_bid_net, &mut rng) {
-                    wins += 1;
-                }
-            }
-        }
-        wins as f64 / random_matches as f64
-    } else {
-        0.0
+    let config = EvalConfig {
+        random_matches,
+        checkpoint_matches,
+        isdd_matches,
+        isdd_time_ms,
     };
 
-    // 2. Match play vs frozen checkpoint
-    let ckpt_wr = if checkpoint_matches > 0 && baseline_net.is_some() {
-        let mut wins = 0;
-        let per_side = checkpoint_matches / 2;
-        for q_team in 0..2u8 {
-            for _ in 0..per_side {
-                if play_match_eval(&mut q_net, q_team, "checkpoint", baseline_net, eval_bid_net, &mut rng) {
-                    wins += 1;
-                }
-            }
-        }
-        wins as f64 / checkpoint_matches as f64
-    } else {
-        0.0
-    };
-
-    // 3. Match play vs IS-DD
-    let isdd_wr = if isdd_matches > 0 {
-        let mut wins = 0;
-        let per_side = isdd_matches / 2;
-        for q_team in 0..2u8 {
-            for _ in 0..per_side {
-                if play_match_eval_isdd(&mut q_net, q_team, isdd_time_ms, eval_bid_net, &mut rng) {
-                    wins += 1;
-                }
-            }
-        }
-        wins as f64 / isdd_matches as f64
-    } else {
-        0.0
-    };
-
-    let elapsed = start.elapsed().as_secs_f64();
-    EvalResult { rand_wr, ckpt_wr, isdd_wr, elapsed }
-}
-
-/// Play a match to 2000 for evaluation (vs random or checkpoint).
-/// Both Q-net team and opponent use NN bid if available, else improved_v2.
-fn play_match_eval(
-    q_net: &mut DmcNet,
-    q_team: u8,
-    baseline: &str,
-    baseline_net: &mut Option<DmcNet>,
-    bid_net: &mut Option<BidNet>,
-    rng: &mut StdRng,
-) -> bool {
-    let mut q_total = 0.0f32;
-    let mut opp_total = 0.0f32;
-    for _ in 0..50 {
-        let dealer = rng.gen_range(0..4u8);
-        let mut state = GameState::deal_random(dealer, rng);
-        let mut tracking = colver_core::dmc_obs::EnvTracking::new();
-        tracking.dealer = dealer;
-
-        while !state.is_terminal() {
-            let player = state.current_player();
-            let team = GameState::player_team(player);
-
-            let action = if state.phase == Phase::Bidding {
-                eval_bid_action(&state, &tracking.bid_history, bid_net)
-            } else if team == q_team {
-                let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
-                let legal_mask = state.legal_actions() as u32;
-                let (best, _) = q_net.best_action(&obs, legal_mask);
-                best
-            } else {
-                match baseline {
-                    "random" => {
-                        let mask = state.legal_actions();
-                        let count = mask.count_ones();
-                        let idx = rng.gen_range(0..count);
-                        rollout::select_nth_bit(mask, idx)
-                    }
-                    "checkpoint" => {
-                        let net = baseline_net.as_mut().unwrap();
-                        let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
-                        let legal_mask = state.legal_actions() as u32;
-                        let (best, _) = net.best_action(&obs, legal_mask);
-                        best
-                    }
-                    _ => unreachable!(),
-                }
-            };
-
-            tracking.track_action(&state, action);
-            state.step(action);
-        }
-
-        let rewards = state.rewards();
-        q_total += rewards[q_team as usize];
-        opp_total += rewards[1 - q_team as usize];
-        if q_total >= 2000.0 || opp_total >= 2000.0 {
-            break;
-        }
-    }
-    q_total >= 2000.0
-}
-
-/// Play a match to 2000 vs IS-DD opponent.
-fn play_match_eval_isdd(
-    q_net: &mut DmcNet,
-    q_team: u8,
-    time_ms: u32,
-    bid_net: &mut Option<BidNet>,
-    rng: &mut StdRng,
-) -> bool {
-    let isdd_config = IsDdConfig {
-        time_limit_ms: Some(time_ms),
-        ..Default::default()
-    };
-
-    let mut q_total = 0.0f32;
-    let mut opp_total = 0.0f32;
-    for _ in 0..50 {
-        let dealer = rng.gen_range(0..4u8);
-        let mut state = GameState::deal_random(dealer, rng);
-        let mut tracking = colver_core::dmc_obs::EnvTracking::new();
-        tracking.dealer = dealer;
-
-        // Initialize IS-DD searches for all 4 players
-        let mut isdd_searches = [
-            IsDdSearch::new(), IsDdSearch::new(),
-            IsDdSearch::new(), IsDdSearch::new(),
-        ];
-        for (p, search) in isdd_searches.iter_mut().enumerate() {
-            search.init_deal(&state, p as u8, true);
-        }
-
-        while !state.is_terminal() {
-            let player = state.current_player();
-            let team = GameState::player_team(player);
-
-            let action = if state.phase == Phase::Bidding {
-                eval_bid_action(&state, &tracking.bid_history, bid_net)
-            } else if team == q_team {
-                let obs = colver_core::dmc_obs::make_observation(&state, &tracking);
-                let legal_mask = state.legal_actions() as u32;
-                let (best, _) = q_net.best_action(&obs, legal_mask);
-                best
-            } else {
-                isdd_searches[player as usize].search(&state, &isdd_config, rng)
-            };
-
-            // Record action for IS-DD beliefs
-            for search in isdd_searches.iter_mut() {
-                search.record_action(&state, player, action);
-            }
-
-            tracking.track_action(&state, action);
-            state.step(action);
-        }
-
-        let rewards = state.rewards();
-        q_total += rewards[q_team as usize];
-        opp_total += rewards[1 - q_team as usize];
-        if q_total >= 2000.0 || opp_total >= 2000.0 {
-            break;
-        }
-    }
-    q_total >= 2000.0
+    dmc_eval::run_eval(&mut q_net, baseline_net, eval_bid_net, &config)
 }
 
 fn main() {

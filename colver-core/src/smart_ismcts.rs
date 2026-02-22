@@ -2,10 +2,13 @@ use std::time::{Duration, Instant};
 
 use rand::Rng;
 
+use crate::belief_net::BeliefNet;
+use crate::belief_obs::{self, BELIEF_OBS_DIM};
 use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
+use crate::dmc_obs::EnvTracking;
 use crate::mcts::{MctsConfig, MctsSearch, RolloutPolicy, SearchResult};
 use crate::state::{GameState, Phase};
 
@@ -23,6 +26,8 @@ pub struct SmartIsMctsConfig {
     pub time_limit_ms: Option<u32>,
     /// Which bid function to use during bidding phase.
     pub bid_function: BidFunction,
+    /// If true and a BeliefNet is loaded, use NN beliefs instead of heuristic CardBeliefs.
+    pub use_nn_beliefs: bool,
 }
 
 impl Default for SmartIsMctsConfig {
@@ -34,6 +39,7 @@ impl Default for SmartIsMctsConfig {
             use_soft_inference: true,
             time_limit_ms: None,
             bid_function: BidFunction::ImprovedV2,
+            use_nn_beliefs: false,
         }
     }
 }
@@ -50,6 +56,8 @@ impl Default for SmartIsMctsConfig {
 pub struct SmartIsMctsSearch {
     inner: MctsSearch,
     beliefs: Option<CardBeliefs>,
+    belief_net: Option<BeliefNet>,
+    belief_tracking: Option<EnvTracking>,
 }
 
 impl SmartIsMctsSearch {
@@ -57,7 +65,20 @@ impl SmartIsMctsSearch {
         SmartIsMctsSearch {
             inner: MctsSearch::new(),
             beliefs: None,
+            belief_net: None,
+            belief_tracking: None,
         }
+    }
+
+    /// Load a BeliefNet for NN-based beliefs.
+    pub fn load_belief_net(&mut self, path: &str) -> std::io::Result<()> {
+        self.belief_net = Some(BeliefNet::load(path)?);
+        Ok(())
+    }
+
+    /// Check if a BeliefNet is loaded.
+    pub fn has_belief_net(&self) -> bool {
+        self.belief_net.is_some()
     }
 
     /// Initialize beliefs for a new deal from the given observer's perspective.
@@ -65,6 +86,12 @@ impl SmartIsMctsSearch {
         let mut beliefs = CardBeliefs::new(state, observer);
         beliefs.use_soft_inference = use_soft_inference;
         self.beliefs = Some(beliefs);
+
+        if self.belief_net.is_some() {
+            let mut tracking = EnvTracking::new();
+            tracking.reset(state.dealer);
+            self.belief_tracking = Some(tracking);
+        }
     }
 
     /// Record an action by any player, updating beliefs.
@@ -74,11 +101,15 @@ impl SmartIsMctsSearch {
         if let Some(beliefs) = &mut self.beliefs {
             beliefs.record_action(state_before, player, action);
         }
+        if let Some(tracking) = &mut self.belief_tracking {
+            tracking.track_action(state_before, action);
+        }
     }
 
     /// Reset beliefs (e.g., between deals).
     pub fn reset(&mut self) {
         self.beliefs = None;
+        self.belief_tracking = None;
     }
 
     pub fn search(
@@ -124,8 +155,17 @@ impl SmartIsMctsSearch {
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
 
-        // Get normalized weights from beliefs (if available)
-        let weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
+        // Get normalized weights from beliefs (NN or heuristic)
+        let weights = if config.use_nn_beliefs && self.belief_net.is_some() {
+            let net = self.belief_net.as_mut().unwrap();
+            let tracking = self.belief_tracking.as_ref().unwrap();
+            let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
+            belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
+            let logits = net.evaluate(&obs_buf);
+            Some(crate::belief_net::belief_to_weights(&logits, state, observer))
+        } else {
+            self.beliefs.as_ref().map(|b| b.normalized_weights())
+        };
 
         loop {
             if let Some(d) = deadline {
@@ -225,7 +265,16 @@ impl SmartIsMctsSearch {
 
         let mut det_count = 0u32;
 
-        let weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
+        let weights = if config.use_nn_beliefs && self.belief_net.is_some() {
+            let net = self.belief_net.as_mut().unwrap();
+            let tracking = self.belief_tracking.as_ref().unwrap();
+            let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
+            belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
+            let logits = net.evaluate(&obs_buf);
+            Some(crate::belief_net::belief_to_weights(&logits, state, observer))
+        } else {
+            self.beliefs.as_ref().map(|b| b.normalized_weights())
+        };
 
         loop {
             if let Some(d) = deadline {
@@ -297,7 +346,16 @@ impl SmartIsMctsSearch {
         // Pre-generate seeds
         let num_dets = config.determinizations as usize;
         let seeds: Vec<u64> = (0..num_dets).map(|_| rng.gen()).collect();
-        let weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
+        let weights = if config.use_nn_beliefs && self.belief_net.is_some() {
+            let net = self.belief_net.as_mut().unwrap();
+            let tracking = self.belief_tracking.as_ref().unwrap();
+            let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
+            belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
+            let logits = net.evaluate(&obs_buf);
+            Some(crate::belief_net::belief_to_weights(&logits, state, observer))
+        } else {
+            self.beliefs.as_ref().map(|b| b.normalized_weights())
+        };
         let game_state = *state; // Copy for thread safety
 
         // Run determinizations in parallel

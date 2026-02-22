@@ -125,9 +125,34 @@ name = "bid_nn_tournament"
 path = "src/tests/bid_nn_tournament.rs"
 
 [[bin]]
+name = "retro_eval"
+path = "src/tests/retro_eval.rs"
+required-features = ["rand"]
+
+[[bin]]
 name = "dd_bench"
 path = "src/tests/dd_bench.rs"
 
 [[bin]]
 name = "tree_size"
 path = "src/tests/tree_size.rs"
+
+[[bin]]
+name = "isdd_sweep"
+path = "src/tests/isdd_sweep.rs"
+required-features = ["rand"]
+
+[[bin]]
+name = "generate_belief_data"
+path = "src/tests/generate_belief_data.rs"
+required-features = ["rand"]
+
+[[bin]]
+name = "train_belief_net"
+path = "src/tests/train_belief_net.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
+name = "belief_eval"
+path = "src/tests/belief_eval.rs"
+required-features = ["rand"]

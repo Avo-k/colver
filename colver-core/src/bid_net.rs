@@ -284,6 +284,26 @@ impl BidNet {
         (best_action, legal_q)
     }
 
+    /// Pick best legal action (no allocation — returns action only).
+    pub fn best_action_fast(&mut self, obs: &[f32], legal_mask: u64) -> u8 {
+        let q = self.evaluate(obs);
+        let mut best_action = 0u8;
+        let mut best_q = f32::NEG_INFINITY;
+        let mut mask = legal_mask;
+        while mask != 0 {
+            let bit = mask.trailing_zeros() as u8;
+            if (bit as usize) < NUM_ACTIONS {
+                let q_val = q[bit as usize];
+                if q_val > best_q {
+                    best_q = q_val;
+                    best_action = bit;
+                }
+            }
+            mask &= mask - 1;
+        }
+        best_action
+    }
+
     pub fn obs_dim(&self) -> usize {
         self.obs_dim
     }
