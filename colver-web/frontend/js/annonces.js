@@ -53,6 +53,10 @@ function updateAnnoncesDisplay() {
     }
     document.getElementById('annonces-count').textContent = `${count}/8 cartes`;
     document.getElementById('annonces-eval-btn').disabled = count !== 8;
+
+    // Update hand preview
+    const handEl = document.getElementById('annonces-hand-display');
+    renderHand(handEl, Array.from(annoncesHand));
 }
 
 function bidActionName(action) {

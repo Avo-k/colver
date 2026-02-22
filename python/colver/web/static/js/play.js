@@ -342,7 +342,7 @@ onMessage('game_state', (data) => {
             const opt = document.querySelector(`#${selId} option[value="doudou"]`);
             if (opt) {
                 opt.disabled = true;
-                opt.textContent = 'DouDou35 (non dispo)';
+                opt.textContent = 'DouDou27 (non dispo)';
             }
             const sel = document.getElementById(selId);
             if (sel.value === 'doudou') sel.value = 'smart';

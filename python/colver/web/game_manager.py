@@ -230,7 +230,7 @@ class PlaySession(TrickTracker):
 
 AGENT_NAMES = {
     "dede": "Dédé (IS-DD)",
-    "doudou": "DouDou35",
+    "doudou": "DouDou27",
     "oracle_dd": "Oracle (DD)",
 }
 

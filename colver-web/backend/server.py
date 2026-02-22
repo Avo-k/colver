@@ -2,17 +2,13 @@
 
 import asyncio
 import os
-import sys
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-# Add backend dir to path
-sys.path.insert(0, os.path.dirname(__file__))
-REPO_ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
-from game_manager import PlaySession, WatchSession, ReplaySession, AnalysisSession
-import database as db
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession
+import colver.web.database as db
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
 ROOT_PATH = os.environ.get("ROOT_PATH", "/")
@@ -21,15 +17,45 @@ if not ROOT_PATH.endswith("/"):
 
 app = FastAPI(title="Colver")
 
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+# Locate static assets bundled in the package
+_WEB_DIR = os.path.dirname(__file__)
+FRONTEND_DIR = os.path.join(_WEB_DIR, "static")
+CARDS_DIR = os.path.join(_WEB_DIR, "cards")
 
-# DouDou35 model path (Rust inference, no PyTorch needed)
-DMC_MODEL_PATH = os.path.join(REPO_ROOT, "models", "dmc_35.bin")
-doudou_available = os.path.exists(DMC_MODEL_PATH)
+# DouDou27 model path (Rust inference, no PyTorch needed)
+import colver as _colver_pkg
+
+_model = _colver_pkg.model_path()
+if _model is None:
+    # Auto-download model if not found
+    print("[server] No DouDou27 model found, downloading...")
+    try:
+        _model = _colver_pkg.download_model()
+    except Exception as e:
+        print(f"[server] Download failed: {e}")
+        _model = None
+
+DMC_MODEL_PATH = str(_model) if _model else None
+doudou_available = _model is not None
 if doudou_available:
-    print(f"[server] DouDou35 model available at {DMC_MODEL_PATH} (Rust inference)")
+    print(f"[server] DouDou27 model available at {DMC_MODEL_PATH} (Rust inference)")
 else:
-    print(f"[server] No DouDou35 model at {DMC_MODEL_PATH}")
+    print("[server] No DouDou27 model found and download failed")
+
+# Bid NN model path (DD-trained bidder)
+_bid_model = _colver_pkg.bid_model_path()
+if _bid_model is None:
+    try:
+        _bid_model = _colver_pkg.download_bid_model()
+    except Exception as e:
+        print(f"[server] Bid model download failed: {e}")
+        _bid_model = None
+
+BID_MODEL_PATH = str(_bid_model) if _bid_model else None
+if _bid_model:
+    print(f"[server] Bid à DD model available at {BID_MODEL_PATH}")
+else:
+    print("[server] No Bid à DD model found, using improved_v2 fallback")
 
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
@@ -43,8 +69,6 @@ async def index():
     html = html.replace('<base href="/">', f'<base href="{ROOT_PATH}">')
     return HTMLResponse(html)
 
-
-CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "images", "cards")
 
 app.mount("/cards", StaticFiles(directory=CARDS_DIR), name="cards")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -89,9 +113,9 @@ async def websocket_endpoint(ws: WebSocket):
     play_session = None
     watch_session = None
     replay_session = None
-    analysis_session = None
     play_game_id = None
     watch_game_id = None
+    play_move_delay = 2.0
 
     try:
         while True:
@@ -100,8 +124,9 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "start_game":
                 human_seat = data.get("human_seat", 2)
-                opponent_ai = data.get("opponent_ai", "doudou")
-                partner_ai = data.get("partner_ai", "doudou")
+                opponent_ai = data.get("opponent_ai", "dede")
+                partner_ai = data.get("partner_ai", "dede")
+                play_move_delay = max(1.0, min(8.0, float(data.get("move_delay", 2))))
                 # Build per-seat AI mapping (human excluded)
                 ai_types = {}
                 for seat in range(4):
@@ -113,7 +138,9 @@ async def websocket_endpoint(ws: WebSocket):
                         ai_types[seat] = opponent_ai
                 needs_dmc = any(t == "doudou" for t in ai_types.values())
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path)
+                bid_path = BID_MODEL_PATH
+                difficulty = data.get("difficulty", "difficile")
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, difficulty=difficulty)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -126,13 +153,15 @@ async def websocket_endpoint(ws: WebSocket):
                     human_seat=human_seat,
                 )
 
-                await ws.send_json({
+                init_msg = {
                     "type": "game_state",
                     "state": play_session.get_state(human_seat),
                     "doudou_available": doudou_available,
                     "game_id": play_game_id,
-                })
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id)
+                    "initial_hands": play_session.initial_hands,
+                }
+                await ws.send_json(init_msg)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
             elif msg_type == "play":
                 if play_session is None:
@@ -140,31 +169,63 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 action = data["action"]
                 human_seat = data.get("human_seat", 2)
+
+                # Ignore duplicate clicks when it's not the human's turn
+                if play_session.env.current_player() != human_seat:
+                    continue
+
+                # Update move delay dynamically from slider
+                if "move_delay" in data:
+                    play_move_delay = max(1.0, min(8.0, float(data["move_delay"])))
+
                 state = play_session.play_action(action)
                 msg = {"type": "game_state", "state": state}
                 if play_session._belote_event:
                     msg["belote_event"] = play_session._belote_event
                     msg["belote_player"] = play_session._belote_player
-                await ws.send_json(msg)
 
-                # Save action to DB
-                if play_game_id:
-                    entry = play_session.history[-1]
-                    await db.append_action(play_game_id, entry)
+                if play_session.trick_just_completed:
+                    play_session.trick_just_completed = False
+                    # Show completed trick (4 cards visible), pause, then clear
+                    snapshot_state = dict(state)
+                    snapshot_state["current_trick"] = state["last_trick"]
+                    # tricks_won already incremented; roll back so hand counts stay correct
+                    tw = list(snapshot_state["tricks_won"])
+                    tw[state["last_trick_winner"] % 2] = max(0, tw[state["last_trick_winner"] % 2] - 1)
+                    snapshot_state["tricks_won"] = tw
+                    snapshot_msg = dict(msg)
+                    snapshot_msg["state"] = snapshot_state
+                    await ws.send_json(snapshot_msg)
+                    if play_game_id:
+                        await db.append_action(play_game_id, play_session.history[-1])
+                    if play_game_id and play_session.env.is_terminal():
+                        await _complete_game(play_game_id, play_session)
+                    await asyncio.sleep(play_move_delay)
+                    final_msg = {"type": "game_state", "state": state}
+                    _enrich_terminal_msg(final_msg, play_session)
+                    await ws.send_json(final_msg)
+                else:
+                    _enrich_terminal_msg(msg, play_session)
+                    await ws.send_json(msg)
+                    if play_game_id:
+                        await db.append_action(play_game_id, play_session.history[-1])
+                    if play_game_id and play_session.env.is_terminal():
+                        await _complete_game(play_game_id, play_session)
+                    # Pause after human's card is visible (simulates next player thinking)
+                    await asyncio.sleep(play_move_delay)
 
-                # Check terminal after human move
-                if play_game_id and play_session.env.is_terminal():
-                    await _complete_game(play_game_id, play_session)
-
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
 
             elif msg_type == "watch_start":
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
                 # Convert string keys from JSON to int
                 agents = {int(k): v for k, v in agents.items()}
+                difficulty = data.get("difficulty", "difficile")
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    difficulty=difficulty,
                 )
                 replay_session = None
 
@@ -177,14 +238,18 @@ async def websocket_endpoint(ws: WebSocket):
                     agents=agents_map,
                 )
 
-                await ws.send_json({
+                watch_started_msg = {
                     "type": "watch_started",
                     "state": watch_session.get_state(),
                     "doudou_available": doudou_available,
                     "bid_history": [],
                     "completed_tricks": [],
                     "game_id": watch_game_id,
-                })
+                }
+                if watch_session.dd_scores is not None:
+                    watch_started_msg["dd_scores"] = watch_session.dd_scores
+                    watch_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(watch_started_msg)
 
             elif msg_type == "watch_step":
                 if watch_session is None:
@@ -266,34 +331,140 @@ async def websocket_endpoint(ws: WebSocket):
                     replay_msg["belote_player"] = replay_session._belote_player
                 await ws.send_json(replay_msg)
 
-            elif msg_type == "setup_analysis":
+            elif msg_type == "save_custom_deal":
                 hands = data["hands"]
-                contract = data["contract"]
                 dealer = data.get("dealer", 0)
-                analysis_session = AnalysisSession()
-                state = analysis_session.setup(dealer, hands, contract)
+                agents = data.get("agents", {})
+                agents_map = {str(k): v for k, v in agents.items()}
+                game_id = await db.create_game(
+                    mode="custom",
+                    dealer=dealer,
+                    hands=hands,
+                    agents=agents_map,
+                )
                 await ws.send_json({
-                    "type": "analysis_ready",
-                    "state": state,
+                    "type": "deal_saved",
+                    "game_id": game_id,
                 })
 
-            elif msg_type == "analyze":
-                if analysis_session is None:
-                    await ws.send_json({"type": "error", "msg": "No analysis position"})
+            elif msg_type == "watch_cfn":
+                cfn_str = data.get("cfn", "").strip()
+                if not cfn_str:
+                    await ws.send_json({"type": "error", "msg": "CFN vide"})
                     continue
-                agent = data.get("agent", "naive")
-                time_ms = data.get("time_ms", 200)
-                result = analysis_session.analyze(agent=agent, time_ms=time_ms)
-                await ws.send_json({
-                    "type": "analysis_result",
-                    **result,
-                })
+                try:
+                    import colver as _cfn_colver
+                    cfn_env = _cfn_colver.Env.from_cfn(cfn_str)
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"CFN invalide : {e}"})
+                    continue
+                agents = data.get("agents", {0: "dede", 1: "dede", 2: "dede", 3: "dede"})
+                agents = {int(k): v for k, v in agents.items()}
+                watch_session = WatchSession(
+                    agents=agents,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    env=cfn_env,
+                    difficulty=data.get("difficulty", "difficile"),
+                )
+                replay_session = None
+                watch_game_id = None
+
+                cfn_started_msg = {
+                    "type": "watch_started",
+                    "state": watch_session.get_state(),
+                    "doudou_available": doudou_available,
+                    "bid_history": [],
+                    "completed_tricks": [],
+                    "game_id": watch_game_id,
+                }
+                if watch_session.dd_scores is not None:
+                    cfn_started_msg["dd_scores"] = watch_session.dd_scores
+                    cfn_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(cfn_started_msg)
+
+            elif msg_type == "bid_eval":
+                hand = data.get("hand", [])
+                prior_passes = min(3, max(0, int(data.get("prior_passes", 0))))
+                if len(hand) != 8:
+                    await ws.send_json({"type": "bid_eval_result", "error": "8 cartes requises"})
+                    continue
+                if not BID_MODEL_PATH:
+                    await ws.send_json({"type": "bid_eval_result", "error": "Modèle d'enchères non disponible"})
+                    continue
+                try:
+                    import random as _random
+                    remaining = list(set(range(32)) - set(hand))
+                    _random.shuffle(remaining)
+                    hands = [None] * 4
+                    seat = 2  # always evaluate as Sud (seat 2)
+                    hands[seat] = sorted(hand)
+                    others = [s for s in range(4) if s != seat]
+                    for i, p in enumerate(others):
+                        hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
+                    dealer = (seat - 1 - prior_passes + 16) % 4
+                    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+                    env.load_bid_model(BID_MODEL_PATH)
+                    for _ in range(prior_passes):
+                        env.step(0)  # PASS
+                    result = env.action_bid_nn()
+                    await ws.send_json({
+                        "type": "bid_eval_result",
+                        "q_values": [[int(a), round(float(q), 3)] for a, q in result["q_values"]],
+                        "best_action": int(result["best_action"]),
+                    })
+                except Exception as e:
+                    await ws.send_json({"type": "bid_eval_result", "error": str(e)})
+
+            elif msg_type == "watch_custom":
+                game_id = data.get("game_id", "").strip().lower()
+                game_data = await db.get_game(game_id)
+                if not game_data:
+                    await ws.send_json({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
+                    continue
+                # Client may override agents (e.g. from Watch tab's dropdowns)
+                if "agents" in data:
+                    agents = {int(k): v for k, v in data["agents"].items()}
+                else:
+                    agents = {int(k): v for k, v in game_data["agents"].items()}
+                watch_session = WatchSession(
+                    agents=agents,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    dealer=game_data["dealer"],
+                    hands=game_data["hands"],
+                    difficulty=data.get("difficulty", "difficile"),
+                )
+                replay_session = None
+                watch_game_id = game_id
+
+                custom_started_msg = {
+                    "type": "watch_started",
+                    "state": watch_session.get_state(),
+                    "doudou_available": doudou_available,
+                    "bid_history": [],
+                    "completed_tricks": [],
+                    "game_id": watch_game_id,
+                }
+                if watch_session.dd_scores is not None:
+                    custom_started_msg["dd_scores"] = watch_session.dd_scores
+                    custom_started_msg["dd_elapsed_ms"] = watch_session.dd_elapsed_ms
+                await ws.send_json(custom_started_msg)
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})
 
     except WebSocketDisconnect:
         pass
+
+
+def _enrich_terminal_msg(msg, play_session):
+    """Add review data (initial hands, bids, tricks) to terminal game_state messages."""
+    if play_session.env.is_terminal():
+        msg["initial_hands"] = play_session.initial_hands
+        msg["bid_history"] = play_session.bid_history
+        msg["completed_tricks"] = play_session.completed_tricks
+    return msg
 
 
 async def _complete_game(game_id, session):
@@ -303,10 +474,9 @@ async def _complete_game(game_id, session):
     await db.complete_game(game_id, points[0], points[1], contract)
 
 
-async def _run_ai_turns(ws, session, human_seat, game_id=None):
+async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
     """Auto-play AI turns until human's turn or game over."""
     while not session.env.is_terminal() and session.env.current_player() != human_seat:
-        await asyncio.sleep(0.3)
         action, name, state = session.play_ai_turn()
         player = session.history[-1]["player"]
         ai_msg = {
@@ -319,17 +489,32 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None):
             ai_msg["belote_event"] = session._belote_event
             ai_msg["belote_player"] = session._belote_player
         await ws.send_json(ai_msg)
-        await ws.send_json({"type": "game_state", "state": state})
 
-        # Save action to DB
         if game_id:
             await db.append_action(game_id, session.history[-1])
+
+        if session.trick_just_completed:
+            session.trick_just_completed = False
+            # Show completed trick (4 cards visible), pause, then clear
+            snapshot = dict(state)
+            snapshot["current_trick"] = state["last_trick"]
+            # tricks_won is already incremented; roll it back so hand counts stay correct
+            tw = list(snapshot["tricks_won"])
+            winner_team = state["last_trick_winner"] % 2
+            tw[winner_team] = max(0, tw[winner_team] - 1)
+            snapshot["tricks_won"] = tw
+            await ws.send_json({"type": "game_state", "state": snapshot})
+            await asyncio.sleep(move_delay)
+            # Send cleared state — no delay after (next card arrives immediately)
+            final_msg = {"type": "game_state", "state": state}
+            _enrich_terminal_msg(final_msg, session)
+            await ws.send_json(final_msg)
+        else:
+            state_msg = {"type": "game_state", "state": state}
+            _enrich_terminal_msg(state_msg, session)
+            await ws.send_json(state_msg)
+            await asyncio.sleep(move_delay)
 
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():
         await _complete_game(game_id, session)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

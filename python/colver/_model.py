@@ -5,15 +5,16 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
-_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.0/dmc_35.bin"
-_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.0/bid_nn_final.bin"
+_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.1/dmc_27.bin"
+_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.1/bid_nn_final.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
-def model_path(name: str = "dmc_35.bin") -> Path | None:
+def model_path(name: str = "dmc_27.bin") -> Path | None:
     """Find a model weights file.
 
-    Checks ``COLVER_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``.
+    Checks ``COLVER_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``,
+    then ``./models/`` relative to the current working directory (dev fallback).
     Returns *None* if the file is not found.
     """
     env = os.environ.get("COLVER_MODEL_PATH")
@@ -24,13 +25,18 @@ def model_path(name: str = "dmc_35.bin") -> Path | None:
     p = _CACHE_DIR / name
     if p.is_file():
         return p
+    # Dev fallback: check ./models/ relative to CWD
+    p = Path.cwd() / "models" / name
+    if p.is_file():
+        return p
     return None
 
 
 def bid_model_path(name: str = "bid_nn_final.bin") -> Path | None:
     """Find a bid model weights file.
 
-    Checks ``COLVER_BID_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``.
+    Checks ``COLVER_BID_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``,
+    then ``./models/`` relative to the current working directory (dev fallback).
     Returns *None* if the file is not found.
     """
     env = os.environ.get("COLVER_BID_MODEL_PATH")
@@ -39,6 +45,10 @@ def bid_model_path(name: str = "bid_nn_final.bin") -> Path | None:
         if p.is_file():
             return p
     p = _CACHE_DIR / name
+    if p.is_file():
+        return p
+    # Dev fallback: check ./models/ relative to CWD
+    p = Path.cwd() / "models" / name
     if p.is_file():
         return p
     return None
@@ -54,7 +64,7 @@ def _progress_hook(block_num: int, block_size: int, total_size: int) -> None:
 
 def download_model(
     url: str | None = None,
-    name: str = "dmc_35.bin",
+    name: str = "dmc_27.bin",
     force: bool = False,
 ) -> Path:
     """Download model weights to ``~/.cache/colver/models/``.
