@@ -47,6 +47,7 @@ const TEMPLATE = `
     <div id="annonces-header">
         <span class="annonces-title">\u00c9valuation des annonces</span>
         <span id="annonces-count">0/8 cartes</span>
+        <button id="annonces-random-btn" class="secondary-btn">Main al\u00e9atoire</button>
         <button id="annonces-clear-btn" class="secondary-btn">Vider la main</button>
     </div>
     <div id="annonces-palette"></div>
@@ -346,6 +347,18 @@ export function mount(container) {
     document.getElementById('annonces-history-clear-btn').addEventListener('click', () => {
         annoncesHistory = [];
         renderAnnoncesHistory();
+    });
+
+    document.getElementById('annonces-random-btn').addEventListener('click', () => {
+        const indices = Array.from({ length: 32 }, (_, i) => i);
+        for (let i = 31; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+        }
+        annoncesHand = new Set(indices.slice(0, 8));
+        updateAnnoncesDisplay();
+        document.getElementById('annonces-results-row').classList.add('hidden');
+        stopDdTimer();
     });
 
     document.getElementById('annonces-clear-btn').addEventListener('click', () => {
