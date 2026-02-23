@@ -165,7 +165,7 @@ Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoin
 ```python
 import colver
 
-print(colver.__version__)  # "0.2.2"
+print(colver.__version__)  # "0.3.2"
 
 # Single environment
 env = colver.Env()

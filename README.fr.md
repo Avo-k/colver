@@ -158,7 +158,7 @@ Encheres → Jeu → Fin. Les encheres se terminent apres 3 passes consecutives,
 ```python
 import colver
 
-print(colver.__version__)  # "0.2.2"
+print(colver.__version__)  # "0.3.2"
 
 # Environnement unique
 env = colver.Env()
