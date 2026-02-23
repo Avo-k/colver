@@ -499,6 +499,9 @@ export function mount(container) {
     onMessage('belief_state', onState);
     onMessage('belief_weights', onWeights);
     onMessage('error', onError);
+
+    // Auto-load a game on tab entry
+    onGenerateClick();
 }
 
 export function unmount() {
