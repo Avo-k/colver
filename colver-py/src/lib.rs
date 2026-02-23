@@ -994,6 +994,45 @@ impl Env {
         Ok(dict)
     }
 
+    /// Get belief weights from IS-DD for a given observer.
+    /// Returns dict: {nn: [[f32; 32]; 4] | None, heuristic: [[f32; 32]; 4] | None}
+    /// Each is weights[player][card] probability distribution.
+    fn get_belief_weights<'py>(&mut self, py: Python<'py>, observer: u8) -> PyResult<Bound<'py, PyDict>> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "observer must be 0-3",
+            ));
+        }
+        let searches = self.dede_searches.as_mut().unwrap();
+        let (nn, heuristic) = searches[observer as usize].get_belief_weights(&self.state, observer);
+
+        let dict = PyDict::new_bound(py);
+        match nn {
+            Some(w) => {
+                let nn_list: Vec<Vec<f32>> = w.iter().map(|row| row.to_vec()).collect();
+                dict.set_item("nn", nn_list)?;
+            }
+            None => {
+                dict.set_item("nn", py.None())?;
+            }
+        }
+        match heuristic {
+            Some(w) => {
+                let h_list: Vec<Vec<f32>> = w.iter().map(|row| row.to_vec()).collect();
+                dict.set_item("heuristic", h_list)?;
+            }
+            None => {
+                dict.set_item("heuristic", py.None())?;
+            }
+        }
+        Ok(dict)
+    }
+
     /// Oracle DD: exact double-dummy solver. Returns optimal card for current player.
     /// Only valid during play phase. No time budget needed (~7ms median).
     fn action_oracle_dd(&self) -> PyResult<u8> {

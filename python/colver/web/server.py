@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
 import colver.web.database as db
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -130,6 +130,7 @@ async def websocket_endpoint(ws: WebSocket):
     replay_session = None
     bid_problem_session = None
     play_problem_session = None
+    belief_session = None
     play_game_id = None
     watch_game_id = None
     play_move_delay = 2.0
@@ -538,6 +539,49 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "play_problem_correction", **result})
                 except Exception as e:
                     await ws.send_json({"type": "error", "msg": f"Évaluation échouée : {e}"})
+
+            elif msg_type == "belief_generate":
+                loop = asyncio.get_event_loop()
+                belief_session = BeliefSession(
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
+                )
+                try:
+                    result = await loop.run_in_executor(None, belief_session.generate)
+                    await ws.send_json({"type": "belief_generated", **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
+
+            elif msg_type == "belief_step":
+                if belief_session is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    continue
+                result = belief_session.step_forward()
+                await ws.send_json({"type": "belief_state", **result})
+
+            elif msg_type == "belief_step_to":
+                if belief_session is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    continue
+                target = int(data.get("target", 0))
+                loop = asyncio.get_event_loop()
+                try:
+                    result = await loop.run_in_executor(None, belief_session.step_to, target)
+                    await ws.send_json({"type": "belief_state", **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Erreur step_to : {e}"})
+
+            elif msg_type == "belief_get_weights":
+                if belief_session is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    continue
+                observer = int(data.get("observer", 0))
+                try:
+                    result = belief_session.get_beliefs(observer)
+                    await ws.send_json({"type": "belief_weights", **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error", "msg": f"Erreur croyances : {e}"})
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})

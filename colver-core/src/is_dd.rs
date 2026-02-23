@@ -231,6 +231,29 @@ impl IsDdSearch {
         }
     }
 
+    /// Get current belief weights for a given observer.
+    /// Returns `(nn_weights, heuristic_weights)` where each is `weights[player][card]`.
+    /// NN weights use hybrid mode (NN + hard constraints from heuristic).
+    /// Heuristic weights are purely from `CardBeliefs::normalized_weights()`.
+    pub fn get_belief_weights(
+        &mut self,
+        state: &GameState,
+        observer: u8,
+    ) -> (Option<[[f32; 32]; 4]>, Option<[[f32; 32]; 4]>) {
+        let nn_config = IsDdConfig {
+            use_nn_beliefs: true,
+            use_hard_constraints: true,
+            ..Default::default()
+        };
+        let nn_weights = if self.belief_net.is_some() {
+            self.compute_weights(state, &nn_config, observer)
+        } else {
+            None
+        };
+        let heuristic_weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
+        (nn_weights, heuristic_weights)
+    }
+
     pub fn search(
         &mut self,
         state: &GameState,

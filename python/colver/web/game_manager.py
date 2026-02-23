@@ -578,6 +578,140 @@ class PlayProblemSession:
         }
 
 
+class BeliefSession:
+    """Belief visualization: generate a game, step through it, query beliefs at each position."""
+
+    def __init__(self, dmc_model_path=None, bid_model_path=None, belief_model_path=None):
+        self.dmc_model_path = dmc_model_path
+        self.bid_model_path = bid_model_path
+        self.belief_model_path = belief_model_path
+        self.env = None
+        self.initial_hands = None
+        self.all_actions = []  # list of (player, action, phase)
+        self.action_idx = 0
+        self.dealer = 0
+
+    def generate(self) -> dict:
+        """Play a full game with DMC + NN bid, store all actions."""
+        env = colver.Env()
+        env.reset()
+        if self.bid_model_path:
+            env.load_bid_model(self.bid_model_path)
+        if self.dmc_model_path:
+            env.load_dmc_model(self.dmc_model_path)
+        if self.belief_model_path:
+            env.load_belief_net(self.belief_model_path)
+        env.dede_init()
+
+        self.initial_hands = [list(h) for h in env.get_hands()]
+        self.dealer = int(env.get_dealer())
+        self.all_actions = []
+        self.action_idx = 0
+
+        # Play full game
+        while not env.is_terminal():
+            player = int(env.current_player())
+            phase = int(env.phase())
+            if phase == 0:
+                action = int(env.bid_a_dd())
+            else:
+                if env.has_dmc_model():
+                    result = env.action_dmc_with_stats()
+                    action = int(result["best_action"])
+                else:
+                    action = int(env.action_dede(50))
+            self.all_actions.append((player, action, phase))
+            env.dede_step(action)
+
+        # Count bid actions
+        num_bid_actions = sum(1 for _, _, p in self.all_actions if p == 0)
+
+        # Now reset env for stepping
+        self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+        if self.bid_model_path:
+            self.env.load_bid_model(self.bid_model_path)
+        if self.belief_model_path:
+            self.env.load_belief_net(self.belief_model_path)
+        self.env.dede_init()
+
+        return {
+            "initial_hands": self.initial_hands,
+            "dealer": self.dealer,
+            "total_actions": len(self.all_actions),
+            "num_bid_actions": num_bid_actions,
+        }
+
+    def _get_state_info(self) -> dict:
+        """Get current state info for the client."""
+        env = self.env
+        finished = self.action_idx >= len(self.all_actions)
+        state = {
+            "phase": int(env.phase()),
+            "current_player": int(env.current_player()),
+            "current_trick": env.get_current_trick(),
+            "contract": env.get_contract(),
+            "points": list(env.get_points()),
+            "tricks_won": list(env.get_tricks_won()),
+            "hands": env.get_hands(),
+            "is_terminal": env.is_terminal(),
+        }
+        # Last action info
+        last_action = None
+        if self.action_idx > 0:
+            player, action, phase = self.all_actions[self.action_idx - 1]
+            last_action = {
+                "player": player,
+                "action": action,
+                "phase": phase,
+                "name": colver.Env.action_name(action, phase),
+            }
+        return {
+            "action_idx": self.action_idx,
+            "total_actions": len(self.all_actions),
+            "state": state,
+            "last_action": last_action,
+            "finished": finished,
+        }
+
+    def step_forward(self) -> dict:
+        """Apply next action and return state."""
+        if self.action_idx >= len(self.all_actions):
+            return self._get_state_info()
+        player, action, phase = self.all_actions[self.action_idx]
+        self.env.dede_step(action)
+        self.action_idx += 1
+        return self._get_state_info()
+
+    def step_to(self, target: int) -> dict:
+        """Jump to a specific action index. Resets and replays if backward."""
+        target = max(0, min(target, len(self.all_actions)))
+        if target < self.action_idx:
+            # Reset from scratch
+            self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+            if self.bid_model_path:
+                self.env.load_bid_model(self.bid_model_path)
+            if self.belief_model_path:
+                self.env.load_belief_net(self.belief_model_path)
+            self.env.dede_init()
+            self.action_idx = 0
+        # Replay up to target
+        while self.action_idx < target:
+            player, action, phase = self.all_actions[self.action_idx]
+            self.env.dede_step(action)
+            self.action_idx += 1
+        return self._get_state_info()
+
+    def get_beliefs(self, observer: int) -> dict:
+        """Return NN + heuristic belief weights + ground truth hands."""
+        result = self.env.get_belief_weights(observer)
+        return {
+            "observer": observer,
+            "nn": result["nn"],
+            "heuristic": result["heuristic"],
+            "ground_truth": self.initial_hands,
+        }
+
+
 class ReplaySession(TrickTracker):
     """Replay a stored game from the database step-by-step."""
 

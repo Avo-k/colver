@@ -736,3 +736,252 @@
     font-weight: 600;
 }
 .docs-footer a:hover { text-decoration: underline; }
+
+/* ===== CROYANCES (BELIEFS) ===== */
+#belief-config {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+#belief-loading {
+    color: #aaa;
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+#belief-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#belief-topbar {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#belief-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.belief-nav-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ccc;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+}
+.belief-nav-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+
+#belief-slider {
+    flex: 1;
+    accent-color: #d4af37;
+    cursor: pointer;
+}
+
+#belief-info {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: #aaa;
+}
+
+#belief-action-info {
+    font-weight: 600;
+    color: #ccc;
+}
+
+#belief-last-action {
+    color: #d4af37;
+}
+
+#belief-controls {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.belief-label {
+    font-size: 0.8rem;
+    color: #888;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.belief-obs-btn, .belief-mode-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #999;
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+.belief-obs-btn:hover, .belief-mode-btn:hover {
+    background: rgba(255,255,255,0.12);
+    color: #ddd;
+}
+.belief-obs-btn.active {
+    background: rgba(212,175,55,0.2);
+    border-color: #d4af37;
+    color: #d4af37;
+}
+.belief-mode-btn.active {
+    background: rgba(130,207,170,0.15);
+    border-color: #82e0aa;
+    color: #82e0aa;
+}
+
+/* Belief grid */
+#belief-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.belief-suit {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.belief-suit-label {
+    width: 28px;
+    font-size: 1.3rem;
+    text-align: center;
+    padding-top: 4px;
+    flex-shrink: 0;
+}
+
+.belief-cards-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.belief-card-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 56px;
+}
+
+.belief-card-img {
+    width: 48px;
+    height: auto;
+    border-radius: 4px;
+}
+
+.belief-known .belief-card-img,
+.belief-played .belief-card-img {
+    opacity: 0.35;
+}
+
+.belief-tag {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+}
+
+.belief-known .belief-tag { color: #82e0aa; }
+.belief-played .belief-tag { color: #666; }
+
+/* Belief bars */
+.belief-bar-container {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.belief-bar-label {
+    font-size: 0.55rem;
+    color: #666;
+    text-align: left;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.belief-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 3px;
+    display: flex;
+    overflow: hidden;
+}
+
+.belief-bar-seg {
+    height: 100%;
+    min-width: 1px;
+    transition: width 0.2s;
+}
+.belief-bar-seg:first-child { border-radius: 3px 0 0 3px; }
+.belief-bar-seg:last-child { border-radius: 0 3px 3px 0; }
+
+.belief-truth-marker {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1;
+}
+
+.belief-no-data {
+    font-size: 0.7rem;
+    color: #444;
+    text-align: center;
+}
+
+/* Stats bar */
+#belief-stats {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 10px 16px;
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.belief-stat-group {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: #aaa;
+}
+
+.belief-stat-label {
+    font-weight: 700;
+    color: #d4af37;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.belief-stat-item b {
+    color: #ccc;
+}
