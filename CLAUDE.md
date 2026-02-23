@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Check compilation (both crates)
 cargo check
 
-# Run all core tests (281 tests, plus more with --features nn or dmc_train)
+# Run all core tests (357 tests, plus more with --features nn or dmc_train)
 cargo test -p colver-core
 
 # Run a single test
@@ -90,7 +90,7 @@ Published as [`colver`](https://pypi.org/project/colver/) on PyPI. Uses GitHub A
 
 Colver is a Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core with PyO3 Python bindings.
 
-**Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `colver-web` (FastAPI/WebSocket frontend)
+**Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `python/colver/web/` (FastAPI/WebSocket frontend)
 
 **Features:** `rand` (default), `parallel` (rayon parallel determinization), `nn` (neural network value function — features, value_net, NN-guided MCTS), `dmc_train` (candle GPU training for DMC + bid NN)
 
@@ -143,42 +143,114 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 NN-based card location prediction: given a player's observable game state, predicts which player holds each unknown card. Replaces or augments heuristic `CardBeliefs` in IS-DD search.
 
-**Architecture:** 330→512 (LN+ReLU) → 512 (LN+ReLU) → 128 linear output. Output is 32 cards × 4 player-relative slots (raw logits). `belief_to_weights()` applies per-card softmax, zeros observer slot, renormalizes, and remaps to absolute player indices. ~2MB weights, ~0.1ms/eval (CPU).
+**Standard architecture (BeliefQNet):** obs_dim→512 (LN+ReLU) → 512 (LN+ReLU) → 128 linear output. Output is 32 cards × 4 player-relative slots (raw logits). `belief_to_weights()` applies per-card softmax, zeros observer slot, renormalizes, and remaps to absolute player indices. ~1.9MB weights (V2), ~0.1ms/eval (CPU). `BeliefNet::load()` auto-detects V1 (330-dim) vs V2 (304-dim) from file size.
+
+**Architecture variants** (`belief_candle.rs`, selected via `--variant` in training):
+- **`standard`** (default): BeliefQNet — 2-layer MLP (obs→512→512→128), ~480K params
+- **`var_mlp`**: BeliefVarMlp — Variable-depth MLP, configurable via `--num-layers` and `--hidden`. Dynamically builds N layers of Linear+LN+ReLU + output head. Use cases: wide-shallow (1 layer, 768) or narrow-deep (3 layers, 256)
+- **`suit_shared`**: BeliefSuitNet — Per-suit weight-shared architecture. Shared suit MLP (57→128→128) processes each suit's features (hand, played-by, trick-idx, pos, hard-constraints, is-trump), global MLP (80→128→128) processes bid history + contract, then per-suit output head (256→32). Suit-equivariant by construction — **no augmentation needed**. ~60K params
+- **`cross_attn`**: BeliefCrossAttnNet — Global encoder (obs→256) + learnable card embeddings (32×64) + 4-head self-attention over 32 card tokens (head_dim=16) + per-card output (64→4). ~120K params
+- **`aux_loss`**: BeliefAuxNet — Same trunk as standard + trick_winner_head (512→32, 8 tricks × 4 seats) + void_head (512→12, 3 players × 4 suits). Joint loss = main_ce + aux_weight × (trick_ce + void_bce), aux_weight decays 0.3→0.0 over 10 epochs
+
+**Three observation versions:**
+
+**V1 Observation** (`belief_obs.rs`, `BELIEF_OBS_DIM=330`): own hand (32) + per-player played cards (128, player-relative [me,left,partner,right], includes current trick) + card trick index (32) + card position-in-trick (32) + bid history (72) + contract (8) + known voids (12) + scoring context (4) + dealer-relative position (4) + current trick lead suit (4) + trick progress (2). `write_belief_observation()` is zero-allocation.
+
+**V2 Observation** (`belief_obs.rs`, `BELIEF_OBS_DIM_V2=304`): Redesigned for leaner input with explicit hard constraints. Drops redundant blocks (per-player played cards, voids, scoring context, dealer position, lead suit, trick progress). Replaces with compact played-by encoding and hard constraint mask.
+
+| Block | Range | Size | Content |
+|-------|-------|------|---------|
+| 1 | [0:32] | 32 | Own hand (binary) |
+| 2 | [32:64] | 32 | Played-by (0=unplayed, 0.25=me, 0.50=left, 0.75=partner, 1.0=right) |
+| 3 | [64:96] | 32 | Card trick index (trick_number/8.0 per card) |
+| 4 | [96:128] | 32 | Card position-in-trick (position/4.0 per card) |
+| 5 | [128:200] | 72 | Bid history (12 slots × 6 floats, player-relative) |
+| 6 | [200:208] | 8 | Contract (trump one-hot[4] + bid_value/250 + taker team[2] + coinche/2) |
+| 7 | [208:304] | 96 | Hard constraints (3 hidden players × 32 cards, 1.0=impossible) |
+
+Hard constraints (block 7) encode all known impossibilities per hidden player: cards in observer's hand, played cards, void suits, trump ceiling (can't hold trump above rank they failed to overtrump). Built by `TrumpCeilingTracker` in `game_replay.rs`. The model no longer needs to learn these rules — they're given as input.
+
+**V3 Observation** (`belief_obs.rs`, `BELIEF_OBS_DIM_V3=380`): Extends V2 with 3 temporal feature blocks:
+
+| Block | Range | Size | Content |
+|-------|-------|------|---------|
+| 1-7 | [0:304] | 304 | Same as V2 |
+| 8 | [304:336] | 32 | Per-card lead suit — `(lead_suit + 1) / 5.0` for each played card, 0.0 if unplayed |
+| 9 | [336:368] | 32 | Per-trick winner — 8 × 4 one-hot, player-relative seat that won each trick |
+| 10 | [368:380] | 12 | Suit failure counts — 3 hidden players × 4 suits, `count / 8.0` |
+
+V3 extraction (`extract_belief_samples_v3()`) tracks trick leads, trick winners, and suit failure counts during replay. Enabled with `--v3` flag in training.
+
+**Suit permutation augmentation** (`suit_perm.rs`): 24 permutations of 4 suits applied to obs, target, and mask during training for 24x data diversity. `permute_belief_obs_v1()` / `permute_belief_obs_v2()` / `permute_belief_obs_v3()` handle the different layouts. `permute_target()` and `permute_mask()` remap card indices across suits. Augmentation enabled with `--augment` flag in training.
 
 **Rust inference** (`belief_net.rs`) — Pure Rust forward pass, zero dependencies. `BeliefNet::load(path)` reads raw f32 binary (auto-infers obs_dim from file size). `BeliefNet::evaluate(&mut self, obs) -> [f32; 128]` returns logits. Uses scratch buffers (not thread-safe — one per thread).
 
 **Weight file format** — Contiguous little-endian f32: for each of 2 hidden layers: W (in×H), b (H), gamma (H), beta (H); then output W (H×128), b (128). Row-major. Compatible between `BeliefTrainer::export_binary()` and `BeliefNet::load()`.
 
-**Observation** (`belief_obs.rs`, 330 floats): own hand (32) + per-player played cards (128, player-relative [me,left,partner,right], includes current trick) + card trick index (32, trick_number/8.0) + card position-in-trick (32, position/4.0) + bid history (72, 12 slots × 6 floats, player-relative) + contract (8, trump one-hot + bid_value/250 + taker team one-hot + coinche/2) + known voids (12, 3 hidden players × 4 suits) + scoring context (4) + dealer-relative position (4, one-hot) + current trick lead suit (4, one-hot) + trick progress (2, trick_number/8 + cards_in_trick/4). `write_belief_observation()` is zero-allocation (writes into buffer at offset). Reuses `EnvTracking` from `dmc_obs.rs`.
-
 **Training data — two paths:**
-1. **Pre-extracted binary** (`COLVBL01` format): `generate_belief_data` binary plays games with DMC + NN bid, records (obs, target, mask) per play step. Header: magic (8B) + obs_dim (4B) + num_samples (8B). Per sample: obs (330×f32) + target (32×u8) + mask (u32). ~20GB for 500K games. Supports `--features parallel` for multi-threaded generation.
-2. **Game replays** (`COLVGM01` format, preferred): `generate_game_data` binary stores compact replays (~62 bytes/game: dealer + hands + actions). `GameReplay::extract_belief_samples()` re-extracts belief training data on demand. ~28MB for 500K games vs ~20GB extracted. `extract_belief_samples_parallel()` behind `parallel` feature.
+1. **Pre-extracted binary** (`COLVBL01` format): `generate_belief_data` binary plays games with DMC + NN bid, records (obs, target, mask) per play step. Header: magic (8B) + obs_dim (4B) + num_samples (8B). Per sample: obs (330×f32) + target (32×u8) + mask (u32). ~20GB for 500K games. V1 only.
+2. **Game replays** (`COLVGM01` format, preferred): `generate_game_data` binary stores compact replays (~62 bytes/game: dealer + hands + actions). `GameReplay::extract_belief_samples()` (V1) / `extract_belief_samples_v2()` (V2) / `extract_belief_samples_v3()` (V3) re-extract belief training data on demand. ~28MB for 500K games vs ~20GB extracted. Parallel extraction behind `parallel` feature. V2/V3 extraction computes hard constraints via `TrumpCeilingTracker`. V3 additionally tracks trick leads, trick winners, and suit failure counts.
 
-**Training** (`train_belief_net` binary, feature `dmc_train`): Candle-based supervised learning with masked cross-entropy loss (only unknown cards contribute). AdamW optimizer. Supports cosine LR schedule with linear warmup (`--cosine-lr --warmup-epochs 5`). Saves safetensors checkpoints + best binary export. Accepts either `--data` (COLVBL01) or `--replays` (COLVGM01, extracts samples on startup).
+**Training** (`train_belief_net` binary, feature `dmc_train`): Candle-based supervised learning with masked cross-entropy loss (only unknown cards contribute). AdamW optimizer. Supports cosine LR schedule with linear warmup. `--v2` enables 304-dim observations with hard constraints. `--v3` enables 380-dim observations with temporal features. `--augment` enables suit permutation augmentation. `--variant` selects architecture (standard, var_mlp, suit_shared, cross_attn, aux_loss). Saves safetensors checkpoints + best binary export. Accepts either `--data` (COLVBL01, V1 only) or `--replays` (COLVGM01, V1/V2/V3).
 
 ```bash
+# V2 training (304-dim, standard architecture)
 cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-  --replays data/games_500k.bin --epochs 100 --batch-size 512 --lr 3e-4 \
-  --cosine-lr --warmup-epochs 5 --val-split 0.05 --output models/belief_net.bin
+  --replays data/games_500k.bin --epochs 200 --batch-size 512 --lr 3e-4 \
+  --v2 --augment --cosine-lr --warmup-epochs 10 --val-split 0.05 \
+  --output models/belief_net_v2.bin
+
+# V3 temporal features (380-dim, same MLP)
+cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
+  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --v3 --augment --cosine-lr --warmup-epochs 3 --output models/race_v3.bin
+
+# Cross-attention variant
+cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
+  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --v2 --augment --variant cross_attn --cosine-lr --warmup-epochs 3 \
+  --output models/race_crossattn.bin
+
+# Auxiliary losses variant
+cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
+  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --v2 --augment --variant aux_loss --cosine-lr --warmup-epochs 3 \
+  --output models/race_auxloss.bin
+
+# Variable-depth MLP (e.g., 3-layer narrow)
+cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
+  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --v2 --augment --variant var_mlp --num-layers 3 --hidden 256 \
+  --cosine-lr --warmup-epochs 3 --output models/race_narrow.bin
+
+# Per-suit weight sharing (no augmentation needed)
+cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
+  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --v2 --variant suit_shared --cosine-lr --warmup-epochs 3 \
+  --output models/race_suitshared.bin
 ```
 
-**Evaluation** (`belief_eval` binary, 4 modes):
+**Evaluation** (`belief_eval` binary, 7 modes):
 - `--mode offline`: accuracy/CE/calibration on held-out COLVBL01 data, per-trick accuracy breakdown, 10-bin calibration table.
 - `--mode match`: IS-DD match play — NN beliefs vs heuristic CardBeliefs (duplicate pairs to 2000 pts, configurable `--time-ms`).
 - `--mode diagnose`: per-card predictions on sample game positions from replay files, grouped by suit, showing predicted probabilities vs ground truth.
-- `--mode scenario`: hand-crafted scenario tests (trump ceiling, void detection, bidding signals).
+- `--mode scenario`: hand-crafted scenario tests (trump ceiling, void detection, bidding signals). Auto-detects V1/V2 model and builds correct observations.
+- `--mode per_trick`: per-trick and per-play-step accuracy breakdown on replay data.
+- `--mode ablation`: zeros each V2 input block and reports per-card accuracy drop. Identifies which blocks contribute most to predictions.
+- `--mode ensemble`: loads comma-separated models (`--model m1.bin,m2.bin,m3.bin`), averages raw logits, reports per-model and ensemble accuracy.
 
-**Integration with IS-DD** (`is_dd.rs`): `IsDdConfig::use_nn_beliefs` flag. `IsDdSearch::load_belief_net(path)` loads the model. `compute_weights()` implements hybrid mode: NN soft predictions are filtered by heuristic `CardBeliefs` hard constraints (where heuristic weight = 0.0, NN weight is zeroed and renormalized). `use_hard_constraints` flag (default true) controls whether hard filtering is applied. Belief tracking via `EnvTracking` is auto-initialized when a `BeliefNet` is loaded.
+**Integration with IS-DD** (`is_dd.rs`): `IsDdConfig::use_nn_beliefs` flag. `IsDdSearch::load_belief_net(path)` loads the model. `compute_weights()` implements hybrid mode: NN soft predictions are filtered by heuristic `CardBeliefs` hard constraints (where heuristic weight = 0.0, NN weight is zeroed and renormalized). `use_hard_constraints` flag (default true) controls whether hard filtering is applied. Belief tracking via `EnvTracking` is auto-initialized when a `BeliefNet` is loaded. For V2 models, builds 304-dim observation with hard constraints from `TrumpCeilingTracker`.
 
-**Key scenario test findings:** Model learned void detection (0% probability for void suits), trump ceiling (0% for impossible trumps above played rank), and bidding signals (J of trump ~100% for bidder, 9 of trump ~56% for bidder vs ~33% baseline).
+**Key scenario test findings (V2 model, 104 epochs):** Hard constraints work perfectly — 0% probability for all impossible cards (voids, trump ceiling). Bidding signals: J of trump 92% for bidder, 9 of trump 64% for bidder. Per-trick accuracy: 48%→85% across tricks 0-7 (accumulates information). Overall ~54% at 104 epochs (still improving, training interrupted by OOM).
+
+**V1 vs V2 design rationale:** V1 encoded played cards per-player (128 floats) + voids (12) + other context (14) = 154 floats that V2 replaces with compact played-by (32) + hard constraints (96) = 128 floats. V2 gives the model "free" knowledge of impossible cards rather than making it learn deduction rules. Suit augmentation (24 permutations) ensures the model generalizes across suits.
 
 **Python API:**
 - `Env.load_belief_net(path)` / `Env.has_belief_net()` — load/check NN belief weights. When loaded, `action_dede()` and `action_dede_with_stats()` automatically use NN beliefs (sets `use_nn_beliefs: true`).
 - `colver.belief_model_path()` / `colver.download_belief_model()` — model discovery/download (same pattern as DMC/bid models).
 - Web frontend auto-downloads and loads belief net at startup; all IS-DD sessions (Play + Watch) use NN beliefs when available.
 
-**Model distribution:** `models/belief_net.bin` (~2MB), auto-downloaded from GitHub releases (v0.3.1) at web server startup.
+**Model distribution:** `models/belief_net.bin` (~2MB, V1), auto-downloaded from GitHub releases (v0.3.1) at web server startup. V2 model (`models/belief_net_v2.bin`, ~1.9MB) not yet released.
 
 ### Bidding Strategies (`bid_eval.rs`)
 
@@ -362,7 +434,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 - **`generate_belief_data`** (feature `rand`): Plays games with DMC + NN bid, records belief training samples (obs + target + mask) in COLVBL01 format. Supports `--features parallel` for multi-threaded generation. Usage: `cargo run --bin generate_belief_data --release --features parallel -- --dmc-model models/dmc_final.bin --bid-model models/bid_nn_final.bin --games 500000 --output data/belief_train.bin`.
 - **`generate_game_data`** (feature `rand`): Plays games with DMC + NN bid, stores compact replays (COLVGM01 format, ~62 bytes/game). Supports `--features parallel`. Usage: `cargo run --bin generate_game_data --release --features parallel -- --dmc-model models/dmc_final.bin --games 500000 --output data/games.bin`.
 - **`train_belief_net`** (feature `dmc_train`): Supervised belief network training. Candle-based masked cross-entropy with cosine LR + warmup. Accepts `--data` (COLVBL01) or `--replays` (COLVGM01). Usage: `cargo run --bin train_belief_net --features dmc_train --release -- --replays data/games_500k.bin --epochs 100 --batch-size 512 --lr 3e-4 --cosine-lr --warmup-epochs 5`.
-- **`belief_eval`** (feature `rand`): Belief network evaluation — 4 modes: `offline` (accuracy/CE/calibration), `match` (IS-DD NN vs heuristic), `diagnose` (per-card predictions), `scenario` (hand-crafted tests). Usage: `cargo run --bin belief_eval --release -- --model models/belief_net.bin --mode scenario`.
+- **`belief_eval`** (feature `rand`): Belief network evaluation — 5 modes: `offline` (accuracy/CE/calibration), `match` (IS-DD NN vs heuristic), `diagnose` (per-card predictions), `scenario` (hand-crafted tests, auto-detects V1/V2), `per_trick` (per-trick and per-play-step accuracy). Usage: `cargo run --bin belief_eval --release -- --model models/belief_net.bin --mode scenario`.
 - **`generate_value_data`** (feature `nn`): Self-play data generation for NN training. Binary output format.
 - **`nn_experiment`** (feature `nn`): NN value function evaluation — accuracy, speed, and strength tests.
 - **`isdd_sweep`** (feature `rand`): IS-DD parameter sweep experiment. Three sections: count-based (D=1–64), time-based (5–50ms), soft inference comparison (D=8/16 hard vs soft). Each config plays N deals twice (IS-DD as NS vs random, and vs DouDou35 DMC), reporting win%, avg NS/EW points, ms/deal, and avg dets. Usage: `cargo run --bin isdd_sweep --release -- --dmc-model models/dmc_35.bin --deals 200 --threads 8`.
@@ -387,7 +459,7 @@ A learned MLP replaces rollouts for MCTS leaf evaluation. Train in Python (PyTor
 
 **Web frontend API** (on `Env`): `get_hands()`, `get_current_trick()`, `get_contract()`, `get_points()`, `get_tricks_won()`, `get_dealer()`, `get_trick_lead()`, `get_played_cards()`, `phase()`, `current_player()`, `is_terminal()`, `legal_actions()`. Static methods: `Env.card_name(idx)`, `Env.action_name(action, phase)`, `Env.deal_with_hands(dealer, hands)`. Setup: `set_contract(trump, value, team, coinche)`, `set_phase_playing()`.
 
-### Web Frontend (`python/colver/web/` + `colver-web/`)
+### Web Frontend (`python/colver/web/`)
 
 FastAPI + WebSocket backend with vanilla JS frontend. Bundled in the wheel under `colver[web]` optional dependency. Three modes: Play (human vs AI), Watch (spectate AI vs AI with thinking stats), Analysis (custom position setup + MCTS analysis).
 
@@ -397,12 +469,8 @@ FastAPI + WebSocket backend with vanilla JS frontend. Bundled in the wheel under
 - `server.py` — FastAPI app, WebSocket handler, auto-downloads DMC/bid/belief models at startup.
 - `game_manager.py` — `PlaySession` (human vs AI), `WatchSession` (spectate), `ReplaySession` (replay), `AnalysisSession` (custom position + MCTS analysis).
 - `database.py` — SQLite game history, defaults to `~/.local/share/colver/colver.db`.
-- `static/` — Frontend files (HTML, JS, CSS), copied from `colver-web/frontend/`.
-- `cards/` — 67 SVG playing cards, copied from `images/cards/`.
-
-**Development source** (`colver-web/`):
-- `colver-web/frontend/` — Original frontend source (copied into `python/colver/web/static/` for builds).
-- `colver-web/backend/` — Original backend source (adapted into `python/colver/web/`).
+- `static/` — Frontend files (HTML, JS, CSS).
+- `cards/` — 67 SVG playing cards.
 
 **Running:** `uv run python -m colver.web` or `uv run colver-web` → http://localhost:8000
 
