@@ -6,7 +6,7 @@ import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR } from '..
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
-const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
+const SEAT_COLORS = ['#5b9ff5', '#e06080', '#d4af37', '#8c6fe6'];
 
 // Display order within a suit: A 10 R D V 9 8 7
 const DISPLAY_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
