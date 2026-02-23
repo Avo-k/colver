@@ -267,7 +267,7 @@ function handleBidEvalResult(data) {
         return;
     }
 
-    const qValues = data.q_values;
+    const qValues = data.q_values.slice().sort((a, b) => b[1] - a[1]);
     const bestAction = data.best_action;
     const minQ = Math.min(...qValues.map(([, q]) => q));
     const maxQ = Math.max(...qValues.map(([, q]) => q));
