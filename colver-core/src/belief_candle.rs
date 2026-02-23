@@ -9,8 +9,6 @@
 use candle_core::{DType, Device, Result, Tensor, D};
 use candle_nn::{self, linear, AdamW, Linear, Module, Optimizer, ParamsAdamW, VarBuilder, VarMap};
 
-use crate::belief_obs::BELIEF_OBS_DIM;
-
 const NUM_OUTPUTS: usize = 128; // 32 cards × 4 players
 
 /// Manual LayerNorm using basic tensor ops.
@@ -45,9 +43,9 @@ pub struct BeliefQNet {
 }
 
 impl BeliefQNet {
-    pub fn new(hidden: usize, vb: VarBuilder) -> Result<Self> {
+    pub fn new(obs_dim: usize, hidden: usize, vb: VarBuilder) -> Result<Self> {
         let trunk_fc = [
-            linear(BELIEF_OBS_DIM, hidden, vb.pp("trunk.0"))?,
+            linear(obs_dim, hidden, vb.pp("trunk.0"))?,
             linear(hidden, hidden, vb.pp("trunk.1"))?,
         ];
         let trunk_ln = [
@@ -81,14 +79,16 @@ pub struct BeliefTrainer {
     pub varmap: VarMap,
     optimizer: AdamW,
     device: Device,
+    obs_dim: usize,
     hidden: usize,
+    lr: f64,
 }
 
 impl BeliefTrainer {
-    pub fn new(hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+    pub fn new(obs_dim: usize, hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = BeliefQNet::new(hidden, vb)?;
+        let net = BeliefQNet::new(obs_dim, hidden, vb)?;
 
         let adamw_params = ParamsAdamW {
             lr,
@@ -104,12 +104,19 @@ impl BeliefTrainer {
             varmap,
             optimizer,
             device,
+            obs_dim,
             hidden,
+            lr,
         })
     }
 
     pub fn set_lr(&mut self, lr: f64) {
+        self.lr = lr;
         self.optimizer.set_learning_rate(lr);
+    }
+
+    pub fn current_lr(&self) -> f64 {
+        self.lr
     }
 
     pub fn device(&self) -> &Device {
@@ -132,8 +139,8 @@ impl BeliefTrainer {
         let batch_size = masks.len();
         let device = &self.device;
 
-        // Create obs tensor: (batch, BELIEF_OBS_DIM)
-        let obs_t = Tensor::from_slice(obs, (batch_size, BELIEF_OBS_DIM), device)?;
+        // Create obs tensor: (batch, obs_dim)
+        let obs_t = Tensor::from_slice(obs, (batch_size, self.obs_dim), device)?;
 
         // Forward pass: (batch, 128)
         let logits = self.net.forward(&obs_t)?;
@@ -188,7 +195,7 @@ impl BeliefTrainer {
         let batch_size = masks.len();
         let device = &self.device;
 
-        let obs_t = Tensor::from_slice(obs, (batch_size, BELIEF_OBS_DIM), device)?;
+        let obs_t = Tensor::from_slice(obs, (batch_size, self.obs_dim), device)?;
         let logits = self.net.forward(&obs_t)?;
         let logits_3d = logits.reshape((batch_size, 32, 4))?;
 
@@ -231,7 +238,7 @@ impl BeliefTrainer {
         let batch_size = masks.len();
         let device = &self.device;
 
-        let obs_t = Tensor::from_slice(obs, (batch_size, BELIEF_OBS_DIM), device)?;
+        let obs_t = Tensor::from_slice(obs, (batch_size, self.obs_dim), device)?;
         let logits = self.net.forward(&obs_t)?;
         let logits_3d = logits.reshape((batch_size, 32, 4))?;
 
@@ -270,7 +277,7 @@ impl BeliefTrainer {
     pub fn export_binary(&self, path: &str) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let data = self.varmap.data().lock().unwrap();
         let mut floats: Vec<f32> = Vec::new();
-        let in_dims = [BELIEF_OBS_DIM, self.hidden];
+        let in_dims = [self.obs_dim, self.hidden];
 
         for i in 0..2 {
             let w: Vec<f32> = data
@@ -331,13 +338,14 @@ impl BeliefTrainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::belief_obs::BELIEF_OBS_DIM;
 
     #[test]
     fn test_model_creation() -> Result<()> {
         let device = Device::Cpu;
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = BeliefQNet::new(64, vb)?;
+        let net = BeliefQNet::new(BELIEF_OBS_DIM, 64, vb)?;
 
         let obs = Tensor::zeros((2, BELIEF_OBS_DIM), DType::F32, &device)?;
         let logits = net.forward(&obs)?;
@@ -350,7 +358,7 @@ mod tests {
         let device = Device::Cpu;
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = BeliefQNet::new(32, vb)?;
+        let net = BeliefQNet::new(BELIEF_OBS_DIM, 32, vb)?;
 
         let batch_size = 16;
         let obs = Tensor::randn(0f32, 1f32, (batch_size, BELIEF_OBS_DIM), &device)?;
@@ -362,18 +370,15 @@ mod tests {
     #[test]
     fn test_trainer_train_step() -> Result<()> {
         let device = Device::Cpu;
-        let mut trainer = BeliefTrainer::new(32, 1e-3, 0.0, device)?;
+        let mut trainer = BeliefTrainer::new(BELIEF_OBS_DIM, 32, 1e-3, 0.0, device)?;
 
         let batch = 4;
         let obs = vec![0.0f32; batch * BELIEF_OBS_DIM];
-        // Each card assigned to player 1
         let targets = vec![1u8; batch * 32];
-        // All cards unknown
         let masks = vec![0xFFFF_FFFFu32; batch];
 
         let loss = trainer.train_step(&obs, &targets, &masks)?;
         assert!(loss.is_finite(), "loss should be finite: {}", loss);
-        // CE loss for uniform 4-class ≈ ln(4) ≈ 1.386
         assert!(loss > 0.5 && loss < 3.0, "initial loss should be ~1.386, got {}", loss);
         Ok(())
     }
@@ -381,16 +386,15 @@ mod tests {
     #[test]
     fn test_eval_accuracy() -> Result<()> {
         let device = Device::Cpu;
-        let trainer = BeliefTrainer::new(32, 1e-3, 0.0, device)?;
+        let trainer = BeliefTrainer::new(BELIEF_OBS_DIM, 32, 1e-3, 0.0, device)?;
 
         let batch = 4;
         let obs = vec![0.0f32; batch * BELIEF_OBS_DIM];
-        let targets = vec![0u8; batch * 32]; // all player 0
+        let targets = vec![0u8; batch * 32];
         let masks = vec![0xFFFF_FFFFu32; batch];
 
         let (correct, total) = trainer.eval_accuracy(&obs, &targets, &masks)?;
         assert_eq!(total, batch as u64 * 32);
-        // With random initialization, accuracy should be ~25% (random guess)
         let acc = correct as f64 / total as f64;
         assert!(acc >= 0.0 && acc <= 1.0);
         Ok(())
@@ -399,16 +403,14 @@ mod tests {
     #[test]
     fn test_export_and_load() -> Result<()> {
         let device = Device::Cpu;
-        let trainer = BeliefTrainer::new(32, 1e-3, 0.0, device)?;
+        let trainer = BeliefTrainer::new(BELIEF_OBS_DIM, 32, 1e-3, 0.0, device)?;
 
         let tmp = "/tmp/test_belief_net.bin";
         trainer.export_binary(tmp).unwrap();
 
-        // Load with BeliefNet
         let mut net = crate::belief_net::BeliefNet::load_with_hidden(tmp, 32).unwrap();
         assert_eq!(net.obs_dim(), BELIEF_OBS_DIM);
 
-        // Verify forward pass
         let obs = vec![0.0f32; BELIEF_OBS_DIM];
         let logits = net.evaluate(&obs);
         assert_eq!(logits.len(), NUM_OUTPUTS);
@@ -416,7 +418,6 @@ mod tests {
             assert!(v.is_finite());
         }
 
-        // Compare with candle forward pass
         let obs_t = Tensor::zeros((1, BELIEF_OBS_DIM), DType::F32, trainer.device())?;
         let logits_candle = trainer.net.forward(&obs_t)?;
         let logits_candle_vec: Vec<f32> = logits_candle.flatten_all()?.to_vec1()?;
@@ -431,6 +432,22 @@ mod tests {
         }
 
         std::fs::remove_file(tmp).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn test_v2_obs_dim() -> Result<()> {
+        use crate::belief_obs::BELIEF_OBS_DIM_V2;
+        let device = Device::Cpu;
+        let mut trainer = BeliefTrainer::new(BELIEF_OBS_DIM_V2, 32, 1e-3, 0.0, device)?;
+
+        let batch = 2;
+        let obs = vec![0.0f32; batch * BELIEF_OBS_DIM_V2];
+        let targets = vec![0u8; batch * 32];
+        let masks = vec![0xFFFF_FFFFu32; batch];
+
+        let loss = trainer.train_step(&obs, &targets, &masks)?;
+        assert!(loss.is_finite());
         Ok(())
     }
 }

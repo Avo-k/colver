@@ -248,6 +248,8 @@ struct Env {
     dmc_net: Option<DmcNet>,
     // Bid Q-network (loaded lazily)
     bid_net: Option<BidNet>,
+    // Belief net model path (shared across dede searches)
+    belief_net_path: Option<String>,
 }
 
 #[pymethods]
@@ -269,6 +271,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            belief_net_path: None,
         }
     }
 
@@ -685,6 +688,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            belief_net_path: None,
         })
     }
 
@@ -843,16 +847,47 @@ impl Env {
         Ok(search.search(&self.state, &config, &mut self.rng))
     }
 
+    /// Load a BeliefNet model for NN-based beliefs in IS-DD.
+    /// Call once, then dede_init() will use it for all searches.
+    fn load_belief_net(&mut self, path: &str) -> PyResult<()> {
+        // Validate by loading once, then store path for dede_init to load per-search
+        colver_core::belief_net::BeliefNet::load(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to load belief net: {}", e))
+        })?;
+        self.belief_net_path = Some(path.to_string());
+        // If searches already exist, load into them
+        if let Some(ref mut searches) = self.dede_searches {
+            for search in searches.iter_mut() {
+                search.load_belief_net(path).map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!("Failed to load belief net: {}", e))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Check if a BeliefNet model is loaded.
+    fn has_belief_net(&self) -> bool {
+        self.belief_net_path.is_some()
+    }
+
     /// Initialize IS-DD (Dédé) beliefs for a new deal.
     /// Must be called after reset() and before action_dede().
     fn dede_init(&mut self) {
+        let belief_path = self.belief_net_path.clone();
         let searches = self.dede_searches.get_or_insert_with(|| {
-            [
+            let mut s = [
                 IsDdSearch::new(),
                 IsDdSearch::new(),
                 IsDdSearch::new(),
                 IsDdSearch::new(),
-            ]
+            ];
+            if let Some(ref path) = belief_path {
+                for search in s.iter_mut() {
+                    let _ = search.load_belief_net(path);
+                }
+            }
+            s
         });
         for (player, search) in searches.iter_mut().enumerate() {
             search.init_deal(&self.state, player as u8, true);
@@ -913,6 +948,7 @@ impl Env {
         let player = self.state.current_player() as usize;
         let config = IsDdConfig {
             time_limit_ms: Some(time_ms),
+            use_nn_beliefs: self.belief_net_path.is_some(),
             ..Default::default()
         };
         let searches = self.dede_searches.as_mut().unwrap();
@@ -943,6 +979,7 @@ impl Env {
         let player = self.state.current_player() as usize;
         let config = IsDdConfig {
             time_limit_ms: Some(time_ms),
+            use_nn_beliefs: self.belief_net_path.is_some(),
             ..Default::default()
         };
         let searches = self.dede_searches.as_mut().unwrap();
@@ -1146,6 +1183,7 @@ impl Env {
             bid_history,
             dmc_net: None,
             bid_net: None,
+            belief_net_path: None,
         })
     }
 

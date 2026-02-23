@@ -90,7 +90,7 @@ DIFFICULTY_TIME_MS = {
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, difficulty="difficile"):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, difficulty="difficile"):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "dede"
         self.human_seat = human_seat
@@ -105,6 +105,8 @@ class PlaySession(TrickTracker):
         self.env.reset()
         self.initial_hands = [list(h) for h in self.env.get_hands()]
         self.uses_dede = any(t == "dede" for t in self.ai_types.values())
+        if belief_model_path and self.uses_dede:
+            self.env.load_belief_net(belief_model_path)
         if self.uses_dede:
             self.env.dede_init()
         if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
@@ -240,11 +242,12 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, dealer=None, hands=None, env=None, difficulty="difficile"):
+    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dealer=None, hands=None, env=None, difficulty="difficile"):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou (Rust inference)
         bid_model_path: path to .bin weights file for Bid à DD (NN bidder)
+        belief_model_path: path to .bin weights file for BeliefNet (NN card beliefs)
         dealer: optional dealer seat (for custom deals)
         hands: optional list of 4 hands (for custom deals)
         env: optional pre-built Env (e.g. from CFN), takes priority over dealer/hands
@@ -273,6 +276,8 @@ class WatchSession(TrickTracker):
 
         # Initialize IS-DD if any seat uses Dédé
         self.uses_dede = any(a == "dede" for a in agents.values())
+        if belief_model_path and self.uses_dede:
+            self.env.load_belief_net(belief_model_path)
         if self.uses_dede:
             self.env.dede_init()
 

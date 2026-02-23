@@ -24,6 +24,11 @@ use crate::state::{GameState, Phase};
 
 pub const BELIEF_OBS_DIM: usize = 330;
 
+/// V2 observation dimension: 32 + 32 + 32 + 32 + 72 + 8 + 96 = 304.
+/// Replaces V1's per-player played cards (128) + voids (12) + blocks 8-11 (14)
+/// with compact played-by (32) + hard constraints (96).
+pub const BELIEF_OBS_DIM_V2: usize = 304;
+
 /// Write the 330-float belief observation into `buf[offset..offset+BELIEF_OBS_DIM]`.
 ///
 /// `observer` is the player whose perspective we encode (may differ from current_player
@@ -177,6 +182,135 @@ pub fn write_belief_observation(
     pos += 2;
 
     debug_assert_eq!(pos, BELIEF_OBS_DIM);
+}
+
+/// Write the 304-float V2 belief observation into `buf[offset..offset+BELIEF_OBS_DIM_V2]`.
+///
+/// V2 layout (304 floats):
+///   Block 1 [0:32]:    Own hand (32) — binary card presence
+///   Block 2 [32:64]:   Card played-by (32) — 0=unplayed, 0.25=me, 0.5=left, 0.75=partner, 1.0=right
+///   Block 3 [64:96]:   Card trick index (32) — (trick_number+1)/8.0, 0 if unplayed
+///   Block 4 [96:128]:  Card position-in-trick (32) — (pos+1)/4.0, 0 if unplayed
+///   Block 5 [128:200]: Bid history (72) — 12 slots × 6 floats, player-relative
+///   Block 6 [200:208]: Contract (8) — trump one-hot + value + taker + coinche
+///   Block 7 [208:304]: Hard constraints (96) — 3 hidden players × 32 cards, 1.0=impossible
+///
+/// `hard_constraints` is a pre-computed 96-float array from the caller
+/// (built by `TrumpCeilingTracker::compute_hard_constraints`).
+pub fn write_belief_observation_v2(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    tracking: &EnvTracking,
+    observer: u8,
+    hard_constraints: &[f32; 96],
+) {
+    debug_assert!(buf.len() >= offset + BELIEF_OBS_DIM_V2);
+
+    let out = &mut buf[offset..offset + BELIEF_OBS_DIM_V2];
+    for v in out.iter_mut() {
+        *v = 0.0;
+    }
+
+    let me = observer as usize;
+    let my_team = me & 1;
+
+    // Player-relative seats: [me, left_opp, partner, right_opp]
+    let seats = [me, (me + 1) % 4, (me + 2) % 4, (me + 3) % 4];
+
+    // Player-relative encoding values for played-by block
+    // seat_val[absolute_player] = float value for that player relative to observer
+    let mut seat_val = [0.0f32; 4];
+    seat_val[seats[0]] = 0.25; // me
+    seat_val[seats[1]] = 0.50; // left
+    seat_val[seats[2]] = 0.75; // partner
+    seat_val[seats[3]] = 1.00; // right
+
+    let mut pos = 0;
+
+    // === Block 1: My hand (32) ===
+    let my_hand = state.hands[me];
+    for i in 0..32u32 {
+        if my_hand & (1 << i) != 0 {
+            out[pos + i as usize] = 1.0;
+        }
+    }
+    pos += 32;
+
+    // === Block 2: Card played-by (32) ===
+    // For each card, encode which player-relative seat played it.
+    // 0.0 = unplayed (still in someone's hand), 0.25/0.5/0.75/1.0 = me/left/partner/right.
+    // Covers both past tricks and current trick.
+    for seat in 0..4usize {
+        let played = tracking.played_by[seat];
+        for i in 0..32u32 {
+            if played & (1 << i) != 0 {
+                out[pos + i as usize] = seat_val[seat];
+            }
+        }
+    }
+    // Current trick cards
+    for seat in 0..4usize {
+        let c = state.current_trick[seat];
+        if c != card::EMPTY {
+            out[pos + c as usize] = seat_val[seat];
+        }
+    }
+    pos += 32;
+
+    // === Block 3: Card trick index (32) ===
+    for (i, &card_played) in tracking.play_order.iter().enumerate() {
+        out[pos + card_played as usize] = (i / 4 + 1) as f32 / 8.0;
+    }
+    let current_trick_num = (tracking.play_order.len() / 4) + 1;
+    for i in 0..4 {
+        let c = state.current_trick[i];
+        if c != card::EMPTY {
+            out[pos + c as usize] = current_trick_num as f32 / 8.0;
+        }
+    }
+    pos += 32;
+
+    // === Block 4: Card position-in-trick (32) ===
+    for (i, &card_played) in tracking.play_order.iter().enumerate() {
+        out[pos + card_played as usize] = (i % 4 + 1) as f32 / 4.0;
+    }
+    let trick_lead = state.trick_lead as usize;
+    for j in 0..4usize {
+        let seat = (trick_lead + j) % 4;
+        let c = state.current_trick[seat];
+        if c != card::EMPTY {
+            out[pos + c as usize] = (j + 1) as f32 / 4.0;
+        }
+    }
+    pos += 32;
+
+    // === Block 5: Bid history (72) ===
+    encode_bid_history(out, pos, &tracking.bid_history, me, tracking.dealer);
+    pos += 72;
+
+    // === Block 6: Contract (8) ===
+    if state.phase != Phase::Bidding {
+        let trump = state.contract.trump as usize;
+        out[pos + trump] = 1.0;
+        out[pos + 4] = state.contract.point_value() as f32 / 250.0;
+        let taker_team = state.contract.team as usize;
+        if taker_team == my_team {
+            out[pos + 5] = 1.0;
+        } else {
+            out[pos + 6] = 1.0;
+        }
+        out[pos + 7] = state.contract.coinche as f32 / 2.0;
+    }
+    pos += 8;
+
+    // === Block 7: Hard constraints (96) ===
+    // 3 hidden players (left, partner, right) × 32 cards.
+    // 1.0 = impossible (card in observer's hand, already played, void suit, trump ceiling).
+    out[pos..pos + 96].copy_from_slice(hard_constraints);
+    pos += 96;
+
+    debug_assert_eq!(pos, BELIEF_OBS_DIM_V2);
 }
 
 /// Convenience wrapper that allocates and returns a Vec<f32>.

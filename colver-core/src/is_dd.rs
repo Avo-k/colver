@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use rand::Rng;
 
 use crate::belief_net::BeliefNet;
-use crate::belief_obs::{self, BELIEF_OBS_DIM};
+use crate::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2};
 use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
@@ -38,6 +38,8 @@ pub struct IsDdConfig {
     pub bid_function: BidFunction,
     /// If true and a BeliefNet is loaded, use NN beliefs instead of heuristic CardBeliefs.
     pub use_nn_beliefs: bool,
+    /// If true (default), apply heuristic hard constraints (voids, trump ceiling) on top of NN beliefs.
+    pub use_hard_constraints: bool,
 }
 
 impl Default for IsDdConfig {
@@ -48,6 +50,7 @@ impl Default for IsDdConfig {
             time_limit_ms: None,
             bid_function: BidFunction::ImprovedV2,
             use_nn_beliefs: false,
+            use_hard_constraints: true,
         }
     }
 }
@@ -127,6 +130,107 @@ impl IsDdSearch {
         self.belief_tracking = None;
     }
 
+    /// Compute belief weights for determinization.
+    /// When NN beliefs are enabled, applies hard constraints from heuristic CardBeliefs
+    /// (voids, trump ceiling) on top of NN soft predictions.
+    fn compute_weights(
+        &mut self,
+        state: &GameState,
+        config: &IsDdConfig,
+        observer: u8,
+    ) -> Option<[[f32; 32]; 4]> {
+        if config.use_nn_beliefs && self.belief_net.is_some() {
+            let net = self.belief_net.as_mut().unwrap();
+            let tracking = self.belief_tracking.as_ref().unwrap();
+
+            let logits = if net.obs_dim() == BELIEF_OBS_DIM_V2 {
+                // V2: build hard constraints from CardBeliefs, then V2 obs
+                let hard_constraints = if let Some(ref beliefs) = self.beliefs {
+                    let raw = beliefs.raw_weights();
+                    let observer_hand = state.hands[observer as usize];
+                    let mut played = state.played_cards;
+                    for i in 0..4 {
+                        let c = state.current_trick[i];
+                        if c != crate::card::EMPTY {
+                            played |= 1u32 << c;
+                        }
+                    }
+                    let known = observer_hand | played;
+                    let hidden_players = [
+                        ((observer + 1) % 4),
+                        ((observer + 2) % 4),
+                        ((observer + 3) % 4),
+                    ];
+                    let mut hc = [0.0f32; 96];
+                    for (hp_idx, &hp) in hidden_players.iter().enumerate() {
+                        let base = hp_idx * 32;
+                        for card_idx in 0..32u32 {
+                            if known & (1 << card_idx) != 0 {
+                                hc[base + card_idx as usize] = 1.0;
+                                continue;
+                            }
+                            if raw[hp as usize][card_idx as usize] == 0.0 {
+                                hc[base + card_idx as usize] = 1.0;
+                            }
+                        }
+                    }
+                    hc
+                } else {
+                    [0.0f32; 96]
+                };
+
+                let mut obs_buf = [0.0f32; BELIEF_OBS_DIM_V2];
+                belief_obs::write_belief_observation_v2(
+                    &mut obs_buf, 0, state, tracking, observer, &hard_constraints,
+                );
+                net.evaluate(&obs_buf)
+            } else {
+                let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
+                belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
+                net.evaluate(&obs_buf)
+            };
+            let mut nn_weights = crate::belief_net::belief_to_weights(&logits, state, observer);
+
+            // Hybrid: apply hard constraints from CardBeliefs (voids, trump ceiling)
+            if config.use_hard_constraints {
+            if let Some(ref beliefs) = self.beliefs {
+                let raw = beliefs.raw_weights();
+                let observer_hand = state.hands[observer as usize];
+                let mut played = state.played_cards;
+                for i in 0..4 {
+                    let c = state.current_trick[i];
+                    if c != crate::card::EMPTY {
+                        played |= 1u32 << c;
+                    }
+                }
+                let known = observer_hand | played;
+
+                for card in 0..32u32 {
+                    if known & (1 << card) != 0 {
+                        continue;
+                    }
+                    for p in 0..4usize {
+                        if raw[p][card as usize] == 0.0 {
+                            nn_weights[p][card as usize] = 0.0;
+                        }
+                    }
+                    let sum: f32 = (0..4).map(|p| nn_weights[p][card as usize]).sum();
+                    if sum > 0.0 {
+                        let inv = 1.0 / sum;
+                        for p in 0..4 {
+                            nn_weights[p][card as usize] *= inv;
+                        }
+                    }
+                }
+            }
+            }
+
+            Some(nn_weights)
+        } else {
+            self.beliefs.as_ref().map(|b| b.normalized_weights())
+        }
+    }
+
     pub fn search(
         &mut self,
         state: &GameState,
@@ -162,16 +266,7 @@ impl IsDdSearch {
             Instant::now() + Duration::from_millis(scaled_ms.max(1))
         });
 
-        let weights = if config.use_nn_beliefs && self.belief_net.is_some() {
-            let net = self.belief_net.as_mut().unwrap();
-            let tracking = self.belief_tracking.as_ref().unwrap();
-            let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
-            belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
-            let logits = net.evaluate(&obs_buf);
-            Some(crate::belief_net::belief_to_weights(&logits, state, observer))
-        } else {
-            self.beliefs.as_ref().map(|b| b.normalized_weights())
-        };
+        let weights = self.compute_weights(state, config, observer);
 
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
@@ -276,16 +371,7 @@ impl IsDdSearch {
 
         let num_dets = config.determinizations as usize;
         let seeds: Vec<u64> = (0..num_dets).map(|_| rng.gen()).collect();
-        let weights = if config.use_nn_beliefs && self.belief_net.is_some() {
-            let net = self.belief_net.as_mut().unwrap();
-            let tracking = self.belief_tracking.as_ref().unwrap();
-            let mut obs_buf = [0.0f32; BELIEF_OBS_DIM];
-            belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
-            let logits = net.evaluate(&obs_buf);
-            Some(crate::belief_net::belief_to_weights(&logits, state, observer))
-        } else {
-            self.beliefs.as_ref().map(|b| b.normalized_weights())
-        };
+        let weights = self.compute_weights(state, config, observer);
         let game_state = *state; // Copy for thread safety
 
         // Each thread returns (score_sum[32], score_count[32])

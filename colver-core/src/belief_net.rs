@@ -172,17 +172,26 @@ impl BeliefNet {
 
 /// Convert raw 128 logits → [[f32; 32]; 4] normalized weights.
 ///
-/// For each unknown card, applies softmax over 4 player logits to get P(card ∈ hand_j).
-/// Known cards (observer's hand + played cards) are zeroed out and weights renormalized.
+/// Logit slots are player-relative: 0=me, 1=left, 2=partner, 3=right.
+/// For each unknown card, applies softmax over 4 relative slots, zeros the
+/// observer slot (rel=0), renormalizes, then remaps to absolute player indices.
 ///
 /// Output layout: `weights[player][card]` = probability card is in player's hand.
-/// Player indices are absolute (0-3), not relative.
+/// Player indices are absolute (0-3).
 pub fn belief_to_weights(
     logits: &[f32; NUM_OUTPUTS],
     state: &GameState,
     observer: u8,
 ) -> [[f32; 32]; 4] {
     let mut weights = [[0.0f32; 32]; 4];
+
+    // Relative slot → absolute player mapping
+    let abs_players = [
+        observer as usize,
+        ((observer + 1) % 4) as usize,
+        ((observer + 2) % 4) as usize,
+        ((observer + 3) % 4) as usize,
+    ];
 
     // Known cards: observer's hand + all played cards (including current trick)
     let observer_hand = state.hands[observer as usize];
@@ -201,31 +210,30 @@ pub fn belief_to_weights(
             continue;
         }
 
-        // Per-card softmax over 4 players
-        // logits layout: card_idx * 4 + player
+        // Per-card softmax over 4 relative slots
         let base = card_idx as usize * 4;
         let mut max_logit = f32::NEG_INFINITY;
-        for p in 0..4 {
-            if logits[base + p] > max_logit {
-                max_logit = logits[base + p];
+        for rel in 0..4 {
+            if logits[base + rel] > max_logit {
+                max_logit = logits[base + rel];
             }
         }
 
         let mut exp_sum = 0.0f32;
         let mut exps = [0.0f32; 4];
-        for p in 0..4 {
-            exps[p] = (logits[base + p] - max_logit).exp();
-            exp_sum += exps[p];
+        for rel in 0..4 {
+            exps[rel] = (logits[base + rel] - max_logit).exp();
+            exp_sum += exps[rel];
         }
 
-        // Set weights, but zero out observer (we know what's in our hand)
-        // and played cards for each player
-        for p in 0..4 {
-            if p == observer as usize {
+        // Map relative softmax to absolute players, zeroing observer (rel=0)
+        for rel in 0..4 {
+            let abs_p = abs_players[rel];
+            if rel == 0 {
                 // Observer can't hold unknown cards (they'd be in our hand)
-                weights[p][card_idx as usize] = 0.0;
+                weights[abs_p][card_idx as usize] = 0.0;
             } else {
-                weights[p][card_idx as usize] = exps[p] / exp_sum;
+                weights[abs_p][card_idx as usize] = exps[rel] / exp_sum;
             }
         }
 
@@ -407,6 +415,58 @@ mod tests {
             let sum: f32 = (0..4).map(|p| weights[p][card_idx]).sum();
             assert!((sum - 1.0).abs() < 1e-5, "card {} weights sum to {}", card_idx, sum);
         }
+    }
+
+    #[test]
+    fn test_belief_to_weights_relative_remapping() {
+        // Verify that relative logit slots are correctly mapped to absolute players
+        // when observer != 0.
+        let mut logits = [0.0f32; NUM_OUTPUTS];
+
+        // Observer=2, so relative slots map as:
+        //   slot 0 (me)      → abs player 2
+        //   slot 1 (left)    → abs player 3
+        //   slot 2 (partner) → abs player 0
+        //   slot 3 (right)   → abs player 1
+        //
+        // Card 8 (in player 1's hand, unknown to observer 2):
+        // Set high logit for slot 3 (= right = abs player 1)
+        logits[8 * 4 + 0] = -10.0; // me (zeroed anyway)
+        logits[8 * 4 + 1] = 0.0;   // left  (abs 3)
+        logits[8 * 4 + 2] = 0.0;   // partner (abs 0)
+        logits[8 * 4 + 3] = 10.0;  // right (abs 1) — high
+
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(0, hands);
+        let weights = belief_to_weights(&logits, &state, 2);
+
+        // Card 16 is in observer 2's hand → known → all zero
+        for p in 0..4 {
+            assert_eq!(weights[p][16], 0.0, "observer's card should have 0 weight");
+        }
+
+        // Card 8: abs player 1 (slot 3 = right) should dominate
+        assert_eq!(weights[2][8], 0.0, "observer can't hold unknown card");
+        assert!(weights[1][8] > 0.9, "abs player 1 should have >90% weight, got {}", weights[1][8]);
+        assert!(weights[0][8] < 0.05, "abs player 0 weight too high: {}", weights[0][8]);
+        assert!(weights[3][8] < 0.05, "abs player 3 weight too high: {}", weights[3][8]);
+    }
+
+    #[test]
+    fn test_belief_to_weights_uniform_nonzero_observer() {
+        // Uniform logits with observer=3: each non-observer should get ~1/3
+        let logits = [0.0f32; NUM_OUTPUTS];
+
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(0, hands);
+        let weights = belief_to_weights(&logits, &state, 3);
+
+        // Card 0 (in player 0's hand, unknown to observer 3)
+        assert_eq!(weights[3][0], 0.0, "observer can't hold unknown card");
+        let expected = 1.0 / 3.0;
+        assert!((weights[0][0] - expected).abs() < 1e-5);
+        assert!((weights[1][0] - expected).abs() < 1e-5);
+        assert!((weights[2][0] - expected).abs() < 1e-5);
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub mod bid_obs;
 pub mod bid_net;
 pub mod belief_obs;
 pub mod belief_net;
+pub mod suit_perm;
+pub mod game_replay;
 #[cfg(feature = "rand")]
 pub mod dmc_eval;
 #[cfg(feature = "rand")]

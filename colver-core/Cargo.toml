@@ -143,6 +143,11 @@ path = "src/tests/isdd_sweep.rs"
 required-features = ["rand"]
 
 [[bin]]
+name = "generate_game_data"
+path = "src/tests/generate_game_data.rs"
+required-features = ["rand"]
+
+[[bin]]
 name = "generate_belief_data"
 path = "src/tests/generate_belief_data.rs"
 required-features = ["rand"]

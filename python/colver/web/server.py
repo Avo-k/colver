@@ -57,6 +57,21 @@ if _bid_model:
 else:
     print("[server] No Bid à DD model found, using improved_v2 fallback")
 
+# Belief net model path (NN-based card location prediction for IS-DD)
+_belief_model = _colver_pkg.belief_model_path()
+if _belief_model is None:
+    try:
+        _belief_model = _colver_pkg.download_belief_model()
+    except Exception as e:
+        print(f"[server] Belief model download failed: {e}")
+        _belief_model = None
+
+BELIEF_MODEL_PATH = str(_belief_model) if _belief_model else None
+if _belief_model:
+    print(f"[server] Belief net model available at {BELIEF_MODEL_PATH}")
+else:
+    print("[server] No belief net model found, using heuristic beliefs")
+
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
 
@@ -142,7 +157,7 @@ async def websocket_endpoint(ws: WebSocket):
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
                 bid_path = BID_MODEL_PATH
                 difficulty = data.get("difficulty", "difficile")
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, difficulty=difficulty)
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, difficulty=difficulty)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -227,6 +242,7 @@ async def websocket_endpoint(ws: WebSocket):
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
                     difficulty=difficulty,
                 )
                 replay_session = None
@@ -366,6 +382,7 @@ async def websocket_endpoint(ws: WebSocket):
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
                     env=cfn_env,
                     difficulty=data.get("difficulty", "difficile"),
                 )
@@ -453,6 +470,7 @@ async def websocket_endpoint(ws: WebSocket):
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
                     dealer=game_data["dealer"],
                     hands=game_data["hands"],
                     difficulty=data.get("difficulty", "difficile"),
