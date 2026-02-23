@@ -32,5 +32,6 @@ docs/enchere_cannes_roro.md
 *.png
 !images/**/*.png
 
-# Training logs
-training.log
+# Training logs and eval outputs
+*.log
+retro_evals.txt

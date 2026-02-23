@@ -13,9 +13,11 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 ## Caracteristiques
 
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
-- **Etat de jeu `Copy` de 56 octets** pour un clonage MCTS performant
-- **Quatre agents IA** — MCTS parfait, IS-MCTS naif, IS-MCTS intelligent avec croyances, et reseau Q (Deep Monte-Carlo)
-- **Interface web** — Jouez contre l'IA dans le navigateur (FastAPI + WebSocket)
+- **Etat de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
+- **Six agents IA** — reseau Q DMC, IS-DD avec reseau de croyances, oracle DD, Smart/Naive IS-MCTS, et heuristique
+- **Encheres par reseau de neurones** — "Le Bide a Dede", un Dueling DQN entraine sur des donnes resolues en double-dummy
+- **Reseau de croyances** — prediction NN de la localisation des cartes pour la recherche IS-DD
+- **Interface web** — jouez contre l'IA, observez, analysez et resolvez des problemes (FastAPI + WebSocket)
 - **Bindings Python** via PyO3 — classe `Env` avec stubs de types complets, installable depuis PyPI
 - Zero dependances dans le coeur (seulement `rand` derriere un feature flag)
 
@@ -29,38 +31,42 @@ uv run python -m colver.web
 # Ouvrir http://localhost:8000
 ```
 
-L'interface comporte quatre onglets :
+L'interface est organisee en trois sections :
 
 ### Jouer
 
-Jouez en tant que Sud contre des adversaires IA. Choisissez l'agent pour vos adversaires (Est/Ouest) et votre partenaire (Nord) independamment — DouDou, Smart IS-MCTS, Naive IS-MCTS ou Oracle. La partie suit les regles officielles FFB de Belote Contree : encheres avec coinche/surcoinche, puis 8 plis. Les cartes jouables sont surelevelees, les cartes illegales sont grisees. Le dernier pli est affiche avec les points et le gagnant.
+**Humain vs IA** — Jouez en tant que Sud contre des adversaires IA. Choisissez l'agent pour vos adversaires (Est/Ouest) et votre partenaire (Nord) independamment. La partie suit les regles officielles FFB : encheres avec coinche/surcoinche, puis 8 plis. Les cartes sont jouees instantanement au clic ; le curseur de pause controle le delai de l'IA.
 
 ![Onglet Jouer](images/screenshots/tab-play.png)
 
-### Regarder
-
-Observez des parties IA contre IA avec toutes les mains visibles. Assignez un agent different a chacune des 4 places (y compris Heuristique et Aleatoire). Avancez action par action, jouez des plis entiers, ou utilisez la lecture automatique avec vitesse reglable. Le panneau de stats affiche les compteurs de visites MCTS et les Q-valeurs pour chaque decision, avec l'historique complet des encheres et des plis.
+**IA vs IA** — Observez des parties IA contre IA avec toutes les mains visibles. Assignez un agent different a chacune des 4 places. Avancez action par action, jouez des plis entiers, ou utilisez la lecture automatique. Le panneau de stats affiche les Q-values, scores DD ou evaluations de main. Collez une chaine CFN pour charger une position specifique.
 
 ![Onglet Regarder](images/screenshots/tab-watch.png)
 
 ### Analyse
 
-Configurez une position personnalisee en glissant les cartes dans les zones de depot des 4 joueurs, ou generez une donne aleatoire. Parametrez le contrat (atout, valeur, equipe declarante), puis lancez l'analyse IS-MCTS pour trouver le meilleur coup et le classement des actions pour le joueur courant.
+**Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
 
-![Onglet Analyse](images/screenshots/tab-analysis.png)
+**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Le Bide a Dede* (l'enchérisseur NN) annoncerait — avec les Q-values pour chaque action legale.
 
-### Docs
+![Onglet Annonces](images/screenshots/tab-annonces.png)
 
-Documentation integree decrivant les modes de jeu et chaque agent IA en detail.
+**Croyances** — Visualisez comment le reseau de croyances et le modele heuristique predisent la localisation des cartes au fil d'une partie. Generez une partie aleatoire, avancez pas a pas, et observez les barres de probabilite par carte avec marquage de la verite terrain et statistiques de precision. Changez de perspective (N/E/S/O) et comparez les predictions NN vs heuristiques cote a cote.
 
-![Onglet Docs](images/screenshots/tab-docs.png)
+![Onglet Croyances](images/screenshots/tab-croyances.png)
+
+### Problemes
+
+**Annonce** — Problemes d'encheres. Voyez une main et l'historique des encheres, puis trouvez la bonne annonce. L'IA evalue votre reponse.
+
+**Jeu** — Problemes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
 
 ## Compilation et execution
 
 Necessite Rust 1.70+ et Python 3.10+.
 
 ```bash
-# Tests (168 tests)
+# Tests (357 tests)
 cargo test -p colver-core
 
 # Benchmark de performance
@@ -88,88 +94,41 @@ PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --basel
 
 ## Agents IA
 
-Colver inclut quatre agents de niveaux de sophistication croissants.
+Tous les agents utilisent le meme encherisseur NN (*Le Bide a Dede*) par defaut. Ils different par leur jeu de la carte.
 
-### 1. MCTS information parfaite (`mcts.rs`)
+### DouDou — Reseau Q DMC (`dmc_net.rs`)
 
-[UCT](https://link.springer.com/chapter/10.1007/11871842_29) standard (Upper Confidence bounds applied to Trees) avec visibilite totale des mains. Cet agent "triche" en voyant les 4 mains — utile comme borne superieure mais irrealiste pour le jeu reel.
+Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Entraine par self-play avec Prioritized Experience Replay sur 35M etapes.
 
-- Politique d'arbre [UCB1](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf) : equilibre exploitation (jouer les coups qui ont bien marche) vs exploration (essayer les coups peu testes)
-- Arbre avec arene de `Node` et `Edge` dans des `Vec` contigus pour la localite du cache
-- Simulation rollout jusqu'a la fin avec des coups legaux aleatoires
-- Meilleure action : enfant racine le plus visite
+**Architecture** : Dueling DQN 415→1024→1024→1024→32 avec LayerNorm (~2.6M parametres). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble.
 
-| Metrique | 1000 iter | 4000 iter |
-|---|---|---|
-| Victoires vs Aleatoire | 97% | — |
-| Temps par partie | 8 ms | 67 ms |
+### Dede — IS-DD (`is_dd.rs`)
 
-### 2. IS-MCTS naif (`naive_ismcts.rs`)
+Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croyances sur les cartes cachees — mis a jour apres chaque action via des contraintes dures (coupes, plafond d'atout) et des signaux faibles (encheres, conventions de jeu). Peut etre augmente par un **reseau de croyances** (prediction NN de la localisation des cartes, 330→512→512→128, ~2Mo). Echantillonne des mains adverses ponderees par ces croyances, puis resout chaque monde exactement avec le solveur alpha-beta DD.
 
-Gere l'information imparfaite via la [determinisation par ensemble](https://doi.org/10.1109/CIG.2012.6374152). L'idee cle de [Cowling, Powley et Whitehouse (2012)](https://doi.org/10.1109/TCIAIG.2012.2200894) :
+### Oracle — Solveur DD (`solver.rs`)
 
-> Au lieu de chercher dans un seul arbre, echantillonner plusieurs mondes "determinises" (chacun etant une distribution possible des cartes cachees), lancer le MCTS standard sur chacun, et agreger les resultats.
+Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, coups tueurs et elagage par equivalence de cartes. Calcule la carte optimale exacte en ~7ms (mediane). Utile comme borne superieure.
 
-L'agent ne voit que ses 8 cartes et les cartes deja jouees. Pour chaque recherche :
-1. Echantillonner D mondes determinises — redistribuer les 24 cartes inconnues entre les 3 adversaires, en respectant les contraintes de coupe connues
-2. Lancer le MCTS standard (I iterations) sur chaque monde
-3. Agreger les compteurs de visites racine sur les D mondes
-4. Choisir l'action la plus visitee
+### Anciens agents de recherche
 
-| Config (DxI) | Victoires vs Aleatoire | Score moyen | Temps/partie |
-|---|---|---|---|
-| 20x50 = 1000 | 92% | 1137 - 81 | 8 ms |
-| 40x100 = 4000 | 90% | 1105 - 103 | 32 ms |
+**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### 3. IS-MCTS intelligent (`smart_ismcts.rs` + `card_beliefs.rs`)
+### Le Bide a Dede — Encherisseur NN (`bid_net.rs`)
 
-Etend l'IS-MCTS naif avec un **modele de croyances** qui biaise la determinisation selon les informations revelees pendant les encheres et le jeu. Au lieu d'echantillonner les mondes uniformement, il echantillonne des mondes *coherents avec ce que les adversaires ont signale*.
-
-L'idee s'appuie sur le concept de [modelisation d'adversaire dans les jeux a information imparfaite](https://doi.org/10.1016/j.artint.2005.10.005). Chaque action revele quelque chose sur la main d'un joueur :
-
-- **Contraintes dures** (poids = 0) : coupes connues, plafond d'atout, cartes jouees/connues
-- **Contraintes souples** (poids multiplicatifs) : signaux d'encheres (annoncer Coeur rend le Valet de Coeur ~5x plus probable), schemas de jeu (entamer d'un As suggere aussi le 10 et le Roi)
-
-Le modele de croyances est une matrice `[[f32; 32]; 4]` — 128 flottants — ou `weights[joueur][carte]` represente la probabilite relative que `joueur` detienne `carte`.
-
-Voir [SMART_ISMCTS.md](SMART_ISMCTS.md) pour le document de conception complet.
-
-| Adversaire | Victoires | Score moyen | Temps/partie |
-|---|---|---|---|
-| Aleatoire | 88% | 1067 - 130 | 9 ms |
-| IS-MCTS naif (budget egal) | 46% | 536 - 647 | 17 ms |
-
-### 4. Agent DMC (Deep Monte-Carlo) (`scripts/dmc_model.py`)
-
-Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Les encheres utilisent `improved_bid` (non apprises).
-
-**Architecture v4** : MLP 415→1024→1024→1024→32 avec LayerNorm (~2.6M parametres). Observation relative au joueur (415 flottants) : main, pli, cartes jouees par joueur, contrat, suivi des coupes, contexte de scoring, historique des encheres.
-
-**Entrainement** : Deep Monte-Carlo (DMC) avec Prioritized Experience Replay (PER), pool d'adversaires (70% self-play, 20% checkpoints passes, 10% aleatoire), 20M etapes, buffer de 2M transitions.
-
-**Inference** : passe forward en Rust pur (~1ms/decision, pas de PyTorch necessaire).
-
-### Strategies d'encheres (`bid_eval.rs`)
-
-Strategies d'encheres deterministes, assez rapides (~200 operations) pour etre utilisees dans les rollouts MCTS.
-
-**`improved_v2_bid`** (par defaut) — Strategie equilibree, gagnante en tournoi. Porte de qualite (V/9/A/10 ou 3+ cartes dans la couleur), mapping score→valeur : 10→80, 13→90, 17→100, 20→110, 25→120. Plafond d'ouverture 120, surenchere 120, reponse 130.
-
-**`heuristic_bid`** — Agressive. Pas de porte de qualite, pas de plafond. Prend ~50% des contrats avec ~70% de reussite.
-
-**`smart_bid`** — Conservative a base de conventions. Signalisation V+9 entre partenaires. Tres conservative (~10-13% de prise, ~78% de reussite).
+Dueling DQN (114→256→256→43) entraine sur 1M de donnes resolues en DD. Encherisseur par defaut pour tous les agents. Bat le meilleur encherisseur heuristique 70-76% sur tous les moteurs de jeu.
 
 ## Comparaison des agents
 
-| Agent | Type | Victoires vs Aleatoire | Vitesse/coup | Encheres |
-|---|---|---|---|---|
-| MCTS parfait | Recherche (triche) | 97% | ~8ms | improved_bid |
-| IS-MCTS naif | Recherche | 92% | ~8ms | improved_bid |
-| IS-MCTS intelligent | Recherche + croyances | 88% | ~9ms | improved_bid |
-| **DMC Q-Network** | **Reseau de neurones** | **66%** | **<1ms** | improved_bid |
-| Aleatoire | Baseline | 50% | ~0ms | — |
+| Agent | Type | Vitesse/coup | Notes |
+|---|---|---|---|
+| **DouDou** | **Reseau Q** | **<1ms** | Plus fort, sans recherche |
+| Dede (IS-DD) | Solveur DD + croyances | ~20ms | Plus fort avec recherche |
+| Oracle (DD) | Solveur DD (triche) | ~7ms | Borne superieure |
+| Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |
+| Naive IS-MCTS | Recherche | ~8ms | Budget configurable |
 
-**Note** : Les agents a base de recherche (IS-MCTS) voient leur force augmenter avec le budget de temps. Les chiffres ci-dessus utilisent le budget par defaut (~8-9ms/coup). L'agent DMC n'utilise aucune recherche — la decision est prise en une seule inference.
+**Note** : Les agents a base de recherche voient leur force augmenter avec le budget de temps. L'agent DMC n'utilise aucune recherche — la decision est prise en une seule inference.
 
 ## Architecture
 
@@ -181,7 +140,7 @@ Systeme de bitmask : `Card = u8` (0-31), `CardSet = u32` (bitmask). Disposition 
 
 ### Etat de jeu
 
-`GameState` est `Copy` et fait 56 octets (verifie a la compilation <= 64) pour un clonage MCTS rapide. Contient les mains, le pli courant, le contrat, les points/plis par equipe, l'etat des encheres, le bitmask des cartes jouees, le suivi des coupes et de la belote.
+`GameState` est `Copy` et fait <=96 octets (verifie a la compilation) pour un clonage MCTS rapide. Contient les mains, le pli courant, le contrat, les points/plis par equipe, l'etat des encheres, le bitmask des cartes jouees, le suivi des coupes et de la belote.
 
 ### Encodage des actions
 
@@ -199,7 +158,7 @@ Encheres → Jeu → Fin. Les encheres se terminent apres 3 passes consecutives,
 ```python
 import colver
 
-print(colver.__version__)  # "0.2.0"
+print(colver.__version__)  # "0.2.2"
 
 # Environnement unique
 env = colver.Env()

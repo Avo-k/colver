@@ -12,10 +12,10 @@ const TEMPLATE = `
         Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
     </p>
 
-    <h3>Modes de jeu</h3>
+    <h3>Jouer</h3>
 
     <div class="docs-section">
-        <h4>Jouer</h4>
+        <h4>Humain vs IA</h4>
         <p>
             Jouez en Sud contre des adversaires IA. Choisissez l'IA pour vos adversaires (Est/Ouest) et votre partenaire (Nord) ind\u00e9pendamment.
             La partie suit les r\u00e8gles officielles FFB de la Belote Contr\u00e9e : phase d'ench\u00e8res avec coinche/surcoinche, puis 8 plis de jeu.
@@ -29,7 +29,7 @@ const TEMPLATE = `
     </div>
 
     <div class="docs-section">
-        <h4>Regarder</h4>
+        <h4>IA vs IA</h4>
         <p>
             Assistez \u00e0 des parties IA contre IA avec visibilit\u00e9 totale sur toutes les mains.
             Assignez un agent diff\u00e9rent \u00e0 chacune des 4 places, puis avancez action par action,
@@ -38,21 +38,14 @@ const TEMPLATE = `
         </p>
     </div>
 
+    <h3>Analyse</h3>
+
     <div class="docs-section">
         <h4>Rejouer</h4>
         <p>
             Parcourez et rejouez les parties pass\u00e9es (jou\u00e9es ou observ\u00e9es). L'historique liste les parties r\u00e9centes \u2014
             cliquez sur une entr\u00e9e pour la rejouer pas \u00e0 pas avec les contr\u00f4les de navigation.
             Recherchez par identifiant de partie pour en retrouver une sp\u00e9cifique. Les parties incompl\u00e8tes sont clairement signal\u00e9es.
-        </p>
-    </div>
-
-    <div class="docs-section">
-        <h4>Donner</h4>
-        <p>
-            Cr\u00e9ez une donne personnalis\u00e9e en glissant les cartes de la palette vers les 4 zones joueurs
-            (ou utilisez \u00ab Donne al\u00e9atoire \u00bb pour compl\u00e9ter la distribution). Choisissez le donneur,
-            enregistrez la donne, puis cliquez \u00ab Regarder \u00bb pour observer l'IA la jouer en direct.
         </p>
     </div>
 
@@ -65,6 +58,34 @@ const TEMPLATE = `
         </p>
     </div>
 
+    <div class="docs-section">
+        <h4>Croyances</h4>
+        <p>
+            Visualisez comment le r\u00e9seau de croyances et le mod\u00e8le heuristique pr\u00e9disent la localisation des cartes
+            au fil d'une partie. G\u00e9n\u00e9rez une partie al\u00e9atoire, avancez pas \u00e0 pas, et observez les barres de probabilit\u00e9
+            par carte avec marquage de la v\u00e9rit\u00e9 terrain et statistiques de pr\u00e9cision.
+            Changez de perspective d'observateur (N/E/S/O) et comparez les pr\u00e9dictions NN vs heuristiques c\u00f4te \u00e0 c\u00f4te.
+        </p>
+    </div>
+
+    <h3>Probl\u00e8mes</h3>
+
+    <div class="docs-section">
+        <h4>Annonce</h4>
+        <p>
+            Probl\u00e8mes d'ench\u00e8res : voyez une main et l'historique des ench\u00e8res, puis trouvez la bonne annonce.
+            L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Le Bide \u00e0 D\u00e9d\u00e9</em>.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>Jeu</h4>
+        <p>
+            Probl\u00e8mes de jeu de la carte : voyez une position en cours de partie et trouvez la meilleure carte.
+            Comparez votre choix au jeu optimal du solveur double-dummy.
+        </p>
+    </div>
+
     <h3>Agents IA</h3>
     <p class="docs-intro">
         Tous les agents portent des surnoms fran\u00e7ais. Les ench\u00e8res utilisent un r\u00e9seau de neurones entra\u00een\u00e9 par double-dummy (Le Bide \u00e0 D\u00e9d\u00e9).
@@ -72,10 +93,10 @@ const TEMPLATE = `
     </p>
 
     <div class="docs-section">
-        <h4>DouDou27 <span class="docs-tag best">Recommand\u00e9</span></h4>
+        <h4>DouDou <span class="docs-tag best">Recommand\u00e9</span></h4>
         <p>
             <em>DouDou</em> = le doudou de l'enfant \u2014 parce qu'il apprend en jouant avec lui-m\u00eame.
-            <em>35</em> = entra\u00een\u00e9 pendant 35 millions d'\u00e9tapes.
+            Entra\u00een\u00e9 pendant 35 millions d'\u00e9tapes par self-play.
         </p>
         <p>
             R\u00e9seau Q Deep Monte-Carlo entra\u00een\u00e9 par self-play (style DouZero).

@@ -21,8 +21,10 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
 - **56-byte `Copy` game state** for fast MCTS cloning
-- **Four AI agents** — perfect-info MCTS, Naive IS-MCTS, belief-weighted Smart IS-MCTS, and a Q-network (Deep Monte-Carlo)
-- **Web interface** — play against AI in the browser (FastAPI + WebSocket)
+- **Six AI agents** — DMC Q-network, IS-DD with belief network, DD oracle, Smart/Naive IS-MCTS, and heuristic
+- **NN bidding** — "Le Bide a Dede", a Dueling DQN trained on DD-solved deals, used by all agents
+- **Belief network** — NN-based card location prediction for IS-DD search
+- **Web interface** — play against AI, spectate, analyze, and solve problems (FastAPI + WebSocket)
 - **Python bindings** via PyO3 — `Env` class with full type stubs, installable from PyPI
 - Zero dependencies in the core (only `rand` behind a feature flag)
 
@@ -36,38 +38,42 @@ uv run python -m colver.web
 # Open http://localhost:8000
 ```
 
-The interface has four tabs:
+The interface is organized in three sections:
 
-### Play
+### Jouer (Play)
 
-Play as South against AI opponents. Choose the agent for your opponents (East/West) and your partner (North) independently — DouDou, Smart IS-MCTS, Naive IS-MCTS, or Oracle. The game follows official FFB Belote Contree rules: bidding with coinche/surcoinche, then 8 tricks. Playable cards are raised, illegal cards are greyed out. The last trick is shown with points and winner.
+**Humain vs IA** — Play as South against AI opponents. Choose the agent for your opponents (East/West) and your partner (North) independently. The game follows official FFB Belote Contree rules: bidding with coinche/surcoinche, then 8 tricks. Cards are played instantly on click; the pause slider controls AI thinking delay.
 
 ![Play tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-play.png)
 
-### Watch
-
-Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats (including Heuristic and Random). Step through actions one by one, play full tricks, or use auto-play with adjustable speed. The stats panel shows MCTS visit counts and Q-values for each decision, with full bidding and trick history.
+**IA vs IA** — Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats. Step through actions, play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision. Paste a CFN string to load a specific position.
 
 ![Watch tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-watch.png)
 
-### Analysis
+### Analyse (Analysis)
 
-Set up a custom position by dragging cards into 4 player drop zones, or generate a random deal. Configure the contract (trump suit, value, declaring team), then run IS-MCTS analysis to find the best move and action rankings for the current player.
+**Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
 
-![Analysis tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-analysis.png)
+**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Le Bide a Dede* (the NN bidder) would bid — with Q-values for every legal action.
 
-### Docs
+![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
 
-In-app documentation describing the game modes and each AI agent in detail.
+**Croyances** — Visualize how the belief network and heuristic model predict card locations as a game progresses. Generate a random game, step through it, and see per-card probability bars with ground truth overlay and accuracy stats. Switch observer perspective (N/E/S/W) and compare NN vs heuristic predictions side by side.
 
-![Docs tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-docs.png)
+![Croyances tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-croyances.png)
+
+### Problemes (Problems)
+
+**Annonce** — Bidding practice problems. See a hand and bidding history, then find the right bid. The AI evaluates your answer against the NN bidder's recommendation.
+
+**Jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
 
 ## Build & Run
 
 Requires Rust 1.70+ and Python 3.10+.
 
 ```bash
-# Tests (168 tests)
+# Tests (357 tests)
 cargo test -p colver-core
 
 # Performance benchmark
@@ -95,88 +101,41 @@ PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --basel
 
 ## AI Agents
 
-Colver includes four agents of increasing sophistication.
+All agents use the same NN bidder (*Le Bide a Dede*) by default. They differ in how they play cards.
 
-### 1. Perfect-info MCTS (`mcts.rs`)
+### DouDou — DMC Q-Network (`dmc_net.rs`)
 
-Standard [UCT](https://link.springer.com/chapter/10.1007/11871842_29) (Upper Confidence bounds applied to Trees) with full hand visibility. This agent "cheats" by seeing all 4 hands — useful as an upper bound but unrealistic for real play.
+[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Trained by self-play with Prioritized Experience Replay over 35M steps.
 
-- [UCB1](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf) tree policy: balances exploitation vs exploration
-- Arena-based tree with `Node` and `Edge` in contiguous `Vec`s for cache locality
-- Rollout simulation to completion with random legal moves
-- Best action: most-visited root child
+**Architecture**: Dueling DQN 415→1024→1024→1024→32 with LayerNorm (~2.6M parameters). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
 
-| Metric | 1000 iter | 4000 iter |
-|---|---|---|
-| Win rate vs Random | 97% | — |
-| Time per game | 8 ms | 67 ms |
+### Dede — IS-DD (`is_dd.rs`)
 
-### 2. Naive IS-MCTS (`naive_ismcts.rs`)
+Information Set Double-Dummy search. Maintains a probabilistic belief model over hidden cards — updated after every action via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). Optionally augmented with a **belief network** (NN-based card location prediction, 330→512→512→128, ~2MB). Samples plausible opponent hands weighted by these beliefs, then solves each world exactly with the alpha-beta DD solver.
 
-Handles imperfect information via [ensemble determinization](https://doi.org/10.1109/CIG.2012.6374152). The key idea from [Cowling, Powley & Whitehouse (2012)](https://doi.org/10.1109/TCIAIG.2012.2200894):
+### Oracle — DD Solver (`solver.rs`)
 
-> Instead of searching a single tree, sample multiple "determinized" worlds (each being a possible distribution of hidden cards), run standard MCTS on each, and aggregate the results.
+Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~7ms (median). Useful as an upper bound.
 
-The agent only sees its 8 cards and previously played cards. For each search:
-1. Sample D determinized worlds — redistribute the 24 unknown cards among the 3 opponents, respecting known void constraints
-2. Run standard MCTS (I iterations) on each world
-3. Aggregate root visit counts across all D worlds
-4. Choose the most-visited action
+### Older search agents
 
-| Config (DxI) | Win rate vs Random | Avg score | Time/game |
-|---|---|---|---|
-| 20x50 = 1000 | 92% | 1137 - 81 | 8 ms |
-| 40x100 = 4000 | 90% | 1105 - 103 | 32 ms |
+**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### 3. Smart IS-MCTS (`smart_ismcts.rs` + `card_beliefs.rs`)
+### Le Bide a Dede — NN Bidder (`bid_net.rs`)
 
-Extends Naive IS-MCTS with a **belief model** that biases determinization based on information revealed during bidding and play. Instead of sampling worlds uniformly, it samples worlds *consistent with what opponents have signaled*.
-
-Based on [opponent modeling in imperfect information games](https://doi.org/10.1016/j.artint.2005.10.005). Each action reveals something about a player's hand:
-
-- **Hard constraints** (weight = 0): known voids, trump ceiling, played/known cards
-- **Soft constraints** (multiplicative weights): bidding signals (bidding Hearts makes the Jack of Hearts ~5x more likely), play patterns (leading an Ace suggests also holding 10 and King)
-
-The belief model is a `[[f32; 32]; 4]` matrix — 128 floats — where `weights[player][card]` is the relative probability that `player` holds `card`.
-
-See [SMART_ISMCTS.md](SMART_ISMCTS.md) for the full design document.
-
-| Opponent | Win rate | Avg score | Time/game |
-|---|---|---|---|
-| Random | 88% | 1067 - 130 | 9 ms |
-| Naive IS-MCTS (equal budget) | 46% | 536 - 647 | 17 ms |
-
-### 4. DMC Agent (Deep Monte-Carlo) (`scripts/dmc_model.py`)
-
-[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Bidding uses `improved_bid` (not learned).
-
-**Architecture v4**: MLP 415→1024→1024→1024→32 with LayerNorm (~2.6M parameters). Player-relative observation (415 floats): hand, trick, per-player played cards, contract, void tracking, scoring context, bid history.
-
-**Training**: Deep Monte-Carlo (DMC) with Prioritized Experience Replay (PER), opponent pool (70% self-play, 20% past checkpoints, 10% random), 20M steps, 2M replay buffer.
-
-**Inference**: pure Rust forward pass (~1ms/decision, no PyTorch needed).
-
-### Bidding Strategies (`bid_eval.rs`)
-
-Deterministic bidding strategies, fast enough (~200 ops) for use in MCTS rollouts.
-
-**`improved_v2_bid`** (default) — Tournament-winning balanced strategy. Quality gate (J/9/A/10 or 3+ cards in suit), score→value mapping: 10→80, 13→90, 17→100, 20→110, 25→120. Opening cap 120, overcall cap 120, response cap 130.
-
-**`heuristic_bid`** — Aggressive. No quality gate, no cap. Takes ~50% of contracts with ~70% success rate.
-
-**`smart_bid`** — Conservative convention-based. J/9 signaling between partners. Very conservative (~10-13% take rate, ~78% success).
+Dueling DQN (114→256→256→43) trained on 1M DD-solved deals. Default bidder for all agents. Beats the best heuristic bidder 70-76% across all play engines.
 
 ## Agent Comparison
 
-| Agent | Type | Win rate vs Random | Speed/move | Bidding |
-|---|---|---|---|---|
-| Perfect MCTS | Search (cheats) | 97% | ~8ms | improved_bid |
-| Naive IS-MCTS | Search | 92% | ~8ms | improved_bid |
-| Smart IS-MCTS | Search + beliefs | 88% | ~9ms | improved_bid |
-| **DMC Q-Network** | **Neural network** | **66%** | **<1ms** | improved_bid |
-| Random | Baseline | 50% | ~0ms | — |
+| Agent | Type | Speed/move | Notes |
+|---|---|---|---|
+| **DouDou** | **Q-network** | **<1ms** | Strongest overall, no search |
+| Dede (IS-DD) | DD solver + beliefs | ~20ms | Strongest search-based |
+| Oracle (DD) | DD solver (cheats) | ~7ms | Perfect info upper bound |
+| Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
+| Naive IS-MCTS | Search | ~8ms | Configurable budget |
 
-**Note**: Search-based agents (IS-MCTS) get stronger with more time budget. Numbers above use the default budget (~8-9ms/move). The DMC agent uses no search — one forward pass per decision.
+**Note**: Search-based agents get stronger with more time budget. The DMC agent uses no search — one forward pass per decision.
 
 ## Architecture
 
@@ -188,7 +147,7 @@ Bitmask system: `Card = u8` (0-31), `CardSet = u32` (bitmask). Layout: Spades\[0
 
 ### Game State
 
-`GameState` is `Copy` and 56 bytes (compile-time enforced ≤64) for fast MCTS cloning. Contains hands, current trick, contract, points/tricks per team, bidding state, played cards bitmask, void tracking, and belote tracking.
+`GameState` is `Copy` and ≤96 bytes (compile-time enforced) for fast MCTS cloning. Contains hands, current trick, contract, points/tricks per team, bidding state, played cards bitmask, void tracking, and belote tracking.
 
 ### Action Encoding
 
@@ -206,7 +165,7 @@ Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoin
 ```python
 import colver
 
-print(colver.__version__)  # "0.2.0"
+print(colver.__version__)  # "0.2.2"
 
 # Single environment
 env = colver.Env()
