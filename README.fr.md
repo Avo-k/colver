@@ -31,10 +31,6 @@ uv run python -m colver.web
 # Ouvrir http://localhost:8000
 ```
 
-L'interface est organisee en trois sections :
-
-### Jouer
-
 **Humain vs IA** — Jouez en tant que Sud contre des adversaires IA. Choisissez l'agent pour vos adversaires (Est/Ouest) et votre partenaire (Nord) independamment. La partie suit les regles officielles FFB : encheres avec coinche/surcoinche, puis 8 plis. Les cartes sont jouees instantanement au clic ; le curseur de pause controle le delai de l'IA.
 
 ![Onglet Jouer](images/screenshots/tab-play.png)
@@ -43,11 +39,9 @@ L'interface est organisee en trois sections :
 
 ![Onglet Regarder](images/screenshots/tab-watch.png)
 
-### Analyse
-
 **Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
 
-**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Le Bide a Dede* (l'enchérisseur NN) annoncerait — avec les Q-values pour chaque action legale.
+**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Le Bide a Dede* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale.
 
 ![Onglet Annonces](images/screenshots/tab-annonces.png)
 
@@ -55,11 +49,9 @@ L'interface est organisee en trois sections :
 
 ![Onglet Croyances](images/screenshots/tab-croyances.png)
 
-### Problemes
+**Problemes d'annonce** — Problemes d'encheres. Voyez une main et l'historique des encheres, puis trouvez la bonne annonce. L'IA evalue votre reponse.
 
-**Annonce** — Problemes d'encheres. Voyez une main et l'historique des encheres, puis trouvez la bonne annonce. L'IA evalue votre reponse.
-
-**Jeu** — Problemes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
+**Problemes de jeu** — Problemes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
 
 ## Compilation et execution
 
@@ -94,21 +86,19 @@ PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --basel
 
 ## Agents IA
 
-Tous les agents utilisent le meme encherisseur NN (*Le Bide a Dede*) par defaut. Ils different par leur jeu de la carte.
+### Oracle — Solveur DD (`solver.rs`)
+
+Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et elagage par equivalence de cartes. Calcule la carte optimale exacte en ~7ms (mediane). Utile comme borne superieure.
+
+### Dede — IS-DD (`is_dd.rs`)
+
+Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croyances sur les cartes cachees — mis a jour apres chaque action via des contraintes dures (coupes, plafond d'atout) et des signaux faibles (encheres, conventions de jeu). Peut etre augmente par un **reseau de croyances** (prediction NN de la localisation des cartes, 330→512→512→128, ~2Mo). Echantillonne des mains adverses ponderees par ces croyances, puis resout chaque monde exactement avec le solveur alpha-beta DD. IS-DD se prononce « is Dede » — d'ou le surnom.
 
 ### DouDou — Reseau Q DMC (`dmc_net.rs`)
 
 Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Entraine par self-play avec Prioritized Experience Replay sur 35M etapes.
 
-**Architecture** : Dueling DQN 415→1024→1024→1024→32 avec LayerNorm (~2.6M parametres). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble.
-
-### Dede — IS-DD (`is_dd.rs`)
-
-Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croyances sur les cartes cachees — mis a jour apres chaque action via des contraintes dures (coupes, plafond d'atout) et des signaux faibles (encheres, conventions de jeu). Peut etre augmente par un **reseau de croyances** (prediction NN de la localisation des cartes, 330→512→512→128, ~2Mo). Echantillonne des mains adverses ponderees par ces croyances, puis resout chaque monde exactement avec le solveur alpha-beta DD.
-
-### Oracle — Solveur DD (`solver.rs`)
-
-Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, coups tueurs et elagage par equivalence de cartes. Calcule la carte optimale exacte en ~7ms (mediane). Utile comme borne superieure.
+**Architecture** : Dueling DQN 415→1024→1024→1024→32 avec LayerNorm (~2.6M parametres). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble. *DouDou* = en reference a DouZero.
 
 ### Anciens agents de recherche
 
@@ -122,9 +112,9 @@ Dueling DQN (114→256→256→43) entraine sur 1M de donnes resolues en DD. Enc
 
 | Agent | Type | Vitesse/coup | Notes |
 |---|---|---|---|
-| **DouDou** | **Reseau Q** | **<1ms** | Plus fort, sans recherche |
-| Dede (IS-DD) | Solveur DD + croyances | ~20ms | Plus fort avec recherche |
 | Oracle (DD) | Solveur DD (triche) | ~7ms | Borne superieure |
+| Dede (IS-DD) | Solveur DD + croyances | ~20ms | Plus fort avec recherche |
+| **DouDou** | **Reseau Q** | **<1ms** | Plus fort, sans recherche |
 | Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |
 | Naive IS-MCTS | Recherche | ~8ms | Budget configurable |
 
@@ -220,3 +210,7 @@ Implemente la Belote Contree avec 4 couleurs (Pique, Coeur, Carreau, Trefle). Co
 - Cowling, P.I., Powley, E.J. et Whitehouse, D. (2012). [Information Set Monte Carlo Tree Search](https://doi.org/10.1109/TCIAIG.2012.2200894). *IEEE Transactions on Computational Intelligence and AI in Games*.
 - Zha, D. et al. (2021). [DouZero: Mastering DouDiZhu with Self-Play Deep Reinforcement Learning](https://arxiv.org/abs/2106.06135). *ICML*.
 - Auer, P., Cesa-Bianchi, N. et Fischer, P. (2002). [Finite-time Analysis of the Multiarmed Bandit Problem](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf). *Machine Learning*.
+
+## Remerciements
+
+Merci a **Ronan Guillou**, joueur de coinche aguerri, pour ses conseils avises sur le jeu et pour avoir ete le premier testeur — son bon sens a guide de nombreux choix d'interface.

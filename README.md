@@ -38,10 +38,6 @@ uv run python -m colver.web
 # Open http://localhost:8000
 ```
 
-The interface is organized in three sections:
-
-### Jouer (Play)
-
 **Humain vs IA** — Play as South against AI opponents. Choose the agent for your opponents (East/West) and your partner (North) independently. The game follows official FFB Belote Contree rules: bidding with coinche/surcoinche, then 8 tricks. Cards are played instantly on click; the pause slider controls AI thinking delay.
 
 ![Play tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-play.png)
@@ -49,8 +45,6 @@ The interface is organized in three sections:
 **IA vs IA** — Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats. Step through actions, play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision. Paste a CFN string to load a specific position.
 
 ![Watch tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-watch.png)
-
-### Analyse (Analysis)
 
 **Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
 
@@ -62,11 +56,9 @@ The interface is organized in three sections:
 
 ![Croyances tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-croyances.png)
 
-### Problemes (Problems)
+**Problemes d'annonce** — Bidding practice problems. See a hand and bidding history, then find the right bid. The AI evaluates your answer against the NN bidder's recommendation.
 
-**Annonce** — Bidding practice problems. See a hand and bidding history, then find the right bid. The AI evaluates your answer against the NN bidder's recommendation.
-
-**Jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
+**Problemes de jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
 
 ## Build & Run
 
@@ -101,21 +93,19 @@ PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --basel
 
 ## AI Agents
 
-All agents use the same NN bidder (*Le Bide a Dede*) by default. They differ in how they play cards.
+### Oracle — DD Solver (`solver.rs`)
+
+Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~7ms (median). Useful as an upper bound.
+
+### Dede — IS-DD (`is_dd.rs`)
+
+Information Set Double-Dummy search. Maintains a probabilistic belief model over hidden cards — updated after every action via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). Optionally augmented with a **belief network** (NN-based card location prediction, 330→512→512→128, ~2MB). Samples plausible opponent hands weighted by these beliefs, then solves each world exactly with the alpha-beta DD solver. IS-DD sounds like "is Dede" — hence the name.
 
 ### DouDou — DMC Q-Network (`dmc_net.rs`)
 
 [DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Trained by self-play with Prioritized Experience Replay over 35M steps.
 
-**Architecture**: Dueling DQN 415→1024→1024→1024→32 with LayerNorm (~2.6M parameters). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
-
-### Dede — IS-DD (`is_dd.rs`)
-
-Information Set Double-Dummy search. Maintains a probabilistic belief model over hidden cards — updated after every action via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). Optionally augmented with a **belief network** (NN-based card location prediction, 330→512→512→128, ~2MB). Samples plausible opponent hands weighted by these beliefs, then solves each world exactly with the alpha-beta DD solver.
-
-### Oracle — DD Solver (`solver.rs`)
-
-Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~7ms (median). Useful as an upper bound.
+**Architecture**: Dueling DQN 415→1024→1024→1024→32 with LayerNorm (~2.6M parameters). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent. *DouDou* = a reference to DouZero.
 
 ### Older search agents
 
@@ -129,9 +119,9 @@ Dueling DQN (114→256→256→43) trained on 1M DD-solved deals. Default bidder
 
 | Agent | Type | Speed/move | Notes |
 |---|---|---|---|
-| **DouDou** | **Q-network** | **<1ms** | Strongest overall, no search |
-| Dede (IS-DD) | DD solver + beliefs | ~20ms | Strongest search-based |
 | Oracle (DD) | DD solver (cheats) | ~7ms | Perfect info upper bound |
+| Dede (IS-DD) | DD solver + beliefs | ~20ms | Strongest search-based |
+| **DouDou** | **Q-network** | **<1ms** | Strongest overall, no search |
 | Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
 | Naive IS-MCTS | Search | ~8ms | Configurable budget |
 
@@ -227,3 +217,7 @@ Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scorin
 - Cowling, P.I., Powley, E.J. & Whitehouse, D. (2012). [Information Set Monte Carlo Tree Search](https://doi.org/10.1109/TCIAIG.2012.2200894). *IEEE Transactions on Computational Intelligence and AI in Games*.
 - Zha, D. et al. (2021). [DouZero: Mastering DouDiZhu with Self-Play Deep Reinforcement Learning](https://arxiv.org/abs/2106.06135). *ICML*.
 - Auer, P., Cesa-Bianchi, N. & Fischer, P. (2002). [Finite-time Analysis of the Multiarmed Bandit Problem](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf). *Machine Learning*.
+
+## Acknowledgments
+
+Thanks to **Ronan Guillou**, seasoned coinche player, for his advice on the game and for being the first tester — his good sense guided many UI decisions.
