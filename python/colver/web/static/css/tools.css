@@ -465,9 +465,16 @@
 .oracle-zero { color: #444; }
 
 #annonces-sim-header {
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     color: #aaa;
     font-size: 0.85rem;
+}
+
+.oracle-explainer {
+    color: #777;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin: 0 0 8px 0;
 }
 
 .dd-loader {

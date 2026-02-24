@@ -86,6 +86,7 @@ const TEMPLATE = `
             </div>
             <div class="annonces-result-panel" id="annonces-sim-panel">
                 <div id="annonces-sim-header" class="section-title">Oracle</div>
+                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
                 <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-sim-viewer-wrap">
                     <details id="annonces-sim-viewer">
