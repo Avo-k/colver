@@ -464,10 +464,48 @@
 .oracle-low  { color: #ef9a9a; }
 .oracle-zero { color: #444; }
 
-#annonces-sim-header {
+#annonces-sim-header, #annonces-doudou-header {
     margin-bottom: 4px;
     color: #aaa;
     font-size: 0.85rem;
+}
+
+/* DouDou table */
+#annonces-doudou-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.doudou-explainer {
+    color: #777;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    margin: 0 0 8px 0;
+}
+
+#doudou-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+#doudou-table th { color: #888; font-weight: 600; padding: 4px 6px; text-align: center; }
+#doudou-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid #222; vertical-align: middle; }
+#doudou-table td:first-child { font-size: 1.1rem; }
+
+.doudou-empty { color: #333; }
+.doudou-high .doudou-pct { color: #82e0aa; }
+.doudou-mid .doudou-pct { color: #d4af37; }
+.doudou-low .doudou-pct { color: #ef9a9a; }
+
+.doudou-count {
+    display: block;
+    font-size: 0.7rem;
+    color: #666;
+    line-height: 1.1;
+}
+
+.doudou-pct {
+    display: block;
+    font-weight: 700;
+    font-size: 0.85rem;
+    line-height: 1.2;
 }
 
 .nn-explainer,

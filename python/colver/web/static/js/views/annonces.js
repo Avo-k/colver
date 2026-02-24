@@ -84,16 +84,21 @@ const TEMPLATE = `
                 <div id="annonces-results-header" class="section-title"></div>
                 <p class="nn-explainer">R\u00e9seau de neurones entra\u00een\u00e9 par renforcement sur des millions de parties en jeu parfait (double-dummy).</p>
                 <div id="annonces-results-body"></div>
-            </div>
-            <div class="annonces-result-panel" id="annonces-sim-panel">
-                <div id="annonces-sim-header" class="section-title">Oracle</div>
-                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
-                <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-sim-viewer-wrap">
                     <details id="annonces-sim-viewer">
                         <summary>Voir 10 exemples de distribution</summary>
                         <div id="annonces-sim-viewer-content"></div>
                     </details>
+                </div>
+            </div>
+            <div class="annonces-result-panel" id="annonces-sim-panel">
+                <div id="annonces-sim-header" class="section-title">Oracle</div>
+                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
+                <div id="annonces-sim-body"></div>
+                <div class="hidden" id="annonces-doudou-panel">
+                    <div id="annonces-doudou-header" class="section-title">DouDou</div>
+                    <p class="doudou-explainer">M\u00eames distributions que l\u2019Oracle, mais jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite.</p>
+                    <div id="annonces-doudou-body"></div>
                 </div>
             </div>
         </div>
@@ -348,6 +353,53 @@ function renderSimViewer(deals, numSims) {
     }
 }
 
+const DOUDOU_COLS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
+
+function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs) {
+    const panel = document.getElementById('annonces-doudou-panel');
+    if (!doudouCells) {
+        panel.classList.add('hidden');
+        return;
+    }
+    panel.classList.remove('hidden');
+
+    const header = document.getElementById('annonces-doudou-header');
+    const v = doudouStats.voids;
+    const nsC = doudouStats.ns_contracts;
+    const nsA = doudouStats.ns_achieved;
+    const ewC = doudouStats.ew_contracts;
+    const ewA = doudouStats.ew_achieved;
+    const elapsed = elapsedMs != null ? ` \u2014 ${(elapsedMs / 1000).toFixed(1)}s` : '';
+    header.textContent = `DouDou (${completed}/${total}${elapsed}) \u2014 ${v} passe, NS ${nsA}/${nsC}, EW ${ewA}/${ewC}`;
+
+    const body = document.getElementById('annonces-doudou-body');
+    let html = '<table id="doudou-table"><thead><tr><th></th>';
+    for (const label of DOUDOU_COLS) {
+        html += `<th>${label}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+
+    for (let suit = 0; suit < 4; suit++) {
+        html += `<tr><td>${suitHtml(suit)}</td>`;
+        for (let col = 0; col < 10; col++) {
+            const [count, achieved] = doudouCells[suit][col];
+            if (count === 0) {
+                html += '<td class="doudou-empty">\u00b7</td>';
+            } else {
+                const pct = Math.round(achieved / count * 100);
+                let cls;
+                if (pct >= 60) cls = 'doudou-high';
+                else if (pct >= 30) cls = 'doudou-mid';
+                else cls = 'doudou-low';
+                html += `<td class="${cls}"><span class="doudou-count">${count}</span><span class="doudou-pct">${pct}%</span></td>`;
+            }
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+}
+
 function handleSimUpdate(data) {
     if (data.error) {
         document.getElementById('annonces-sim-body').innerHTML =
@@ -356,10 +408,12 @@ function handleSimUpdate(data) {
         return;
     }
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
 }
 
 function handleSimDone(data) {
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
         renderSimViewer(data.sampled_deals, data.completed);
     }
@@ -422,6 +476,10 @@ export function mount(container) {
         const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                                  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
         renderOracleTable(emptyCountsSeed, 0, numSims, null);
+
+        // Reset DouDou panel
+        document.getElementById('annonces-doudou-panel').classList.add('hidden');
+        document.getElementById('annonces-doudou-body').innerHTML = '';
 
         send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
         send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
