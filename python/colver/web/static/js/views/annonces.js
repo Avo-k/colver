@@ -43,54 +43,73 @@ function bidActionName(action) {
 }
 
 const TEMPLATE = `
-<div id="annonces-config">
-    <div id="annonces-header">
-        <span class="annonces-title">\u00c9valuation des annonces</span>
-        <span id="annonces-count">0/8 cartes</span>
-        <button id="annonces-random-btn" class="secondary-btn">Main al\u00e9atoire</button>
-        <button id="annonces-clear-btn" class="secondary-btn">Vider la main</button>
-    </div>
-    <div id="annonces-palette"></div>
-    <div id="annonces-history-section">
-        <div id="annonces-history-header">
-            <span class="annonces-subtitle">Ench\u00e8res pr\u00e9c\u00e9dentes</span>
-            <button id="annonces-history-clear-btn" class="secondary-btn">Vider</button>
-        </div>
-        <div id="annonces-history-list"></div>
-        <div id="annonces-history-add">
-            <select id="annonces-action-select"></select>
-            <button id="annonces-history-add-btn">+ Ajouter</button>
-        </div>
-    </div>
-    <div id="annonces-eval-row">
-        <button id="annonces-eval-btn" disabled>\u00c9valuer</button>
-        <label class="annonces-sim-label">Simulations DD :
-            <input type="number" id="annonces-sim-count" value="10" min="1" max="200" style="width:55px">
-        </label>
-    </div>
-    <div id="annonces-loading" class="hidden">Calcul en cours\u2026</div>
-    <div id="annonces-results-row" class="hidden">
-        <div id="annonces-results" class="annonces-result-col">
-            <div id="annonces-results-header" class="section-title"></div>
-            <div id="annonces-results-body"></div>
-        </div>
-        <div id="annonces-dd-results" class="annonces-result-col">
-            <div id="annonces-dd-header" class="section-title"></div>
-            <div id="annonces-dd-body"></div>
+<div id="annonces-top-row">
+    <div id="annonces-left">
+        <div id="annonces-config">
+            <div id="annonces-header">
+                <span class="annonces-title">\u00c9valuation des annonces</span>
+                <span id="annonces-count">0/8 cartes</span>
+                <button id="annonces-random-btn" class="secondary-btn">Main al\u00e9atoire</button>
+                <button id="annonces-clear-btn" class="secondary-btn">Vider la main</button>
+            </div>
+            <div id="annonces-palette"></div>
+            <div id="annonces-history-section">
+                <div id="annonces-history-header">
+                    <span class="annonces-subtitle">Ench\u00e8res pr\u00e9c\u00e9dentes</span>
+                    <button id="annonces-history-clear-btn" class="secondary-btn">Vider</button>
+                </div>
+                <div id="annonces-history-list"></div>
+                <div id="annonces-history-add">
+                    <select id="annonces-action-select"></select>
+                    <button id="annonces-history-add-btn">+ Ajouter</button>
+                </div>
+            </div>
         </div>
     </div>
-</div>
-<div id="annonces-hand-preview">
-    <div class="section-title">Votre main</div>
-    <div class="hand" id="annonces-hand-display"></div>
+    <div id="annonces-right">
+        <div id="annonces-hand-preview">
+            <div class="section-title">Votre main</div>
+            <div class="hand" id="annonces-hand-display"></div>
+            <div id="annonces-eval-row">
+                <button id="annonces-eval-btn" disabled>\u00c9valuer</button>
+                <label class="annonces-sim-label">Simulations :
+                    <input type="number" id="annonces-sim-count" value="10" min="1" max="200" style="width:55px">
+                </label>
+            </div>
+        </div>
+        <div id="annonces-results-area" class="hidden">
+            <div class="annonces-result-panel" id="annonces-nn-panel">
+                <div id="annonces-results-header" class="section-title"></div>
+                <div id="annonces-results-body"></div>
+            </div>
+            <div class="annonces-result-panel" id="annonces-dd-panel">
+                <div id="annonces-dd-header" class="section-title"></div>
+                <div id="annonces-dd-body"></div>
+            </div>
+            <div class="annonces-result-panel" id="annonces-oracle-panel">
+                <div id="annonces-oracle-header" class="section-title"></div>
+                <div id="annonces-oracle-body"></div>
+            </div>
+            <div class="annonces-result-panel hidden" id="annonces-dmc-panel">
+                <div id="annonces-dmc-header" class="section-title"></div>
+                <div id="annonces-dmc-body"></div>
+            </div>
+            <div class="annonces-result-panel hidden" id="annonces-sim-viewer-panel">
+                <details id="annonces-sim-viewer">
+                    <summary>Voir les mains simul\u00e9es</summary>
+                    <div id="annonces-sim-viewer-content"></div>
+                </details>
+            </div>
+        </div>
+    </div>
 </div>
 `;
 
 let annoncesHand = new Set();
 let annoncesHistory = [];
-let ddTimerId = null;
-let ddStartTime = 0;
-let ddEstimatedMs = 0;
+let simTimerId = null;
+let simStartTime = 0;
+let simEstimatedMs = 0;
 
 function annoncesPlayerSeat(turnIdx, historyLen) {
     return (2 - historyLen + turnIdx + 32) % 4;
@@ -221,33 +240,44 @@ function renderAnnoncesHistory() {
     list.appendChild(yourRow);
 }
 
-function startDdTimer(numSims) {
-    ddEstimatedMs = numSims * 150;
-    ddStartTime = Date.now();
-    const estSec = (ddEstimatedMs / 1000).toFixed(1);
-    document.getElementById('annonces-dd-header').textContent = `Oracle DD`;
+function startSimTimer(numSims) {
+    simEstimatedMs = numSims * 300;
+    simStartTime = Date.now();
+    const estSec = (simEstimatedMs / 1000).toFixed(1);
+
+    // Show loader in DD panel
+    document.getElementById('annonces-dd-header').textContent = 'Oracle DD';
     document.getElementById('annonces-dd-body').innerHTML =
         `<div class="dd-loader">
             <div class="dd-loader-text">R\u00e9solution de ${numSims} donnes (~${estSec}s)\u2026</div>
             <div class="dd-progress-bar"><div class="dd-progress-fill" id="dd-progress-fill"></div></div>
             <div class="dd-loader-pct" id="dd-loader-pct">0%</div>
         </div>`;
-    ddTimerId = setInterval(updateDdProgress, 100);
+
+    // Show loading placeholders in Oracle + DMC panels
+    document.getElementById('annonces-oracle-header').textContent = 'Oracle : Succ\u00e8s contrat 80';
+    document.getElementById('annonces-oracle-body').innerHTML =
+        '<div class="dd-loader"><div class="dd-loader-text">En attente\u2026</div></div>';
+    document.getElementById('annonces-dmc-header').textContent = 'DouDou : Succ\u00e8s contrat 80';
+    document.getElementById('annonces-dmc-body').innerHTML =
+        '<div class="dd-loader"><div class="dd-loader-text">En attente\u2026</div></div>';
+
+    simTimerId = setInterval(updateSimProgress, 100);
 }
 
-function updateDdProgress() {
-    const elapsed = Date.now() - ddStartTime;
-    const pct = Math.min(99, Math.round((elapsed / ddEstimatedMs) * 100));
+function updateSimProgress() {
+    const elapsed = Date.now() - simStartTime;
+    const pct = Math.min(99, Math.round((elapsed / simEstimatedMs) * 100));
     const fill = document.getElementById('dd-progress-fill');
     const label = document.getElementById('dd-loader-pct');
     if (fill) fill.style.width = pct + '%';
     if (label) label.textContent = pct + '%';
 }
 
-function stopDdTimer() {
-    if (ddTimerId) {
-        clearInterval(ddTimerId);
-        ddTimerId = null;
+function stopSimTimer() {
+    if (simTimerId) {
+        clearInterval(simTimerId);
+        simTimerId = null;
     }
 }
 
@@ -291,8 +321,61 @@ function handleBidEvalResult(data) {
     document.getElementById('annonces-results-body').innerHTML = html;
 }
 
-function handleDdSimResult(data) {
-    stopDdTimer();
+function renderSuccessTable(bodyEl, rates) {
+    let html = '<table class="success-table"><tr><th>Atout</th><th>Succ\u00e8s</th><th></th></tr>';
+    for (let i = 0; i < 4; i++) {
+        const pct = rates[i];
+        const symbol = suitHtml(i);
+        const barClass = pct >= 60 ? 'success-high' : (pct >= 40 ? 'success-mid' : 'success-low');
+        html += `<tr>
+            <td>${symbol}</td>
+            <td>${pct.toFixed(0)}%</td>
+            <td class="success-bar-cell"><div class="success-bar-bg"><div class="success-bar-fill ${barClass}" style="width:${pct}%"></div></div></td>
+        </tr>`;
+    }
+    html += '</table>';
+    bodyEl.innerHTML = html;
+}
+
+function renderSimViewer(deals, numSims) {
+    const panel = document.getElementById('annonces-sim-viewer-panel');
+    panel.classList.remove('hidden');
+    const content = document.getElementById('annonces-sim-viewer-content');
+    const viewer = document.getElementById('annonces-sim-viewer');
+    viewer.querySelector('summary').textContent = `Voir les mains simul\u00e9es (${numSims} donnes)`;
+
+    let html = '';
+    for (let d = 0; d < deals.length; d++) {
+        const deal = deals[d];
+        html += `<details class="sim-deal-details">
+            <summary>Donne ${d + 1}</summary>
+            <div class="sim-deal-hands">`;
+        for (const seat of [0, 1, 3]) {
+            const cards = deal.hands[String(seat)];
+            if (!cards) continue;
+            html += `<div class="sim-hand-section">
+                <span class="sim-hand-label">${SEAT_NAMES[seat]}</span>
+                <div class="hand sim-hand" id="sim-hand-${d}-${seat}"></div>
+            </div>`;
+        }
+        html += '</div></details>';
+    }
+    content.innerHTML = html;
+
+    // Render card images into each sim hand container
+    for (let d = 0; d < deals.length; d++) {
+        const deal = deals[d];
+        for (const seat of [0, 1, 3]) {
+            const cards = deal.hands[String(seat)];
+            if (!cards) continue;
+            const el = document.getElementById(`sim-hand-${d}-${seat}`);
+            if (el) renderHand(el, cards);
+        }
+    }
+}
+
+function handleSimResult(data) {
+    stopSimTimer();
 
     if (data.error) {
         document.getElementById('annonces-dd-body').innerHTML =
@@ -301,28 +384,45 @@ function handleDdSimResult(data) {
         return;
     }
 
-    const suits = data.suits;
-    const elapsed = data.elapsed_ms;
-    const numSims = data.num_sims;
+    const { dd_suits, oracle_success, dmc_success, num_sims, elapsed_ms, sampled_deals, dmc_available } = data;
 
+    // DD table
     document.getElementById('annonces-dd-header').textContent =
-        `Oracle DD (${numSims} donnes, ${(elapsed / 1000).toFixed(1)}s)`;
+        `Oracle DD (${num_sims} donnes, ${(elapsed_ms / 1000).toFixed(1)}s)`;
 
-    let html = '<table class="dd-sim-table"><tr><th>Atout</th><th>Moy. NS</th><th>Moy. EO</th><th>Annonce</th></tr>';
-    for (const s of suits) {
+    let ddHtml = '<table class="dd-sim-table"><tr><th>Atout</th><th>Moy. NS</th><th>Moy. EO</th><th>Annonce</th></tr>';
+    for (const s of dd_suits) {
         const symbol = suitHtml(s.suit);
         const bid = ddSuggestedBid(s.avg_ns);
         const bidText = bid ? `${bid} ${suitHtml(s.suit)}` : '\u2014';
         const bidClass = bid ? (bid >= 100 ? 'dd-bid-high' : 'dd-bid-ok') : 'dd-bid-none';
-        html += `<tr>
+        ddHtml += `<tr>
             <td>${symbol}</td>
             <td>${s.avg_ns.toFixed(1)}</td>
             <td>${s.avg_ew.toFixed(1)}</td>
             <td class="${bidClass}">${bidText}</td>
         </tr>`;
     }
-    html += '</table>';
-    document.getElementById('annonces-dd-body').innerHTML = html;
+    ddHtml += '</table>';
+    document.getElementById('annonces-dd-body').innerHTML = ddHtml;
+
+    // Oracle success
+    document.getElementById('annonces-oracle-header').textContent = 'Oracle : Succ\u00e8s contrat 80';
+    renderSuccessTable(document.getElementById('annonces-oracle-body'), oracle_success);
+
+    // DMC success
+    if (dmc_available && dmc_success) {
+        document.getElementById('annonces-dmc-panel').classList.remove('hidden');
+        document.getElementById('annonces-dmc-header').textContent = 'DouDou : Succ\u00e8s contrat 80';
+        renderSuccessTable(document.getElementById('annonces-dmc-body'), dmc_success);
+    } else {
+        document.getElementById('annonces-dmc-panel').classList.add('hidden');
+    }
+
+    // Sim viewer
+    if (sampled_deals && sampled_deals.length > 0) {
+        renderSimViewer(sampled_deals, num_sims);
+    }
 }
 
 export function mount(container) {
@@ -357,42 +457,44 @@ export function mount(container) {
         }
         annoncesHand = new Set(indices.slice(0, 8));
         updateAnnoncesDisplay();
-        document.getElementById('annonces-results-row').classList.add('hidden');
-        stopDdTimer();
+        document.getElementById('annonces-results-area').classList.add('hidden');
+        stopSimTimer();
     });
 
     document.getElementById('annonces-clear-btn').addEventListener('click', () => {
         annoncesHand.clear();
         updateAnnoncesDisplay();
-        document.getElementById('annonces-results-row').classList.add('hidden');
-        stopDdTimer();
+        document.getElementById('annonces-results-area').classList.add('hidden');
+        stopSimTimer();
     });
 
     document.getElementById('annonces-eval-btn').addEventListener('click', () => {
         const hand = Array.from(annoncesHand);
         const numSims = Math.max(1, Math.min(200, parseInt(document.getElementById('annonces-sim-count').value) || 10));
 
-        document.getElementById('annonces-results-row').classList.remove('hidden');
-        document.getElementById('annonces-loading').classList.add('hidden');
+        document.getElementById('annonces-results-area').classList.remove('hidden');
 
+        // Reset panels
         document.getElementById('annonces-results-header').textContent = 'Le Bide \u00e0 D\u00e9d\u00e9';
         document.getElementById('annonces-results-body').innerHTML =
             '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
+        document.getElementById('annonces-dmc-panel').classList.add('hidden');
+        document.getElementById('annonces-sim-viewer-panel').classList.add('hidden');
 
-        startDdTimer(numSims);
+        startSimTimer(numSims);
 
         send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
-        send({ type: 'dd_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
+        send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
     });
 
     onMessage('bid_eval_result', handleBidEvalResult);
-    onMessage('dd_sim_result', handleDdSimResult);
+    onMessage('annonces_sim_result', handleSimResult);
 }
 
 export function unmount() {
     offMessage('bid_eval_result', handleBidEvalResult);
-    offMessage('dd_sim_result', handleDdSimResult);
-    stopDdTimer();
+    offMessage('annonces_sim_result', handleSimResult);
+    stopSimTimer();
     annoncesHand = new Set();
     annoncesHistory = [];
 }

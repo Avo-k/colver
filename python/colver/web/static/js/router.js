@@ -1,4 +1,4 @@
-// Hash-based router with dynamic import, mount/unmount lifecycle
+// pushState router with dynamic import, mount/unmount lifecycle
 
 const routes = {
     '/':                  () => import('./views/landing.js'),
@@ -12,35 +12,51 @@ const routes = {
     '/about':             () => import('./views/about.js'),
 };
 
-// Legacy hash redirects
-const legacyRedirects = {
-    '#play':         '#/jouer/humain',
-    '#watch':        '#/jouer/ia',
-    '#replay':       '#/analyse/rejouer',
-    '#deal':         '#/jouer/ia',
-    '#annonces':     '#/analyse/annonces',
-    '#prob-annonce': '#/problemes/annonce',
-    '#prob-jeu':     '#/problemes/jeu',
-    '#docs':         '#/about',
+// Legacy hash redirects (old bookmarks still work)
+const legacyHashMap = {
+    '#play':         '/jouer/humain',
+    '#watch':        '/jouer/ia',
+    '#replay':       '/analyse/rejouer',
+    '#deal':         '/jouer/ia',
+    '#annonces':     '/analyse/annonces',
+    '#prob-annonce': '/problemes/annonce',
+    '#prob-jeu':     '/problemes/jeu',
+    '#docs':         '/about',
 };
 
 let currentView = null;
 let currentPath = null;
 const container = () => document.getElementById('app');
 
+// Resolve base href for reverse proxy support (e.g. /colver/)
+const base = document.querySelector('base')?.getAttribute('href') || '/';
+
 function parsePath() {
-    const hash = location.hash || '#/';
-    // Handle legacy hashes
-    if (legacyRedirects[hash]) {
-        location.hash = legacyRedirects[hash];
-        return null; // will re-trigger hashchange
+    // Handle legacy hash URLs — redirect to clean path
+    const hash = location.hash;
+    if (hash) {
+        // Legacy short hashes: #play, #watch, etc.
+        if (legacyHashMap[hash]) {
+            history.replaceState(null, '', base + legacyHashMap[hash].slice(1));
+            return legacyHashMap[hash];
+        }
+        // Old hash-router URLs: #/jouer/humain, #/analyse/annonces, etc.
+        if (hash.startsWith('#/')) {
+            const path = hash.slice(1); // '#/foo' -> '/foo'
+            history.replaceState(null, '', base + path.slice(1));
+            return path;
+        }
     }
-    return hash.slice(1) || '/'; // remove leading #
+    // Strip base prefix to get the route path
+    let path = location.pathname;
+    if (base !== '/' && path.startsWith(base)) {
+        path = path.slice(base.length - 1); // keep leading /
+    }
+    return path || '/';
 }
 
 async function navigate() {
     const path = parsePath();
-    if (path === null) return; // redirecting
     if (path === currentPath) return;
 
     // Unmount current view
@@ -57,7 +73,7 @@ async function navigate() {
     const loader = routes[path];
     if (!loader) {
         // Unknown route — go to landing
-        location.hash = '#/';
+        navigateTo('/');
         return;
     }
 
@@ -94,10 +110,24 @@ function updateNavHighlight(path) {
 }
 
 export function init() {
-    window.addEventListener('hashchange', navigate);
+    // Intercept clicks on internal links to avoid full page reloads
+    document.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href]');
+        if (!link) return;
+        const href = link.getAttribute('href');
+        // Only handle local paths (not external links, ws://, etc.)
+        if (!href || href.startsWith('http') || href.startsWith('//')) return;
+        e.preventDefault();
+        navigateTo(href);
+    });
+
+    window.addEventListener('popstate', navigate);
     navigate();
 }
 
 export function navigateTo(path) {
-    location.hash = '#' + path;
+    // Build full URL respecting base href
+    const url = base === '/' ? path : base + path.slice(1);
+    history.pushState(null, '', url);
+    navigate();
 }

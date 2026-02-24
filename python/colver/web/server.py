@@ -75,14 +75,18 @@ else:
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
 
-@app.get("/")
-async def index():
+def _serve_index():
     html_path = os.path.join(FRONTEND_DIR, "index.html")
     with open(html_path) as f:
         html = f.read()
     # Inject the correct base href for reverse proxy support
     html = html.replace('<base href="/">', f'<base href="{ROOT_PATH}">')
     return HTMLResponse(html)
+
+
+@app.get("/")
+async def index():
+    return _serve_index()
 
 
 app.mount("/cards", StaticFiles(directory=CARDS_DIR), name="cards")
@@ -456,6 +460,20 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     await ws.send_json({"type": "dd_sim_result", "error": str(e)})
 
+            elif msg_type == "annonces_sim":
+                hand = data.get("hand", [])
+                num_sims = max(1, min(200, int(data.get("num_sims", 50))))
+                if len(hand) != 8:
+                    await ws.send_json({"type": "annonces_sim_result", "error": "8 cartes requises"})
+                    continue
+                try:
+                    loop = asyncio.get_event_loop()
+                    dmc_path = DMC_MODEL_PATH if doudou_available else None
+                    result = await loop.run_in_executor(None, _run_annonces_sim, hand, num_sims, dmc_path)
+                    await ws.send_json(result)
+                except Exception as e:
+                    await ws.send_json({"type": "annonces_sim_result", "error": str(e)})
+
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
                 game_data = await db.get_game(game_id)
@@ -690,3 +708,88 @@ def _run_dd_sim(hand, num_sims):
         "num_sims": num_sims,
         "elapsed_ms": round(elapsed_ms, 1),
     }
+
+
+def _run_annonces_sim(hand, num_sims, dmc_model_path=None):
+    """Unified annonces simulation: DD solve + Oracle success + DMC playout."""
+    import random
+    import time
+
+    start = time.monotonic()
+    remaining = list(set(range(32)) - set(hand))
+    seat = 2  # Sud
+    others = [s for s in range(4) if s != seat]
+
+    dd_totals = [[0.0, 0.0] for _ in range(4)]
+    oracle_success = [0 for _ in range(4)]
+    dmc_success = [0 for _ in range(4)]
+    sampled_deals = []
+    has_dmc = dmc_model_path is not None
+
+    for _ in range(num_sims):
+        random.shuffle(remaining)
+        hands = [None] * 4
+        hands[seat] = sorted(hand)
+        for i, p in enumerate(others):
+            hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
+
+        # Store sampled opponent hands for the viewer
+        deal_hands = {}
+        for p in others:
+            deal_hands[str(p)] = list(hands[p])
+        sampled_deals.append({"hands": deal_hands})
+
+        # DD solve all 4 suits
+        env = _colver_pkg.Env.deal_with_hands(0, hands)
+        dd_result = env.solve_all_suits()
+        for suit_idx, (ns, ew) in enumerate(dd_result["suits"]):
+            dd_totals[suit_idx][0] += ns
+            dd_totals[suit_idx][1] += ew
+            # Oracle success: DD optimal play achieves >= 80 for NS
+            if ns >= 80:
+                oracle_success[suit_idx] += 1
+
+        # DMC playouts for each suit
+        if has_dmc:
+            for suit_idx in range(4):
+                dmc_env = _colver_pkg.Env.deal_with_hands(0, hands)
+                dmc_env.set_contract(suit_idx, 80, 0, 0)
+                dmc_env.set_phase_playing()
+                dmc_env.load_dmc_model(dmc_model_path)
+                while not dmc_env.is_terminal():
+                    result = dmc_env.action_dmc_with_stats()
+                    dmc_env.step(result["best_action"])
+                ns_pts, _ = dmc_env.get_points()
+                if ns_pts >= 80:
+                    dmc_success[suit_idx] += 1
+
+    elapsed_ms = (time.monotonic() - start) * 1000.0
+
+    dd_suits = []
+    for suit_idx in range(4):
+        dd_suits.append({
+            "suit": suit_idx,
+            "avg_ns": round(dd_totals[suit_idx][0] / num_sims, 1),
+            "avg_ew": round(dd_totals[suit_idx][1] / num_sims, 1),
+        })
+
+    oracle_pcts = [round(oracle_success[i] / num_sims * 100, 1) for i in range(4)]
+    dmc_pcts = [round(dmc_success[i] / num_sims * 100, 1) for i in range(4)] if has_dmc else None
+
+    return {
+        "type": "annonces_sim_result",
+        "dd_suits": dd_suits,
+        "oracle_success": oracle_pcts,
+        "dmc_success": dmc_pcts,
+        "num_sims": num_sims,
+        "elapsed_ms": round(elapsed_ms, 1),
+        "sampled_deals": sampled_deals,
+        "dmc_available": has_dmc,
+    }
+
+
+# Catch-all for client-side routes (pushState).
+# Must be registered AFTER all API/WS/static mounts.
+@app.get("/{full_path:path}")
+async def spa_catchall(full_path: str):
+    return _serve_index()

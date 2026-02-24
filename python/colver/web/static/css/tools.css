@@ -50,21 +50,43 @@
     cursor: default;
 }
 
+/* Annonces: two-column layout — left (palette) + right (hand + results) */
+#annonces-top-row {
+    display: flex;
+    gap: 16px;
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+}
+
+#annonces-left {
+    flex-shrink: 0;
+}
+
+#annonces-right {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
 /* Annonces hand preview */
 #annonces-hand-preview {
     background: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
-    padding: 16px 20px;
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    min-height: calc(var(--card-h) + 48px);
+    gap: 10px;
 }
 
 #annonces-hand-display {
     justify-content: center;
+    flex-wrap: wrap;
 }
 
 /* Deal table: cardinal direction layout */
@@ -231,7 +253,7 @@
 
 /* ===== ANNONCES MODE ===== */
 #annonces-config {
-    max-width: 700px;
+    width: fit-content;
     padding: 16px;
 }
 
@@ -415,16 +437,16 @@
     font-size: 0.85rem;
 }
 
-#annonces-results-row {
+/* Results area: stacked panels */
+#annonces-results-area {
     display: flex;
-    gap: 16px;
-    margin-top: 12px;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
 }
 
-.annonces-result-col {
-    flex: 1;
-    min-width: 0;
-    padding: 10px;
+.annonces-result-panel {
+    padding: 10px 12px;
     background: rgba(255, 255, 255, 0.04);
     border-radius: 8px;
 }
@@ -509,6 +531,153 @@
     color: #82e0aa;
     font-size: 0.8rem;
     margin-top: 4px;
+}
+
+/* Success rate tables */
+.success-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    table-layout: fixed;
+}
+
+.success-table th {
+    color: #888;
+    font-weight: 600;
+    padding: 4px 12px;
+    text-align: center;
+    border-bottom: 1px solid #333;
+}
+
+.success-table td {
+    padding: 6px 12px;
+    text-align: center;
+    border-bottom: 1px solid #222;
+}
+
+.success-table td:first-child {
+    font-size: 1.2rem;
+}
+
+.success-bar-cell {
+    width: 50%;
+    min-width: 80px;
+}
+
+.success-bar-bg {
+    width: 100%;
+    height: 10px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.success-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.3s ease;
+}
+
+.success-bar-fill.success-high {
+    background: linear-gradient(90deg, #3a6a5a, #82e0aa);
+}
+
+.success-bar-fill.success-mid {
+    background: linear-gradient(90deg, #8a7a20, #d4af37);
+}
+
+.success-bar-fill.success-low {
+    background: linear-gradient(90deg, #6a3030, #ef9a9a);
+}
+
+/* Sim viewer accordion */
+#annonces-sim-viewer summary {
+    cursor: pointer;
+    color: #aaa;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 4px 0;
+    user-select: none;
+}
+
+#annonces-sim-viewer summary:hover {
+    color: #ddd;
+}
+
+#annonces-sim-viewer[open] summary {
+    color: #d4af37;
+}
+
+#annonces-sim-viewer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+.sim-deal-details {
+    background: rgba(0,0,0,0.15);
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
+.sim-deal-details summary {
+    cursor: pointer;
+    color: #999;
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 3px 0;
+    user-select: none;
+}
+
+.sim-deal-details summary:hover {
+    color: #ccc;
+}
+
+.sim-deal-details[open] summary {
+    color: #d4af37;
+}
+
+.sim-deal-hands {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 0;
+}
+
+.sim-hand-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sim-hand-label {
+    width: 20px;
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #888;
+    flex-shrink: 0;
+}
+
+.sim-hand {
+    gap: 2px;
+}
+
+.sim-hand .card {
+    width: 36px;
+    height: auto;
+}
+
+/* Responsive: stack top-row on narrow screens */
+@media (max-width: 800px) {
+    #annonces-top-row {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+    #annonces-right {
+        overflow-y: visible;
+    }
 }
 
 /* ===== PROBLEMES PANELS ===== */

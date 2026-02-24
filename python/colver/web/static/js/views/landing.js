@@ -61,7 +61,7 @@ const TEMPLATE = `
     </div>
 
     <div class="landing-footer">
-        <a href="#/about" class="landing-about-link">\u00c0 propos de Colver</a>
+        <a href="/about" class="landing-about-link">\u00c0 propos de Colver</a>
     </div>
 </div>
 `;
