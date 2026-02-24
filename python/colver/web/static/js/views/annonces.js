@@ -6,6 +6,8 @@ import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName }
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
 const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
+const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
+const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
 function suitHtml(suitIdx) {
     const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
@@ -73,7 +75,7 @@ const TEMPLATE = `
             <div id="annonces-eval-row">
                 <button id="annonces-eval-btn" disabled>\u00c9valuer</button>
                 <label class="annonces-sim-label">Simulations :
-                    <input type="number" id="annonces-sim-count" value="10" min="1" max="200" style="width:55px">
+                    <input type="number" id="annonces-sim-count" value="200" min="1" max="1000" style="width:55px">
                 </label>
             </div>
         </div>
@@ -82,23 +84,15 @@ const TEMPLATE = `
                 <div id="annonces-results-header" class="section-title"></div>
                 <div id="annonces-results-body"></div>
             </div>
-            <div class="annonces-result-panel" id="annonces-dd-panel">
-                <div id="annonces-dd-header" class="section-title"></div>
-                <div id="annonces-dd-body"></div>
-            </div>
-            <div class="annonces-result-panel" id="annonces-oracle-panel">
-                <div id="annonces-oracle-header" class="section-title"></div>
-                <div id="annonces-oracle-body"></div>
-            </div>
-            <div class="annonces-result-panel hidden" id="annonces-dmc-panel">
-                <div id="annonces-dmc-header" class="section-title"></div>
-                <div id="annonces-dmc-body"></div>
-            </div>
-            <div class="annonces-result-panel hidden" id="annonces-sim-viewer-panel">
-                <details id="annonces-sim-viewer">
-                    <summary>Voir les mains simul\u00e9es</summary>
-                    <div id="annonces-sim-viewer-content"></div>
-                </details>
+            <div class="annonces-result-panel" id="annonces-sim-panel">
+                <div id="annonces-sim-header" class="section-title">Oracle</div>
+                <div id="annonces-sim-body"></div>
+                <div class="hidden" id="annonces-sim-viewer-wrap">
+                    <details id="annonces-sim-viewer">
+                        <summary>Voir les mains simul\u00e9es</summary>
+                        <div id="annonces-sim-viewer-content"></div>
+                    </details>
+                </div>
             </div>
         </div>
     </div>
@@ -107,9 +101,6 @@ const TEMPLATE = `
 
 let annoncesHand = new Set();
 let annoncesHistory = [];
-let simTimerId = null;
-let simStartTime = 0;
-let simEstimatedMs = 0;
 
 function annoncesPlayerSeat(turnIdx, historyLen) {
     return (2 - historyLen + turnIdx + 32) % 4;
@@ -240,55 +231,6 @@ function renderAnnoncesHistory() {
     list.appendChild(yourRow);
 }
 
-function startSimTimer(numSims) {
-    simEstimatedMs = numSims * 300;
-    simStartTime = Date.now();
-    const estSec = (simEstimatedMs / 1000).toFixed(1);
-
-    // Show loader in DD panel
-    document.getElementById('annonces-dd-header').textContent = 'Oracle DD';
-    document.getElementById('annonces-dd-body').innerHTML =
-        `<div class="dd-loader">
-            <div class="dd-loader-text">R\u00e9solution de ${numSims} donnes (~${estSec}s)\u2026</div>
-            <div class="dd-progress-bar"><div class="dd-progress-fill" id="dd-progress-fill"></div></div>
-            <div class="dd-loader-pct" id="dd-loader-pct">0%</div>
-        </div>`;
-
-    // Show loading placeholders in Oracle + DMC panels
-    document.getElementById('annonces-oracle-header').textContent = 'Oracle : Succ\u00e8s contrat 80';
-    document.getElementById('annonces-oracle-body').innerHTML =
-        '<div class="dd-loader"><div class="dd-loader-text">En attente\u2026</div></div>';
-    document.getElementById('annonces-dmc-header').textContent = 'DouDou : Succ\u00e8s contrat 80';
-    document.getElementById('annonces-dmc-body').innerHTML =
-        '<div class="dd-loader"><div class="dd-loader-text">En attente\u2026</div></div>';
-
-    simTimerId = setInterval(updateSimProgress, 100);
-}
-
-function updateSimProgress() {
-    const elapsed = Date.now() - simStartTime;
-    const pct = Math.min(99, Math.round((elapsed / simEstimatedMs) * 100));
-    const fill = document.getElementById('dd-progress-fill');
-    const label = document.getElementById('dd-loader-pct');
-    if (fill) fill.style.width = pct + '%';
-    if (label) label.textContent = pct + '%';
-}
-
-function stopSimTimer() {
-    if (simTimerId) {
-        clearInterval(simTimerId);
-        simTimerId = null;
-    }
-}
-
-function ddSuggestedBid(avgNs) {
-    const thresholds = [160, 150, 140, 130, 120, 110, 100, 90, 80];
-    for (const t of thresholds) {
-        if (avgNs >= t) return t;
-    }
-    return null;
-}
-
 function handleBidEvalResult(data) {
     if (data.error) {
         document.getElementById('annonces-results-body').innerHTML =
@@ -321,37 +263,68 @@ function handleBidEvalResult(data) {
     document.getElementById('annonces-results-body').innerHTML = html;
 }
 
-function renderSuccessTable(bodyEl, rates) {
-    let html = '<table class="success-table"><tr><th>Atout</th><th>Succ\u00e8s</th><th></th></tr>';
-    for (let i = 0; i < 4; i++) {
-        const pct = rates[i];
-        const symbol = suitHtml(i);
-        const barClass = pct >= 60 ? 'success-high' : (pct >= 40 ? 'success-mid' : 'success-low');
-        html += `<tr>
-            <td>${symbol}</td>
-            <td>${pct.toFixed(0)}%</td>
-            <td class="success-bar-cell"><div class="success-bar-bg"><div class="success-bar-fill ${barClass}" style="width:${pct}%"></div></div></td>
-        </tr>`;
+function renderOracleTable(successCounts, completed, total, elapsedMs) {
+    const header = document.getElementById('annonces-sim-header');
+    const elapsed = elapsedMs != null ? `, ${(elapsedMs / 1000).toFixed(1)}s` : '';
+    header.textContent = `Oracle (${completed}/${total} donnes${elapsed})`;
+
+    const body = document.getElementById('annonces-sim-body');
+
+    // Build header row
+    let html = '<table id="oracle-table"><thead><tr><th></th>';
+    for (const label of THRESHOLD_LABELS) {
+        html += `<th>${label}</th>`;
     }
-    html += '</table>';
-    bodyEl.innerHTML = html;
+    html += '</tr></thead><tbody>';
+
+    // 4 suit rows
+    for (let suit = 0; suit < 4; suit++) {
+        html += `<tr><td>${suitHtml(suit)}</td>`;
+        for (let t = 0; t < THRESHOLDS.length; t++) {
+            const count = successCounts[suit][t];
+            const pct = completed > 0 ? Math.round(count / completed * 100) : 0;
+            let cls;
+            if (pct === 0) cls = 'oracle-zero';
+            else if (pct >= 60) cls = 'oracle-high';
+            else if (pct >= 30) cls = 'oracle-mid';
+            else cls = 'oracle-low';
+            html += `<td class="${cls}">${pct}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
 }
 
 function renderSimViewer(deals, numSims) {
-    const panel = document.getElementById('annonces-sim-viewer-panel');
-    panel.classList.remove('hidden');
+    const wrap = document.getElementById('annonces-sim-viewer-wrap');
+    wrap.classList.remove('hidden');
     const content = document.getElementById('annonces-sim-viewer-content');
     const viewer = document.getElementById('annonces-sim-viewer');
-    viewer.querySelector('summary').textContent = `Voir les mains simul\u00e9es (${numSims} donnes)`;
+
+    // Show at most 10 randomly sampled deals
+    let sampled = deals;
+    if (deals.length > 10) {
+        const indices = Array.from({ length: deals.length }, (_, i) => i);
+        for (let i = indices.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [indices[i], indices[j]] = [indices[j], indices[i]];
+        }
+        sampled = indices.slice(0, 10).sort((a, b) => a - b).map(i => deals[i]);
+    }
+
+    const shown = sampled.length;
+    viewer.querySelector('summary').textContent =
+        `Voir les mains simul\u00e9es (${shown}${shown < numSims ? `/${numSims}` : ''} donnes)`;
 
     let html = '';
-    for (let d = 0; d < deals.length; d++) {
-        const deal = deals[d];
+    for (let d = 0; d < sampled.length; d++) {
+        const deal = sampled[d];
         html += `<details class="sim-deal-details">
             <summary>Donne ${d + 1}</summary>
             <div class="sim-deal-hands">`;
         for (const seat of [0, 1, 3]) {
-            const cards = deal.hands[String(seat)];
+            const cards = deal[String(seat)];
             if (!cards) continue;
             html += `<div class="sim-hand-section">
                 <span class="sim-hand-label">${SEAT_NAMES[seat]}</span>
@@ -363,10 +336,10 @@ function renderSimViewer(deals, numSims) {
     content.innerHTML = html;
 
     // Render card images into each sim hand container
-    for (let d = 0; d < deals.length; d++) {
-        const deal = deals[d];
+    for (let d = 0; d < sampled.length; d++) {
+        const deal = sampled[d];
         for (const seat of [0, 1, 3]) {
-            const cards = deal.hands[String(seat)];
+            const cards = deal[String(seat)];
             if (!cards) continue;
             const el = document.getElementById(`sim-hand-${d}-${seat}`);
             if (el) renderHand(el, cards);
@@ -374,54 +347,20 @@ function renderSimViewer(deals, numSims) {
     }
 }
 
-function handleSimResult(data) {
-    stopSimTimer();
-
+function handleSimUpdate(data) {
     if (data.error) {
-        document.getElementById('annonces-dd-body').innerHTML =
+        document.getElementById('annonces-sim-body').innerHTML =
             `<div class="annonces-error">${data.error}</div>`;
-        document.getElementById('annonces-dd-header').textContent = 'Erreur';
+        document.getElementById('annonces-sim-header').textContent = 'Erreur';
         return;
     }
+    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+}
 
-    const { dd_suits, oracle_success, dmc_success, num_sims, elapsed_ms, sampled_deals, dmc_available } = data;
-
-    // DD table
-    document.getElementById('annonces-dd-header').textContent =
-        `Oracle DD (${num_sims} donnes, ${(elapsed_ms / 1000).toFixed(1)}s)`;
-
-    let ddHtml = '<table class="dd-sim-table"><tr><th>Atout</th><th>Moy. NS</th><th>Moy. EO</th><th>Annonce</th></tr>';
-    for (const s of dd_suits) {
-        const symbol = suitHtml(s.suit);
-        const bid = ddSuggestedBid(s.avg_ns);
-        const bidText = bid ? `${bid} ${suitHtml(s.suit)}` : '\u2014';
-        const bidClass = bid ? (bid >= 100 ? 'dd-bid-high' : 'dd-bid-ok') : 'dd-bid-none';
-        ddHtml += `<tr>
-            <td>${symbol}</td>
-            <td>${s.avg_ns.toFixed(1)}</td>
-            <td>${s.avg_ew.toFixed(1)}</td>
-            <td class="${bidClass}">${bidText}</td>
-        </tr>`;
-    }
-    ddHtml += '</table>';
-    document.getElementById('annonces-dd-body').innerHTML = ddHtml;
-
-    // Oracle success
-    document.getElementById('annonces-oracle-header').textContent = 'Oracle : Succ\u00e8s contrat 80';
-    renderSuccessTable(document.getElementById('annonces-oracle-body'), oracle_success);
-
-    // DMC success
-    if (dmc_available && dmc_success) {
-        document.getElementById('annonces-dmc-panel').classList.remove('hidden');
-        document.getElementById('annonces-dmc-header').textContent = 'DouDou : Succ\u00e8s contrat 80';
-        renderSuccessTable(document.getElementById('annonces-dmc-body'), dmc_success);
-    } else {
-        document.getElementById('annonces-dmc-panel').classList.add('hidden');
-    }
-
-    // Sim viewer
-    if (sampled_deals && sampled_deals.length > 0) {
-        renderSimViewer(sampled_deals, num_sims);
+function handleSimDone(data) {
+    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+    if (data.sampled_deals && data.sampled_deals.length > 0) {
+        renderSimViewer(data.sampled_deals, data.completed);
     }
 }
 
@@ -458,43 +397,44 @@ export function mount(container) {
         annoncesHand = new Set(indices.slice(0, 8));
         updateAnnoncesDisplay();
         document.getElementById('annonces-results-area').classList.add('hidden');
-        stopSimTimer();
     });
 
     document.getElementById('annonces-clear-btn').addEventListener('click', () => {
         annoncesHand.clear();
         updateAnnoncesDisplay();
         document.getElementById('annonces-results-area').classList.add('hidden');
-        stopSimTimer();
     });
 
     document.getElementById('annonces-eval-btn').addEventListener('click', () => {
         const hand = Array.from(annoncesHand);
-        const numSims = Math.max(1, Math.min(200, parseInt(document.getElementById('annonces-sim-count').value) || 10));
+        const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 200));
 
         document.getElementById('annonces-results-area').classList.remove('hidden');
 
-        // Reset panels
+        // Reset NN panel
         document.getElementById('annonces-results-header').textContent = 'Le Bide \u00e0 D\u00e9d\u00e9';
         document.getElementById('annonces-results-body').innerHTML =
             '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
-        document.getElementById('annonces-dmc-panel').classList.add('hidden');
-        document.getElementById('annonces-sim-viewer-panel').classList.add('hidden');
 
-        startSimTimer(numSims);
+        // Reset oracle panel with empty table
+        document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
+        const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
+        renderOracleTable(emptyCountsSeed, 0, numSims, null);
 
         send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
         send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
     });
 
     onMessage('bid_eval_result', handleBidEvalResult);
-    onMessage('annonces_sim_result', handleSimResult);
+    onMessage('annonces_sim_update', handleSimUpdate);
+    onMessage('annonces_sim_done', handleSimDone);
 }
 
 export function unmount() {
     offMessage('bid_eval_result', handleBidEvalResult);
-    offMessage('annonces_sim_result', handleSimResult);
-    stopSimTimer();
+    offMessage('annonces_sim_update', handleSimUpdate);
+    offMessage('annonces_sim_done', handleSimDone);
     annoncesHand = new Set();
     annoncesHistory = [];
 }

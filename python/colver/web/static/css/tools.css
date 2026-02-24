@@ -437,13 +437,16 @@
     font-size: 0.85rem;
 }
 
-/* Results area: stacked panels */
+/* Results area: side-by-side panels */
 #annonces-results-area {
     display: flex;
-    flex-direction: column;
     gap: 12px;
+    align-items: flex-start;
     margin-top: 16px;
 }
+
+#annonces-nn-panel { flex-shrink: 0; width: 500px; max-width: 500px; }
+#annonces-sim-panel { flex: 1; min-width: 0; }
 
 .annonces-result-panel {
     padding: 10px 12px;
@@ -451,52 +454,20 @@
     border-radius: 8px;
 }
 
-#annonces-dd-header {
+/* Oracle table */
+#oracle-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+#oracle-table th { color: #888; font-weight: 600; padding: 4px 6px; text-align: center; }
+#oracle-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid #222; }
+#oracle-table td:first-child { font-size: 1.1rem; }
+.oracle-high { color: #82e0aa; }
+.oracle-mid  { color: #d4af37; }
+.oracle-low  { color: #ef9a9a; }
+.oracle-zero { color: #444; }
+
+#annonces-sim-header {
     margin-bottom: 8px;
     color: #aaa;
     font-size: 0.85rem;
-}
-
-.dd-sim-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-}
-
-.dd-sim-table th {
-    color: #888;
-    font-weight: 600;
-    padding: 4px 12px;
-    text-align: center;
-    border-bottom: 1px solid #333;
-}
-
-.dd-sim-table td {
-    padding: 6px 12px;
-    text-align: center;
-    border-bottom: 1px solid #222;
-}
-
-.dd-sim-table td:first-child {
-    font-size: 1.2rem;
-}
-
-.dd-sim-table td.red {
-    color: #ef9a9a;
-}
-
-.dd-bid-ok {
-    color: #82e0aa;
-    font-weight: 600;
-}
-
-.dd-bid-high {
-    color: #d4af37;
-    font-weight: 700;
-}
-
-.dd-bid-none {
-    color: #666;
 }
 
 .dd-loader {
@@ -508,86 +479,6 @@
     color: #aaa;
     font-size: 0.85rem;
     margin-bottom: 8px;
-}
-
-.dd-progress-bar {
-    height: 6px;
-    background: #222;
-    border-radius: 3px;
-    overflow: hidden;
-    margin: 0 auto;
-    max-width: 200px;
-}
-
-.dd-progress-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, #3a6a5a, #82e0aa);
-    border-radius: 3px;
-    transition: width 0.1s linear;
-}
-
-.dd-loader-pct {
-    color: #82e0aa;
-    font-size: 0.8rem;
-    margin-top: 4px;
-}
-
-/* Success rate tables */
-.success-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-    table-layout: fixed;
-}
-
-.success-table th {
-    color: #888;
-    font-weight: 600;
-    padding: 4px 12px;
-    text-align: center;
-    border-bottom: 1px solid #333;
-}
-
-.success-table td {
-    padding: 6px 12px;
-    text-align: center;
-    border-bottom: 1px solid #222;
-}
-
-.success-table td:first-child {
-    font-size: 1.2rem;
-}
-
-.success-bar-cell {
-    width: 50%;
-    min-width: 80px;
-}
-
-.success-bar-bg {
-    width: 100%;
-    height: 10px;
-    background: rgba(255,255,255,0.06);
-    border-radius: 5px;
-    overflow: hidden;
-}
-
-.success-bar-fill {
-    height: 100%;
-    border-radius: 5px;
-    transition: width 0.3s ease;
-}
-
-.success-bar-fill.success-high {
-    background: linear-gradient(90deg, #3a6a5a, #82e0aa);
-}
-
-.success-bar-fill.success-mid {
-    background: linear-gradient(90deg, #8a7a20, #d4af37);
-}
-
-.success-bar-fill.success-low {
-    background: linear-gradient(90deg, #6a3030, #ef9a9a);
 }
 
 /* Sim viewer accordion */
@@ -677,6 +568,12 @@
     }
     #annonces-right {
         overflow-y: visible;
+    }
+    #annonces-results-area {
+        flex-direction: column;
+    }
+    #annonces-nn-panel {
+        max-width: none;
     }
 }
 

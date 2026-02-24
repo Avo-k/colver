@@ -462,17 +462,47 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "annonces_sim":
                 hand = data.get("hand", [])
-                num_sims = max(1, min(200, int(data.get("num_sims", 50))))
+                num_sims = max(1, min(1000, int(data.get("num_sims", 200))))
                 if len(hand) != 8:
-                    await ws.send_json({"type": "annonces_sim_result", "error": "8 cartes requises"})
+                    await ws.send_json({"type": "annonces_sim_update", "error": "8 cartes requises"})
                     continue
                 try:
+                    import time as _time
                     loop = asyncio.get_event_loop()
-                    dmc_path = DMC_MODEL_PATH if doudou_available else None
-                    result = await loop.run_in_executor(None, _run_annonces_sim, hand, num_sims, dmc_path)
-                    await ws.send_json(result)
+                    remaining = list(set(range(32)) - set(hand))
+                    THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162]
+                    success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
+                    dd_totals = [[0.0, 0.0] for _ in range(4)]
+                    sampled_deals = []
+                    start = _time.monotonic()
+
+                    for i in range(num_sims):
+                        result = await loop.run_in_executor(
+                            None, _run_single_dd_sim, hand, list(remaining))
+                        for suit_idx, (ns, ew) in enumerate(result["suits"]):
+                            dd_totals[suit_idx][0] += ns
+                            dd_totals[suit_idx][1] += ew
+                            for t_idx, thr in enumerate(THRESHOLDS):
+                                if ns >= thr:
+                                    success_counts[suit_idx][t_idx] += 1
+                        sampled_deals.append(result["hands"])
+                        completed = i + 1
+                        await ws.send_json({
+                            "type": "annonces_sim_update",
+                            "completed": completed, "total": num_sims,
+                            "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
+                            "success_counts": success_counts,
+                        })
+
+                    await ws.send_json({
+                        "type": "annonces_sim_done",
+                        "completed": num_sims, "total": num_sims,
+                        "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
+                        "success_counts": success_counts,
+                        "sampled_deals": sampled_deals,
+                    })
                 except Exception as e:
-                    await ws.send_json({"type": "annonces_sim_result", "error": str(e)})
+                    await ws.send_json({"type": "annonces_sim_update", "error": str(e)})
 
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
@@ -710,81 +740,29 @@ def _run_dd_sim(hand, num_sims):
     }
 
 
-def _run_annonces_sim(hand, num_sims, dmc_model_path=None):
-    """Unified annonces simulation: DD solve + Oracle success + DMC playout."""
+def _run_single_dd_sim(hand, remaining):
+    """Run ONE DD simulation: shuffle remaining cards, solve all 4 suits."""
     import random
-    import time
 
-    start = time.monotonic()
-    remaining = list(set(range(32)) - set(hand))
+    remaining = list(remaining)  # copy to avoid mutating caller's list
+    random.shuffle(remaining)
     seat = 2  # Sud
     others = [s for s in range(4) if s != seat]
+    hands = [None] * 4
+    hands[seat] = sorted(hand)
+    for i, p in enumerate(others):
+        hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
 
-    dd_totals = [[0.0, 0.0] for _ in range(4)]
-    oracle_success = [0 for _ in range(4)]
-    dmc_success = [0 for _ in range(4)]
-    sampled_deals = []
-    has_dmc = dmc_model_path is not None
+    env = _colver_pkg.Env.deal_with_hands(0, hands)
+    dd_result = env.solve_all_suits()
 
-    for _ in range(num_sims):
-        random.shuffle(remaining)
-        hands = [None] * 4
-        hands[seat] = sorted(hand)
-        for i, p in enumerate(others):
-            hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
-
-        # Store sampled opponent hands for the viewer
-        deal_hands = {}
-        for p in others:
-            deal_hands[str(p)] = list(hands[p])
-        sampled_deals.append({"hands": deal_hands})
-
-        # DD solve all 4 suits
-        env = _colver_pkg.Env.deal_with_hands(0, hands)
-        dd_result = env.solve_all_suits()
-        for suit_idx, (ns, ew) in enumerate(dd_result["suits"]):
-            dd_totals[suit_idx][0] += ns
-            dd_totals[suit_idx][1] += ew
-            # Oracle success: DD optimal play achieves >= 80 for NS
-            if ns >= 80:
-                oracle_success[suit_idx] += 1
-
-        # DMC playouts for each suit
-        if has_dmc:
-            for suit_idx in range(4):
-                dmc_env = _colver_pkg.Env.deal_with_hands(0, hands)
-                dmc_env.set_contract(suit_idx, 80, 0, 0)
-                dmc_env.set_phase_playing()
-                dmc_env.load_dmc_model(dmc_model_path)
-                while not dmc_env.is_terminal():
-                    result = dmc_env.action_dmc_with_stats()
-                    dmc_env.step(result["best_action"])
-                ns_pts, _ = dmc_env.get_points()
-                if ns_pts >= 80:
-                    dmc_success[suit_idx] += 1
-
-    elapsed_ms = (time.monotonic() - start) * 1000.0
-
-    dd_suits = []
-    for suit_idx in range(4):
-        dd_suits.append({
-            "suit": suit_idx,
-            "avg_ns": round(dd_totals[suit_idx][0] / num_sims, 1),
-            "avg_ew": round(dd_totals[suit_idx][1] / num_sims, 1),
-        })
-
-    oracle_pcts = [round(oracle_success[i] / num_sims * 100, 1) for i in range(4)]
-    dmc_pcts = [round(dmc_success[i] / num_sims * 100, 1) for i in range(4)] if has_dmc else None
+    deal_hands = {}
+    for p in others:
+        deal_hands[str(p)] = list(hands[p])
 
     return {
-        "type": "annonces_sim_result",
-        "dd_suits": dd_suits,
-        "oracle_success": oracle_pcts,
-        "dmc_success": dmc_pcts,
-        "num_sims": num_sims,
-        "elapsed_ms": round(elapsed_ms, 1),
-        "sampled_deals": sampled_deals,
-        "dmc_available": has_dmc,
+        "suits": dd_result["suits"],
+        "hands": deal_hands,
     }
 
 
