@@ -56,6 +56,17 @@ const TEMPLATE = `
             (combien de passes ont pr\u00e9c\u00e9d\u00e9 votre tour), puis cliquez \u00ab \u00c9valuer \u00bb pour voir ce que
             <em>Le Bide \u00e0 D\u00e9d\u00e9</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
         </p>
+        <p>
+            Le tableau <strong>Oracle</strong> g\u00e9n\u00e8re des mains adverses al\u00e9atoires et r\u00e9sout chaque donne en jeu parfait (double-dummy).
+            Chaque cellule indique le pourcentage de mondes o\u00f9 le contrat est r\u00e9alisable \u2014 un plafond th\u00e9orique.
+        </p>
+        <p>
+            Le tableau <strong>DouDou</strong> joue les m\u00eames distributions en partie compl\u00e8te via le r\u00e9seau de neurones
+            (ench\u00e8res NN + jeu DMC). Pour chaque cellule, la <strong>taille du chiffre</strong> refl\u00e8te le nombre d'observations\u00a0:
+            un taux calcul\u00e9 sur 2 parties appara\u00eet plus petit qu'un taux sur 40. La <strong>couleur</strong> (vert/or/rouge)
+            est d\u00e9termin\u00e9e par la borne inf\u00e9rieure de l'intervalle de confiance de Wilson plut\u00f4t que le taux brut,
+            ce qui \u00e9vite qu'un 100\u00a0% sur 2 observations soit trait\u00e9 comme fiable.
+        </p>
     </div>
 
     <div class="docs-section">

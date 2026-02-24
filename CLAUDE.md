@@ -71,6 +71,8 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 FastAPI + WebSocket + vanilla JS. Three modes: Play, Watch, Analysis. Models auto-downloaded at startup (DMC 10MB, bid NN 421KB, belief net 2MB).
 
+**Annonces page** (`views/annonces.js`): BidNet Q-values + Oracle DD table + DouDou simulation table. Oracle shows raw success % per suit×threshold. DouDou table uses Wilson score lower bound (z=1.645) for color thresholds (green/gold/red) and scales font size by observation count (0.65rem at 1 obs → 0.85rem at 20+) so small-sample cells appear visually less prominent than well-sampled ones.
+
 ## Publishing & Deployment
 
 **PyPI:** push `v*` tag → CI builds manylinux/macOS/Windows wheels via maturin → publishes automatically (trusted publishing).

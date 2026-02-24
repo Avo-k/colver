@@ -120,7 +120,7 @@ const TEMPLATE = `
                         </div>
                         <span id="doudou-stats-text"></span>
                     </div>
-                    <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite.</p>
+                    <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite. La taille du chiffre refl\u00e8te la fiabilit\u00e9\u00a0: plus il y a d\u2019observations, plus le score est lisible. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
                     <div id="annonces-doudou-body"></div>
                 </div>
             </div>
@@ -412,6 +412,25 @@ function renderSimViewer(deals, numSims) {
 
 const DOUDOU_COLS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
+// Wilson score lower bound (z=1.645 for 90% confidence).
+// Returns a value in [0, 1] — usable as a "meaningful winrate" that
+// penalises small sample sizes.
+function wilsonLower(successes, n) {
+    if (n === 0) return 0;
+    const z = 1.645;
+    const p = successes / n;
+    const denom = 1 + z * z / n;
+    const centre = p + z * z / (2 * n);
+    const spread = z * Math.sqrt((p * (1 - p) + z * z / (4 * n)) / n);
+    return Math.max(0, (centre - spread) / denom);
+}
+
+// Font-size scale: ranges from 0.65rem (1 obs) to 0.85rem (≥20 obs).
+function pctFontSize(count) {
+    const t = Math.min(count, 20) / 20;          // 0 → 1
+    return (0.65 + t * 0.20).toFixed(2);          // rem
+}
+
 function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs) {
     const panel = document.getElementById('annonces-doudou-panel');
     if (!doudouCells) {
@@ -447,11 +466,13 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
                 html += '<td class="doudou-empty">\u00b7</td>';
             } else {
                 const pct = Math.round(achieved / count * 100);
+                const wlb = Math.round(wilsonLower(achieved, count) * 100);
                 let cls;
-                if (pct >= 60) cls = 'doudou-high';
-                else if (pct >= 30) cls = 'doudou-mid';
+                if (wlb >= 60) cls = 'doudou-high';
+                else if (wlb >= 30) cls = 'doudou-mid';
                 else cls = 'doudou-low';
-                html += `<td class="${cls}"><span class="doudou-count">${count}</span><span class="doudou-pct">${pct}%</span></td>`;
+                const fs = pctFontSize(count);
+                html += `<td class="${cls}"><span class="doudou-count">${count}</span><span class="doudou-pct" style="font-size:${fs}rem">${pct}</span></td>`;
             }
         }
         html += '</tr>';
