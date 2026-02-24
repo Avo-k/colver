@@ -29,6 +29,10 @@ pub const BELIEF_OBS_DIM: usize = 330;
 /// with compact played-by (32) + hard constraints (96).
 pub const BELIEF_OBS_DIM_V2: usize = 304;
 
+/// V3 observation dimension: V2 (304) + per-card lead suit (32) + per-trick winner (32) + suit failure counts (12) = 380.
+/// Extends V2 with temporal features for richer play-history encoding.
+pub const BELIEF_OBS_DIM_V3: usize = 380;
+
 /// Write the 330-float belief observation into `buf[offset..offset+BELIEF_OBS_DIM]`.
 ///
 /// `observer` is the player whose perspective we encode (may differ from current_player
@@ -311,6 +315,86 @@ pub fn write_belief_observation_v2(
     pos += 96;
 
     debug_assert_eq!(pos, BELIEF_OBS_DIM_V2);
+}
+
+/// Write the 380-float V3 belief observation into `buf[offset..offset+BELIEF_OBS_DIM_V3]`.
+///
+/// V3 layout: V2 (304 floats) + 3 new temporal blocks:
+///   Block 8 [304:336]: Per-card lead suit — `(lead_suit + 1) / 5.0` for each played card, 0 if unplayed.
+///   Block 9 [336:368]: Per-trick winner — 8 × 4 one-hot, relative seat that won each completed trick.
+///   Block 10 [368:380]: Suit failure counts — 3 hidden players × 4 suits, `count / 8.0`.
+///
+/// `trick_leads`: lead suit index (0-3) for each completed trick.
+/// `trick_winners`: absolute seat (0-3) that won each completed trick.
+/// `suit_fail_counts`: `[3][4]` — for each hidden player (left, partner, right), count of times
+///   they played a non-lead suit when that suit was led.
+pub fn write_belief_observation_v3(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    tracking: &EnvTracking,
+    observer: u8,
+    hard_constraints: &[f32; 96],
+    trick_leads: &[u8],
+    trick_winners: &[u8],
+    suit_fail_counts: &[[u8; 4]; 3],
+) {
+    debug_assert!(buf.len() >= offset + BELIEF_OBS_DIM_V3);
+
+    // Write V2 base (first 304 floats)
+    write_belief_observation_v2(buf, offset, state, tracking, observer, hard_constraints);
+
+    let out = &mut buf[offset..offset + BELIEF_OBS_DIM_V3];
+    let mut pos = 304;
+
+    // === Block 8: Per-card lead suit (32) ===
+    // For each played card, encode the lead suit of its trick as (lead_suit + 1) / 5.0.
+    // Uses play_order to map each card to its trick index, then looks up trick_leads.
+    for (i, &card_played) in tracking.play_order.iter().enumerate() {
+        let trick_idx = i / 4;
+        if trick_idx < trick_leads.len() {
+            out[pos + card_played as usize] = (trick_leads[trick_idx] as f32 + 1.0) / 5.0;
+        }
+    }
+    // Current trick cards: use current trick's lead suit
+    if state.trick_count > 0 {
+        let lead_card = state.current_trick[state.trick_lead as usize];
+        if lead_card != card::EMPTY {
+            let lead_suit = card::card_suit(lead_card) as u8;
+            let current_trick_idx = tracking.play_order.len() / 4; // completed tricks count
+            let val = (lead_suit as f32 + 1.0) / 5.0;
+            // Encode all cards currently in the trick
+            for seat in 0..4 {
+                let c = state.current_trick[seat];
+                if c != card::EMPTY {
+                    out[pos + c as usize] = val;
+                }
+            }
+            // Also set lead suit for trick_leads lookup consistency
+            let _ = current_trick_idx; // used indirectly above
+        }
+    }
+    pos += 32;
+
+    // === Block 9: Per-trick winner (32) = 8 tricks × 4 seats (one-hot, relative) ===
+    for (t, &winner_abs) in trick_winners.iter().enumerate() {
+        if t >= 8 { break; }
+        // Convert absolute winner to relative seat
+        let winner_rel = ((winner_abs + 4 - observer) % 4) as usize;
+        out[pos + t * 4 + winner_rel] = 1.0;
+    }
+    pos += 32;
+
+    // === Block 10: Suit failure counts (12) = 3 hidden players × 4 suits ===
+    // suit_fail_counts[i][s] = times hidden player i played non-lead when suit s was led
+    for i in 0..3 {
+        for s in 0..4 {
+            out[pos + i * 4 + s] = suit_fail_counts[i][s] as f32 / 8.0;
+        }
+    }
+    pos += 12;
+
+    debug_assert_eq!(pos, BELIEF_OBS_DIM_V3);
 }
 
 /// Convenience wrapper that allocates and returns a Vec<f32>.

@@ -4,8 +4,11 @@
 /// Usage:
 ///   cargo run --bin agent_tournament --release -- [matches] [time_ms] [--threads N] [--dmc]
 ///   cargo run --bin agent_tournament --release -- 50 20 --threads 8 --dmc
+///   cargo run --bin agent_tournament --release -- 50 20 --dd --belief-model models/belief_v3.bin --bid-nn-model models/bid_nn_final.bin
 
 use colver_core::bid_eval::BidFunction;
+use colver_core::bid_net::BidNet;
+use colver_core::bid_obs::{self, BID_OBS_DIM};
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::{EnvTracking, OBS_DIM};
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
@@ -38,6 +41,7 @@ struct Agent {
     name: String,
     bid_function: BidFunction,
     card_play: CardPlayMethod,
+    use_nn_bid: bool, // use BidNet instead of BidFunction
 }
 
 /// Shared DMC weights (read-only after init, one per model file).
@@ -77,6 +81,41 @@ impl DmcWeights {
     }
 }
 
+/// Shared BidNet weights for thread-local construction.
+struct BidNetWeights {
+    floats: Vec<f32>,
+    hidden: usize,
+    obs_dim: usize,
+    dueling: bool,
+}
+
+impl BidNetWeights {
+    fn load(path: &str) -> std::io::Result<Self> {
+        let net = BidNet::load(path)?;
+        let obs_dim = net.obs_dim();
+        let hidden = net.hidden();
+        let dueling = net.is_dueling();
+        drop(net);
+
+        let data = std::fs::read(path)?;
+        let floats: Vec<f32> = data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+
+        Ok(BidNetWeights {
+            floats,
+            hidden,
+            obs_dim,
+            dueling,
+        })
+    }
+
+    fn make_net(&self) -> BidNet {
+        BidNet::from_floats(&self.floats, self.hidden, self.obs_dim, self.dueling).unwrap()
+    }
+}
+
 // --- Match result ---
 
 struct MatchResult {
@@ -93,6 +132,8 @@ fn play_match(
     time_ms: u32,
     oracle_iters: u32,
     dmc_models: &[DmcWeights],
+    bid_net_weights: Option<&BidNetWeights>,
+    belief_model_path: Option<&str>,
     rng: &mut StdRng,
 ) -> MatchResult {
     let naive_config = NaiveIsMctsConfig {
@@ -126,10 +167,37 @@ fn play_match(
         }
     }
 
+    // Pre-create thread-local BidNet if needed
+    let need_nn_bid = ns_agent.use_nn_bid || ew_agent.use_nn_bid;
+    let mut bid_net = if need_nn_bid {
+        bid_net_weights.map(|w| w.make_net())
+    } else {
+        None
+    };
+    let mut bid_obs_buf = vec![0.0f32; BID_OBS_DIM];
+
     let mut ns_cumulative: i32 = 0;
     let mut ew_cumulative: i32 = 0;
     let mut dealer: u8 = rng.gen_range(0..4);
     let mut obs_buf = vec![0.0f32; OBS_DIM];
+
+    // Pre-create Smart IS-DD searches with belief net (load once, reuse across deals)
+    let ns_is_smart_dd = matches!(ns_agent.card_play, CardPlayMethod::SmartIsDd);
+    let ew_is_smart_dd = matches!(ew_agent.card_play, CardPlayMethod::SmartIsDd);
+    let mut ns_smart_dd = [IsDdSearch::new(), IsDdSearch::new()];
+    let mut ew_smart_dd = [IsDdSearch::new(), IsDdSearch::new()];
+    if ns_is_smart_dd {
+        if let Some(path) = belief_model_path {
+            let _ = ns_smart_dd[0].load_belief_net(path);
+            let _ = ns_smart_dd[1].load_belief_net(path);
+        }
+    }
+    if ew_is_smart_dd {
+        if let Some(path) = belief_model_path {
+            let _ = ew_smart_dd[0].load_belief_net(path);
+            let _ = ew_smart_dd[1].load_belief_net(path);
+        }
+    }
 
     while ns_cumulative < MATCH_TARGET && ew_cumulative < MATCH_TARGET {
         let mut state = GameState::deal_random(dealer, rng);
@@ -141,8 +209,6 @@ fn play_match(
         let mut ew_smart = [SmartIsMctsSearch::new(), SmartIsMctsSearch::new()]; // p1, p3
         let mut ns_dd = IsDdSearch::new();
         let mut ew_dd = IsDdSearch::new();
-        let mut ns_smart_dd = [IsDdSearch::new(), IsDdSearch::new()]; // p0, p2
-        let mut ew_smart_dd = [IsDdSearch::new(), IsDdSearch::new()]; // p1, p3
         let mut oracle = MctsSearch::new();
         let mut tracking = EnvTracking::new();
         tracking.reset(dealer);
@@ -158,9 +224,7 @@ fn play_match(
             ew_smart[0].init_deal(&state, 1, true);
             ew_smart[1].init_deal(&state, 3, true);
         }
-        // Init Smart IS-DD if needed
-        let ns_is_smart_dd = matches!(ns_agent.card_play, CardPlayMethod::SmartIsDd);
-        let ew_is_smart_dd = matches!(ew_agent.card_play, CardPlayMethod::SmartIsDd);
+        // Init Smart IS-DD for this deal (belief net already loaded)
         if ns_is_smart_dd {
             ns_smart_dd[0].init_deal(&state, 0, true);
             ns_smart_dd[1].init_deal(&state, 2, true);
@@ -177,7 +241,22 @@ fn play_match(
             let state_before = state;
 
             let action = if state.phase == Phase::Bidding {
-                agent.bid_function.bid(&state)
+                if agent.use_nn_bid {
+                    if let Some(ref mut bn) = bid_net {
+                        bid_obs::write_bid_observation(
+                            &mut bid_obs_buf,
+                            0,
+                            &state,
+                            &tracking.bid_history,
+                        );
+                        let legal_mask = state.legal_actions();
+                        bn.best_action_fast(&bid_obs_buf, legal_mask)
+                    } else {
+                        agent.bid_function.bid(&state)
+                    }
+                } else {
+                    agent.bid_function.bid(&state)
+                }
             } else {
                 match &agent.card_play {
                     CardPlayMethod::NaiveIsMcts => {
@@ -301,6 +380,8 @@ fn run_matchup(
     time_ms: u32,
     oracle_iters: u32,
     dmc_models: &[DmcWeights],
+    bid_net_weights: Option<&BidNetWeights>,
+    belief_model_path: Option<&str>,
     n_threads: usize,
     base_seed: u64,
     progress: &AtomicU32,
@@ -322,7 +403,8 @@ fn run_matchup(
                 let mut result = MatchupResult::default();
                 for _ in 0..count {
                     let mr = play_match(
-                        ns_agent, ew_agent, time_ms, oracle_iters, dmc_models, &mut rng,
+                        ns_agent, ew_agent, time_ms, oracle_iters, dmc_models,
+                        bid_net_weights, belief_model_path, &mut rng,
                     );
                     result.n_matches += 1;
                     if mr.winner == 0 {
@@ -364,6 +446,9 @@ fn main() {
     let mut use_dmc = false;
     let mut use_dd_only = false;
     let mut oracle_iters: u32 = 2000;
+    let mut belief_model: Option<String> = None;
+    let mut bid_nn_model: Option<String> = None;
+    let mut dmc_model_override: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -382,6 +467,18 @@ fn main() {
                 i += 1;
                 oracle_iters = args[i].parse().unwrap_or(2000);
             }
+            "--belief-model" => {
+                i += 1;
+                belief_model = Some(args[i].clone());
+            }
+            "--bid-nn-model" => {
+                i += 1;
+                bid_nn_model = Some(args[i].clone());
+            }
+            "--dmc-model" => {
+                i += 1;
+                dmc_model_override = Some(args[i].clone());
+            }
             s => {
                 if let Ok(v) = s.parse::<u32>() {
                     if n_matches == 50 && i == 1 {
@@ -397,9 +494,10 @@ fn main() {
 
     // Load DMC models
     let mut dmc_models: Vec<DmcWeights> = Vec::new();
-    let dmc_paths: Vec<(&str, &str)> = if use_dd_only {
-        // For --dd mode, load best available model
-        vec![("models/dmc_35.bin", "DouDou35")]
+    let dmc_paths: Vec<(&str, &str)> = if let Some(ref path) = dmc_model_override {
+        vec![(path.as_str(), "DMC")]
+    } else if use_dd_only {
+        vec![("models/dmc_27.bin", "DouDou27")]
     } else {
         vec![
             ("models/dmc_2000000.bin", "DMC2M"),
@@ -422,87 +520,125 @@ fn main() {
         }
     }
 
+    // Load bid NN model if specified
+    let bid_net_weights: Option<BidNetWeights> = bid_nn_model.as_ref().and_then(|path| {
+        match BidNetWeights::load(path) {
+            Ok(w) => {
+                println!("  Loaded BidNet (obs_dim={}, hidden={}, dueling={})",
+                    w.obs_dim, w.hidden, w.dueling);
+                Some(w)
+            }
+            Err(e) => {
+                eprintln!("  Warning: could not load bid NN {}: {}", path, e);
+                None
+            }
+        }
+    });
+    let belief_path_str = belief_model.as_deref();
+    if let Some(path) = belief_path_str {
+        println!("  Belief model: {}", path);
+    }
+
+    // Determine if NN bidding is available
+    let has_nn_bid = bid_net_weights.is_some();
+
     // Build agent list
     let mut agents: Vec<Agent> = vec![
         Agent {
             name: "Naive+Heur".into(),
             bid_function: BidFunction::Heuristic,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Naive+Impr".into(),
             bid_function: BidFunction::Improved,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Naive+ImV2".into(),
             bid_function: BidFunction::ImprovedV2,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Naive+Roro".into(),
             bid_function: BidFunction::Roro,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Smart+Impr".into(),
             bid_function: BidFunction::Improved,
             card_play: CardPlayMethod::SmartIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Smart+ImV2".into(),
             bid_function: BidFunction::ImprovedV2,
             card_play: CardPlayMethod::SmartIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Smart+Roro".into(),
             bid_function: BidFunction::Roro,
             card_play: CardPlayMethod::SmartIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Naive+PBid".into(),
             bid_function: BidFunction::PetitBide,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Naive+Moel".into(),
             bid_function: BidFunction::Moelleux,
             card_play: CardPlayMethod::NaiveIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Smart+PBid".into(),
             bid_function: BidFunction::PetitBide,
             card_play: CardPlayMethod::SmartIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Smart+Moel".into(),
             bid_function: BidFunction::Moelleux,
             card_play: CardPlayMethod::SmartIsMcts,
+            use_nn_bid: false,
         },
         Agent {
             name: "Orcl+Impr".into(),
             bid_function: BidFunction::Improved,
             card_play: CardPlayMethod::Oracle,
+            use_nn_bid: false,
         },
         Agent {
             name: "Orcl+ImV2".into(),
             bid_function: BidFunction::ImprovedV2,
             card_play: CardPlayMethod::Oracle,
+            use_nn_bid: false,
         },
         Agent {
             name: "Orcl+Roro".into(),
             bid_function: BidFunction::Roro,
             card_play: CardPlayMethod::Oracle,
+            use_nn_bid: false,
         },
         Agent {
             name: "IsDd+ImV2".into(),
             bid_function: BidFunction::ImprovedV2,
             card_play: CardPlayMethod::IsDd,
+            use_nn_bid: false,
         },
         Agent {
             name: "SDD+ImV2".into(),
             bid_function: BidFunction::ImprovedV2,
             card_play: CardPlayMethod::SmartIsDd,
+            use_nn_bid: false,
         },
     ];
 
@@ -517,10 +653,30 @@ fn main() {
     // Add DMC agents if models loaded
     if use_dd_only {
         if !dmc_models.is_empty() {
+            // DMC with ImV2 bidding (baseline)
             agents.push(Agent {
                 name: "DMC+ImV2".into(),
                 bid_function: BidFunction::ImprovedV2,
                 card_play: CardPlayMethod::Dmc(0),
+                use_nn_bid: false,
+            });
+            // DMC with NN bidding if available
+            if has_nn_bid {
+                agents.push(Agent {
+                    name: "DMC+NN".into(),
+                    bid_function: BidFunction::ImprovedV2, // fallback, unused
+                    card_play: CardPlayMethod::Dmc(0),
+                    use_nn_bid: true,
+                });
+            }
+        }
+        // Add NN-bid variants of DD agents if available
+        if has_nn_bid {
+            agents.push(Agent {
+                name: "SDD+NN".into(),
+                bid_function: BidFunction::ImprovedV2,
+                card_play: CardPlayMethod::SmartIsDd,
+                use_nn_bid: true,
             });
         }
     } else {
@@ -529,11 +685,13 @@ fn main() {
                 name: "DMC2M+Impr".into(),
                 bid_function: BidFunction::Improved,
                 card_play: CardPlayMethod::Dmc(0),
+                use_nn_bid: false,
             });
             agents.push(Agent {
                 name: "DMC2M+Roro".into(),
                 bid_function: BidFunction::Roro,
                 card_play: CardPlayMethod::Dmc(0),
+                use_nn_bid: false,
             });
         }
         if dmc_models.len() >= 2 {
@@ -541,11 +699,13 @@ fn main() {
                 name: "DMC6M+Impr".into(),
                 bid_function: BidFunction::Improved,
                 card_play: CardPlayMethod::Dmc(1),
+                use_nn_bid: false,
             });
             agents.push(Agent {
                 name: "DMC6M+Roro".into(),
                 bid_function: BidFunction::Roro,
                 card_play: CardPlayMethod::Dmc(1),
+                use_nn_bid: false,
             });
         }
     }
@@ -572,9 +732,13 @@ fn main() {
             CardPlayMethod::Oracle => format!("Oracle ({}it)", oracle_iters),
             CardPlayMethod::Dmc(idx) => format!("DMC ({})", dmc_paths.get(*idx).map(|p| p.1).unwrap_or("?")),
             CardPlayMethod::IsDd => "IS-DD (naive)".to_string(),
-            CardPlayMethod::SmartIsDd => "Smart IS-DD".to_string(),
+            CardPlayMethod::SmartIsDd => {
+                if belief_path_str.is_some() { "Smart IS-DD (belief NN)".to_string() }
+                else { "Smart IS-DD".to_string() }
+            }
         };
-        println!("  [{:>2}] {:<12}  bid={:<10}  play={}", i, a.name, format!("{:?}", a.bid_function), play_str);
+        let bid_str = if a.use_nn_bid { "NN".to_string() } else { format!("{:?}", a.bid_function) };
+        println!("  [{:>2}] {:<12}  bid={:<10}  play={}", i, a.name, bid_str, play_str);
     }
     println!();
 
@@ -626,6 +790,8 @@ fn main() {
                 time_ms,
                 oracle_iters,
                 &dmc_models,
+                bid_net_weights.as_ref(),
+                belief_path_str,
                 n_threads,
                 seed1,
                 &progress,
@@ -640,6 +806,8 @@ fn main() {
                 time_ms,
                 oracle_iters,
                 &dmc_models,
+                bid_net_weights.as_ref(),
+                belief_path_str,
                 n_threads,
                 seed2,
                 &progress,

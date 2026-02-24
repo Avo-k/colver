@@ -1,0 +1,55 @@
+# Training image: Rust + CUDA for candle-based belief/DMC training
+# Usage:
+#   docker build -f Dockerfile.train -t colver-train .
+#   docker run --gpus all -v $(pwd)/data:/data -v $(pwd)/models:/models colver-train \
+#     --replays /data/games_500k.bin --epochs 50 --batch-size 512 --lr 3e-4 \
+#     --v2 --augment --cosine-lr --warmup-epochs 5 --output /models/my_model.bin
+
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Minimal deps for Rust + CUDA build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    --default-toolchain 1.83.0 --profile minimal
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /app
+
+# Cache dependency build: copy only manifests first
+COPY Cargo.toml Cargo.lock ./
+COPY colver-core/Cargo.toml colver-core/Cargo.toml
+COPY colver-py/Cargo.toml colver-py/Cargo.toml
+
+# Create dummy source files so cargo can resolve deps
+RUN mkdir -p colver-core/src colver-py/src && \
+    echo "fn main() {}" > colver-core/src/lib.rs && \
+    echo "fn main() {}" > colver-py/src/lib.rs && \
+    cargo build -p colver-core --features dmc_train --release 2>/dev/null || true
+
+# Copy real source and build
+COPY colver-core/ colver-core/
+RUN cargo build -p colver-core --bin train_belief_net --features dmc_train --release && \
+    cargo build -p colver-core --bin belief_eval --features dmc_train --release
+
+# Slim runtime: just CUDA runtime + binaries + data
+FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04
+
+COPY --from=builder /app/target/release/train_belief_net /usr/local/bin/
+COPY --from=builder /app/target/release/belief_eval /usr/local/bin/
+
+# Bake replay data into image (~28 MB)
+COPY data/games_500k.bin /data/games_500k.bin
+
+# Output dir for models
+RUN mkdir -p /models
+
+ENTRYPOINT ["train_belief_net"]
+CMD ["--replays", "/data/games_500k.bin", "--epochs", "50", "--batch-size", "512", \
+     "--lr", "3e-4", "--cosine-lr", "--warmup-epochs", "5", "--seed", "42", \
+     "--v2", "--augment", "--output", "/models/result.bin"]

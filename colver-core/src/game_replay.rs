@@ -41,6 +41,10 @@ pub struct BeliefSample {
     pub mask: u32,
     /// V2: hard constraint mask (3 hidden players × 32 cards), 1.0 = impossible.
     pub hard_constraints: Option<[f32; 96]>,
+    /// Number of completed tricks when this sample was taken (0-7).
+    pub trick_idx: u8,
+    /// Position within current trick (0-3).
+    pub pos_in_trick: u8,
 }
 
 impl GameReplay {
@@ -189,11 +193,14 @@ impl GameReplay {
                 let unknown_mask = !observer_hand & !played;
 
                 if unknown_mask != 0 {
+                    let completed_tricks = tracking.play_order.len() / 4;
                     samples.push(BeliefSample {
                         obs: obs_buf.clone(),
                         target,
                         mask: unknown_mask,
                         hard_constraints: None, // embedded in obs already
+                        trick_idx: completed_tricks as u8,
+                        pos_in_trick: state.trick_count,
                     });
                 }
 
@@ -333,11 +340,14 @@ impl GameReplay {
                 let unknown_mask = !observer_hand & !played;
 
                 if unknown_mask != 0 {
+                    let completed_tricks_v3 = tracking.play_order.len() / 4;
                     samples.push(BeliefSample {
                         obs: obs_buf.clone(),
                         target,
                         mask: unknown_mask,
                         hard_constraints: None,
+                        trick_idx: completed_tricks_v3 as u8,
+                        pos_in_trick: state.trick_count,
                     });
                 }
 
@@ -395,11 +405,14 @@ impl GameReplay {
                 let unknown_mask = !observer_hand & !played;
 
                 if unknown_mask != 0 {
+                    let completed_tricks_v1 = tracking.play_order.len() / 4;
                     samples.push(BeliefSample {
                         obs: obs_buf.clone(),
                         target,
                         mask: unknown_mask,
                         hard_constraints: None,
+                        trick_idx: completed_tricks_v1 as u8,
+                        pos_in_trick: state.trick_count,
                     });
                 }
             }

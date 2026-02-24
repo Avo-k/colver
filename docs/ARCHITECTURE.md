@@ -111,7 +111,31 @@ Predicts which player holds each unknown card from observable game state. Replac
 
 **Integration with IS-DD** (`is_dd.rs`): `IsDdConfig::use_nn_beliefs` flag. Hybrid mode: NN predictions filtered by heuristic hard constraints.
 
-**Rust inference:** `BeliefNet::load(path)` auto-detects V1/V2 from file size. `BeliefNet::evaluate(&mut self, obs) -> [f32; 128]`.
+**Rust inference:** `BeliefNet::load(path)` auto-detects V1/V2/V3 and 3-class/4-class from file size. `BeliefNet::evaluate(&mut self, obs) -> [f32; 128]`.
+
+### Per-trick accuracy (100k games, 38.3M card predictions)
+
+Évaluation sur 100k parties rejouées (data/games\_500k.bin). À chaque position de jeu, le modèle prédit pour chaque carte inconnue quel joueur la détient (3 candidats). V2 = 4-class (304-dim), V3 = 3-class + count regularization (304-dim).
+
+| Trick | V2 Acc | V3 Acc | Δ Acc | V2 CE | V3 CE | Δ CE |
+|-------|--------|--------|-------|-------|-------|------|
+| 0 | 47.1% | 47.2% | +0.1 | 0.9848 | 0.9840 | -0.0008 |
+| 1 | 50.0% | 50.2% | +0.2 | 0.9450 | 0.9432 | -0.0018 |
+| 2 | 53.2% | 53.5% | +0.3 | 0.8989 | 0.8959 | -0.0030 |
+| 3 | 56.8% | 57.1% | +0.3 | 0.8447 | 0.8402 | -0.0045 |
+| 4 | 60.7% | 61.2% | +0.5 | 0.7808 | 0.7744 | -0.0064 |
+| 5 | 65.3% | 65.9% | +0.6 | 0.7016 | 0.6925 | -0.0091 |
+| 6 | 71.3% | 72.2% | +0.9 | 0.5873 | 0.5727 | -0.0146 |
+| 7 | 81.1% | 82.2% | +1.1 | 0.3726 | 0.3563 | -0.0163 |
+| **Total** | **54.68%** | **55.00%** | **+0.32** | | | |
+
+V3 est systématiquement meilleur à chaque pli, en accuracy comme en cross-entropy. L'écart se creuse au fil du jeu : +0.1% au pli 0 → +1.1% au pli 7, et -0.0008 CE → -0.016 CE. La régularisation de comptage aide surtout en fin de partie quand le modèle doit respecter les contraintes combinatoires (chaque joueur a exactement N cartes restantes). Baseline random = 33.3%.
+
+```bash
+cargo run -p colver-core --bin belief_eval --release -- \
+  --model models/belief_v3.bin --replays data/games_500k.bin \
+  --mode per_trick --games 100000
+```
 
 ## NN Value Function (feature `nn`) — parked
 

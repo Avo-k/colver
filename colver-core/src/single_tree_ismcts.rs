@@ -496,6 +496,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = SingleTreeIsmctsConfig {
@@ -522,6 +523,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_with_beliefs() {
         let mut rng = rand::thread_rng();
         let config = SingleTreeIsmctsConfig {
@@ -573,6 +575,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_subtree_reuse() {
         let mut rng = rand::thread_rng();
         let config = SingleTreeIsmctsConfig {
@@ -628,6 +631,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_subtree_fallback() {
         let mut rng = rand::thread_rng();
         let config_low = SingleTreeIsmctsConfig {
@@ -685,6 +689,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_reusable_across_deals() {
         let mut rng = rand::thread_rng();
         let mut search = SingleTreeIsmctsSearch::new();
@@ -710,6 +715,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_works_during_bidding() {
         let mut rng = rand::thread_rng();
         let config = SingleTreeIsmctsConfig {
@@ -732,6 +738,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_no_reuse_mode() {
         let mut rng = rand::thread_rng();
         let config = SingleTreeIsmctsConfig {

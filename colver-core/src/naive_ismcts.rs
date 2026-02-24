@@ -175,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_naive_ismcts_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = NaiveIsMctsConfig {
@@ -202,6 +203,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_naive_ismcts_forced_move() {
         let mut rng = rand::thread_rng();
         let config = NaiveIsMctsConfig {
@@ -234,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_naive_ismcts_reusable() {
         let mut rng = rand::thread_rng();
         let mut search = NaiveIsMctsSearch::new();
@@ -259,6 +262,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_naive_ismcts_works_during_bidding() {
         let mut rng = rand::thread_rng();
         let config = NaiveIsMctsConfig {

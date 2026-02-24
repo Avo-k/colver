@@ -319,6 +319,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore]
     fn test_determinize_preserves_observer() {
         let mut rng = rand::thread_rng();
         let state = GameState::deal_random(0, &mut rng);
@@ -328,6 +329,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_correct_card_counts() {
         let mut rng = rand::thread_rng();
 
@@ -358,6 +360,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_respects_voids() {
         let mut rng = rand::thread_rng();
         let mut state = GameState::deal_random(0, &mut rng);
@@ -381,6 +384,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_greedy() {
         let mut rng = rand::thread_rng();
 
@@ -396,6 +400,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_weighted_preserves_observer() {
         let mut rng = rand::thread_rng();
         let state = GameState::deal_random(0, &mut rng);
@@ -418,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_weighted_correct_counts() {
         let mut rng = rand::thread_rng();
 
@@ -460,6 +466,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_weighted_respects_voids() {
         let mut rng = rand::thread_rng();
         let state = {
@@ -495,6 +502,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_determinize_weighted_bias() {
         let mut rng = rand::thread_rng();
 

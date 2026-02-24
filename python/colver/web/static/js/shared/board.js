@@ -173,7 +173,7 @@ export class BoardRenderer {
             _prevTrick[this.trickPrefix] = [];
             if (this.initialState) {
                 this.renderState(this.initialState);
-                this.renderBidHistory([]);
+                this.renderBidHistory([], this.initialState.phase);
                 this.renderTricksHistory([]);
                 this._renderInitialStats();
                 this.renderCardAnnotations(null, this.initialState);
@@ -206,7 +206,7 @@ export class BoardRenderer {
                 this._clearStats();
             }
 
-            this.renderBidHistory(data.bid_history);
+            this.renderBidHistory(data.bid_history, data.state.phase);
             this.renderTricksHistory(data.completed_tricks);
             this.renderCardAnnotations(data, data.state);
         }
@@ -259,11 +259,14 @@ export class BoardRenderer {
         }
     }
 
-    renderBidHistory(bidHistory) {
+    renderBidHistory(bidHistory, phase) {
         const container = this.el('bid-entries');
         if (!container) return;
         container.innerHTML = '';
-        if (!bidHistory || bidHistory.length === 0) return;
+        if (!bidHistory || bidHistory.length === 0) {
+            this._updateBidOverlay([], phase);
+            return;
+        }
 
         for (const bid of bidHistory) {
             const el = document.createElement('span');
@@ -273,6 +276,34 @@ export class BoardRenderer {
             const name = actionName(bid.action, 0);
             el.textContent = `${seatLetter}:${name}`;
             container.appendChild(el);
+        }
+
+        this._updateBidOverlay(bidHistory, phase);
+    }
+
+    _updateBidOverlay(bidHistory, phase) {
+        const overlay = document.getElementById(`${this.prefix}-bid-overlay`);
+        if (!overlay) return;
+        const entries = document.getElementById(`${this.prefix}-bid-overlay-entries`);
+        if (!entries) return;
+
+        if (phase !== 0 || !bidHistory || bidHistory.length === 0) {
+            overlay.classList.add('hidden');
+            entries.innerHTML = '';
+            return;
+        }
+
+        overlay.classList.remove('hidden');
+        entries.innerHTML = '';
+
+        for (const bid of bidHistory) {
+            const el = document.createElement('span');
+            const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
+            el.className = `watch-bid-entry ${team}`;
+            const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
+            const name = actionName(bid.action, 0);
+            el.textContent = `${seatLetter}:${name}`;
+            entries.appendChild(el);
         }
     }
 

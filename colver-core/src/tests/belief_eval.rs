@@ -26,7 +26,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use colver_core::belief_net::BeliefNet;
-use colver_core::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2};
+use colver_core::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3};
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs;
@@ -1086,6 +1086,8 @@ fn scenario_bidding_signal(net: &mut BeliefNet) {
 /// Per-trick accuracy evaluation: replay many games, evaluate at every play step,
 /// report accuracy grouped by trick number. Answers: "does the model get better as
 /// it sees more tricks?"
+///
+/// Supports V1 (330-dim), V2 (304-dim), and V3 (380-dim) models automatically.
 fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
     if replays_path.is_empty() {
         eprintln!("--replays is required for per_trick mode");
@@ -1101,7 +1103,14 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
         eprintln!("Failed to load model: {}", e);
         std::process::exit(1);
     });
-    println!("Model loaded (obs_dim={}, hidden={})\n", net.obs_dim(), net.hidden());
+    let obs_dim = net.obs_dim();
+    let version_str = match obs_dim {
+        BELIEF_OBS_DIM => "V1 (330)",
+        BELIEF_OBS_DIM_V2 => "V2 (304)",
+        BELIEF_OBS_DIM_V3 => "V3 (380)",
+        d => { eprintln!("Unknown obs_dim={}", d); std::process::exit(1); }
+    };
+    println!("Model loaded ({}, hidden={}, {}-class)\n", version_str, net.hidden(), net.num_classes());
 
     let replays = GameReplay::load_all(replays_path).unwrap_or_else(|e| {
         eprintln!("Failed to load replays: {}", e);
@@ -1109,116 +1118,90 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
     });
     println!("Loaded {} replays", replays.len());
 
-    let start = Instant::now();
+    // Select subset of replays
+    let step = replays.len().max(1) / num_games.max(1);
+    let subset: Vec<GameReplay> = (0..num_games)
+        .map(|i| {
+            let r = &replays[(i * step) % replays.len()];
+            GameReplay { dealer: r.dealer, hands: r.hands, actions: r.actions.clone() }
+        })
+        .collect();
 
-    // Per-trick stats: [trick 0..7][position_in_trick 0..3]
+    // Extract samples using the correct version's extraction function
+    println!("Extracting samples ({})...", version_str);
+    let extract_start = Instant::now();
+    let samples = match obs_dim {
+        BELIEF_OBS_DIM_V3 => colver_core::game_replay::extract_belief_samples_v3(&subset),
+        BELIEF_OBS_DIM_V2 => colver_core::game_replay::extract_belief_samples_v2(&subset),
+        _ => colver_core::game_replay::extract_belief_samples(&subset),
+    };
+    println!("Extracted {} samples in {:.1}s\n", samples.len(), extract_start.elapsed().as_secs_f64());
+
+    let start = Instant::now();
+    let nc = net.num_classes();
+
+    // Per-trick stats
     let mut correct_by_trick = [0u64; 8];
     let mut total_by_trick = [0u64; 8];
     let mut ce_by_trick = [0.0f64; 8];
 
-    // Also track by cards_in_trick (position in trick) for finer granularity
-    let mut correct_by_step = [0u64; 32]; // trick*4 + pos_in_trick
+    // Fine-grained: trick*4 + pos_in_trick
+    let mut correct_by_step = [0u64; 32];
     let mut total_by_step = [0u64; 32];
 
-    let step = replays.len().max(1) / num_games.max(1);
-    let mut games_evaluated = 0u64;
-    let mut total_positions = 0u64;
+    for (si, sample) in samples.iter().enumerate() {
+        let logits = net.evaluate(&sample.obs);
+        let trick_idx = (sample.trick_idx as usize).min(7);
+        let step_idx = (trick_idx * 4 + sample.pos_in_trick as usize).min(31);
 
-    for game_idx in 0..num_games {
-        let replay_idx = (game_idx * step) % replays.len();
-        let replay = &replays[replay_idx];
+        for c in 0..32u32 {
+            if sample.mask & (1 << c) == 0 { continue; }
 
-        let true_hands = replay.hands;
-        let mut state = GameState::new(replay.dealer, replay.hands);
-        let mut tracking = EnvTracking::new();
-        tracking.dealer = replay.dealer;
+            // Extraction always produces 3-class targets: 0=left, 1=partner, 2=right.
+            // For 4-class models (0=me, 1=left, 2=partner, 3=right), shift target +1
+            // and skip observer slot in argmax.
+            let true_rel = if nc == 4 {
+                sample.target[c as usize] as usize + 1
+            } else {
+                sample.target[c as usize] as usize
+            };
+            let base = c as usize * nc;
+            let start_slot = if nc == 4 { 1 } else { 0 }; // skip observer for 4-class
 
-        // Play through bidding
-        let mut action_idx = 0;
-        while action_idx < replay.actions.len() && state.phase == Phase::Bidding {
-            let action = replay.actions[action_idx];
-            tracking.track_action(&state, action);
-            state.step(action);
-            action_idx += 1;
-        }
-
-        if state.is_terminal() || state.phase != Phase::Playing {
-            continue; // void deal
-        }
-
-        games_evaluated += 1;
-
-        // Play through tricks, evaluating at every play step
-        while action_idx < replay.actions.len() && !state.is_terminal() {
-            let action = replay.actions[action_idx];
-            let observer = state.current_player();
-            let completed_tricks = tracking.play_order.len() / 4;
-            let pos_in_trick = state.trick_count as usize;
-            let trick_idx = completed_tricks.min(7);
-            let step_idx = (trick_idx * 4 + pos_in_trick).min(31);
-
-            // Build obs and run inference
-            let logits = eval_belief(&mut net, &state, &tracking, observer);
-
-            // Evaluate each unknown card
-            let observer_hand = state.hands[observer as usize];
-            let mut played = state.played_cards;
-            for j in 0..4 {
-                let c = state.current_trick[j];
-                if c != card::EMPTY {
-                    played |= 1u32 << c;
-                }
+            // Softmax
+            let mut max_l = f32::NEG_INFINITY;
+            for p in start_slot..nc { if logits[base + p] > max_l { max_l = logits[base + p]; } }
+            let mut exp_sum = 0.0f32;
+            let mut exps = [0.0f32; 4];
+            for p in start_slot..nc {
+                exps[p] = (logits[base + p] - max_l).exp();
+                exp_sum += exps[p];
             }
 
-            for c in 0..32u32 {
-                if observer_hand & (1 << c) != 0 { continue; } // my card
-                if played & (1 << c) != 0 { continue; } // played
-
-                // True holder (relative)
-                let mut true_abs = 0u8;
-                for p in 0..4u8 {
-                    if true_hands[p as usize] & (1u32 << c) != 0 {
-                        true_abs = p;
-                        break;
-                    }
-                }
-                let true_rel = ((true_abs + 4 - observer) % 4) as usize;
-
-                // Softmax + remap to 4-slot layout (slot 0 = observer = 0.0)
-                let nc = net.num_classes();
-                let probs = card_probs(&logits, c as usize, nc);
-
-                // Argmax over slots 1-3 (non-observer)
-                let mut pred = 1usize;
-                for p in 2..4 {
-                    if probs[p] > probs[pred] { pred = p; }
-                }
-
-                if pred == true_rel {
-                    correct_by_trick[trick_idx] += 1;
-                    correct_by_step[step_idx] += 1;
-                }
-                total_by_trick[trick_idx] += 1;
-                total_by_step[step_idx] += 1;
-
-                // Cross-entropy
-                let true_prob = probs[true_rel].max(1e-10);
-                ce_by_trick[trick_idx] += -(true_prob as f64).ln();
+            // Argmax over non-observer slots
+            let mut pred = start_slot;
+            for p in (start_slot + 1)..nc {
+                if exps[p] > exps[pred] { pred = p; }
             }
 
-            total_positions += 1;
+            if pred == true_rel {
+                correct_by_trick[trick_idx] += 1;
+                correct_by_step[step_idx] += 1;
+            }
+            total_by_trick[trick_idx] += 1;
+            total_by_step[step_idx] += 1;
 
-            tracking.track_action(&state, action);
-            state.step(action);
-            action_idx += 1;
+            // Cross-entropy
+            let true_prob = (exps[true_rel] / exp_sum).max(1e-10);
+            ce_by_trick[trick_idx] += -(true_prob as f64).ln();
         }
 
-        if (game_idx + 1) % 1000 == 0 {
+        if (si + 1) % 100_000 == 0 {
             let elapsed = start.elapsed().as_secs_f64();
             let total_correct: u64 = correct_by_trick.iter().sum();
             let total_cards: u64 = total_by_trick.iter().sum();
             let acc = if total_cards > 0 { total_correct as f64 / total_cards as f64 * 100.0 } else { 0.0 };
-            println!("  [{}/{}] acc={:.1}% positions={} ({:.1}s)", game_idx + 1, num_games, acc, total_positions, elapsed);
+            println!("  [{}/{}] acc={:.1}% ({:.1}s)", si + 1, samples.len(), acc, elapsed);
         }
     }
 
@@ -1228,12 +1211,12 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
     let overall_acc = total_correct as f64 / total_cards.max(1) as f64 * 100.0;
 
     println!("\n=== Results ===");
-    println!("Games evaluated: {}", games_evaluated);
-    println!("Play positions:  {}", total_positions);
+    println!("Games:            {}", num_games);
+    println!("Samples:          {}", samples.len());
     println!("Cards predicted:  {}", total_cards);
     println!("Overall accuracy: {:.2}% ({}/{})", overall_acc, total_correct, total_cards);
     println!("Random baseline:  33.33%");
-    println!("Elapsed:          {:.1}s", elapsed);
+    println!("Eval time:        {:.1}s", elapsed);
 
     println!("\n--- Accuracy by completed trick ---");
     println!("  {:>7}  {:>8}  {:>10}  {:>10}  {:>7}", "Trick", "Acc%", "Correct", "Total", "CE");

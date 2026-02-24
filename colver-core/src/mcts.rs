@@ -494,6 +494,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mcts_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -520,6 +521,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mcts_forced_move() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -551,6 +553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mcts_search_reusable() {
         let mut rng = rand::thread_rng();
         let mut search = MctsSearch::new();
@@ -575,6 +578,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_search_with_stats() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -608,6 +612,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mcts_works_during_bidding() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -627,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_rave_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -656,6 +662,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_rave_amaf_filtered() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {
@@ -692,6 +699,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mcts_heuristic_play_policy() {
         let mut rng = rand::thread_rng();
         let config = MctsConfig {

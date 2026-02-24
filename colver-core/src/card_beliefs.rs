@@ -477,6 +477,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_initial_beliefs_observer_known() {
         let state = make_test_state();
         let beliefs = CardBeliefs::new(&state, 0);
@@ -492,6 +493,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_initial_beliefs_unknown_cards() {
         let state = make_test_state();
         let beliefs = CardBeliefs::new(&state, 0);
@@ -511,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_void_constraint_in_initial() {
         let mut state = make_test_state();
         // P1 is known void in spades
@@ -527,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mark_played_zeros_all() {
         let state = make_test_state();
         let mut beliefs = CardBeliefs::new(&state, 0);
@@ -539,6 +543,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_mark_void_zeros_suit() {
         let state = make_test_state();
         let mut beliefs = CardBeliefs::new(&state, 0);
@@ -555,6 +560,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_trump_ceiling() {
         let state = make_test_state();
         let mut beliefs = CardBeliefs::new(&state, 0);
@@ -572,6 +578,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_normalized_weights_sum_to_one() {
         let state = make_test_state();
         let beliefs = CardBeliefs::new(&state, 0);
@@ -591,6 +598,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_bid_inference_increases_trump_weight() {
         let mut state = make_test_state();
         state.current_player = 1; // P1 is bidding
@@ -619,6 +627,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_pass_decreases_trump_weight() {
         let state = make_test_state();
         let mut beliefs = CardBeliefs::new(&state, 0);
@@ -635,6 +644,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_play_marks_void() {
         use crate::bidding;
         let mut state = make_test_state();

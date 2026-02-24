@@ -101,40 +101,74 @@ pub fn permute_belief_obs_v1(obs: &mut [f32], perm: &[u8; 4]) {
     // Block 11 [328:330]: trick progress -- no permutation
 }
 
-/// Permute a 414-float V2 belief observation in-place.
+/// Permute a 304-float V2 belief observation in-place.
+///
+/// V2 layout:
+///   Block 1 [0:32]:    own hand — card block
+///   Block 2 [32:64]:   card played-by — card block
+///   Block 3 [64:96]:   card trick index — card block
+///   Block 4 [96:128]:  card position-in-trick — card block
+///   Block 5 [128:200]: bid history — 12 slots × 6, suit one-hot at +2..+6
+///   Block 6 [200:208]: contract — trump one-hot at [200:204]
+///   Block 7 [208:304]: hard constraints — 3 × card block (32 each)
 pub fn permute_belief_obs_v2(obs: &mut [f32], perm: &[u8; 4]) {
-    debug_assert!(obs.len() >= 414);
+    debug_assert!(obs.len() >= 304);
 
-    // Blocks 1-6 same as V1 [0:304]
+    // Blocks 1-4 [0:128]: 4 card-indexed blocks
     permute_card_block(&mut obs[0..32], perm);
+    permute_card_block(&mut obs[32..64], perm);
+    permute_card_block(&mut obs[64..96], perm);
+    permute_card_block(&mut obs[96..128], perm);
 
-    for i in 0..4 {
-        let start = 32 + i * 32;
-        permute_card_block(&mut obs[start..start + 32], perm);
-    }
-
-    permute_card_block(&mut obs[160..192], perm);
-    permute_card_block(&mut obs[192..224], perm);
-
+    // Block 5 [128:200]: bid history, suit one-hot at +2..+6 per slot
     for slot in 0..12 {
-        let base = 224 + slot * 6;
+        let base = 128 + slot * 6;
         permute_suit_onehot(&mut obs[base + 2..base + 6], perm);
     }
 
-    permute_suit_onehot(&mut obs[296..300], perm);
+    // Block 6 [200:204]: trump suit one-hot
+    permute_suit_onehot(&mut obs[200..204], perm);
 
-    // Block 7 [304:400]: hard constraints, 3x card block (32 each)
+    // Block 7 [208:304]: hard constraints, 3 × card block (32 each)
+    permute_card_block(&mut obs[208..240], perm);
+    permute_card_block(&mut obs[240..272], perm);
+    permute_card_block(&mut obs[272..304], perm);
+}
+
+/// Permute a 380-float V3 belief observation in-place.
+///
+/// V3 layout: V2 (304) + 3 new blocks:
+///   Block 8 [304:336]: per-card lead suit — card block with encoded suit values
+///   Block 9 [336:368]: per-trick winner — 8 × 4, player-relative (no suit permutation needed)
+///   Block 10 [368:380]: suit failure counts — 3 × 4 suit-indexed values
+pub fn permute_belief_obs_v3(obs: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(obs.len() >= 380);
+
+    // First 304: V2 permutation
+    permute_belief_obs_v2(obs, perm);
+
+    // Block 8 [304:336]: per-card lead suit values
+    // First permute card positions (which card slots to swap)
     permute_card_block(&mut obs[304..336], perm);
-    permute_card_block(&mut obs[336..368], perm);
-    permute_card_block(&mut obs[368..400], perm);
+    // Then remap the lead suit encoding: val = (old_suit + 1) / 5.0
+    // → old_suit = round(val * 5) - 1 → new_suit = perm[old_suit] → new_val = (new_suit + 1) / 5.0
+    for i in 304..336 {
+        let val = obs[i];
+        if val > 0.0 {
+            let old_suit = (val * 5.0).round() as usize - 1;
+            if old_suit < 4 {
+                let new_suit = perm[old_suit] as usize;
+                obs[i] = (new_suit as f32 + 1.0) / 5.0;
+            }
+        }
+    }
 
-    // Block 8 [400:404]: scoring context -- no permutation
-    // Block 9 [404:408]: dealer-relative position -- no permutation
+    // Block 9 [336:368]: per-trick winner one-hot — player-relative, no suit permutation needed
 
-    // Block 10 [408:412]: current trick lead suit one-hot
-    permute_suit_onehot(&mut obs[408..412], perm);
-
-    // Block 11 [412:414]: trick progress -- no permutation
+    // Block 10 [368:380]: suit failure counts — 3 groups of 4 suit-indexed values
+    permute_suit_onehot(&mut obs[368..372], perm);
+    permute_suit_onehot(&mut obs[372..376], perm);
+    permute_suit_onehot(&mut obs[376..380], perm);
 }
 
 /// Permute a 32-element target array (card -> player mapping) by swapping suit lanes.
@@ -225,7 +259,7 @@ mod tests {
     #[test]
     fn test_identity_v2_no_change() {
         let perm = [0, 1, 2, 3];
-        let mut obs = vec![0.5f32; 414];
+        let mut obs = vec![0.5f32; 304];
         let original = obs.clone();
         permute_belief_obs_v2(&mut obs, &perm);
         assert_eq!(obs, original);
@@ -306,29 +340,19 @@ mod tests {
     #[test]
     fn test_v2_perm_preserves_non_suit_blocks() {
         let perm = [3, 2, 1, 0];
-        let mut obs = vec![0.0f32; 414];
+        let mut obs = vec![0.0f32; 304];
 
-        // Scoring context (block 8, [400:404])
-        obs[400] = 0.1;
-        obs[401] = 0.2;
-        obs[402] = 0.3;
-        obs[403] = 0.4;
-
-        // Dealer pos (block 9, [404:408])
-        obs[406] = 1.0;
-
-        // Trick progress (block 11, [412:414])
-        obs[412] = 0.5;
-        obs[413] = 0.75;
+        // Contract non-trump fields [204:208]: bid_value, taker, coinche
+        obs[204] = 0.32; // bid_value / 250
+        obs[205] = 1.0;  // taker team
+        obs[206] = 0.0;
+        obs[207] = 0.5;  // coinche
 
         permute_belief_obs_v2(&mut obs, &perm);
 
-        assert_eq!(obs[400], 0.1);
-        assert_eq!(obs[401], 0.2);
-        assert_eq!(obs[402], 0.3);
-        assert_eq!(obs[403], 0.4);
-        assert_eq!(obs[406], 1.0);
-        assert_eq!(obs[412], 0.5);
-        assert_eq!(obs[413], 0.75);
+        assert_eq!(obs[204], 0.32);
+        assert_eq!(obs[205], 1.0);
+        assert_eq!(obs[206], 0.0);
+        assert_eq!(obs[207], 0.5);
     }
 }

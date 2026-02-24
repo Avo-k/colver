@@ -375,6 +375,40 @@
     font-weight: 700;
 }
 
+/* ===== BID OVERLAY (centered during bidding) ===== */
+#watch-bid-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 35;
+    background: rgba(10, 10, 10, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 16px 20px;
+    min-width: 220px;
+}
+
+.bid-overlay-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #999;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+#watch-bid-overlay-entries {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    min-height: 24px;
+    font-size: clamp(0.75rem, 0.85vw, 0.95rem);
+}
+
 /* ===== BID & TRICKS HISTORY ===== */
 #watch-bid-history, #watch-tricks-history,
 #replay-bid-history, #replay-tricks-history {

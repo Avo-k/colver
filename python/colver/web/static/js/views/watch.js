@@ -143,6 +143,10 @@ function template() {
                 <div class="trick-card" id="watch-trick-e"></div>
                 <div class="trick-card" id="watch-trick-s"></div>
             </div>
+            <div id="watch-bid-overlay" class="hidden">
+                <div class="bid-overlay-title">Ench\u00e8res</div>
+                <div id="watch-bid-overlay-entries"></div>
+            </div>
             <div class="seat east">
                 <div class="seat-label" id="watch-label-e">Est</div>
                 <div class="hand" id="watch-hand-east"></div>
