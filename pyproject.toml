@@ -1,6 +1,6 @@
 [project]
 name = "colver"
-version = "0.3.2"
+version = "0.3.3"
 description = "Fast Belote Contree game engine with AI agents"
 readme = "README.md"
 license = { text = "WTFPL" }
@@ -16,6 +16,7 @@ classifiers = [
 dependencies = [
     "numpy",
     "matplotlib>=3.5",
+    "runpod>=1.8.1",
 ]
 
 [project.optional-dependencies]

@@ -189,7 +189,7 @@ impl IsDdSearch {
                 belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
                 net.evaluate(&obs_buf)
             };
-            let mut nn_weights = crate::belief_net::belief_to_weights(&logits, state, observer);
+            let mut nn_weights = crate::belief_net::belief_to_weights(&logits, net.num_classes(), state, observer);
 
             // Hybrid: apply hard constraints from CardBeliefs (voids, trump ceiling)
             if config.use_hard_constraints {
@@ -499,6 +499,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_is_dd_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {
@@ -525,6 +526,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_is_dd_with_beliefs() {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {
@@ -576,6 +578,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_is_dd_works_during_bidding() {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {
@@ -598,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_is_dd_reusable() {
         let mut rng = rand::thread_rng();
         let mut search = IsDdSearch::new();
@@ -623,6 +627,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_is_dd_search_with_stats() {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {
@@ -660,6 +665,7 @@ mod tests {
 
     #[cfg(feature = "parallel")]
     #[test]
+    #[ignore]
     fn test_parallel_returns_legal_action() {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {

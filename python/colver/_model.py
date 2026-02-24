@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
-_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.1/dmc_27.bin"
-_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.1/bid_nn_final.bin"
-_DEFAULT_BELIEF_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.1/belief_net.bin"
+_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/dmc_27.bin"
+_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/bid_nn_final.bin"
+_DEFAULT_BELIEF_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/belief_v3.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
@@ -125,7 +125,7 @@ def download_bid_model(
     return dest
 
 
-def belief_model_path(name: str = "belief_net.bin") -> Path | None:
+def belief_model_path(name: str = "belief_v3.bin") -> Path | None:
     """Find a belief net model weights file.
 
     Checks ``COLVER_BELIEF_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``,
@@ -148,7 +148,7 @@ def belief_model_path(name: str = "belief_net.bin") -> Path | None:
 
 def download_belief_model(
     url: str | None = None,
-    name: str = "belief_net.bin",
+    name: str = "belief_v3.bin",
     force: bool = False,
 ) -> Path:
     """Download belief net model weights to ``~/.cache/colver/models/``.

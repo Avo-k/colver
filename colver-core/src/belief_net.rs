@@ -1,20 +1,22 @@
 /// BeliefNet: pure Rust inference for the NN belief network (card location prediction).
 ///
-/// Architecture (standard): 330 → 512 (LN+ReLU) → 512 (LN+ReLU) → 128
+/// Architecture (standard): 330 → 512 (LN+ReLU) → 512 (LN+ReLU) → output
 ///
-/// Output: 128 raw logits = 32 cards × 4 player slots.
-/// Caller applies per-card softmax + hard constraint masking via `belief_to_weights()`.
+/// V3 (3-class): 96 logits = 32 cards × 3 player slots (left/partner/right).
+/// Legacy (4-class): 128 logits = 32 cards × 4 player slots.
+/// Auto-detected from weight file size.
+///
+/// Caller applies per-card softmax via `belief_to_weights()`.
 ///
 /// Weight file layout (contiguous little-endian f32):
 ///   For each of 2 hidden layers:
 ///     W: in_dim × H (row-major), b: H, gamma: H, beta: H
 ///   Output layer:
-///     W: H × 128 (row-major), b: 128
+///     W: H × num_outputs (row-major), b: num_outputs
 
 use crate::card;
 use crate::state::GameState;
 
-const NUM_OUTPUTS: usize = 128; // 32 cards × 4 players
 const NUM_LAYERS: usize = 2;
 const LN_EPS: f32 = 1e-5;
 const DEFAULT_HIDDEN: usize = 512;
@@ -28,6 +30,8 @@ pub struct BeliefNet {
     b_out: Vec<f32>,
     obs_dim: usize,
     hidden: usize,
+    num_classes: usize, // 3 (V3: left/partner/right) or 4 (legacy: me/left/partner/right)
+    num_outputs: usize, // 32 * num_classes
     in_dims: [usize; NUM_LAYERS],
     scratch_a: Vec<f32>,
     scratch_b: Vec<f32>,
@@ -40,6 +44,7 @@ impl BeliefNet {
     }
 
     /// Load weights with custom hidden size.
+    /// Auto-detects num_classes (3 or 4) from weight file size.
     pub fn load_with_hidden(path: &str, hidden: usize) -> std::io::Result<Self> {
         let data = std::fs::read(path)?;
         if data.len() % 4 != 0 {
@@ -57,14 +62,32 @@ impl BeliefNet {
         let h = hidden;
         let total = floats.len();
 
-        // Fixed part: layer1 (H*H + 3*H) + layer0 b/gamma/beta (3*H) + output (H*128 + 128)
+        // Trunk fixed part: layer1 (H*H + 3*H) + layer0 b/gamma/beta (3*H)
         let trunk_fixed = h * h + 3 * h + 3 * h;
-        let output_tail = h * NUM_OUTPUTS + NUM_OUTPUTS;
-        let fixed = trunk_fixed + output_tail;
 
-        if total > fixed && (total - fixed) % h == 0 {
-            let obs_dim = (total - fixed) / h;
-            return Self::from_floats(&floats, hidden, obs_dim);
+        // Try both 3-class (V3) and 4-class (legacy), prefer the one matching a known obs_dim
+        use crate::belief_obs::{BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3};
+        let known_dims = [BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3];
+
+        let mut candidates: Vec<(usize, usize)> = Vec::new(); // (nc, obs_dim)
+        for &nc in &[3usize, 4usize] {
+            let num_out = 32 * nc;
+            let output_tail = h * num_out + num_out;
+            let fixed = trunk_fixed + output_tail;
+
+            if total > fixed && (total - fixed) % h == 0 {
+                let obs_dim = (total - fixed) / h;
+                candidates.push((nc, obs_dim));
+            }
+        }
+
+        // Prefer candidate matching a known obs_dim; among ties prefer 3-class (new format)
+        if let Some(&(nc, obs_dim)) = candidates
+            .iter()
+            .find(|(_, od)| known_dims.contains(od))
+            .or(candidates.first())
+        {
+            return Self::from_floats_with_classes(&floats, hidden, obs_dim, nc);
         }
 
         Err(std::io::Error::new(
@@ -76,22 +99,33 @@ impl BeliefNet {
         ))
     }
 
-    /// Construct from a flat array of f32 weights.
+    /// Construct from a flat array of f32 weights (legacy 4-class).
     pub fn from_floats(floats: &[f32], hidden: usize, obs_dim: usize) -> std::io::Result<Self> {
+        Self::from_floats_with_classes(floats, hidden, obs_dim, 4)
+    }
+
+    /// Construct from a flat array of f32 weights with explicit num_classes.
+    pub fn from_floats_with_classes(
+        floats: &[f32],
+        hidden: usize,
+        obs_dim: usize,
+        num_classes: usize,
+    ) -> std::io::Result<Self> {
+        let num_outputs = 32 * num_classes;
         let in_dims = [obs_dim, hidden];
 
         let mut expected = 0;
         for &in_dim in &in_dims {
             expected += in_dim * hidden + hidden + hidden + hidden; // W + b + gamma + beta
         }
-        expected += hidden * NUM_OUTPUTS + NUM_OUTPUTS; // output W + b
+        expected += hidden * num_outputs + num_outputs; // output W + b
 
         if floats.len() != expected {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "weight file has {} floats, expected {} for obs_dim={}, hidden={}",
-                    floats.len(), expected, obs_dim, hidden,
+                    "weight file has {} floats, expected {} for obs_dim={}, hidden={}, num_classes={}",
+                    floats.len(), expected, obs_dim, hidden, num_classes,
                 ),
             ));
         }
@@ -115,10 +149,10 @@ impl BeliefNet {
             offset += hidden;
         }
 
-        let w_out = floats[offset..offset + hidden * NUM_OUTPUTS].to_vec();
-        offset += hidden * NUM_OUTPUTS;
-        let b_out = floats[offset..offset + NUM_OUTPUTS].to_vec();
-        debug_assert_eq!(offset + NUM_OUTPUTS, floats.len());
+        let w_out = floats[offset..offset + hidden * num_outputs].to_vec();
+        offset += hidden * num_outputs;
+        let b_out = floats[offset..offset + num_outputs].to_vec();
+        debug_assert_eq!(offset + num_outputs, floats.len());
 
         Ok(BeliefNet {
             w, b, gamma, beta,
@@ -126,15 +160,21 @@ impl BeliefNet {
             b_out,
             obs_dim,
             hidden,
+            num_classes,
+            num_outputs,
             in_dims,
             scratch_a: vec![0.0; hidden],
             scratch_b: vec![0.0; hidden],
         })
     }
 
-    /// Forward pass: compute 128 raw logits (32 cards × 4 player slots).
+    /// Forward pass: compute raw logits (32 cards × num_classes player slots).
+    ///
+    /// Returns `[f32; 128]`:
+    /// - 3-class: fills `[0..96]` with native layout (card*3 + class), rest zeroed.
+    /// - 4-class: fills all 128 as before.
     #[inline]
-    pub fn evaluate(&mut self, obs: &[f32]) -> [f32; NUM_OUTPUTS] {
+    pub fn evaluate(&mut self, obs: &[f32]) -> [f32; 128] {
         debug_assert_eq!(obs.len(), self.obs_dim);
 
         // Layer 0: scratch_a = ReLU(LN(W0 * obs + b0))
@@ -147,9 +187,9 @@ impl BeliefNet {
         layer_norm(&mut self.scratch_b, &self.gamma[1], &self.beta[1], self.hidden);
         relu(&mut self.scratch_b);
 
-        // Output: 128 logits
-        let mut logits = [0.0f32; NUM_OUTPUTS];
-        for i in 0..NUM_OUTPUTS {
+        // Output: num_outputs logits
+        let mut logits = [0.0f32; 128];
+        for i in 0..self.num_outputs {
             let row_start = i * self.hidden;
             let mut sum = self.b_out[i];
             for j in 0..self.hidden {
@@ -168,30 +208,32 @@ impl BeliefNet {
     pub fn hidden(&self) -> usize {
         self.hidden
     }
+
+    pub fn num_classes(&self) -> usize {
+        self.num_classes
+    }
 }
 
-/// Convert raw 128 logits → [[f32; 32]; 4] normalized weights.
+/// Convert raw logits → [[f32; 32]; 4] normalized weights.
 ///
-/// Logit slots are player-relative: 0=me, 1=left, 2=partner, 3=right.
-/// For each unknown card, applies softmax over 4 relative slots, zeros the
-/// observer slot (rel=0), renormalizes, then remaps to absolute player indices.
+/// For `num_classes=3` (V3): logit slots are 0=left, 1=partner, 2=right.
+/// For `num_classes=4` (legacy): logit slots are 0=me, 1=left, 2=partner, 3=right;
+///   observer slot (rel=0) is zeroed and renormalized.
 ///
 /// Output layout: `weights[player][card]` = probability card is in player's hand.
 /// Player indices are absolute (0-3).
 pub fn belief_to_weights(
-    logits: &[f32; NUM_OUTPUTS],
+    logits: &[f32; 128],
+    num_classes: usize,
     state: &GameState,
     observer: u8,
 ) -> [[f32; 32]; 4] {
     let mut weights = [[0.0f32; 32]; 4];
 
-    // Relative slot → absolute player mapping
-    let abs_players = [
-        observer as usize,
-        ((observer + 1) % 4) as usize,
-        ((observer + 2) % 4) as usize,
-        ((observer + 3) % 4) as usize,
-    ];
+    // Absolute players for non-observer slots: left, partner, right
+    let abs_left = ((observer + 1) % 4) as usize;
+    let abs_partner = ((observer + 2) % 4) as usize;
+    let abs_right = ((observer + 3) % 4) as usize;
 
     // Known cards: observer's hand + all played cards (including current trick)
     let observer_hand = state.hands[observer as usize];
@@ -206,45 +248,62 @@ pub fn belief_to_weights(
 
     for card_idx in 0..32u32 {
         if known & (1 << card_idx) != 0 {
-            // Known card: zero weight for all players
             continue;
         }
 
-        // Per-card softmax over 4 relative slots
-        let base = card_idx as usize * 4;
-        let mut max_logit = f32::NEG_INFINITY;
-        for rel in 0..4 {
-            if logits[base + rel] > max_logit {
-                max_logit = logits[base + rel];
+        if num_classes == 3 {
+            // V3: 3 slots = left/partner/right, softmax directly
+            let base = card_idx as usize * 3;
+            let mut max_logit = f32::NEG_INFINITY;
+            for s in 0..3 {
+                if logits[base + s] > max_logit {
+                    max_logit = logits[base + s];
+                }
             }
-        }
-
-        let mut exp_sum = 0.0f32;
-        let mut exps = [0.0f32; 4];
-        for rel in 0..4 {
-            exps[rel] = (logits[base + rel] - max_logit).exp();
-            exp_sum += exps[rel];
-        }
-
-        // Map relative softmax to absolute players, zeroing observer (rel=0)
-        for rel in 0..4 {
-            let abs_p = abs_players[rel];
-            if rel == 0 {
-                // Observer can't hold unknown cards (they'd be in our hand)
-                weights[abs_p][card_idx as usize] = 0.0;
-            } else {
-                weights[abs_p][card_idx as usize] = exps[rel] / exp_sum;
+            let mut exp_sum = 0.0f32;
+            let mut exps = [0.0f32; 3];
+            for s in 0..3 {
+                exps[s] = (logits[base + s] - max_logit).exp();
+                exp_sum += exps[s];
             }
-        }
-
-        // Renormalize after zeroing observer
-        let mut total = 0.0f32;
-        for p in 0..4 {
-            total += weights[p][card_idx as usize];
-        }
-        if total > 0.0 {
+            weights[abs_left][card_idx as usize] = exps[0] / exp_sum;
+            weights[abs_partner][card_idx as usize] = exps[1] / exp_sum;
+            weights[abs_right][card_idx as usize] = exps[2] / exp_sum;
+        } else {
+            // Legacy 4-class: softmax over 4 slots, zero observer, renormalize
+            let base = card_idx as usize * 4;
+            let abs_players = [
+                observer as usize, abs_left, abs_partner, abs_right,
+            ];
+            let mut max_logit = f32::NEG_INFINITY;
+            for rel in 0..4 {
+                if logits[base + rel] > max_logit {
+                    max_logit = logits[base + rel];
+                }
+            }
+            let mut exp_sum = 0.0f32;
+            let mut exps = [0.0f32; 4];
+            for rel in 0..4 {
+                exps[rel] = (logits[base + rel] - max_logit).exp();
+                exp_sum += exps[rel];
+            }
+            for rel in 0..4 {
+                let abs_p = abs_players[rel];
+                if rel == 0 {
+                    weights[abs_p][card_idx as usize] = 0.0;
+                } else {
+                    weights[abs_p][card_idx as usize] = exps[rel] / exp_sum;
+                }
+            }
+            // Renormalize after zeroing observer
+            let mut total = 0.0f32;
             for p in 0..4 {
-                weights[p][card_idx as usize] /= total;
+                total += weights[p][card_idx as usize];
+            }
+            if total > 0.0 {
+                for p in 0..4 {
+                    weights[p][card_idx as usize] /= total;
+                }
             }
         }
     }
@@ -300,6 +359,11 @@ mod tests {
     use crate::belief_obs::BELIEF_OBS_DIM;
 
     fn build_test_weights(obs_dim: usize, hidden: usize) -> Vec<f32> {
+        build_test_weights_nc(obs_dim, hidden, 3)
+    }
+
+    fn build_test_weights_nc(obs_dim: usize, hidden: usize, num_classes: usize) -> Vec<f32> {
+        let num_outputs = 32 * num_classes;
         let mut floats = Vec::new();
 
         // Layer 0: W, b, gamma, beta
@@ -319,8 +383,8 @@ mod tests {
         floats.extend(vec![0.0f32; hidden]); // beta
 
         // Output: W, b
-        floats.extend(vec![0.0f32; hidden * NUM_OUTPUTS]);
-        floats.extend(vec![0.0f32; NUM_OUTPUTS]);
+        floats.extend(vec![0.0f32; hidden * num_outputs]);
+        floats.extend(vec![0.0f32; num_outputs]);
 
         floats
     }
@@ -329,14 +393,15 @@ mod tests {
     fn test_from_floats_tiny() {
         let hidden = 4;
         let floats = build_test_weights(BELIEF_OBS_DIM, hidden);
-        let mut net = BeliefNet::from_floats(&floats, hidden, BELIEF_OBS_DIM).unwrap();
+        let mut net = BeliefNet::from_floats_with_classes(&floats, hidden, BELIEF_OBS_DIM, 3).unwrap();
         assert_eq!(net.obs_dim(), BELIEF_OBS_DIM);
         assert_eq!(net.hidden(), hidden);
+        assert_eq!(net.num_classes(), 3);
 
         let obs = vec![0.0f32; BELIEF_OBS_DIM];
         let logits = net.evaluate(&obs);
-        // With zero weights, all logits should be ~0
-        for &v in &logits {
+        // With zero weights, first 96 logits should be ~0
+        for &v in &logits[..96] {
             assert!(v.abs() < 1e-4, "expected ~0, got {}", v);
         }
     }
@@ -345,7 +410,7 @@ mod tests {
     fn test_evaluate_output_shape() {
         let hidden = 2;
         let floats = build_test_weights(BELIEF_OBS_DIM, hidden);
-        let mut net = BeliefNet::from_floats(&floats, hidden, BELIEF_OBS_DIM).unwrap();
+        let mut net = BeliefNet::from_floats_with_classes(&floats, hidden, BELIEF_OBS_DIM, 3).unwrap();
 
         let obs = vec![0.5f32; BELIEF_OBS_DIM];
         let logits = net.evaluate(&obs);
@@ -353,23 +418,20 @@ mod tests {
     }
 
     #[test]
-    fn test_belief_to_weights_uniform() {
-        // With uniform logits (all zero), should get equal weights for non-observer players
-        let logits = [0.0f32; NUM_OUTPUTS];
+    fn test_belief_to_weights_3class_uniform() {
+        // 3-class: uniform logits → equal weights for left/partner/right
+        let logits = [0.0f32; 128];
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
-
-        // Observer=0, hand=0xFF
-        // For card 8 (in player 1's hand): unknown to observer 0
-        let weights = belief_to_weights(&logits, &state, 0);
+        let weights = belief_to_weights(&logits, 3, &state, 0);
 
         // Card 0 is in observer's hand → known → all zero
         for p in 0..4 {
             assert_eq!(weights[p][0], 0.0, "known card should have 0 weight");
         }
 
-        // Card 8 (unknown to observer 0): should have ~equal weight for players 1,2,3
+        // Card 8 (unknown to observer 0): ~1/3 each for players 1,2,3
         assert_eq!(weights[0][8], 0.0, "observer can't hold unknown card");
         let expected = 1.0 / 3.0;
         assert!((weights[1][8] - expected).abs() < 1e-5);
@@ -378,35 +440,33 @@ mod tests {
     }
 
     #[test]
-    fn test_belief_to_weights_biased() {
-        // With biased logits, should get skewed weights
-        let mut logits = [0.0f32; NUM_OUTPUTS];
+    fn test_belief_to_weights_3class_biased() {
+        // 3-class: biased logits for card 8
+        let mut logits = [0.0f32; 128];
 
-        // Card 8: strongly favor player 1
-        logits[8 * 4 + 0] = -10.0; // observer (will be zeroed anyway)
-        logits[8 * 4 + 1] = 10.0;  // player 1 (high)
-        logits[8 * 4 + 2] = 0.0;   // player 2
-        logits[8 * 4 + 3] = 0.0;   // player 3
+        // Card 8: 3-class layout: base=8*3=24, slots 0=left, 1=partner, 2=right
+        // Observer=0: left=P1, partner=P2, right=P3
+        logits[8 * 3 + 0] = 10.0; // left (P1) — high
+        logits[8 * 3 + 1] = 0.0;  // partner (P2)
+        logits[8 * 3 + 2] = 0.0;  // right (P3)
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
-        let weights = belief_to_weights(&logits, &state, 0);
+        let weights = belief_to_weights(&logits, 3, &state, 0);
 
-        // Player 1 should have much higher weight than 2,3 for card 8
-        assert!(weights[1][8] > 0.9, "player 1 should have >90% weight, got {}", weights[1][8]);
+        assert!(weights[1][8] > 0.9, "P1 should have >90% weight, got {}", weights[1][8]);
         assert!(weights[2][8] < 0.05);
         assert!(weights[3][8] < 0.05);
     }
 
     #[test]
-    fn test_belief_to_weights_sum_to_one() {
-        let logits = [0.5f32; NUM_OUTPUTS]; // arbitrary uniform logits
+    fn test_belief_to_weights_3class_sum_to_one() {
+        let logits = [0.5f32; 128];
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
-        let weights = belief_to_weights(&logits, &state, 0);
+        let weights = belief_to_weights(&logits, 3, &state, 0);
 
-        // For each unknown card, weights should sum to 1.0
         let known = state.hands[0] | state.played_cards;
         for card_idx in 0..32 {
             if known & (1 << card_idx) != 0 {
@@ -418,55 +478,68 @@ mod tests {
     }
 
     #[test]
-    fn test_belief_to_weights_relative_remapping() {
-        // Verify that relative logit slots are correctly mapped to absolute players
-        // when observer != 0.
-        let mut logits = [0.0f32; NUM_OUTPUTS];
+    fn test_belief_to_weights_3class_nonzero_observer() {
+        // Observer=2: left=P3, partner=P0, right=P1
+        let mut logits = [0.0f32; 128];
 
-        // Observer=2, so relative slots map as:
-        //   slot 0 (me)      → abs player 2
-        //   slot 1 (left)    → abs player 3
-        //   slot 2 (partner) → abs player 0
-        //   slot 3 (right)   → abs player 1
-        //
-        // Card 8 (in player 1's hand, unknown to observer 2):
-        // Set high logit for slot 3 (= right = abs player 1)
-        logits[8 * 4 + 0] = -10.0; // me (zeroed anyway)
-        logits[8 * 4 + 1] = 0.0;   // left  (abs 3)
-        logits[8 * 4 + 2] = 0.0;   // partner (abs 0)
-        logits[8 * 4 + 3] = 10.0;  // right (abs 1) — high
+        // Card 8: high logit for slot 2 (right = P1)
+        logits[8 * 3 + 0] = 0.0;   // left (P3)
+        logits[8 * 3 + 1] = 0.0;   // partner (P0)
+        logits[8 * 3 + 2] = 10.0;  // right (P1) — high
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
-        let weights = belief_to_weights(&logits, &state, 2);
+        let weights = belief_to_weights(&logits, 3, &state, 2);
 
-        // Card 16 is in observer 2's hand → known → all zero
+        // Card 16 in observer 2's hand → known
         for p in 0..4 {
-            assert_eq!(weights[p][16], 0.0, "observer's card should have 0 weight");
+            assert_eq!(weights[p][16], 0.0);
         }
 
-        // Card 8: abs player 1 (slot 3 = right) should dominate
+        // Card 8: P1 (right) should dominate
         assert_eq!(weights[2][8], 0.0, "observer can't hold unknown card");
-        assert!(weights[1][8] > 0.9, "abs player 1 should have >90% weight, got {}", weights[1][8]);
-        assert!(weights[0][8] < 0.05, "abs player 0 weight too high: {}", weights[0][8]);
-        assert!(weights[3][8] < 0.05, "abs player 3 weight too high: {}", weights[3][8]);
+        assert!(weights[1][8] > 0.9, "P1 should have >90%, got {}", weights[1][8]);
     }
 
     #[test]
-    fn test_belief_to_weights_uniform_nonzero_observer() {
-        // Uniform logits with observer=3: each non-observer should get ~1/3
-        let logits = [0.0f32; NUM_OUTPUTS];
+    fn test_belief_to_weights_4class_legacy() {
+        // Legacy 4-class: uniform → 1/3 each for non-observer
+        let logits = [0.0f32; 128];
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
-        let weights = belief_to_weights(&logits, &state, 3);
+        let weights = belief_to_weights(&logits, 4, &state, 0);
 
-        // Card 0 (in player 0's hand, unknown to observer 3)
-        assert_eq!(weights[3][0], 0.0, "observer can't hold unknown card");
+        assert_eq!(weights[0][8], 0.0);
         let expected = 1.0 / 3.0;
-        assert!((weights[0][0] - expected).abs() < 1e-5);
-        assert!((weights[1][0] - expected).abs() < 1e-5);
-        assert!((weights[2][0] - expected).abs() < 1e-5);
+        assert!((weights[1][8] - expected).abs() < 1e-5);
+        assert!((weights[2][8] - expected).abs() < 1e-5);
+        assert!((weights[3][8] - expected).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_auto_detect_3class() {
+        let hidden = 4;
+        let floats = build_test_weights_nc(BELIEF_OBS_DIM, hidden, 3);
+        // load_with_hidden should auto-detect 3-class
+        let tmp = "/tmp/test_belief_3class.bin";
+        let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+        std::fs::write(tmp, &bytes).unwrap();
+        let net = BeliefNet::load_with_hidden(tmp, hidden).unwrap();
+        assert_eq!(net.num_classes(), 3);
+        std::fs::remove_file(tmp).ok();
+    }
+
+    #[test]
+    fn test_auto_detect_4class() {
+        let hidden = 4;
+        let floats = build_test_weights_nc(BELIEF_OBS_DIM, hidden, 4);
+        let tmp = "/tmp/test_belief_4class.bin";
+        let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+        std::fs::write(tmp, &bytes).unwrap();
+        let net = BeliefNet::load_with_hidden(tmp, hidden).unwrap();
+        assert_eq!(net.num_classes(), 4);
+        std::fs::remove_file(tmp).ok();
     }
 
     #[test]

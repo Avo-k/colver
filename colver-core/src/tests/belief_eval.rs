@@ -26,7 +26,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use colver_core::belief_net::BeliefNet;
-use colver_core::belief_obs::{self, BELIEF_OBS_DIM};
+use colver_core::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2};
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs;
@@ -76,8 +76,10 @@ fn main() {
         "diagnose" => run_diagnose(&model_path, &replays_path, num_games, seed),
         "scenario" => run_scenario_test(&model_path),
         "per_trick" => run_per_trick_eval(&model_path, &replays_path, num_games),
+        "ablation" => run_ablation(&model_path, &replays_path, num_games),
+        "ensemble" => run_ensemble_eval(&model_path, &replays_path, num_games),
         other => {
-            eprintln!("Unknown mode: {} (expected 'offline', 'match', 'diagnose', 'scenario', or 'per_trick')", other);
+            eprintln!("Unknown mode: {} (expected 'offline', 'match', 'diagnose', 'scenario', 'per_trick', 'ablation', or 'ensemble')", other);
             std::process::exit(1);
         }
     }
@@ -162,24 +164,28 @@ fn run_offline_eval(model_path: &str, data_path: &str) {
         let trick_idx = trick_num.min(7);
 
         // Per-card evaluation
+        let nc = net.num_classes();
         for c in 0..32u32 {
             if mask & (1 << c) == 0 {
                 continue;
             }
 
-            let base = c as usize * 4;
-            let true_player = target[c as usize] as usize;
+            let base = c as usize * nc;
+            // Old data format uses 4-class targets (0=me,1=left,2=partner,3=right)
+            // Remap to 3-class if needed
+            let raw_target = target[c as usize] as usize;
+            let true_player = if nc == 3 && raw_target > 0 { raw_target - 1 } else { raw_target };
 
             // Softmax
             let mut max_l = f32::NEG_INFINITY;
-            for p in 0..4 {
+            for p in 0..nc {
                 if logits[base + p] > max_l {
                     max_l = logits[base + p];
                 }
             }
             let mut exp_sum = 0.0f32;
-            let mut exps = [0.0f32; 4];
-            for p in 0..4 {
+            let mut exps = vec![0.0f32; nc];
+            for p in 0..nc {
                 exps[p] = (logits[base + p] - max_l).exp();
                 exp_sum += exps[p];
             }
@@ -187,7 +193,7 @@ fn run_offline_eval(model_path: &str, data_path: &str) {
 
             // Accuracy (argmax)
             let mut pred = 0;
-            for p in 1..4 {
+            for p in 1..nc {
                 if probs[p] > probs[pred] {
                     pred = p;
                 }
@@ -593,9 +599,7 @@ fn run_diagnose(model_path: &str, replays_path: &str, num_games: usize, seed: u6
         }
 
         // Run belief net
-        let mut obs_buf = vec![0.0f32; BELIEF_OBS_DIM];
-        belief_obs::write_belief_observation(&mut obs_buf, 0, &state, &tracking, observer);
-        let logits = net.evaluate(&obs_buf);
+        let logits = eval_belief(&mut net, &state, &tracking, observer);
 
         // Compute masks
         let observer_hand = state.hands[observer as usize];
@@ -667,24 +671,11 @@ fn run_diagnose(model_path: &str, replays_path: &str, num_games: usize, seed: u6
                     );
                 } else {
                     // Unknown — show prediction
-                    let base = c as usize * 4;
-                    let mut max_l = f32::NEG_INFINITY;
-                    for p in 0..4 {
-                        if logits[base + p] > max_l {
-                            max_l = logits[base + p];
-                        }
-                    }
-                    let mut probs = [0.0f32; 4];
-                    let mut exp_sum = 0.0f32;
-                    for p in 0..4 {
-                        probs[p] = (logits[base + p] - max_l).exp();
-                        exp_sum += probs[p];
-                    }
-                    for p in 0..4 {
-                        probs[p] /= exp_sum;
-                    }
+                    let nc = net.num_classes();
+                    let probs = card_probs(&logits, c as usize, nc);
 
-                    let mut pred_rel = 1;
+                    // Argmax over non-observer slots (1..4 in 4-class display)
+                    let mut pred_rel = 1usize;
                     for p in 2..4 {
                         if probs[p] > probs[pred_rel] {
                             pred_rel = p;
@@ -752,21 +743,29 @@ fn run_scenario_test(model_path: &str) {
     scenario_bidding_signal(&mut net);
 }
 
-/// Helper: compute per-card softmax from logits, excluding observer slot (rel=0).
-fn card_probs(logits: &[f32; 128], card: usize) -> [f32; 4] {
-    let base = card * 4;
+/// Helper: compute per-card softmax from logits.
+/// Returns [f32; 4] with probabilities. For 3-class models, slot 0 (observer) is 0.
+fn card_probs(logits: &[f32; 128], card: usize, num_classes: usize) -> [f32; 4] {
+    let base = card * num_classes;
     let mut max_l = f32::NEG_INFINITY;
-    for p in 0..4 {
+    for p in 0..num_classes {
         if logits[base + p] > max_l { max_l = logits[base + p]; }
     }
-    let mut probs = [0.0f32; 4];
+    let mut raw = [0.0f32; 4];
     let mut sum = 0.0f32;
-    for p in 0..4 {
-        probs[p] = (logits[base + p] - max_l).exp();
-        sum += probs[p];
+    for p in 0..num_classes {
+        let e = (logits[base + p] - max_l).exp();
+        raw[p] = e;
+        sum += e;
     }
-    for p in 0..4 { probs[p] /= sum; }
-    probs
+    for p in 0..num_classes { raw[p] /= sum; }
+
+    if num_classes == 3 {
+        // Remap: raw[0]=left, raw[1]=partner, raw[2]=right → [observer=0, left, partner, right]
+        [0.0, raw[0], raw[1], raw[2]]
+    } else {
+        [raw[0], raw[1], raw[2], raw[3]]
+    }
 }
 
 fn print_card_prediction(name: &str, probs: &[f32; 4], rel_names: &[&str; 4], highlight_rel: Option<usize>, expected_low: bool) {
@@ -785,6 +784,78 @@ fn print_card_prediction(name: &str, probs: &[f32; 4], rel_names: &[&str; 4], hi
         rel_names[3], probs[3] * 100.0,
         mark,
     );
+}
+
+/// Build observation and evaluate, handling V1 (330-dim) and V2 (304-dim) models.
+/// For V2, computes hard constraints from state + optional TrumpCeilingTracker.
+fn eval_belief(
+    net: &mut BeliefNet,
+    state: &GameState,
+    tracking: &EnvTracking,
+    observer: u8,
+) -> [f32; 128] {
+    eval_belief_with_tracker(net, state, tracking, observer, None)
+}
+
+/// Like eval_belief but with optional TrumpCeilingTracker for full hard constraints.
+fn eval_belief_with_tracker(
+    net: &mut BeliefNet,
+    state: &GameState,
+    tracking: &EnvTracking,
+    observer: u8,
+    tracker: Option<&colver_core::game_replay::TrumpCeilingTracker>,
+) -> [f32; 128] {
+    if net.obs_dim() == BELIEF_OBS_DIM_V2 {
+        let hard_constraints = if let Some(t) = tracker {
+            t.compute_hard_constraints(state, observer)
+        } else {
+            build_hard_constraints_from_state(state, observer)
+        };
+        let mut obs_buf = vec![0.0f32; BELIEF_OBS_DIM_V2];
+        belief_obs::write_belief_observation_v2(&mut obs_buf, 0, state, tracking, observer, &hard_constraints);
+        net.evaluate(&obs_buf)
+    } else {
+        let mut obs_buf = vec![0.0f32; BELIEF_OBS_DIM];
+        belief_obs::write_belief_observation(&mut obs_buf, 0, state, tracking, observer);
+        net.evaluate(&obs_buf)
+    }
+}
+
+/// Build hard constraints from GameState for V2 eval.
+/// Uses state.voids for void constraints. No trump ceiling (would need TrumpCeilingTracker).
+/// For full trump ceiling support, use TrumpCeilingTracker from game_replay.
+fn build_hard_constraints_from_state(state: &GameState, observer: u8) -> [f32; 96] {
+    let mut hc = [0.0f32; 96];
+    let seats = [
+        ((observer as usize + 1) % 4),
+        ((observer as usize + 2) % 4),
+        ((observer as usize + 3) % 4),
+    ];
+    let observer_hand = state.hands[observer as usize];
+    let mut played = state.played_cards;
+    for j in 0..4 {
+        let c = state.current_trick[j];
+        if c != card::EMPTY {
+            played |= 1u32 << c;
+        }
+    }
+    let known = observer_hand | played;
+
+    for (i, &seat) in seats.iter().enumerate() {
+        for card_idx in 0..32u32 {
+            let offset = i * 32 + card_idx as usize;
+            let suit = (card_idx / 8) as u8;
+
+            if known & (1 << card_idx) != 0 {
+                hc[offset] = 1.0;
+                continue;
+            }
+            if state.voids[seat] & (1 << suit) != 0 {
+                hc[offset] = 1.0;
+            }
+        }
+    }
+    hc
 }
 
 /// Scenario 1: Trump ceiling.
@@ -816,6 +887,7 @@ fn scenario_trump_ceiling(net: &mut BeliefNet) {
     tracking.dealer = dealer;
 
     // Bidding: P0 bids 80♠ (action=1), P1/P2/P3 pass
+    let mut tracker = colver_core::game_replay::TrumpCeilingTracker::new();
     for &action in &[1u8, 0, 0, 0] {
         tracking.track_action(&state, action);
         state.step(action);
@@ -823,10 +895,14 @@ fn scenario_trump_ceiling(net: &mut BeliefNet) {
     assert_eq!(state.phase, Phase::Playing);
 
     // P0 leads K♠ (card 5)
+    let player = state.current_player();
+    tracker.record_play(&state, player, 5);
     tracking.track_action(&state, 5);
     state.step(5);
 
     // P1 plays 8♠ (card 1) — can't overtrump
+    let player = state.current_player();
+    tracker.record_play(&state, player, 1);
     tracking.track_action(&state, 1);
     state.step(1);
 
@@ -834,9 +910,7 @@ fn scenario_trump_ceiling(net: &mut BeliefNet) {
     assert_eq!(state.current_player(), 2);
     let observer = 2u8;
 
-    let mut obs_buf = vec![0.0f32; belief_obs::BELIEF_OBS_DIM];
-    belief_obs::write_belief_observation(&mut obs_buf, 0, &state, &tracking, observer);
-    let logits = net.evaluate(&obs_buf);
+    let logits = eval_belief_with_tracker(net, &state, &tracking, observer, Some(&tracker));
 
     // Observer=P2: relative 0=P2(me), 1=P3(left), 2=P0(partner), 3=P1(right)
     let rel_names = ["Me", "Left", "Prtner", "Right"];
@@ -851,7 +925,7 @@ fn scenario_trump_ceiling(net: &mut BeliefNet) {
     ];
 
     for &(card_idx, name) in &spade_cards {
-        let probs = card_probs(&logits, card_idx);
+        let probs = card_probs(&logits, card_idx, net.num_classes());
         let is_constraint_card = card_idx == 7 || card_idx == 6 || card_idx == 3 || card_idx == 2;
         print_card_prediction(name, &probs, &rel_names, if is_constraint_card { Some(3) } else { None }, true);
     }
@@ -912,10 +986,15 @@ fn scenario_void_detection(net: &mut BeliefNet) {
     assert_eq!(state.phase, Phase::Playing);
 
     // P0 leads A♦ (card 23)
+    let mut tracker = colver_core::game_replay::TrumpCeilingTracker::new();
+    let player = state.current_player();
+    tracker.record_play(&state, player, 23);
     tracking.track_action(&state, 23);
     state.step(23);
 
     // P1 plays 7♣ (card 24) — discards, doesn't follow ♦, doesn't cut with ♥
+    let player = state.current_player();
+    tracker.record_play(&state, player, 24);
     tracking.track_action(&state, 24);
     state.step(24);
 
@@ -923,23 +1002,21 @@ fn scenario_void_detection(net: &mut BeliefNet) {
     assert_eq!(state.current_player(), 2);
     let observer = 2u8;
 
-    let mut obs_buf = vec![0.0f32; belief_obs::BELIEF_OBS_DIM];
-    belief_obs::write_belief_observation(&mut obs_buf, 0, &state, &tracking, observer);
-    let logits = net.evaluate(&obs_buf);
+    let logits = eval_belief_with_tracker(net, &state, &tracking, observer, Some(&tracker));
 
     let rel_names = ["Me", "Left", "Prtner", "Right"];
 
     println!("Diamond predictions (P1 = 'Right', should be ~0% for all ♦):");
     let diamond_cards = [(16, "7♦"), (17, "8♦"), (18, "9♦"), (19, "J♦"), (20, "Q♦"), (21, "K♦"), (22, "10♦")];
     for &(card_idx, name) in &diamond_cards {
-        let probs = card_probs(&logits, card_idx);
+        let probs = card_probs(&logits, card_idx, net.num_classes());
         print_card_prediction(name, &probs, &rel_names, Some(3), true);
     }
 
     println!("\nHeart (trump) predictions (P1 = 'Right', should be ~0% for all ♥):");
     let heart_cards = [(8, "7♥"), (9, "8♥"), (10, "9♥"), (11, "J♥"), (12, "Q♥"), (13, "K♥"), (14, "10♥"), (15, "A♥")];
     for &(card_idx, name) in &heart_cards {
-        let probs = card_probs(&logits, card_idx);
+        let probs = card_probs(&logits, card_idx, net.num_classes());
         print_card_prediction(name, &probs, &rel_names, Some(3), true);
     }
     println!();
@@ -984,9 +1061,7 @@ fn scenario_bidding_signal(net: &mut BeliefNet) {
     assert_eq!(state.current_player(), 1);
 
     // Build obs from P2's perspective even though it's P1's turn
-    let mut obs_buf = vec![0.0f32; belief_obs::BELIEF_OBS_DIM];
-    belief_obs::write_belief_observation(&mut obs_buf, 0, &state, &tracking, observer);
-    let logits = net.evaluate(&obs_buf);
+    let logits = eval_belief(net, &state, &tracking, observer);
 
     // Observer=P2: relative 0=P2(me), 1=P3(left), 2=P0(partner), 3=P1(right)
     let rel_names = ["Me", "Left", "Prtner", "Right"];
@@ -994,7 +1069,7 @@ fn scenario_bidding_signal(net: &mut BeliefNet) {
     println!("Spade predictions (P1 = 'Right', bid 80♠ → should have higher J♠/9♠):");
     let spade_cards = [(3, "J♠"), (2, "9♠"), (7, "A♠"), (6, "10♠")];
     for &(card_idx, name) in &spade_cards {
-        let probs = card_probs(&logits, card_idx);
+        let probs = card_probs(&logits, card_idx, net.num_classes());
         print_card_prediction(name, &probs, &rel_names, Some(3), false);
     }
 
@@ -1002,7 +1077,7 @@ fn scenario_bidding_signal(net: &mut BeliefNet) {
     println!("\nDiamond predictions (no signal — baseline):");
     let diamond_cards = [(19, "J♦"), (18, "9♦"), (23, "A♦"), (22, "10♦")];
     for &(card_idx, name) in &diamond_cards {
-        let probs = card_probs(&logits, card_idx);
+        let probs = card_probs(&logits, card_idx, net.num_classes());
         print_card_prediction(name, &probs, &rel_names, None, false);
     }
     println!();
@@ -1083,9 +1158,7 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
             let step_idx = (trick_idx * 4 + pos_in_trick).min(31);
 
             // Build obs and run inference
-            let mut obs_buf = vec![0.0f32; BELIEF_OBS_DIM];
-            belief_obs::write_belief_observation(&mut obs_buf, 0, &state, &tracking, observer);
-            let logits = net.evaluate(&obs_buf);
+            let logits = eval_belief(&mut net, &state, &tracking, observer);
 
             // Evaluate each unknown card
             let observer_hand = state.hands[observer as usize];
@@ -1111,21 +1184,11 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
                 }
                 let true_rel = ((true_abs + 4 - observer) % 4) as usize;
 
-                // Softmax over slots 1-3 (skip slot 0 = me)
-                let base = c as usize * 4;
-                let mut max_l = f32::NEG_INFINITY;
-                for p in 0..4 {
-                    if logits[base + p] > max_l { max_l = logits[base + p]; }
-                }
-                let mut probs = [0.0f32; 4];
-                let mut exp_sum = 0.0f32;
-                for p in 0..4 {
-                    probs[p] = (logits[base + p] - max_l).exp();
-                    exp_sum += probs[p];
-                }
-                for p in 0..4 { probs[p] /= exp_sum; }
+                // Softmax + remap to 4-slot layout (slot 0 = observer = 0.0)
+                let nc = net.num_classes();
+                let probs = card_probs(&logits, c as usize, nc);
 
-                // Argmax over slots 1-3
+                // Argmax over slots 1-3 (non-observer)
                 let mut pred = 1usize;
                 for p in 2..4 {
                     if probs[p] > probs[pred] { pred = p; }
@@ -1192,6 +1255,268 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
             println!("  {:>4}.{:<5}  {:>7.1}%  {:>10}  {:>10}", trick, pos, acc, correct_by_step[s], total_by_step[s]);
         }
     }
+}
+
+/// Input block ablation: zero each V2 input block and report accuracy drop.
+fn run_ablation(model_path: &str, replays_path: &str, num_games: usize) {
+    if replays_path.is_empty() {
+        eprintln!("--replays is required for ablation mode");
+        std::process::exit(1);
+    }
+
+    println!("=== Input Block Ablation (V2) ===");
+    println!("Model:   {}", model_path);
+    println!("Replays: {}", replays_path);
+    println!("Games:   {}", num_games);
+
+    let mut net = BeliefNet::load(model_path).unwrap_or_else(|e| {
+        eprintln!("Failed to load model: {}", e);
+        std::process::exit(1);
+    });
+
+    if net.obs_dim() != BELIEF_OBS_DIM_V2 {
+        eprintln!("Ablation mode requires a V2 model (obs_dim={}), got obs_dim={}",
+                  BELIEF_OBS_DIM_V2, net.obs_dim());
+        std::process::exit(1);
+    }
+    println!("Model loaded (obs_dim={}, hidden={})\n", net.obs_dim(), net.hidden());
+
+    let replays = GameReplay::load_all(replays_path).unwrap_or_else(|e| {
+        eprintln!("Failed to load replays: {}", e);
+        std::process::exit(1);
+    });
+    println!("Loaded {} replays", replays.len());
+
+    // Extract V2 samples
+    let step = replays.len().max(1) / num_games.max(1);
+    let subset: Vec<&GameReplay> = (0..num_games)
+        .map(|i| &replays[(i * step) % replays.len()])
+        .collect();
+    let samples = {
+        let owned: Vec<GameReplay> = subset.iter().map(|r| GameReplay {
+            dealer: r.dealer,
+            hands: r.hands,
+            actions: r.actions.clone(),
+        }).collect();
+        colver_core::game_replay::extract_belief_samples_v2(&owned)
+    };
+    println!("Extracted {} samples\n", samples.len());
+
+    // Evaluate baseline
+    let baseline_acc = eval_samples_accuracy(&mut net, &samples);
+    println!("Baseline accuracy: {:.2}%\n", baseline_acc * 100.0);
+
+    // Block definitions for V2
+    let blocks: &[(&str, usize, usize)] = &[
+        ("Own hand",           0,   32),
+        ("Played-by",          32,  64),
+        ("Trick index",        64,  96),
+        ("Position-in-trick",  96,  128),
+        ("Bid history",        128, 200),
+        ("Contract",           200, 208),
+        ("Hard constraints",   208, 304),
+    ];
+
+    println!("{:<22} {:>8} {:>10} {:>10}", "Block", "Acc%", "Delta%", "Rel. Drop%");
+    println!("{}", "-".repeat(55));
+
+    for &(name, start, end) in blocks {
+        let ablated_acc = eval_samples_ablated(&mut net, &samples, start, end);
+        let delta = ablated_acc - baseline_acc;
+        let rel_drop = if baseline_acc > 0.0 { delta / baseline_acc * 100.0 } else { 0.0 };
+        println!(
+            "{:<22} {:>7.2}% {:>+9.2}% {:>+9.1}%",
+            format!("[{}:{}] {}", start, end, name),
+            ablated_acc * 100.0,
+            delta * 100.0,
+            rel_drop,
+        );
+    }
+}
+
+/// Compute argmax accuracy over unknown cards for a set of belief samples.
+fn eval_samples_accuracy(net: &mut BeliefNet, samples: &[colver_core::game_replay::BeliefSample]) -> f64 {
+    let mut correct = 0u64;
+    let mut total = 0u64;
+    let nc = net.num_classes();
+
+    for sample in samples {
+        let logits = net.evaluate(&sample.obs);
+
+        for c in 0..32u32 {
+            if sample.mask & (1 << c) == 0 {
+                continue;
+            }
+            let true_rel = sample.target[c as usize] as usize;
+            let base = c as usize * nc;
+
+            // Argmax over all nc slots
+            let mut pred = 0usize;
+            for p in 1..nc {
+                if logits[base + p] > logits[base + pred] {
+                    pred = p;
+                }
+            }
+
+            if pred == true_rel {
+                correct += 1;
+            }
+            total += 1;
+        }
+    }
+
+    if total > 0 { correct as f64 / total as f64 } else { 0.0 }
+}
+
+/// Compute accuracy after zeroing obs[start..end] for each sample.
+fn eval_samples_ablated(
+    net: &mut BeliefNet,
+    samples: &[colver_core::game_replay::BeliefSample],
+    zero_start: usize,
+    zero_end: usize,
+) -> f64 {
+    let mut correct = 0u64;
+    let mut total = 0u64;
+    let nc = net.num_classes();
+
+    for sample in samples {
+        let mut obs = sample.obs.clone();
+        for v in &mut obs[zero_start..zero_end] {
+            *v = 0.0;
+        }
+        let logits = net.evaluate(&obs);
+
+        for c in 0..32u32 {
+            if sample.mask & (1 << c) == 0 {
+                continue;
+            }
+            let true_rel = sample.target[c as usize] as usize;
+            let base = c as usize * nc;
+
+            let mut pred = 0usize;
+            for p in 1..nc {
+                if logits[base + p] > logits[base + pred] {
+                    pred = p;
+                }
+            }
+
+            if pred == true_rel {
+                correct += 1;
+            }
+            total += 1;
+        }
+    }
+
+    if total > 0 { correct as f64 / total as f64 } else { 0.0 }
+}
+
+/// Ensemble evaluation: load multiple models, average raw logits, report accuracy.
+fn run_ensemble_eval(model_paths: &str, replays_path: &str, num_games: usize) {
+    if replays_path.is_empty() {
+        eprintln!("--replays is required for ensemble mode");
+        std::process::exit(1);
+    }
+    if model_paths.is_empty() {
+        eprintln!("--model is required for ensemble mode (comma-separated paths)");
+        std::process::exit(1);
+    }
+
+    let paths: Vec<&str> = model_paths.split(',').collect();
+    println!("=== Ensemble Evaluation ===");
+    println!("Models:  {} models", paths.len());
+    for (i, p) in paths.iter().enumerate() {
+        println!("  [{}] {}", i, p);
+    }
+    println!("Replays: {}", replays_path);
+    println!("Games:   {}", num_games);
+
+    let mut nets: Vec<BeliefNet> = paths.iter().map(|p| {
+        BeliefNet::load(p).unwrap_or_else(|e| {
+            eprintln!("Failed to load model {}: {}", p, e);
+            std::process::exit(1);
+        })
+    }).collect();
+
+    // Verify all models have the same obs_dim
+    let obs_dim = nets[0].obs_dim();
+    for (i, net) in nets.iter().enumerate() {
+        if net.obs_dim() != obs_dim {
+            eprintln!("Model {} has obs_dim={}, expected {}", paths[i], net.obs_dim(), obs_dim);
+            std::process::exit(1);
+        }
+    }
+    println!("All models: obs_dim={}\n", obs_dim);
+
+    let replays = GameReplay::load_all(replays_path).unwrap_or_else(|e| {
+        eprintln!("Failed to load replays: {}", e);
+        std::process::exit(1);
+    });
+
+    // Extract samples matching model version
+    let step = replays.len().max(1) / num_games.max(1);
+    let subset: Vec<GameReplay> = (0..num_games)
+        .map(|i| {
+            let r = &replays[(i * step) % replays.len()];
+            GameReplay { dealer: r.dealer, hands: r.hands, actions: r.actions.clone() }
+        })
+        .collect();
+    let samples = if obs_dim == BELIEF_OBS_DIM_V2 {
+        colver_core::game_replay::extract_belief_samples_v2(&subset)
+    } else {
+        colver_core::game_replay::extract_belief_samples(&subset)
+    };
+    println!("Extracted {} samples\n", samples.len());
+
+    // Evaluate individual models and ensemble
+    let n_models = nets.len();
+
+    // Individual accuracies
+    for (i, net) in nets.iter_mut().enumerate() {
+        let acc = eval_samples_accuracy(net, &samples);
+        println!("Model [{}]: {:.2}%", i, acc * 100.0);
+    }
+
+    // Ensemble: average logits
+    let mut correct = 0u64;
+    let mut total = 0u64;
+    let nc = nets[0].num_classes();
+    let n_logits = 32 * nc;
+
+    for sample in &samples {
+        let mut avg_logits = [0.0f32; 128];
+        for net in nets.iter_mut() {
+            let logits = net.evaluate(&sample.obs);
+            for j in 0..n_logits {
+                avg_logits[j] += logits[j];
+            }
+        }
+        for j in 0..n_logits {
+            avg_logits[j] /= n_models as f32;
+        }
+
+        for c in 0..32u32 {
+            if sample.mask & (1 << c) == 0 {
+                continue;
+            }
+            let true_rel = sample.target[c as usize] as usize;
+            let base = c as usize * nc;
+
+            let mut pred = 0usize;
+            for p in 1..nc {
+                if avg_logits[base + p] > avg_logits[base + pred] {
+                    pred = p;
+                }
+            }
+
+            if pred == true_rel {
+                correct += 1;
+            }
+            total += 1;
+        }
+    }
+
+    let ensemble_acc = if total > 0 { correct as f64 / total as f64 } else { 0.0 };
+    println!("\nEnsemble ({} models): {:.2}%", n_models, ensemble_acc * 100.0);
 }
 
 fn format_bid_action(action: u8) -> String {
