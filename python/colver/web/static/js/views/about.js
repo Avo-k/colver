@@ -12,7 +12,41 @@ const TEMPLATE = `
         Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
     </p>
 
-    <h3>Jouer</h3>
+    <h3>Agents IA</h3>
+
+    <div class="docs-section">
+        <h4>Oracle (DD)</h4>
+        <p>
+            Solveur double-dummy en information parfaite qui voit les 4 mains \u2014 il <em>triche</em>.
+            Utilise une recherche alpha-b\u00eata avec tables de transposition, PVS et killer moves pour calculer
+            la carte optimale exacte en ~7ms (m\u00e9diane). Utile comme borne sup\u00e9rieure pour \u00e9valuer
+            la qualit\u00e9 de jeu des autres agents : aucun agent r\u00e9aliste ne devrait battre l'Oracle de mani\u00e8re r\u00e9guli\u00e8re.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>D\u00e9d\u00e9 (IS-DD) <span class="docs-tag">Fort</span></h4>
+        <p>
+            Maintient un mod\u00e8le probabiliste de croyances sur les cartes cach\u00e9es, mis \u00e0 jour apr\u00e8s chaque action
+            via des contraintes dures (inf\u00e9rence de coupes, plafond d'atout) et des signaux faibles (patterns d'ench\u00e8res, conventions de jeu).
+            \u00c9chantillonne des mains adverses plausibles pond\u00e9r\u00e9es par ces croyances, puis r\u00e9sout chaque monde exactement
+            avec un solveur alpha-b\u00eata double-dummy \u2014 optimal par d\u00e9terminisation.
+            IS-DD se prononce \u00ab is D\u00e9d\u00e9 \u00bb \u2014 d'o\u00f9 le surnom.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>DouDou <span class="docs-tag best">Recommand\u00e9</span></h4>
+        <p>
+            R\u00e9seau Q Deep Monte-Carlo entra\u00een\u00e9 par self-play (style DouZero).
+            Un MLP \u00e0 3 couches (1024 unit\u00e9s cach\u00e9es, ~2.6M param\u00e8tres) prend une observation de dimension 415
+            et produit les Q-values des 32 cartes en une seule passe \u2014 aucun arbre de recherche n\u00e9cessaire.
+            L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision. Agent le plus fort dans l'ensemble.
+            <em>DouDou</em> = en r\u00e9f\u00e9rence \u00e0 DouZero.
+        </p>
+    </div>
+
+    <h3>Pages</h3>
 
     <div class="docs-section">
         <h4>Humain vs IA</h4>
@@ -38,8 +72,6 @@ const TEMPLATE = `
         </p>
     </div>
 
-    <h3>Analyse</h3>
-
     <div class="docs-section">
         <h4>Rejouer</h4>
         <p>
@@ -62,10 +94,7 @@ const TEMPLATE = `
         </p>
         <p>
             Le tableau <strong>DouDou</strong> joue les m\u00eames distributions en partie compl\u00e8te via le r\u00e9seau de neurones
-            (ench\u00e8res NN + jeu DMC). Pour chaque cellule, la <strong>taille du chiffre</strong> refl\u00e8te le nombre d'observations\u00a0:
-            un taux calcul\u00e9 sur 2 parties appara\u00eet plus petit qu'un taux sur 40. La <strong>couleur</strong> (vert/or/rouge)
-            est d\u00e9termin\u00e9e par la borne inf\u00e9rieure de l'intervalle de confiance de Wilson plut\u00f4t que le taux brut,
-            ce qui \u00e9vite qu'un 100\u00a0% sur 2 observations soit trait\u00e9 comme fiable.
+            (ench\u00e8res NN + jeu DMC).
         </p>
     </div>
 
@@ -79,10 +108,8 @@ const TEMPLATE = `
         </p>
     </div>
 
-    <h3>Probl\u00e8mes</h3>
-
     <div class="docs-section">
-        <h4>Annonce</h4>
+        <h4>Probl\u00e8mes d'annonce</h4>
         <p>
             Probl\u00e8mes d'ench\u00e8res : voyez une main et l'historique des ench\u00e8res, puis trouvez la bonne annonce.
             L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Le Bide \u00e0 D\u00e9d\u00e9</em>.
@@ -90,55 +117,18 @@ const TEMPLATE = `
     </div>
 
     <div class="docs-section">
-        <h4>Jeu</h4>
+        <h4>Probl\u00e8mes de jeu</h4>
         <p>
             Probl\u00e8mes de jeu de la carte : voyez une position en cours de partie et trouvez la meilleure carte.
             Comparez votre choix au jeu optimal du solveur double-dummy.
         </p>
     </div>
 
-    <h3>Agents IA</h3>
-    <p class="docs-intro">
-        Tous les agents portent des surnoms fran\u00e7ais. Les ench\u00e8res utilisent un r\u00e9seau de neurones entra\u00een\u00e9 par double-dummy (Le Bide \u00e0 D\u00e9d\u00e9).
-        C'est le jeu de la carte qui les diff\u00e9rencie : r\u00e9seau de neurones, solveur exact, ou recherche pond\u00e9r\u00e9e par croyances.
-    </p>
-
+    <h3>Remerciements</h3>
     <div class="docs-section">
-        <h4>DouDou <span class="docs-tag best">Recommand\u00e9</span></h4>
         <p>
-            <em>DouDou</em> = le doudou de l'enfant \u2014 parce qu'il apprend en jouant avec lui-m\u00eame.
-            Entra\u00een\u00e9 pendant 35 millions d'\u00e9tapes par self-play.
-        </p>
-        <p>
-            R\u00e9seau Q Deep Monte-Carlo entra\u00een\u00e9 par self-play (style DouZero).
-            Un MLP \u00e0 3 couches (1024 unit\u00e9s cach\u00e9es, ~2.6M param\u00e8tres) prend une observation de dimension 415
-            et produit les Q-values des 32 cartes en une seule passe \u2014 aucun arbre de recherche n\u00e9cessaire.
-            L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision. Agent le plus fort dans l'ensemble.
-        </p>
-    </div>
-
-    <div class="docs-section">
-        <h4>D\u00e9d\u00e9 (IS-DD) <span class="docs-tag">Fort</span></h4>
-        <p>
-            <em>D\u00e9d\u00e9</em> = diminutif de <em>Double-Dummy</em> (DD \u2192 D\u00e9d\u00e9), un surnom fran\u00e7ais classique.
-            IS-DD = Information Set Double-Dummy.
-        </p>
-        <p>
-            Maintient un mod\u00e8le probabiliste de croyances sur les cartes cach\u00e9es, mis \u00e0 jour apr\u00e8s chaque action
-            via des contraintes dures (inf\u00e9rence de coupes, plafond d'atout) et des signaux faibles (patterns d'ench\u00e8res, conventions de jeu).
-            \u00c9chantillonne des mains adverses plausibles pond\u00e9r\u00e9es par ces croyances, puis r\u00e9sout chaque monde exactement
-            avec un solveur alpha-b\u00eata double-dummy \u2014 optimal par d\u00e9terminisation.
-            \u00c9crase les anciens agents IS-MCTS (~65% de victoires).
-        </p>
-    </div>
-
-    <div class="docs-section">
-        <h4>Oracle (DD)</h4>
-        <p>
-            Solveur double-dummy en information parfaite qui voit les 4 mains \u2014 il <em>triche</em>.
-            Utilise une recherche alpha-b\u00eata avec tables de transposition, PVS et coups tueurs pour calculer
-            la carte optimale exacte en ~7ms (m\u00e9diane). Utile comme borne sup\u00e9rieure pour \u00e9valuer
-            la qualit\u00e9 de jeu des autres agents : aucun agent r\u00e9aliste ne devrait battre l'Oracle de mani\u00e8re r\u00e9guli\u00e8re.
+            Merci à <strong>Ronan Guillou</strong>, joueur de coinche aguerri, pour ses conseils avisés sur le jeu
+            et pour avoir été le premier testeur — son bon sens a guidé de nombreux choix d'interface.
         </p>
     </div>
 
