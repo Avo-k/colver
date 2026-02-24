@@ -82,6 +82,7 @@ const TEMPLATE = `
         <div id="annonces-results-area" class="hidden">
             <div class="annonces-result-panel" id="annonces-nn-panel">
                 <div id="annonces-results-header" class="section-title"></div>
+                <p class="nn-explainer">R\u00e9seau de neurones entra\u00een\u00e9 par renforcement sur des millions de parties en jeu parfait (double-dummy).</p>
                 <div id="annonces-results-body"></div>
             </div>
             <div class="annonces-result-panel" id="annonces-sim-panel">
