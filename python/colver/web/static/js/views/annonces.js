@@ -91,7 +91,7 @@ const TEMPLATE = `
                 <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-sim-viewer-wrap">
                     <details id="annonces-sim-viewer">
-                        <summary>Voir les mains simul\u00e9es</summary>
+                        <summary>Voir 10 exemples de distribution</summary>
                         <div id="annonces-sim-viewer-content"></div>
                     </details>
                 </div>
@@ -316,8 +316,7 @@ function renderSimViewer(deals, numSims) {
     }
 
     const shown = sampled.length;
-    viewer.querySelector('summary').textContent =
-        `Voir les mains simul\u00e9es (${shown}${shown < numSims ? `/${numSims}` : ''} donnes)`;
+    viewer.querySelector('summary').textContent = `Voir 10 exemples de distribution`;
 
     let html = '';
     for (let d = 0; d < sampled.length; d++) {
