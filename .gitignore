@@ -25,6 +25,9 @@ images/SVG-cards-1.3.zip
 # Private strategy documents
 docs/enchere_cannes_roro.md
 
+# WASM build output (wasm-pack build)
+python/colver/web/static/wasm/
+
 # Playwright MCP
 .playwright-mcp/
 

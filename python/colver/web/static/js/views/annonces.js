@@ -1,7 +1,9 @@
 // Annonces view — hand builder + bidding NN evaluation
+// Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName } from '../shared/cards.js';
+import * as wasmBridge from '../wasm-bridge.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
@@ -77,6 +79,14 @@ const TEMPLATE = `
                 <label class="annonces-sim-label">Simulations :
                     <input type="number" id="annonces-sim-count" value="200" min="1" max="1000" style="width:55px">
                 </label>
+                <div class="annonces-toggle-wrap">
+                    <span class="annonces-toggle-label" id="annonces-label-server">Serveur</span>
+                    <label class="annonces-toggle">
+                        <input type="checkbox" id="annonces-local-toggle">
+                        <span class="annonces-toggle-track"></span>
+                    </label>
+                    <span class="annonces-toggle-label" id="annonces-label-local">Calcul local</span>
+                </div>
             </div>
         </div>
         <div id="annonces-results-area" class="hidden">
@@ -92,12 +102,25 @@ const TEMPLATE = `
                 </div>
             </div>
             <div class="annonces-result-panel" id="annonces-sim-panel">
-                <div id="annonces-sim-header" class="section-title">Oracle</div>
+                <div id="annonces-sim-header" class="section-title">
+                    <span>Oracle</span>
+                    <div id="oracle-progress" class="sim-progress hidden">
+                        <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
+                        <span class="sim-progress-text"></span>
+                    </div>
+                </div>
                 <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
                 <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-doudou-panel">
-                    <div id="annonces-doudou-header" class="section-title">DouDou</div>
-                    <p class="doudou-explainer">M\u00eames distributions que l\u2019Oracle, mais jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite.</p>
+                    <div id="annonces-doudou-header" class="section-title">
+                        <span>DouDou</span>
+                        <div id="doudou-progress" class="sim-progress hidden">
+                            <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
+                            <span class="sim-progress-text"></span>
+                        </div>
+                        <span id="doudou-stats-text"></span>
+                    </div>
+                    <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite.</p>
                     <div id="annonces-doudou-body"></div>
                 </div>
             </div>
@@ -108,6 +131,26 @@ const TEMPLATE = `
 
 let annoncesHand = new Set();
 let annoncesHistory = [];
+
+function isLocalMode() {
+    const toggle = document.getElementById('annonces-local-toggle');
+    return toggle && toggle.checked;
+}
+
+function setLocalMode(on) {
+    const toggle = document.getElementById('annonces-local-toggle');
+    if (toggle) toggle.checked = on;
+    updateToggleLabels();
+    try { localStorage.setItem('annonces-local', on ? '1' : '0'); } catch(e) {}
+}
+
+function updateToggleLabels() {
+    const local = isLocalMode();
+    const labelLocal = document.getElementById('annonces-label-local');
+    const labelServer = document.getElementById('annonces-label-server');
+    if (labelLocal) labelLocal.classList.toggle('active', local);
+    if (labelServer) labelServer.classList.toggle('active', !local);
+}
 
 function annoncesPlayerSeat(turnIdx, historyLen) {
     return (2 - historyLen + turnIdx + 32) % 4;
@@ -270,10 +313,24 @@ function handleBidEvalResult(data) {
     document.getElementById('annonces-results-body').innerHTML = html;
 }
 
+function updateProgressBar(id, completed, total, elapsedMs) {
+    const wrap = document.getElementById(id);
+    wrap.classList.remove('hidden');
+    const fill = wrap.querySelector('.sim-progress-fill');
+    const text = wrap.querySelector('.sim-progress-text');
+    const pct = total > 0 ? Math.round(completed / total * 100) : 0;
+    fill.style.width = `${pct}%`;
+    const elapsed = elapsedMs != null ? ` \u2014 ${(elapsedMs / 1000).toFixed(1)}s` : '';
+    text.textContent = `${completed}/${total}${elapsed}`;
+    if (completed >= total) {
+        wrap.classList.add('done');
+    } else {
+        wrap.classList.remove('done');
+    }
+}
+
 function renderOracleTable(successCounts, completed, total, elapsedMs) {
-    const header = document.getElementById('annonces-sim-header');
-    const elapsed = elapsedMs != null ? `, ${(elapsedMs / 1000).toFixed(1)}s` : '';
-    header.textContent = `Oracle (${completed}/${total} donnes${elapsed})`;
+    updateProgressBar('oracle-progress', completed, total, elapsedMs);
 
     const body = document.getElementById('annonces-sim-body');
 
@@ -363,14 +420,17 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     }
     panel.classList.remove('hidden');
 
-    const header = document.getElementById('annonces-doudou-header');
+    updateProgressBar('doudou-progress', completed, total, elapsedMs);
+
     const v = doudouStats.voids;
     const nsC = doudouStats.ns_contracts;
     const nsA = doudouStats.ns_achieved;
     const ewC = doudouStats.ew_contracts;
     const ewA = doudouStats.ew_achieved;
-    const elapsed = elapsedMs != null ? ` \u2014 ${(elapsedMs / 1000).toFixed(1)}s` : '';
-    header.textContent = `DouDou (${completed}/${total}${elapsed}) \u2014 ${v} passe, NS ${nsA}/${nsC}, EW ${ewA}/${ewC}`;
+    const nsPct = nsC > 0 ? Math.round(nsA / nsC * 100) : 0;
+    const ewPct = ewC > 0 ? Math.round(ewA / ewC * 100) : 0;
+    document.getElementById('doudou-stats-text').textContent =
+        `${v} passe, NS ${nsPct}% (${nsA}/${nsC}), EW ${ewPct}% (${ewA}/${ewC})`;
 
     const body = document.getElementById('annonces-doudou-body');
     let html = '<table id="doudou-table"><thead><tr><th></th>';
@@ -404,19 +464,95 @@ function handleSimUpdate(data) {
     if (data.error) {
         document.getElementById('annonces-sim-body').innerHTML =
             `<div class="annonces-error">${data.error}</div>`;
-        document.getElementById('annonces-sim-header').textContent = 'Erreur';
         return;
     }
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
-    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
 }
 
 function handleSimDone(data) {
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
-    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
         renderSimViewer(data.sampled_deals, data.completed);
     }
+}
+
+// --- DouDou-only server handlers (used in local mode for DouDou part) ---
+
+function handleDoudouUpdate(data) {
+    if (data.error) return; // Silently ignore — DouDou is optional in local mode
+    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
+}
+
+function handleDoudouDone(data) {
+    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
+}
+
+// --- Eval paths ---
+
+function resetPanels(numSims) {
+    document.getElementById('annonces-results-area').classList.remove('hidden');
+    document.getElementById('annonces-results-header').textContent = 'Le Bide \u00e0 D\u00e9d\u00e9';
+    document.getElementById('annonces-results-body').innerHTML =
+        '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
+    document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
+    const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
+    renderOracleTable(emptyCountsSeed, 0, numSims, null);
+    // Reset DouDou panel — show it but with empty state
+    const doudouPanel = document.getElementById('annonces-doudou-panel');
+    doudouPanel.classList.remove('hidden');
+    document.getElementById('annonces-doudou-body').innerHTML = '';
+    document.getElementById('doudou-stats-text').textContent = '';
+    const dp = document.getElementById('doudou-progress');
+    dp.classList.add('hidden');
+    dp.classList.remove('done');
+    dp.querySelector('.sim-progress-fill').style.width = '0%';
+    dp.querySelector('.sim-progress-text').textContent = '';
+}
+
+async function evalLocal(hand, numSims) {
+    try {
+        await wasmBridge.ensureReady();
+    } catch (err) {
+        console.warn('[annonces] WASM init failed, falling back to server:', err);
+        setLocalMode(false);
+        evalServer(hand, numSims);
+        return;
+    }
+
+    // 1. BidNet eval (main thread, sub-ms)
+    try {
+        const result = wasmBridge.evaluateBid(hand, annoncesHistory);
+        handleBidEvalResult(result);
+    } catch (err) {
+        handleBidEvalResult({ error: `WASM BidNet: ${err.message || err}` });
+    }
+
+    // 2. Oracle via Worker (streaming)
+    wasmBridge.runOracleSim(hand, numSims,
+        (data) => {
+            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+        },
+        (data) => {
+            if (data.error) {
+                document.getElementById('annonces-sim-body').innerHTML =
+                    `<div class="annonces-error">${data.error}</div>`;
+                return;
+            }
+            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+            if (data.sampled_deals && data.sampled_deals.length > 0) {
+                renderSimViewer(data.sampled_deals, data.completed);
+            }
+        }
+    );
+
+    // 3. DouDou via WebSocket (server-side, needs DMC model)
+    send({ type: 'annonces_doudou', hand, prior_actions: annoncesHistory, num_sims: numSims });
+}
+
+function evalServer(hand, numSims) {
+    send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
+    send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
 }
 
 export function mount(container) {
@@ -429,6 +565,13 @@ export function mount(container) {
     initActionSelect();
     renderAnnoncesHistory();
     updateAnnoncesDisplay();
+
+    // Restore toggle state from localStorage
+    const toggle = document.getElementById('annonces-local-toggle');
+    const stored = localStorage.getItem('annonces-local');
+    toggle.checked = stored !== '0'; // default on
+    updateToggleLabels();
+    toggle.addEventListener('change', updateToggleLabels);
 
     // Event handlers
     document.getElementById('annonces-history-add-btn').addEventListener('click', () => {
@@ -464,36 +607,29 @@ export function mount(container) {
         const hand = Array.from(annoncesHand);
         const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 200));
 
-        document.getElementById('annonces-results-area').classList.remove('hidden');
+        resetPanels(numSims);
 
-        // Reset NN panel
-        document.getElementById('annonces-results-header').textContent = 'Le Bide \u00e0 D\u00e9d\u00e9';
-        document.getElementById('annonces-results-body').innerHTML =
-            '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
-
-        // Reset oracle panel with empty table
-        document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
-        const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                                 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
-        renderOracleTable(emptyCountsSeed, 0, numSims, null);
-
-        // Reset DouDou panel
-        document.getElementById('annonces-doudou-panel').classList.add('hidden');
-        document.getElementById('annonces-doudou-body').innerHTML = '';
-
-        send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
-        send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
+        if (isLocalMode()) {
+            evalLocal(hand, numSims);
+        } else {
+            evalServer(hand, numSims);
+        }
     });
 
     onMessage('bid_eval_result', handleBidEvalResult);
     onMessage('annonces_sim_update', handleSimUpdate);
     onMessage('annonces_sim_done', handleSimDone);
+    onMessage('annonces_doudou_update', handleDoudouUpdate);
+    onMessage('annonces_doudou_done', handleDoudouDone);
 }
 
 export function unmount() {
     offMessage('bid_eval_result', handleBidEvalResult);
     offMessage('annonces_sim_update', handleSimUpdate);
     offMessage('annonces_sim_done', handleSimDone);
+    offMessage('annonces_doudou_update', handleDoudouUpdate);
+    offMessage('annonces_doudou_done', handleDoudouDone);
+    wasmBridge.cancelOracle();
     annoncesHand = new Set();
     annoncesHistory = [];
 }

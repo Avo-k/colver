@@ -473,45 +473,145 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 try:
                     import time as _time
+                    import random as _random
                     loop = asyncio.get_event_loop()
                     remaining = list(set(range(32)) - set(hand))
                     seat = 2  # Sud
                     n_prior = len(prior_actions)
                     dealer = (seat - 1 - n_prior + 32) % 4
                     THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162]
-                    success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
-                    dd_totals = [[0.0, 0.0] for _ in range(4)]
-                    sampled_deals = []
-                    start = _time.monotonic()
 
-                    # DouDou aggregation: doudou_cells[suit][col] = [bid_count, achieved_count]
-                    # cols 0-8 = values 80-160 (step 10), col 9 = capot (250)
-                    has_models = bool(BID_MODEL_PATH and DMC_MODEL_PATH)
-                    doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)] if has_models else None
-                    doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
-                                    "ew_contracts": 0, "ew_achieved": 0} if has_models else None
+                    # Pre-generate all distributions
+                    others = [s for s in range(4) if s != seat]
+                    all_hands = []
+                    for _ in range(num_sims):
+                        r = list(remaining)
+                        _random.shuffle(r)
+                        h = [None] * 4
+                        h[seat] = sorted(hand)
+                        for j, p in enumerate(others):
+                            h[p] = sorted(r[j * 8:(j + 1) * 8])
+                        all_hands.append(h)
+
+                    # Phase 1: Oracle (DD solves) — fast
+                    success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
+                    sampled_deals = []
+                    oracle_start = _time.monotonic()
 
                     for i in range(num_sims):
-                        if has_models:
-                            result = await loop.run_in_executor(
-                                None, _run_single_combined_sim, hand, list(remaining),
-                                BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
-                        else:
-                            result = await loop.run_in_executor(
-                                None, _run_single_dd_sim, hand, list(remaining), dealer)
-                            result["doudou"] = None
+                        result = await loop.run_in_executor(
+                            None, _run_dd_sim_with_hands, all_hands[i], dealer)
 
                         for suit_idx, (ns, ew) in enumerate(result["suits"]):
-                            dd_totals[suit_idx][0] += ns
-                            dd_totals[suit_idx][1] += ew
                             for t_idx, thr in enumerate(THRESHOLDS):
                                 if ns >= thr:
                                     success_counts[suit_idx][t_idx] += 1
                         sampled_deals.append(result["hands"])
 
-                        # Aggregate DouDou results
+                        completed = i + 1
+                        await ws.send_json({
+                            "type": "annonces_sim_update",
+                            "completed": completed, "total": num_sims,
+                            "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
+                            "success_counts": success_counts,
+                        })
+
+                    await ws.send_json({
+                        "type": "annonces_sim_done",
+                        "completed": num_sims, "total": num_sims,
+                        "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
+                        "success_counts": success_counts,
+                        "sampled_deals": sampled_deals,
+                    })
+
+                    # Phase 2: DouDou (NN bid + DMC play) — slow
+                    has_models = bool(BID_MODEL_PATH and DMC_MODEL_PATH)
+                    if has_models:
+                        doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)]
+                        doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
+                                        "ew_contracts": 0, "ew_achieved": 0}
+                        doudou_start = _time.monotonic()
+
+                        for i in range(num_sims):
+                            dd = await loop.run_in_executor(
+                                None, _run_doudou_sim_with_hands, all_hands[i],
+                                BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
+
+                            if dd["void"]:
+                                doudou_stats["voids"] += 1
+                            else:
+                                suit = dd["trump"]
+                                value = dd["value"]
+                                team = dd["team"]
+                                achieved = dd["achieved"]
+                                col = 9 if value == 250 else (value - 80) // 10
+                                if 0 <= col <= 9 and 0 <= suit <= 3:
+                                    doudou_cells[suit][col][0] += 1
+                                    if achieved:
+                                        doudou_cells[suit][col][1] += 1
+                                if team == 0:
+                                    doudou_stats["ns_contracts"] += 1
+                                    if achieved:
+                                        doudou_stats["ns_achieved"] += 1
+                                else:
+                                    doudou_stats["ew_contracts"] += 1
+                                    if achieved:
+                                        doudou_stats["ew_achieved"] += 1
+
+                            completed = i + 1
+                            await ws.send_json({
+                                "type": "annonces_doudou_update",
+                                "completed": completed, "total": num_sims,
+                                "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
+                                "doudou_cells": doudou_cells,
+                                "doudou_stats": doudou_stats,
+                            })
+
+                        await ws.send_json({
+                            "type": "annonces_doudou_done",
+                            "completed": num_sims, "total": num_sims,
+                            "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
+                            "doudou_cells": doudou_cells,
+                            "doudou_stats": doudou_stats,
+                        })
+
+                except Exception as e:
+                    await ws.send_json({"type": "annonces_sim_update", "error": str(e)})
+
+            elif msg_type == "annonces_doudou":
+                hand = data.get("hand", [])
+                num_sims = max(1, min(1000, int(data.get("num_sims", 200))))
+                prior_actions_raw = data.get("prior_actions", None)
+                if prior_actions_raw is not None:
+                    prior_actions = [int(a) for a in prior_actions_raw]
+                else:
+                    prior_actions = []
+                if len(hand) != 8:
+                    await ws.send_json({"type": "annonces_doudou_update", "error": "8 cartes requises"})
+                    continue
+                if not BID_MODEL_PATH or not DMC_MODEL_PATH:
+                    await ws.send_json({"type": "annonces_doudou_update", "error": "Modèles DouDou non disponibles"})
+                    continue
+                try:
+                    import time as _time
+                    loop = asyncio.get_event_loop()
+                    remaining = list(set(range(32)) - set(hand))
+                    seat = 2  # Sud
+                    n_prior = len(prior_actions)
+                    dealer = (seat - 1 - n_prior + 32) % 4
+                    start = _time.monotonic()
+
+                    doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)]
+                    doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
+                                    "ew_contracts": 0, "ew_achieved": 0}
+
+                    for i in range(num_sims):
+                        result = await loop.run_in_executor(
+                            None, _run_single_doudou_sim, hand, list(remaining),
+                            BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
+
                         dd = result.get("doudou")
-                        if dd and doudou_cells is not None:
+                        if dd:
                             if dd["void"]:
                                 doudou_stats["voids"] += 1
                             else:
@@ -535,25 +635,22 @@ async def websocket_endpoint(ws: WebSocket):
 
                         completed = i + 1
                         await ws.send_json({
-                            "type": "annonces_sim_update",
+                            "type": "annonces_doudou_update",
                             "completed": completed, "total": num_sims,
                             "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
-                            "success_counts": success_counts,
                             "doudou_cells": doudou_cells,
                             "doudou_stats": doudou_stats,
                         })
 
                     await ws.send_json({
-                        "type": "annonces_sim_done",
+                        "type": "annonces_doudou_done",
                         "completed": num_sims, "total": num_sims,
                         "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
-                        "success_counts": success_counts,
-                        "sampled_deals": sampled_deals,
                         "doudou_cells": doudou_cells,
                         "doudou_stats": doudou_stats,
                     })
                 except Exception as e:
-                    await ws.send_json({"type": "annonces_sim_update", "error": str(e)})
+                    await ws.send_json({"type": "annonces_doudou_update", "error": str(e)})
 
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
@@ -791,6 +888,51 @@ def _run_dd_sim(hand, num_sims):
     }
 
 
+def _run_dd_sim_with_hands(hands, dealer=0):
+    """Run DD solve on pre-generated hands."""
+    seat = 2
+    others = [s for s in range(4) if s != seat]
+    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+    dd_result = env.solve_all_suits()
+    deal_hands = {str(p): list(hands[p]) for p in others}
+    return {"suits": dd_result["suits"], "hands": deal_hands}
+
+
+def _run_doudou_sim_with_hands(hands, bid_model_path, dmc_model_path,
+                                dealer=0, prior_actions=None):
+    """Run DouDou (NN bid + DMC play) on pre-generated hands."""
+    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+    env.load_bid_model(bid_model_path)
+    env.load_dmc_model(dmc_model_path)
+
+    if prior_actions:
+        for action in prior_actions:
+            env.step(action)
+
+    safety = 0
+    while env.phase() == 0 and not env.is_terminal() and safety < 50:
+        env.step(int(env.bid_a_dd()))
+        safety += 1
+
+    contract = env.get_contract()
+    if not contract:
+        return {"void": True}
+
+    while not env.is_terminal():
+        result = env.action_dmc_with_stats()
+        env.step(int(result["best_action"]))
+    rewards = env.rewards()
+    taker = contract["team"]
+    return {
+        "void": False,
+        "trump": contract["trump"],
+        "value": contract["value"],
+        "team": taker,
+        "coinche": contract["coinche"],
+        "achieved": rewards[taker] > 0,
+    }
+
+
 def _run_single_dd_sim(hand, remaining, dealer=0):
     """Run ONE DD simulation: shuffle remaining cards, solve all 4 suits."""
     import random
@@ -874,6 +1016,58 @@ def _run_single_combined_sim(hand, remaining, bid_model_path, dmc_model_path,
             }
 
     return {"suits": dd_result["suits"], "hands": deal_hands, "doudou": doudou}
+
+
+def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
+                            dealer=0, prior_actions=None):
+    """Run ONE DouDou-only sim: shuffle opponent hands, NN bid + DMC play (no DD solve)."""
+    import random
+
+    remaining = list(remaining)
+    random.shuffle(remaining)
+    seat = 2  # Sud
+    others = [s for s in range(4) if s != seat]
+    hands = [None] * 4
+    hands[seat] = sorted(hand)
+    for i, p in enumerate(others):
+        hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
+
+    doudou = None
+    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+    env.load_bid_model(bid_model_path)
+    env.load_dmc_model(dmc_model_path)
+
+    # Replay user's bid history
+    if prior_actions:
+        for action in prior_actions:
+            env.step(action)
+
+    # Bidding phase
+    safety = 0
+    while env.phase() == 0 and not env.is_terminal() and safety < 50:
+        env.step(int(env.bid_a_dd()))
+        safety += 1
+
+    contract = env.get_contract()
+    if not contract:
+        doudou = {"void": True}
+    else:
+        # Play phase with DMC
+        while not env.is_terminal():
+            result = env.action_dmc_with_stats()
+            env.step(int(result["best_action"]))
+        rewards = env.rewards()
+        taker = contract["team"]
+        doudou = {
+            "void": False,
+            "trump": contract["trump"],
+            "value": contract["value"],
+            "team": taker,
+            "coinche": contract["coinche"],
+            "achieved": rewards[taker] > 0,
+        }
+
+    return {"doudou": doudou}
 
 
 # Catch-all for client-side routes (pushState).
