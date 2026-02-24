@@ -12,7 +12,7 @@ const TEMPLATE = `
         Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
     </p>
 
-    <h3>Agents IA</h3>
+    <h3>Jeu de la carte</h3>
 
     <div class="docs-section">
         <h4>Oracle (DD)</h4>
@@ -43,6 +43,38 @@ const TEMPLATE = `
             et produit les Q-values des 32 cartes en une seule passe \u2014 aucun arbre de recherche n\u00e9cessaire.
             L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision. Agent le plus fort dans l'ensemble.
             <em>DouDou</em> = en r\u00e9f\u00e9rence \u00e0 DouZero.
+        </p>
+    </div>
+
+    <h3>Ench\u00e8res</h3>
+
+    <div class="docs-section">
+        <h4>Le Bide \u00e0 D\u00e9d\u00e9 <span class="docs-tag best">D\u00e9faut</span></h4>
+        <p>
+            R\u00e9seau de neurones d'ench\u00e8res utilis\u00e9 par tous les agents.
+            Dueling DQN entra\u00een\u00e9 sur un million de donnes r\u00e9solues par le solveur double-dummy :
+            pour chaque main, le r\u00e9seau apprend quelle annonce m\u00e8ne au meilleur r\u00e9sultat en jeu parfait.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>Ench\u00e8res heuristiques</h4>
+        <p>
+            Syst\u00e8me d'ench\u00e8res \u00e0 base de r\u00e8gles cod\u00e9es \u00e0 la main :
+            \u00e9valuation de la main (honneurs d'atout, longueur, as annexes),
+            seuils de palier, plafonds d'annonce et conditions de coinche.
+            Utilis\u00e9 pendant l'entra\u00eenement des r\u00e9seaux de neurones et disponible comme alternative.
+        </p>
+    </div>
+
+    <h3>Croyances</h3>
+
+    <div class="docs-section">
+        <h4>R\u00e9seau de croyances</h4>
+        <p>
+            R\u00e9seau de neurones qui pr\u00e9dit, pour chaque carte non visible, la probabilit\u00e9 qu'elle se trouve
+            dans chaque main adverse. Utilis\u00e9 par D\u00e9d\u00e9 pour \u00e9chantillonner des distributions de cartes
+            plus r\u00e9alistes que le hasard uniforme, et par la page Croyances pour la visualisation.
         </p>
     </div>
 
