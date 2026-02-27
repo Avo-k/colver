@@ -190,6 +190,29 @@
 }
 #play-status:empty { display: none; }
 
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    #play-table {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto auto;
+        gap: 8px 0;
+        min-height: 0;
+    }
+    #play-table #score-bar { grid-column: 1; grid-row: 1; }
+    #play-table .cfn-box { grid-column: 1; grid-row: 2; }
+    #play-table .seats { grid-column: 1; grid-row: 3; min-height: 0; }
+    #play-table #bid-history-panel {
+        grid-column: 1;
+        grid-row: 4;
+        width: 100%;
+    }
+    #play-table #play-review {
+        grid-column: 1;
+        grid-row: 4;
+        width: 100%;
+    }
+}
+
 /* Welcome state: center config when no game is running */
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config {
     flex: 1;

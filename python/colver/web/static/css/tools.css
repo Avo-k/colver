@@ -722,6 +722,7 @@
         flex-direction: column;
     }
     #annonces-nn-panel {
+        width: auto;
         max-width: none;
     }
 }
@@ -1199,4 +1200,21 @@
 
 .belief-stat-item b {
     color: #ccc;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    /* Beliefs: narrower card columns */
+    .belief-card-col { width: 40px; }
+    .belief-card-img { width: 34px; }
+    .belief-suit-label { width: 20px; font-size: 1rem; }
+    .belief-cards-row { gap: 3px; }
+
+    /* Problems: stack vertically */
+    #pa-main, #pj-main { flex-direction: column; }
+    #pa-left, #pj-left { min-width: 0; }
+    .prob-correction { width: 100%; }
+
+    /* Docs: tighter padding */
+    #docs-content { padding: 12px 16px; }
 }

@@ -93,6 +93,18 @@ nav { display: flex; gap: 4px; align-items: center; }
     border-bottom-color: #d4af37;
 }
 
+.nav-toggle {
+    display: none;
+    background: transparent;
+    border: none;
+    color: #aaa;
+    font-size: 1.5rem;
+    padding: 4px 8px;
+    cursor: pointer;
+    line-height: 1;
+}
+.nav-toggle:hover { color: #fff; background: transparent; }
+
 .sound-toggle {
     background: transparent;
     border: none;
@@ -279,4 +291,66 @@ nav { display: flex; gap: 4px; align-items: center; }
     .landing-grid {
         grid-template-columns: 1fr;
     }
+
+    /* Hamburger nav */
+    .nav-toggle { display: block; }
+    nav {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: rgba(15, 15, 15, 0.97);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        flex-direction: column;
+        padding: 8px 0;
+        z-index: 200;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    nav.nav-open { display: flex; }
+    header { position: relative; }
+    .nav-group { position: static; }
+    .nav-label { display: none; }
+    .nav-dropdown {
+        display: flex;
+        flex-direction: column;
+        position: static;
+        background: none;
+        backdrop-filter: none;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        border-radius: 0;
+    }
+    .nav-item {
+        padding: 12px 24px;
+        font-size: 1rem;
+    }
+    .nav-link {
+        padding: 12px 24px;
+        font-size: 1rem;
+        border-bottom: none;
+    }
+    .sound-toggle {
+        padding: 12px 24px;
+        font-size: 1.2rem;
+        margin-left: 0;
+        text-align: left;
+    }
+
+    /* Main container: allow scrolling on mobile */
+    #app {
+        overflow-y: auto;
+        height: auto;
+        min-height: calc(100vh - 46px);
+    }
+
+    /* Config bars: compact on mobile */
+    #play-config, #watch-config {
+        gap: 8px;
+        padding: 8px 12px;
+    }
+    .config-separator { display: none; }
 }

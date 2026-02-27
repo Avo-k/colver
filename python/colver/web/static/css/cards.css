@@ -128,3 +128,11 @@
     background: rgba(184, 134, 11, 0.85);
     color: #fff8e1;
 }
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    .seat.west .hand .card,
+    .seat.east .hand .card {
+        margin-top: calc(var(--card-h) * -0.8);
+    }
+}

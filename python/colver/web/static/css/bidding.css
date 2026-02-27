@@ -90,3 +90,10 @@
     color: #fff;
 }
 .bid-btn.coinche:hover { background: #e04438; }
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 600px) {
+    .bid-btn {
+        padding: 10px 16px;
+    }
+}

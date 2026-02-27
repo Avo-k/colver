@@ -11,6 +11,21 @@ connect();
 // Init bug report modal (it lives in index.html shell)
 initBugReportModal();
 
+// Mobile nav toggle
+const navToggle = document.getElementById('nav-toggle');
+const nav = document.querySelector('nav');
+if (navToggle && nav) {
+    navToggle.addEventListener('click', () => {
+        nav.classList.toggle('nav-open');
+    });
+    // Close nav when a link is clicked
+    nav.addEventListener('click', (e) => {
+        if (e.target.matches('.nav-item, .nav-link')) {
+            nav.classList.remove('nav-open');
+        }
+    });
+}
+
 // Sound toggle
 const soundBtn = document.getElementById('sound-toggle');
 if (soundBtn) {

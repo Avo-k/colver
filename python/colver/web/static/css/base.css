@@ -86,4 +86,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
     .seats {
         grid-template-columns: 80px 1fr 80px;
     }
+    button, select {
+        min-height: 40px;
+    }
 }
