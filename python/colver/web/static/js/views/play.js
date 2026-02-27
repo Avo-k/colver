@@ -48,14 +48,6 @@ const TEMPLATE = `
             <option value="oracle_dd">Oracle (DD)</option>
         </select>
     </label>
-    <label id="difficulty-label">Niveau :
-        <select id="difficulty">
-            <option value="facile">Facile</option>
-            <option value="normal">Normal</option>
-            <option value="difficile" selected>Difficile</option>
-            <option value="expert">Expert</option>
-        </select>
-    </label>
     <label>Pause :
         <input type="range" id="move-delay" min="1" max="8" value="2" step="1" style="width:80px">
         <span id="move-delay-val">2s</span>
@@ -606,18 +598,6 @@ function launchConfetti() {
     }
 }
 
-// ===== Difficulty visibility =====
-
-function updateDifficultyVisibility() {
-    const opp = document.getElementById('opponent-ai').value;
-    const par = document.getElementById('partner-ai').value;
-    const label = document.getElementById('difficulty-label');
-    const sel = document.getElementById('difficulty');
-    const hasDede = opp === 'dede' || par === 'dede';
-    label.classList.toggle('hidden', !hasDede);
-    if (!hasDede) sel.value = 'difficile';
-}
-
 // ===== WS message handlers (stored for offMessage) =====
 
 function handleGameState(data) {
@@ -691,10 +671,6 @@ export function mount(container) {
         document.getElementById('move-delay-val').textContent = `${e.target.value}s`;
     });
 
-    document.getElementById('opponent-ai').addEventListener('change', updateDifficultyVisibility);
-    document.getElementById('partner-ai').addEventListener('change', updateDifficultyVisibility);
-    updateDifficultyVisibility();
-
     document.getElementById('play-config-toggle').addEventListener('click', () => {
         document.getElementById('play-config').classList.toggle('config-shown');
     });
@@ -711,8 +687,7 @@ export function mount(container) {
         _playGameId = null;
         _serverBidHistory = null;
         _serverCompletedTricks = null;
-        const difficulty = document.getElementById('difficulty').value;
-        send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay(), difficulty });
+        send({ type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi, human_seat: HUMAN_SEAT, move_delay: getMoveDelay() });
         document.getElementById('play-table').classList.remove('hidden');
         document.getElementById('game-result').classList.add('hidden');
         document.getElementById('game-result').innerHTML = '';
