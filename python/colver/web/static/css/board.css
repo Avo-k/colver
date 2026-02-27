@@ -194,21 +194,25 @@
 @media (max-width: 600px) {
     #play-table {
         grid-template-columns: 1fr;
-        grid-template-rows: auto auto auto auto;
-        gap: 8px 0;
+        grid-template-rows: auto 1fr;
+        gap: 4px 0;
         min-height: 0;
     }
     #play-table #score-bar { grid-column: 1; grid-row: 1; }
-    #play-table .cfn-box { grid-column: 1; grid-row: 2; }
-    #play-table .seats { grid-column: 1; grid-row: 3; min-height: 0; }
+    #play-table .cfn-box { display: none; }
+    #play-table .seats { grid-column: 1; grid-row: 2; min-height: 0; }
+    /* South hand: span full screen width, cards overlap dynamically */
+    #play-table .seat.south .hand {
+        width: calc(100vw - 16px);
+    }
     #play-table #bid-history-panel {
         grid-column: 1;
-        grid-row: 4;
+        grid-row: 3;
         width: 100%;
     }
     #play-table #play-review {
         grid-column: 1;
-        grid-row: 4;
+        grid-row: 3;
         width: 100%;
     }
 }

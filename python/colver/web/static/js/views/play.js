@@ -207,6 +207,20 @@ function renderPlayState(state) {
         }
     }
 
+    // Mobile: compute card overlap so south hand spans full width
+    if (window.innerWidth <= 600) {
+        const handEl = handEls[HUMAN_SEAT];
+        const n = handEl.children.length;
+        if (n > 1) {
+            const cardW = handEl.children[0].offsetWidth;
+            const availW = handEl.offsetWidth;
+            const overlap = (availW - n * cardW) / (n - 1);
+            handEl.style.setProperty('--card-overlap', Math.min(0, overlap) + 'px');
+        } else {
+            handEl.style.removeProperty('--card-overlap');
+        }
+    }
+
     // Trick (with flush animation)
     const completedCards = detectTrickCompletion('trick', state.current_trick);
     if (completedCards && _animatingTrick !== 'trick') {

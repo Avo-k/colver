@@ -360,6 +360,12 @@ nav { display: flex; gap: 4px; align-items: center; }
         height: auto;
         min-height: calc(100vh - 46px);
     }
+    /* Keep play table within viewport on mobile */
+    #app:has(#play-table:not(.hidden)) {
+        height: calc(100vh - 61px);
+        min-height: 0;
+        overflow: hidden;
+    }
 
     /* Config bars: compact on mobile */
     #play-config, #watch-config {

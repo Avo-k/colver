@@ -96,6 +96,14 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
             "south";
     }
     .seat.west, .seat.east { display: none !important; }
+    /* In play mode, hide North's face-down cards to save space */
+    #play-table .seat.north { display: none !important; }
+    #play-table .seats {
+        grid-template-areas:
+            "trick"
+            "south";
+        grid-template-rows: 1fr auto;
+    }
     button, select {
         min-height: 40px;
     }
