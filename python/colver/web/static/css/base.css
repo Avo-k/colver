@@ -79,13 +79,23 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 600px) {
+    body {
+        overflow: auto;
+        height: auto;
+        min-height: 100vh;
+    }
     :root {
         --card-w: 48px;
         --palette-w: 36px;
     }
     .seats {
-        grid-template-columns: 80px 1fr 80px;
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "north"
+            "trick"
+            "south";
     }
+    .seat.west, .seat.east { display: none !important; }
     button, select {
         min-height: 40px;
     }

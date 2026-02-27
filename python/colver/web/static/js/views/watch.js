@@ -125,6 +125,7 @@ function template() {
             <span id="watch-contract-display"></span>
             <span id="watch-score-ew">EO\u00a0: 0</span>
             <button id="watch-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+            <button id="watch-config-toggle" class="config-toggle-btn" title="Options">\u2699</button>
         </div>
         <div id="watch-cfn" class="cfn-box hidden" title="Cliquer pour copier"></div>
 
@@ -696,6 +697,11 @@ export function mount(container) {
     // Bind transport buttons and keyboard
     watchBoard.bindTransport();
     watchBoard.bindKeyboard();
+
+    // Config toggle (mobile)
+    document.getElementById('watch-config-toggle').addEventListener('click', () => {
+        document.getElementById('watch-config').classList.toggle('config-shown');
+    });
 
     // CFN load
     document.getElementById('cfn-load').addEventListener('click', loadFromCfn);

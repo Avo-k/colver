@@ -93,6 +93,20 @@ nav { display: flex; gap: 4px; align-items: center; }
     border-bottom-color: #d4af37;
 }
 
+.config-toggle-btn {
+    display: none;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #aaa;
+    font-size: 1rem;
+    padding: 2px 6px;
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: 1;
+    min-height: auto;
+}
+.config-toggle-btn:hover { color: #d4af37; border-color: rgba(212,175,55,0.4); background: transparent; }
+
 .nav-toggle {
     display: none;
     background: transparent;
@@ -353,4 +367,17 @@ nav { display: flex; gap: 4px; align-items: center; }
         padding: 8px 12px;
     }
     .config-separator { display: none; }
+
+    /* Config toggle button visible on mobile */
+    .config-toggle-btn { display: inline-block; }
+
+    /* Collapse config when game is active */
+    #app:has(#play-table:not(.hidden)) #play-config,
+    #app:has(#watch-main:not(.hidden)) #watch-config {
+        display: none;
+    }
+    #app:has(#play-table:not(.hidden)) #play-config.config-shown,
+    #app:has(#watch-main:not(.hidden)) #watch-config.config-shown {
+        display: flex;
+    }
 }

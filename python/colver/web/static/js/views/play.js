@@ -70,6 +70,7 @@ const TEMPLATE = `
         <span id="contract-display"></span>
         <span id="score-ew">EO : 0</span>
         <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+        <button id="play-config-toggle" class="config-toggle-btn" title="Options">\u2699</button>
     </div>
     <div class="seats">
         <div class="seat north" id="seat-north">
@@ -693,6 +694,10 @@ export function mount(container) {
     document.getElementById('opponent-ai').addEventListener('change', updateDifficultyVisibility);
     document.getElementById('partner-ai').addEventListener('change', updateDifficultyVisibility);
     updateDifficultyVisibility();
+
+    document.getElementById('play-config-toggle').addEventListener('click', () => {
+        document.getElementById('play-config').classList.toggle('config-shown');
+    });
 
     document.getElementById('start-game').addEventListener('click', () => {
         const opponentAi = document.getElementById('opponent-ai').value;
