@@ -94,7 +94,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 }
 
 .config-toggle-btn {
-    display: none;
+    display: inline-block;
     background: transparent;
     border: 1px solid rgba(255,255,255,0.15);
     color: #aaa;
@@ -299,6 +299,16 @@ nav { display: flex; gap: 4px; align-items: center; }
 }
 .landing-about-link:hover { color: #d4af37; }
 
+/* Collapse config when game is active (all screen sizes) */
+#app:has(#play-table:not(.hidden)) #play-config,
+#app:has(#watch-main:not(.hidden)) #watch-config {
+    display: none;
+}
+#app:has(#play-table:not(.hidden)) #play-config.config-shown,
+#app:has(#watch-main:not(.hidden)) #watch-config.config-shown {
+    display: flex;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 600px) {
     #app { padding: 8px; }
@@ -374,16 +384,4 @@ nav { display: flex; gap: 4px; align-items: center; }
     }
     .config-separator { display: none; }
 
-    /* Config toggle button visible on mobile */
-    .config-toggle-btn { display: inline-block; }
-
-    /* Collapse config when game is active */
-    #app:has(#play-table:not(.hidden)) #play-config,
-    #app:has(#watch-main:not(.hidden)) #watch-config {
-        display: none;
-    }
-    #app:has(#play-table:not(.hidden)) #play-config.config-shown,
-    #app:has(#watch-main:not(.hidden)) #watch-config.config-shown {
-        display: flex;
-    }
 }

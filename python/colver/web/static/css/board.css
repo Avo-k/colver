@@ -29,7 +29,7 @@
         "west  trick  east"
         ".     south  .";
     grid-template-columns: 1fr 2fr 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: clamp(4px, 0.5vh, 10px);
 }
 
@@ -65,7 +65,7 @@
     gap: clamp(2px, 0.5vw, 8px);
     align-items: center;
     justify-items: center;
-    min-height: calc(var(--card-h) * 1.4);
+    min-height: 0;
 }
 
 #trick-n, #watch-trick-n, #replay-trick-n { grid-area: n; }
@@ -124,7 +124,7 @@
 
 /* ===== PLAY TABLE GRID ===== */
 #play-table {
-    --card-w: clamp(65px, min(6vw, 10.5vh), 150px);
+    --card-w: clamp(65px, min(6vw, calc((100vh - 200px) / 7.5)), 150px);
     --card-h: calc(var(--card-w) * 1.43);
     --card-overlap: calc(var(--card-w) * -0.2);
     display: grid;
@@ -137,7 +137,7 @@
 
 #play-table #score-bar { grid-column: 1 / -1; grid-row: 1; }
 #play-table .cfn-box { grid-column: 1 / -1; grid-row: 2; }
-#play-table .seats { grid-column: 1; grid-row: 3; min-height: 0; }
+#play-table .seats { grid-column: 1; grid-row: 3; min-height: 0; overflow: hidden; align-content: end; }
 #play-table #bid-history-panel {
     grid-column: 2;
     grid-row: 3;

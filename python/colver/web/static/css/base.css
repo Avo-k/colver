@@ -102,7 +102,7 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
         grid-template-areas:
             "trick"
             "south";
-        grid-template-rows: 1fr auto;
+        grid-template-rows: minmax(0, 1fr) auto;
     }
     button, select {
         min-height: 40px;
