@@ -2,7 +2,7 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import * as wasmBridge from '../wasm-bridge.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
@@ -159,7 +159,7 @@ function annoncesPlayerSeat(turnIdx, historyLen) {
 function initAnnoncesGrid() {
     const palette = document.getElementById('annonces-palette');
     palette.innerHTML = '';
-    for (let suit = 0; suit < 4; suit++) {
+    for (const suit of SUIT_DISPLAY_ORDER) {
         const label = document.createElement('div');
         label.className = 'palette-suit-label';
         label.innerHTML = suitHtml(suit);
@@ -342,7 +342,7 @@ function renderOracleTable(successCounts, completed, total, elapsedMs) {
     html += '</tr></thead><tbody>';
 
     // 4 suit rows
-    for (let suit = 0; suit < 4; suit++) {
+    for (const suit of SUIT_DISPLAY_ORDER) {
         html += `<tr><td>${suitHtml(suit)}</td>`;
         for (let t = 0; t < THRESHOLDS.length; t++) {
             const count = successCounts[suit][t];
@@ -458,7 +458,7 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     }
     html += '</tr></thead><tbody>';
 
-    for (let suit = 0; suit < 4; suit++) {
+    for (const suit of SUIT_DISPLAY_ORDER) {
         html += `<tr><td>${suitHtml(suit)}</td>`;
         for (let col = 0; col < 10; col++) {
             const [count, achieved] = doudouCells[suit][col];

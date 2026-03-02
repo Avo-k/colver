@@ -2,7 +2,7 @@
 // Step through a game and see how NN/heuristic beliefs evolve
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
@@ -216,7 +216,7 @@ function renderGrid() {
     const relNames = ['Moi', 'Gauche', 'Partenaire', 'Droite'];
     const absFromRel = (rel) => (observer + rel) % 4;
 
-    for (let suit = 0; suit < 4; suit++) {
+    for (const suit of SUIT_DISPLAY_ORDER) {
         const suitDiv = document.createElement('div');
         suitDiv.className = 'belief-suit';
 

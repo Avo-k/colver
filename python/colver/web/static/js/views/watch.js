@@ -6,7 +6,8 @@ import * as SFX from '../sounds.js';
 import {
     RANKS, SUITS, SEAT_NAMES_FR, cardSuit, cardRank, cardSvgPath, cardToHtml,
     renderHand, renderTrick, renderLastTrick, contractStr, actionName,
-    _prevTrick, _animatingTrick, detectTrickCompletion, animateTrickFlush
+    _prevTrick, _animatingTrick, detectTrickCompletion, animateTrickFlush,
+    SUIT_DISPLAY_ORDER, suitSortKeys
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
@@ -167,8 +168,8 @@ function template() {
                 <tr><th></th><th>NS</th><th>EO</th></tr>
                 <tr><td>\u2660</td><td id="dd-s-ns">-</td><td id="dd-s-ew">-</td></tr>
                 <tr><td class="red">\u2665</td><td id="dd-h-ns">-</td><td id="dd-h-ew">-</td></tr>
-                <tr><td class="red">\u2666</td><td id="dd-d-ns">-</td><td id="dd-d-ew">-</td></tr>
                 <tr><td>\u2663</td><td id="dd-c-ns">-</td><td id="dd-c-ew">-</td></tr>
+                <tr><td class="red">\u2666</td><td id="dd-d-ns">-</td><td id="dd-d-ew">-</td></tr>
             </table>
         </div>
         <div id="watch-transport">
@@ -515,7 +516,7 @@ function initCardPalette() {
     const palette = document.getElementById('card-palette');
     if (!palette) return;
     palette.innerHTML = '';
-    for (let suit = 0; suit < 4; suit++) {
+    for (const suit of SUIT_DISPLAY_ORDER) {
         const label = document.createElement('div');
         label.className = 'palette-suit-label';
         label.textContent = SUITS[suit];
@@ -635,7 +636,11 @@ function updateCardDisplay() {
         const container = zone.querySelector('.drop-zone-cards');
         if (!container) return;
         container.innerHTML = '';
-        const sorted = [...cards].sort((a, b) => a - b);
+        const keys = suitSortKeys(cards);
+        const sorted = [...cards].sort((a, b) => {
+            const sa = keys[a >> 3], sb = keys[b >> 3];
+            return sa !== sb ? sa - sb : a - b;
+        });
         for (const c of sorted) {
             container.appendChild(createDraggableCard(c, String(playerIdx)));
         }

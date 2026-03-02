@@ -60,8 +60,8 @@ const TEMPLATE = `
                 <tr><th></th><th>NS</th><th>EO</th></tr>
                 <tr><td>\u2660</td><td id="pa-dd-s-ns">-</td><td id="pa-dd-s-ew">-</td></tr>
                 <tr><td class="red">\u2665</td><td id="pa-dd-h-ns">-</td><td id="pa-dd-h-ew">-</td></tr>
-                <tr><td class="red">\u2666</td><td id="pa-dd-d-ns">-</td><td id="pa-dd-d-ew">-</td></tr>
                 <tr><td>\u2663</td><td id="pa-dd-c-ns">-</td><td id="pa-dd-c-ew">-</td></tr>
+                <tr><td class="red">\u2666</td><td id="pa-dd-d-ns">-</td><td id="pa-dd-d-ew">-</td></tr>
             </table>
             <div id="pa-dd-elapsed" class="visit-total"></div>
         </div>

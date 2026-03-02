@@ -10,6 +10,30 @@ export const SUIT_NAMES_EN = ['spades', 'hearts', 'diamonds', 'clubs'];
 export const RANK_NAMES_EN = ['7', '8', '9', 'jack', 'queen', 'king', '10', 'ace'];
 export const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 
+// Display order: ♠ ♥ ♣ ♦ (alternating black-red)
+export const SUIT_DISPLAY_ORDER = [0, 1, 3, 2];
+
+// Build per-hand suit sort keys that maximize color alternation.
+// With all 4 suits: ♠ ♥ ♣ ♦. With fewer, reorders to avoid adjacent same-color.
+export function suitSortKeys(cards) {
+    const present = new Set();
+    for (const c of cards) present.add(c >> 3);
+    const blacks = [0, 3].filter(s => present.has(s)); // ♠ ♣
+    const reds = [1, 2].filter(s => present.has(s));   // ♥ ♦
+    const order = [];
+    let bi = 0, ri = 0, pickBlack = blacks.length >= reds.length;
+    while (bi < blacks.length || ri < reds.length) {
+        if (pickBlack && bi < blacks.length) order.push(blacks[bi++]);
+        else if (!pickBlack && ri < reds.length) order.push(reds[ri++]);
+        else if (bi < blacks.length) order.push(blacks[bi++]);
+        else order.push(reds[ri++]);
+        pickBlack = !pickBlack;
+    }
+    const keys = [4, 4, 4, 4];
+    for (let i = 0; i < order.length; i++) keys[order[i]] = i;
+    return keys;
+}
+
 export function cardSuit(idx) { return idx >> 3; }
 export function cardRank(idx) { return idx & 7; }
 
@@ -60,9 +84,10 @@ const TRUMP_ORDER = [7, 6, 1, 0, 5, 4, 3, 2];
 
 export function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1, annotations = null) {
     container.innerHTML = '';
+    const sortKeys = suitSortKeys(cards);
     const sorted = [...cards].sort((a, b) => {
         const suitA = cardSuit(a), suitB = cardSuit(b);
-        if (suitA !== suitB) return suitA - suitB;
+        if (suitA !== suitB) return sortKeys[suitA] - sortKeys[suitB];
         const orderA = suitA === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
         const orderB = suitB === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
         return orderA[cardRank(a)] - orderB[cardRank(b)];
