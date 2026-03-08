@@ -8,7 +8,7 @@ services:
       - ./data:/app/data
       - colver-db:/data/colver
     environment:
-      - ROOT_PATH=${ROOT_PATH:-/colver}
+      - ROOT_PATH=${ROOT_PATH:-/}
       - COLVER_UPDATE_MODEL=1
       - COLVER_MODEL_PATH=/app/models/dmc_35.bin
       - COLVER_DB_PATH=/data/colver/colver.db
