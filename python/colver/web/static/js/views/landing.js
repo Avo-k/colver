@@ -58,6 +58,13 @@ const TEMPLATE = `
             <p class="mode-desc">Pratiquez le jeu de la carte face \u00e0 l'Oracle DD et D\u00e9d\u00e9.</p>
             <span class="mode-tag">Entra\u00eenement</span>
         </div>
+
+        <div class="mode-card" data-route="/aide">
+            <div class="mode-icon">\uD83D\uDCD6</div>
+            <h3 class="mode-title">Aide-m\u00e9moire</h3>
+            <p class="mode-desc">Ordre des cartes, points atout et non-atout \u2014 r\u00e9f\u00e9rence rapide pour vos parties.</p>
+            <span class="mode-tag">R\u00e9f\u00e9rence</span>
+        </div>
     </div>
 
     <div class="landing-footer">

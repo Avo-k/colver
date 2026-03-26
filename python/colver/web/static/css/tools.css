@@ -1202,8 +1202,234 @@
     color: #ccc;
 }
 
+/* ===== AIDE-MÉMOIRE ===== */
+#aide-content {
+    max-width: 700px;
+    margin: 0 auto;
+    padding: 24px 20px;
+    overflow-y: auto;
+    max-height: 100%;
+    line-height: 1.5;
+}
+
+.aide-header {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.aide-header h2 {
+    font-size: clamp(1.6rem, 2.5vw, 2.2rem);
+    color: #d4af37;
+    font-weight: 800;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+}
+
+.aide-subtitle {
+    color: #777;
+    font-size: clamp(0.85rem, 1vw, 1rem);
+    margin-top: 6px;
+}
+
+.aide-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.aide-section {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px;
+    padding: 20px 24px;
+}
+
+.aide-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+
+.aide-section-head h3 {
+    font-size: clamp(1.15rem, 1.5vw, 1.4rem);
+    color: #e0e0e0;
+    font-weight: 700;
+}
+
+.aide-section-total {
+    font-size: clamp(0.8rem, 1vw, 0.95rem);
+    color: #d4af37;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.aide-hint {
+    font-size: clamp(0.75rem, 0.85vw, 0.85rem);
+    color: #666;
+    margin-bottom: 14px;
+}
+
+.aide-card-row {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: clamp(3px, 0.6vw, 10px);
+}
+
+.aide-card-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.aide-card-img {
+    width: 100%;
+    height: auto;
+    border-radius: clamp(3px, 0.4vw, 6px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.aide-promoted .aide-card-img {
+    outline: 2px solid rgba(212, 175, 55, 0.5);
+    outline-offset: 1px;
+    box-shadow: 0 0 12px rgba(212, 175, 55, 0.3), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.aide-pts {
+    font-size: clamp(0.85rem, 1.2vw, 1.15rem);
+    font-weight: 800;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.aide-pts-gold {
+    color: #d4af37;
+    text-shadow: 0 0 8px rgba(212, 175, 55, 0.4);
+}
+
+.aide-pts-bright { color: #e0e0e0; }
+.aide-pts-dim { color: #888; }
+.aide-pts-zero { color: #444; }
+
+/* Totals */
+.aide-totals-section h3 {
+    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    color: #e0e0e0;
+    font-weight: 700;
+    margin-bottom: 14px;
+}
+
+.aide-totals-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+}
+
+.aide-stat {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    padding: 14px 8px;
+    text-align: center;
+}
+
+.aide-stat-val {
+    font-size: clamp(1.4rem, 2.2vw, 1.9rem);
+    font-weight: 800;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+
+.aide-stat-plus { color: #a5d6a7; }
+
+.aide-stat-highlight {
+    border-color: rgba(212, 175, 55, 0.3);
+    background: rgba(212, 175, 55, 0.06);
+}
+
+.aide-stat-highlight .aide-stat-val { color: #d4af37; }
+
+.aide-stat-label {
+    font-size: clamp(0.7rem, 0.85vw, 0.85rem);
+    color: #aaa;
+    font-weight: 600;
+    margin-top: 4px;
+}
+
+.aide-stat-detail {
+    font-size: clamp(0.65rem, 0.75vw, 0.75rem);
+    color: #555;
+    margin-top: 2px;
+}
+
+/* Bids */
+.aide-bids-section h3 {
+    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    color: #e0e0e0;
+    font-weight: 700;
+    margin-bottom: 12px;
+}
+
+.aide-bids-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.aide-bid {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: clamp(0.85rem, 1vw, 1rem);
+    font-weight: 700;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+
+.aide-bid-capot {
+    background: rgba(212, 175, 55, 0.12);
+    border-color: rgba(212, 175, 55, 0.35);
+    color: #d4af37;
+}
+
+.aide-bids-info {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: clamp(0.8rem, 0.9vw, 0.9rem);
+}
+
+.aide-bid-tag {
+    background: rgba(130, 224, 170, 0.1);
+    border: 1px solid rgba(130, 224, 170, 0.25);
+    border-radius: 6px;
+    padding: 4px 10px;
+    color: #82e0aa;
+    font-weight: 600;
+}
+
+.aide-bid-sep { color: #444; }
+
+.aide-bid-match {
+    color: #888;
+    font-weight: 600;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 600px) {
+    /* Aide */
+    #aide-content { padding: 16px 10px; }
+    .aide-section { padding: 14px 12px; border-radius: 10px; }
+    .aide-card-item { gap: 4px; }
+    .aide-totals-grid { gap: 6px; }
+    .aide-stat { padding: 10px 6px; }
+    .aide-bid { padding: 5px 8px; }
+
     /* Beliefs: narrower card columns */
     .belief-card-col { width: 40px; }
     .belief-card-img { width: 34px; }

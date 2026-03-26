@@ -9,6 +9,7 @@ const routes = {
     '/analyse/croyances': () => import('./views/beliefs.js'),
     '/problemes/annonce': () => import('./views/prob-annonce.js'),
     '/problemes/jeu':     () => import('./views/prob-jeu.js'),
+    '/aide':              () => import('./views/aide.js'),
     '/about':             () => import('./views/about.js'),
 };
 
