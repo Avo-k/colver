@@ -25,6 +25,8 @@ use colver_core::bid_net::BidNet;
 use colver_core::bid_obs;
 use colver_core::bidding::{self, BID_COINCHE, BID_PASS, BID_SURCOINCHE};
 use colver_core::card::*;
+use colver_core::is_dd::{IsDdConfig, IsDdSearch};
+use colver_core::scoring::compute_deal_score;
 use colver_core::solver;
 use colver_core::state::{GameState, Phase};
 
@@ -530,7 +532,8 @@ struct DealResult {
     ew_score: i16,
 }
 
-fn play_deal(
+/// Play a deal with DD oracle (fast: ~60ms/deal, uses pre-computed DD points).
+fn play_deal_dd(
     state: &mut GameState,
     ns_bidder: Bidder,
     ew_bidder: Bidder,
@@ -560,27 +563,89 @@ fn play_deal(
     }
 
     if state.contract.value == 0 {
-        return DealResult {
-            void: true,
-            ns_score: 0,
-            ew_score: 0,
-        };
+        return DealResult { void: true, ns_score: 0, ew_score: 0 };
     }
 
+    let contract_trump = state.contract.trump;
+    let ns_pts = dd_pts[contract_trump as usize];
+    dd_score(state, ns_pts)
+}
+
+/// Play a deal with IS-DD (realistic: ~1-2s/deal, actual card play with beliefs).
+fn play_deal_isdd(
+    state: &mut GameState,
+    ns_bidder: Bidder,
+    ew_bidder: Bidder,
+    nn: &mut Option<BidNet>,
+    isdd_time_ms: u32,
+    rng: &mut StdRng,
+) -> DealResult {
+    let mut bid_history: Vec<(u8, u8)> = Vec::new();
+
+    while state.phase == Phase::Bidding {
+        let player = state.current_player();
+        let team = GameState::player_team(player);
+        let bidder = if team == 0 { ns_bidder } else { ew_bidder };
+
+        let action = match bidder {
+            Bidder::V3Rules => v3_bid(state, &bid_history),
+            Bidder::ImprovedV2 => bid_eval::improved_v2_bid(state),
+            Bidder::Nn => {
+                let net = nn.as_mut().unwrap();
+                let obs = bid_obs::make_bid_observation(state, &bid_history);
+                let legal = state.legal_actions();
+                net.best_action_fast(&obs, legal)
+            }
+        };
+
+        bid_history.push((player, action));
+        state.step(action);
+    }
+
+    if state.contract.value == 0 {
+        return DealResult { void: true, ns_score: 0, ew_score: 0 };
+    }
+
+    // IS-DD play: each player uses belief-weighted determinization + DD solver
+    let isdd_config = IsDdConfig {
+        determinizations: 20,
+        time_limit_ms: Some(isdd_time_ms),
+        ..Default::default()
+    };
+
+    let mut searches: Vec<IsDdSearch> = (0..4).map(|_| IsDdSearch::new()).collect();
+    for p in 0..4u8 {
+        searches[p as usize].init_deal(state, p, true);
+    }
+
+    while state.phase == Phase::Playing && !state.is_terminal() {
+        let player = state.current_player();
+        let state_before = *state;
+        let action = searches[player as usize].search(state, &isdd_config, rng);
+        for s in &mut searches {
+            s.record_action(&state_before, player, action);
+        }
+        state.step(action);
+    }
+
+    let score = compute_deal_score(state);
+    DealResult {
+        void: false,
+        ns_score: score.scores[0],
+        ew_score: score.scores[1],
+    }
+}
+
+/// Compute score from DD points (for DD oracle mode).
+fn dd_score(state: &GameState, ns_pts: u8) -> DealResult {
     let contract_team = state.contract.team;
     let contract_value = state.contract.point_value();
     let contract_trump = state.contract.trump;
     let contract_coinche = state.contract.coinche;
 
-    let ns_pts = dd_pts[contract_trump as usize];
     let taker = contract_team as usize;
-    let taker_pts = if taker == 0 {
-        ns_pts
-    } else {
-        162 - ns_pts
-    };
+    let taker_pts = if taker == 0 { ns_pts } else { 162 - ns_pts };
 
-    // Belote check
     let mut belote = [0u8; 2];
     for p in 0..4u8 {
         let team = GameState::player_team(p) as usize;
@@ -597,45 +662,25 @@ fn play_deal(
         (taker_pts as u16 + belote_bonus) >= contract_value
     };
 
-    let coinche_mult = match contract_coinche {
-        1 => 2u16,
-        2 => 4,
-        _ => 1,
-    };
+    let coinche_mult = match contract_coinche { 1 => 2u16, 2 => 4, _ => 1 };
 
     let (ns_score, ew_score) = if reussi {
         let scored = (contract_value + taker_pts as u16) * coinche_mult;
         if contract_team == 0 {
-            (
-                scored as i16 + if belote[0] == 2 { 20 } else { 0 },
-                if belote[1] == 2 { 20 } else { 0 },
-            )
+            (scored as i16 + if belote[0] == 2 { 20 } else { 0 }, if belote[1] == 2 { 20 } else { 0 })
         } else {
-            (
-                if belote[0] == 2 { 20 } else { 0 },
-                scored as i16 + if belote[1] == 2 { 20 } else { 0 },
-            )
+            (if belote[0] == 2 { 20 } else { 0 }, scored as i16 + if belote[1] == 2 { 20 } else { 0 })
         }
     } else {
         let penalty = (160 + contract_value) * coinche_mult;
         if contract_team == 0 {
-            (
-                if belote[0] == 2 { 20 } else { 0 },
-                penalty as i16 + if belote[1] == 2 { 20 } else { 0 },
-            )
+            (if belote[0] == 2 { 20 } else { 0 }, penalty as i16 + if belote[1] == 2 { 20 } else { 0 })
         } else {
-            (
-                penalty as i16 + if belote[0] == 2 { 20 } else { 0 },
-                if belote[1] == 2 { 20 } else { 0 },
-            )
+            (penalty as i16 + if belote[0] == 2 { 20 } else { 0 }, if belote[1] == 2 { 20 } else { 0 })
         }
     };
 
-    DealResult {
-        void: false,
-        ns_score,
-        ew_score,
-    }
+    DealResult { void: false, ns_score, ew_score }
 }
 
 fn run_matchup(
@@ -645,6 +690,8 @@ fn run_matchup(
     n_deals: usize,
     nn: &mut Option<BidNet>,
     rng: &mut StdRng,
+    use_isdd: bool,
+    isdd_time_ms: u32,
 ) {
     let start = Instant::now();
     let mut tt_buf = solver::new_tt_buffer();
@@ -663,13 +710,16 @@ fn run_matchup(
         let dealer = (i % 4) as u8;
         let mut state = GameState::deal_random(dealer, rng);
 
-        let mut dd_pts = [0u8; 4];
-        for s in 0..4u8 {
-            let [ns, _] = solver::solve_for_trump_reuse_tt(state.hands, dealer, s, &mut tt_buf);
-            dd_pts[s as usize] = ns;
-        }
-
-        let result = play_deal(&mut state, ns, ew, nn, &dd_pts);
+        let result = if use_isdd {
+            play_deal_isdd(&mut state, ns, ew, nn, isdd_time_ms, rng)
+        } else {
+            let mut dd_pts = [0u8; 4];
+            for s in 0..4u8 {
+                let [ns_p, _] = solver::solve_for_trump_reuse_tt(state.hands, dealer, s, &mut tt_buf);
+                dd_pts[s as usize] = ns_p;
+            }
+            play_deal_dd(&mut state, ns, ew, nn, &dd_pts)
+        };
 
         if result.void {
             voids += 1;
@@ -696,20 +746,27 @@ fn run_matchup(
         if result.ns_score > result.ew_score {
             ns_wins += 1;
         }
+
+        // Progress for slow IS-DD mode
+        if use_isdd && (i + 1) % 10 == 0 {
+            let elapsed = start.elapsed().as_secs_f64();
+            let rate = (i + 1) as f64 / elapsed;
+            eprint!("\r  [{}/{}] {:.1} deals/sec", i + 1, n_deals, rate);
+        }
     }
+    if use_isdd { eprintln!(); }
 
     let played = n_deals as u32 - voids;
     let elapsed = start.elapsed().as_secs_f64();
 
+    let mode = if use_isdd { format!("IS-DD {}ms", isdd_time_ms) } else { "DD oracle".into() };
     println!("  ┌────────────────────────────────────────────────────┐");
     println!("  │  {:<50} │", label);
     println!("  └────────────────────────────────────────────────────┘");
-    println!("  {} deals ({} void), {:.1}s\n", n_deals, voids, elapsed);
+    println!("  {} deals ({} void), {:.1}s [{}]\n", n_deals, voids, elapsed, mode);
     println!(
         "  NS win rate: {:.1}% ({}/{})",
-        ns_wins as f64 / played as f64 * 100.0,
-        ns_wins,
-        played
+        ns_wins as f64 / played as f64 * 100.0, ns_wins, played
     );
     println!(
         "  Avg score:   NS {:+.0}  EW {:+.0}  (margin {:+.1})",
@@ -719,25 +776,13 @@ fn run_matchup(
     );
     println!(
         "  Contracts:   NS took {} ({:.0}%), made {} ({:.0}%)",
-        ns_contracts,
-        ns_contracts as f64 / played as f64 * 100.0,
-        ns_made,
-        if ns_contracts > 0 {
-            ns_made as f64 / ns_contracts as f64 * 100.0
-        } else {
-            0.0
-        }
+        ns_contracts, ns_contracts as f64 / played as f64 * 100.0,
+        ns_made, if ns_contracts > 0 { ns_made as f64 / ns_contracts as f64 * 100.0 } else { 0.0 }
     );
     println!(
         "               EW took {} ({:.0}%), made {} ({:.0}%)",
-        ew_contracts,
-        ew_contracts as f64 / played as f64 * 100.0,
-        ew_made,
-        if ew_contracts > 0 {
-            ew_made as f64 / ew_contracts as f64 * 100.0
-        } else {
-            0.0
-        }
+        ew_contracts, ew_contracts as f64 / played as f64 * 100.0,
+        ew_made, if ew_contracts > 0 { ew_made as f64 / ew_contracts as f64 * 100.0 } else { 0.0 }
     );
     println!("  Coinches:    {}\n", coinches);
 }
@@ -922,6 +967,8 @@ fn main() {
     let mut n_matches = 500usize;
     let mut bid_model: Option<String> = None;
     let mut diag_only = false;
+    let mut use_isdd = false;
+    let mut isdd_time_ms = 20u32;
 
     let mut i = 1;
     while i < args.len() {
@@ -929,13 +976,15 @@ fn main() {
             "--matches" => { n_matches = args[i + 1].parse().unwrap(); i += 2; }
             "--bid-model" => { bid_model = Some(args[i + 1].clone()); i += 2; }
             "--diag" => { diag_only = true; i += 1; }
+            "--isdd" => { use_isdd = true; i += 1; }
+            "--isdd-ms" => { isdd_time_ms = args[i + 1].parse().unwrap(); use_isdd = true; i += 2; }
             _ => i += 1,
         }
     }
 
     let model_path = bid_model.as_deref().unwrap_or("models/bid_nn_final.bin");
     let mut nn: Option<BidNet> = BidNet::load_with_hidden(model_path, 256).ok().map(|net| {
-        println!("NN: {} (obs={}, dueling={})\n", model_path, net.obs_dim(), net.is_dueling());
+        println!("NN: {} (obs={}, dueling={})", model_path, net.obs_dim(), net.is_dueling());
         net
     });
 
@@ -944,20 +993,44 @@ fn main() {
         return;
     }
 
-    // Always run diagnostics first to see examples
-    run_diagnostics(nn.as_mut().unwrap(), 200);
+    let mode_str = if use_isdd { format!("IS-DD {}ms/move", isdd_time_ms) } else { "DD oracle".into() };
+    println!("Play mode: {}\n", mode_str);
+
+    if !use_isdd && !diag_only {
+        // Quick diagnostics in DD mode
+        run_diagnostics(nn.as_mut().unwrap(), 200);
+    }
 
     if diag_only { return; }
 
-    // Then tournament
-    println!("=== Tournament (V3) — {} deals ===\n", n_matches);
+    // Calibration: run 5 deals first to estimate time
+    if use_isdd {
+        println!("  Calibrating IS-DD speed (5 deals)...");
+        let cal_start = Instant::now();
+        let mut cal_rng = StdRng::seed_from_u64(999);
+        for ci in 0..5 {
+            let mut st = GameState::deal_random((ci % 4) as u8, &mut cal_rng);
+            let _ = play_deal_isdd(&mut st, Bidder::V3Rules, Bidder::ImprovedV2, &mut nn, isdd_time_ms, &mut cal_rng);
+        }
+        let cal_elapsed = cal_start.elapsed().as_secs_f64();
+        let per_deal = cal_elapsed / 5.0;
+        println!("  → {:.2}s/deal, {} deals ≈ {:.0}s per matchup\n",
+            per_deal, n_matches, per_deal * n_matches as f64);
+    }
+
+    println!("=== Tournament (V3) — {} deals [{}] ===\n", n_matches, mode_str);
     let mut rng = StdRng::seed_from_u64(42);
 
-    run_matchup("V3 (NS) vs ImprovedV2 (EW)", Bidder::V3Rules, Bidder::ImprovedV2, n_matches, &mut nn, &mut rng);
-    run_matchup("ImprovedV2 (NS) vs V3 (EW)", Bidder::ImprovedV2, Bidder::V3Rules, n_matches, &mut nn, &mut rng);
-    run_matchup("V3 (NS) vs NN (EW)", Bidder::V3Rules, Bidder::Nn, n_matches, &mut nn, &mut rng);
-    run_matchup("NN (NS) vs V3 (EW)", Bidder::Nn, Bidder::V3Rules, n_matches, &mut nn, &mut rng);
-    run_matchup("NN (NS) vs ImprovedV2 (EW) [ref]", Bidder::Nn, Bidder::ImprovedV2, n_matches, &mut nn, &mut rng);
+    run_matchup("V3 (NS) vs ImprovedV2 (EW)", Bidder::V3Rules, Bidder::ImprovedV2,
+        n_matches, &mut nn, &mut rng, use_isdd, isdd_time_ms);
+    run_matchup("ImprovedV2 (NS) vs V3 (EW)", Bidder::ImprovedV2, Bidder::V3Rules,
+        n_matches, &mut nn, &mut rng, use_isdd, isdd_time_ms);
+    run_matchup("V3 (NS) vs NN (EW)", Bidder::V3Rules, Bidder::Nn,
+        n_matches, &mut nn, &mut rng, use_isdd, isdd_time_ms);
+    run_matchup("NN (NS) vs V3 (EW)", Bidder::Nn, Bidder::V3Rules,
+        n_matches, &mut nn, &mut rng, use_isdd, isdd_time_ms);
+    run_matchup("NN (NS) vs ImprovedV2 (EW) [ref]", Bidder::Nn, Bidder::ImprovedV2,
+        n_matches, &mut nn, &mut rng, use_isdd, isdd_time_ms);
 
     println!("Done.");
 }

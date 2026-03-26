@@ -167,10 +167,45 @@ The NN's edge comes from:
 3. **Coinche precision** (87% correct, rules are ~70%)
 4. **Millions of RL training games** calibrating the exact thresholds
 
+## Part 4: IS-DD Validation (Realistic Imperfect-Info Play)
+
+All prior results used DD oracle (perfect play) to evaluate contracts. This overstates everyone's performance. IS-DD (Information Set DD, 20ms/move, belief-weighted determinization) gives realistic imperfect-info card play.
+
+### DD Oracle vs IS-DD — Side by Side (250 deals, V3b bidder)
+
+| Matchup | DD margin | IS-DD margin | Delta |
+|---|---|---|---|
+| V3 vs ImprovedV2 | +6 | **-16** | -22 |
+| ImprovedV2 vs V3 | +3 | **-31** | -34 |
+| V3 vs NN | -59 | **-64** | -5 |
+| NN vs V3 | +64 | **+51** | -13 |
+| NN vs ImprovedV2 [ref] | +44 | **+13** | -31 |
+
+### Key Findings
+
+1. **V3's competitive rebidding backfires under realistic play.** V3 takes 63% of contracts but makes only 50-59%. Under DD it was 73%. Aggressive bidding works with perfect play but gets punished by imperfect card play.
+
+2. **NN's edge shrinks 3×.** NN vs ImprovedV2: +44 (DD) → +13 (IS-DD). The NN was trained against DD oracle, so its bid calibration assumes better play than IS-DD delivers. ~15-20% of contracts that DD says succeed actually fail with belief-weighted play.
+
+3. **Conservative bidding wins under imperfect play.** ImprovedV2's cautious approach actually outperforms V3's aggressive history-aware approach when card play is realistic.
+
+4. **Contract success drops everywhere.** DD oracle: ~73% success rate. IS-DD: 50-63%. The DD-to-reality gap is the single biggest factor.
+
+5. **The NN is still best** — but by a modest +13 margin instead of +44-64. Its advantage is calibration (takes fewer contracts but makes them more often: 42% taken, 63% made).
+
+### Implications
+
+- The bid NN was trained against DD (perfect play), making it overconfident in marginal contracts
+- A bid NN trained against IS-DD or DMC play quality would be better calibrated for real games — this is the **dual learning** opportunity
+- Rule-based bidders should err conservative: under imperfect play, a safe 80 that succeeds beats an ambitious 100 that fails
+- The competitive rebidding rules (V3) are counterproductive — fighting for contracts you can't make under realistic play is net negative
+
 ## Next Steps
 
-1. **Dual learning loop**: Train bid NN using DMC play results (not DD oracle) → bid NN learns actual achievable success rates → more accurate bidding. Then retrain DMC on games with better bids. Iterate.
+1. **Dual learning loop**: Train bid NN using DMC/IS-DD play results (not DD oracle) → bid NN learns actual achievable success rates → more accurate bidding. Then retrain DMC on games with better bids. Iterate.
 
 2. **Transfer NN knowledge to rules**: Use the diagnostic framework to find the ~20% of deals where rules match NN, identify what's different about the other 80%, and write more targeted rules.
 
 3. **Hybrid approach**: Use rule-based bidder for opening, NN for competitive/coinche decisions (where history matters most).
+
+4. **IS-DD calibrated thresholds**: Re-run the DD probe experiments with IS-DD play to get realistic success rates per hand profile, then recalibrate the rule bidder's score→level mapping.
