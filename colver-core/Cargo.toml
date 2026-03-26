@@ -161,3 +161,15 @@ required-features = ["dmc_train"]
 name = "belief_eval"
 path = "src/tests/belief_eval.rs"
 required-features = ["rand"]
+
+[[bin]]
+name = "bid_nn_probe"
+path = "src/tests/bid_nn_probe.rs"
+
+[[bin]]
+name = "bid_dd_probe"
+path = "src/tests/bid_dd_probe.rs"
+
+[[bin]]
+name = "bid_rules_iter"
+path = "src/tests/bid_rules_iter.rs"
