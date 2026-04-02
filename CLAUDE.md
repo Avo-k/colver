@@ -73,7 +73,9 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 ### Observation Layouts (for suit permutation / NN inputs)
 
-**DMC play obs — legacy (415):** [0:32] hand, [32:160] trick 4×32, [160:256] played 3×32, [256:260] trump suit, [260:263] value/team/coinche, [263:275] voids 3×4, [275:279] scores, [279:351] bid history 12×6, [351:383] card trick idx, [383:415] card seq idx. Used by DouDou35 (legacy play model) and web inference.
+**DMC play obs — legacy (415):** [0:32] hand, [32:160] trick 4×32, [160:256] played 3×32, [256:260] trump suit, [260:263] value/team/coinche, [263:275] voids 3×4, [275:279] scores, [279:351] bid history 12×6, [351:383] card trick idx, [383:415] card seq idx. Used by DouDou35 (legacy play model).
+
+**Canonical obs critical:** When using 411-dim models for inference, you MUST convert legal masks via `cardset_to_canonical(mask, order)` and actions back via `card_to_physical(action, order)`. Without this, the model plays random legal moves. The PyO3 bridge (`action_dmc_with_stats`) and arena auto-detect obs_dim and branch accordingly.
 
 **DMC play obs — canonical (411):** Fully canonical suit encoding: trump in slot 0, non-trump sorted by (card_count, rank_pattern) descending — `canonical_play_order(trump, initial_hand)`. No suit augmentation needed. [0:32] hand, [32:160] trick 4×32, [160:256] played 3×32, [256:259] value/team/coinche (no trump one-hot), [259:271] voids 3×4, [271:275] scores, [275:347] bid history 12×6, [347:379] card trick idx, [379:411] card seq idx. Used by DouDou50 (default play model) and joint training. `card_to_canonical`/`card_to_physical` convert between spaces; `current_player_order` computes the ordering from state+tracking.
 
@@ -84,6 +86,8 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 ## Python Layer (`colver-py/` → `python/colver/`)
 
 `Env` wraps GameState with IS-MCTS/DMC support. Built as `colver._colver`, re-exported from `colver.__init__`. See `python/colver/_colver.pyi` for type stubs.
+
+**PyO3 rebuild:** `uv sync` may not recompile Rust changes. Use `touch colver-py/src/lib.rs && maturin develop --release` to force rebuild. The `.so` at `python/colver/_colver*.so` may be stale — check file timestamp if behavior doesn't match code.
 
 ## Web Frontend (`python/colver/web/`)
 
