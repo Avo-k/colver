@@ -725,6 +725,9 @@ export function mount(container) {
         const hand = Array.from(annoncesHand);
         const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 200));
 
+        // Cancel any previous simulation before starting a new one
+        wasmBridge.cancelOracle();
+
         resetPanels(numSims);
 
         if (isLocalMode()) {

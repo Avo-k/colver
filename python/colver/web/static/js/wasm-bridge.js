@@ -6,6 +6,7 @@ let _bidNet = null;
 let _oracleWorker = null;
 let _oracleReady = false;
 let _simIdCounter = 0;
+let _currentOracleHandler = null;
 
 // Paths relative to this module (static/js/wasm-bridge.js)
 // ../wasm/ resolves to static/wasm/
@@ -90,6 +91,9 @@ export function evaluateBid(hand, priorActions) {
 export function runOracleSim(hand, numSims, onUpdate, onDone) {
     if (!_oracleWorker || !_oracleReady) throw new Error('Oracle Worker not ready');
 
+    // Cancel any previous oracle sim and detach its handler
+    cancelOracle();
+
     const simId = ++_simIdCounter;
 
     const handler = (e) => {
@@ -105,6 +109,7 @@ export function runOracleSim(hand, numSims, onUpdate, onDone) {
             });
         } else if (d.type === 'oracle_done') {
             _oracleWorker.removeEventListener('message', handler);
+            _currentOracleHandler = null;
             onDone({
                 completed: d.completed,
                 total: d.total,
@@ -114,10 +119,12 @@ export function runOracleSim(hand, numSims, onUpdate, onDone) {
             });
         } else if (d.type === 'error') {
             _oracleWorker.removeEventListener('message', handler);
+            _currentOracleHandler = null;
             onDone({ error: d.message });
         }
     };
 
+    _currentOracleHandler = handler;
     _oracleWorker.addEventListener('message', handler);
     _oracleWorker.postMessage({ type: 'oracle_sim', id: simId, hand, numSims });
 
@@ -130,5 +137,9 @@ export function runOracleSim(hand, numSims, onUpdate, onDone) {
 export function cancelOracle() {
     if (_oracleWorker) {
         _oracleWorker.postMessage({ type: 'cancel' });
+        if (_currentOracleHandler) {
+            _oracleWorker.removeEventListener('message', _currentOracleHandler);
+            _currentOracleHandler = null;
+        }
     }
 }
