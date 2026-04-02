@@ -4,6 +4,7 @@
 import { send, onMessage, offMessage } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import * as wasmBridge from '../wasm-bridge.js';
+import * as xgbExplain from '../xgb-explain.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
@@ -100,6 +101,15 @@ const TEMPLATE = `
                         <div id="annonces-sim-viewer-content"></div>
                     </details>
                 </div>
+                <div class="hidden" id="annonces-xgb-panel">
+                    <div id="annonces-xgb-header" class="section-title">
+                        <span>Facteurs cl\u00e9s</span>
+                        <select id="xgb-suit-select"></select>
+                    </div>
+                    <p class="xgb-explainer">Mod\u00e8le XGBoost distill\u00e9 du NN \u2014 il <em>approxime</em> les d\u00e9cisions du r\u00e9seau \u00e0 l\u2019aide de caract\u00e9ristiques interpr\u00e9tables. Ces contributions ne proviennent <strong>pas</strong> du r\u00e9seau de neurones.</p>
+                    <div id="xgb-waterfall"></div>
+                    <div id="xgb-probability"></div>
+                </div>
             </div>
             <div class="annonces-result-panel" id="annonces-sim-panel">
                 <div id="annonces-sim-header" class="section-title">
@@ -131,6 +141,7 @@ const TEMPLATE = `
 
 let annoncesHand = new Set();
 let annoncesHistory = [];
+let xgbResults = null; // cached XGB analysis results
 
 function isLocalMode() {
     const toggle = document.getElementById('annonces-local-toggle');
@@ -281,6 +292,83 @@ function renderAnnoncesHistory() {
     list.appendChild(yourRow);
 }
 
+// ── XGBoost interpretability ──
+
+function renderXgbWaterfall(result) {
+    const container = document.getElementById('xgb-waterfall');
+    const probEl = document.getElementById('xgb-probability');
+    if (!container || !result) return;
+
+    // Sort contributions by absolute value, descending
+    const entries = Object.entries(result.contributions)
+        .filter(([, v]) => Math.abs(v) > 0.001)
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+
+    if (entries.length === 0) {
+        container.innerHTML = '<div class="xgb-empty">Pas assez de donn\u00e9es</div>';
+        probEl.innerHTML = '';
+        return;
+    }
+
+    const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(v)));
+
+    let html = '<div class="xgb-waterfall-chart">';
+    for (const [feat, val] of entries) {
+        const label = xgbExplain.featureLabel(feat);
+        const featVal = result.features[feat];
+        const pct = Math.abs(val) / maxAbs * 100;
+        const isPos = val > 0;
+        const cls = isPos ? 'xgb-bar-pos' : 'xgb-bar-neg';
+        const sign = isPos ? '+' : '';
+        const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
+
+        html += `<div class="xgb-row">
+            <span class="xgb-feat-name" title="${feat}${valDisplay}">${label}<span class="xgb-feat-val">${valDisplay}</span></span>
+            <div class="xgb-bar-wrap">
+                <div class="xgb-bar ${cls}" style="width:${pct.toFixed(0)}%"></div>
+            </div>
+            <span class="xgb-contrib">${sign}${val.toFixed(3)}</span>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Show probability
+    const pct = (result.probability * 100).toFixed(0);
+    const cls = result.probability >= 0.5 ? 'xgb-prob-high' : 'xgb-prob-low';
+    probEl.innerHTML = `<span class="${cls}">Probabilit\u00e9 d\u2019ench\u00e9rir : ${pct}%</span>`;
+}
+
+function populateXgbSuitSelect(results) {
+    const select = document.getElementById('xgb-suit-select');
+    if (!select || !results) return;
+    select.innerHTML = '';
+    for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.innerHTML = `${SUIT_SYMBOLS[r.suit]} (${(r.probability * 100).toFixed(0)}%)`;
+        select.appendChild(opt);
+    }
+    select.value = '0';
+}
+
+async function runXgbAnalysis(hand, qValues) {
+    try {
+        const results = await xgbExplain.analyzeAllSuits(hand, annoncesHistory, qValues);
+        if (!results) return;
+        xgbResults = results;
+
+        const panel = document.getElementById('annonces-xgb-panel');
+        panel.classList.remove('hidden');
+
+        populateXgbSuitSelect(results);
+        renderXgbWaterfall(results[0]);
+    } catch (err) {
+        console.warn('[xgb] Analysis failed:', err);
+    }
+}
+
 function handleBidEvalResult(data) {
     if (data.error) {
         document.getElementById('annonces-results-body').innerHTML =
@@ -311,6 +399,12 @@ function handleBidEvalResult(data) {
     }
     html += '</div>';
     document.getElementById('annonces-results-body').innerHTML = html;
+
+    // Trigger XGB interpretability analysis
+    const hand = Array.from(annoncesHand);
+    if (hand.length === 8) {
+        runXgbAnalysis(hand, data.q_values);
+    }
 }
 
 function updateProgressBar(id, completed, total, elapsedMs) {
@@ -515,6 +609,9 @@ function resetPanels(numSims) {
     document.getElementById('annonces-results-header').textContent = 'Bid \u00e0 D\u00e9d\u00e9';
     document.getElementById('annonces-results-body').innerHTML =
         '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
+    // Reset XGB panel
+    document.getElementById('annonces-xgb-panel').classList.add('hidden');
+    xgbResults = null;
     document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
     const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
@@ -637,6 +734,13 @@ export function mount(container) {
         }
     });
 
+    // XGB suit dropdown
+    document.getElementById('xgb-suit-select').addEventListener('change', (e) => {
+        if (xgbResults) {
+            renderXgbWaterfall(xgbResults[parseInt(e.target.value)]);
+        }
+    });
+
     onMessage('bid_eval_result', handleBidEvalResult);
     onMessage('annonces_sim_update', handleSimUpdate);
     onMessage('annonces_sim_done', handleSimDone);
@@ -653,4 +757,5 @@ export function unmount() {
     wasmBridge.cancelOracle();
     annoncesHand = new Set();
     annoncesHistory = [];
+    xgbResults = null;
 }

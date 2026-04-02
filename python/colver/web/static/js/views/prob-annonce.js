@@ -2,6 +2,7 @@
 
 import { send, onMessage, offMessage } from '../ws.js';
 import { SUITS, renderHand, actionName, encodeBidAction } from '../shared/cards.js';
+import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
 <div id="pa-config">
@@ -54,6 +55,12 @@ const TEMPLATE = `
             <div class="prob-label">Heuristique (am\u00e9lior\u00e9)</div>
             <div id="pa-heuristic-best" class="prob-best"></div>
         </div>
+        <div class="prob-section hidden" id="pa-xgb-section">
+            <div class="prob-label">Facteurs cl\u00e9s <span style="font-size:0.7rem;color:#777">(XGBoost, pas le NN)</span></div>
+            <select id="pa-xgb-suit-select" style="margin-bottom:4px"></select>
+            <div id="pa-xgb-waterfall"></div>
+            <div id="pa-xgb-probability"></div>
+        </div>
         <div class="prob-section">
             <div class="prob-label">Analyse Double-Dummy</div>
             <table class="dd-table">
@@ -70,8 +77,13 @@ const TEMPLATE = `
 </div>
 `;
 
+const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
+
 let paLegalActions = [];
 let paLocked = false;
+let paHand = [];
+let paBidHistory = [];
+let paXgbResults = null;
 
 function bidActionName(action) {
     if (action === 0) return 'Passe';
@@ -95,6 +107,10 @@ function handleProblemReady(data) {
     document.getElementById('pa-bid-panel').style.display = '';
     paLegalActions = data.legal_actions;
     paLocked = false;
+    paHand = data.south_hand || [];
+    paXgbResults = null;
+    // Extract bid actions from history for XGB scenario detection
+    paBidHistory = (data.bid_history || []).map(e => e.action);
 
     // Render bid history
     const entries = document.getElementById('pa-bid-history-entries');
@@ -134,6 +150,63 @@ function handleProblemReady(data) {
     document.getElementById('pa-pass-btn').classList.toggle('hidden', !legalSet.has(0));
     document.getElementById('pa-coinche-btn').classList.toggle('hidden', !legalSet.has(41));
     document.getElementById('pa-surcoinche-btn').classList.toggle('hidden', !legalSet.has(42));
+}
+
+function renderPaXgbWaterfall(result, containerId, probId) {
+    const container = document.getElementById(containerId);
+    const probEl = document.getElementById(probId);
+    if (!container || !result) return;
+    const entries = Object.entries(result.contributions)
+        .filter(([, v]) => Math.abs(v) > 0.001)
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+    if (entries.length === 0) {
+        container.innerHTML = '';
+        probEl.innerHTML = '';
+        return;
+    }
+    const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(v)));
+    let html = '<div class="xgb-waterfall-chart">';
+    for (const [feat, val] of entries) {
+        const label = xgbExplain.featureLabel(feat);
+        const featVal = result.features[feat];
+        const pct = Math.abs(val) / maxAbs * 100;
+        const cls = val > 0 ? 'xgb-bar-pos' : 'xgb-bar-neg';
+        const sign = val > 0 ? '+' : '';
+        const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
+        html += `<div class="xgb-row">
+            <span class="xgb-feat-name" title="${feat}${valDisplay}">${label}<span class="xgb-feat-val">${valDisplay}</span></span>
+            <div class="xgb-bar-wrap"><div class="xgb-bar ${cls}" style="width:${pct.toFixed(0)}%"></div></div>
+            <span class="xgb-contrib">${sign}${val.toFixed(3)}</span>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+    const pctVal = (result.probability * 100).toFixed(0);
+    const pcls = result.probability >= 0.5 ? 'xgb-prob-high' : 'xgb-prob-low';
+    probEl.innerHTML = `<span class="${pcls}">P(enchérir) : ${pctVal}%</span>`;
+}
+
+async function runPaXgbAnalysis(qValues) {
+    try {
+        const results = await xgbExplain.analyzeAllSuits(paHand, paBidHistory, qValues);
+        if (!results) return;
+        paXgbResults = results;
+        const section = document.getElementById('pa-xgb-section');
+        if (section) section.classList.remove('hidden');
+        const select = document.getElementById('pa-xgb-suit-select');
+        select.innerHTML = '';
+        for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.innerHTML = `${SUIT_SYMBOLS[r.suit]} (${(r.probability * 100).toFixed(0)}%)`;
+            select.appendChild(opt);
+        }
+        select.value = '0';
+        renderPaXgbWaterfall(results[0], 'pa-xgb-waterfall', 'pa-xgb-probability');
+    } catch (err) {
+        console.warn('[pa-xgb] Analysis failed:', err);
+    }
 }
 
 function handleCorrection(data) {
@@ -182,6 +255,11 @@ function handleCorrection(data) {
         }
     }
     document.getElementById('pa-dd-elapsed').textContent = `DD : ${data.dd_elapsed_ms}ms`;
+
+    // XGB interpretability
+    if (data.nn_q_values && data.nn_q_values.length && paHand.length === 8) {
+        runPaXgbAnalysis(data.nn_q_values);
+    }
 }
 
 function paBidSubmit(action) {
@@ -214,6 +292,11 @@ export function mount(container) {
     document.getElementById('pa-coinche-btn').onclick = () => paBidSubmit(41);
     document.getElementById('pa-surcoinche-btn').onclick = () => paBidSubmit(42);
     document.getElementById('pa-next-btn').onclick = () => document.getElementById('pa-generate-btn').click();
+    document.getElementById('pa-xgb-suit-select').addEventListener('change', (e) => {
+        if (paXgbResults) {
+            renderPaXgbWaterfall(paXgbResults[parseInt(e.target.value)], 'pa-xgb-waterfall', 'pa-xgb-probability');
+        }
+    });
 
     onMessage('bid_problem_ready', handleProblemReady);
     onMessage('bid_problem_correction', handleCorrection);
