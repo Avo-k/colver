@@ -362,7 +362,8 @@ async def websocket_endpoint(ws: WebSocket):
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
                 bid_path = BID_MODEL_PATH
                 difficulty = data.get("difficulty", "difficile")
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, difficulty=difficulty)
+                dede_time_ms = int(play_move_delay * 1000)
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, difficulty=difficulty, dede_time_ms=dede_time_ms)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -399,6 +400,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Update move delay dynamically from slider
                 if "move_delay" in data:
                     play_move_delay = max(1.0, min(8.0, float(data["move_delay"])))
+                    play_session.dede_time_ms = int(play_move_delay * 1000)
 
                 state = play_session.play_action(action)
                 msg = {"type": "game_state", "state": state}

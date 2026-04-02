@@ -90,14 +90,14 @@ DIFFICULTY_TIME_MS = {
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, difficulty="difficile"):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, difficulty="difficile", dede_time_ms=None):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "dede"
         self.human_seat = human_seat
         if ai_types is None:
             ai_types = {}
         self.ai_types = ai_types
-        self.dede_time_ms = DIFFICULTY_TIME_MS.get(difficulty, AI_TIME_MS)
+        self.dede_time_ms = dede_time_ms or 1000
         self.env = colver.Env()
         self.history = []
         self.bid_history = []
