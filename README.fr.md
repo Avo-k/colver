@@ -15,7 +15,7 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
 - **Etat de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
 - **Six agents IA** — reseau Q DMC, IS-DD avec reseau de croyances, oracle DD, Smart/Naive IS-MCTS, et heuristique
-- **Encheres par reseau de neurones** — "Le Bide a Dede", un Dueling DQN entraine sur des donnes resolues en double-dummy
+- **Encheres par reseau de neurones** — "Bid a Dede" (v2), un Dueling DQN entraine sur des donnes resolues en DD avec augmentation de couleurs
 - **Reseau de croyances** — prediction NN de la localisation des cartes pour la recherche IS-DD
 - **Interface web** — jouez contre l'IA, observez, analysez et resolvez des problemes (FastAPI + WebSocket)
 - **Bindings Python** via PyO3 — classe `Env` avec stubs de types complets, installable depuis PyPI
@@ -41,7 +41,7 @@ uv run python -m colver.web
 
 **Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
 
-**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Le Bide a Dede* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale.
+**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Bid a Dede* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale.
 
 ![Onglet Annonces](images/screenshots/tab-annonces.png)
 
@@ -94,19 +94,23 @@ Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche
 
 Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croyances sur les cartes cachees — mis a jour apres chaque action via des contraintes dures (coupes, plafond d'atout) et des signaux faibles (encheres, conventions de jeu). Peut etre augmente par un **reseau de croyances** (prediction NN de la localisation des cartes, 330→512→512→128, ~2Mo). Echantillonne des mains adverses ponderees par ces croyances, puis resout chaque monde exactement avec le solveur alpha-beta DD. IS-DD se prononce « is Dede » — d'ou le surnom.
 
-### DouDou — Reseau Q DMC (`dmc_net.rs`)
+### DouDou50 — Reseau Q DMC (`dmc_net.rs`)
 
-Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Entraine par self-play avec Prioritized Experience Replay sur 35M etapes.
+Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Modele de jeu par defaut, entraine sur 50M etapes avec Bid a Dede gele (phase play-only du triforge).
 
-**Architecture** : Dueling DQN 415→1024→1024→1024→32 avec LayerNorm (~2.6M parametres). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble. *DouDou* = en reference a DouZero.
+**Architecture** : ResNet Dueling DQN 411→1024→1024→1024→32 avec LayerNorm et skip connections (~2.6M parametres). Utilise un encodage canonique des couleurs (pas d'augmentation necessaire). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble.
+
+L'ancien modele **DouDou35** (415→1024³→32, obs legacy, 35M etapes) reste supporte. *DouDou* = en reference a DouZero.
 
 ### Anciens agents de recherche
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Le Bide a Dede — Encherisseur NN (`bid_net.rs`)
+### Bid a Dede — Encherisseur NN (`bid_net.rs`)
 
-Dueling DQN (114→256→256→43) entraine sur 1M de donnes resolues en DD. Encherisseur par defaut pour tous les agents. Bat le meilleur encherisseur heuristique 70-76% sur tous les moteurs de jeu.
+Dueling DQN (108→512→512→512→43) entraine sur des donnes resolues en DD avec augmentation 24x des couleurs. Encherisseur par defaut pour tous les agents. Bat le meilleur encherisseur heuristique 70-76% sur tous les moteurs de jeu. `BidNet::load` detecte automatiquement la taille cachee (essaie 256, 512, 1024).
+
+L'ancien modele **Bid a Doudou** (v1, 114→256→256→43, entraine par self-play DouZero) reste supporte.
 
 ## Comparaison des agents
 
@@ -114,7 +118,7 @@ Dueling DQN (114→256→256→43) entraine sur 1M de donnes resolues en DD. Enc
 |---|---|---|---|
 | Oracle (DD) | Solveur DD (triche) | ~7ms | Borne superieure |
 | Dede (IS-DD) | Solveur DD + croyances | ~20ms | Plus fort avec recherche |
-| **DouDou** | **Reseau Q** | **<1ms** | Plus fort, sans recherche |
+| **DouDou50** | **Reseau Q (ResNet)** | **<1ms** | Plus fort, sans recherche |
 | Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |
 | Naive IS-MCTS | Recherche | ~8ms | Budget configurable |
 

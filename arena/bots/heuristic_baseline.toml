@@ -1,0 +1,7 @@
+# Baseline: simple heuristic bidding + naive IS-MCTS play
+[bid]
+strategy = "heuristic"
+
+[play]
+method = "naive_ismcts"
+time_ms = 20

@@ -12,7 +12,7 @@
 use crate::bidding;
 use crate::state::{GameState, Phase};
 
-pub const BID_OBS_DIM: usize = 114;
+pub const BID_OBS_DIM: usize = 108;
 pub const BID_MASK_DIM: usize = 43;
 
 /// Write the 114-float bidding observation into `buf[offset..offset+BID_OBS_DIM]`.
@@ -50,19 +50,6 @@ pub fn write_bid_observation(
     let rel_pos = (me + 4 - state.dealer as usize) % 4;
     out[pos + rel_pos] = 1.0;
     pos += 4;
-
-    // === Block 4: Auction state (6) ===
-    // Current highest bid value normalized
-    out[pos] = state.last_bid_value as f32 * 10.0 / 160.0;
-    pos += 1;
-    // Suit of highest bid (one-hot, only if there is a bid)
-    if state.last_bid_value > 0 {
-        out[pos + state.last_bid_suit as usize] = 1.0;
-    }
-    pos += 4;
-    // Coinche state
-    out[pos] = state.coinche_state as f32 / 2.0;
-    pos += 1;
 
     debug_assert_eq!(pos, BID_OBS_DIM);
 }
@@ -145,7 +132,7 @@ mod tests {
 
     #[test]
     fn test_bid_obs_dim() {
-        assert_eq!(BID_OBS_DIM, 114);
+        assert_eq!(BID_OBS_DIM, 108);
         assert_eq!(BID_MASK_DIM, 43);
     }
 
@@ -184,45 +171,6 @@ mod tests {
         assert_eq!(obs[pos_offset + 1], 1.0); // position 1
         assert_eq!(obs[pos_offset + 2], 0.0);
         assert_eq!(obs[pos_offset + 3], 0.0);
-    }
-
-    #[test]
-    fn test_auction_state_empty() {
-        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
-        let state = GameState::new(0, hands);
-        let obs = make_bid_observation(&state, &[]);
-
-        // No bids yet: bid_value=0, suit one-hot all zero, coinche=0
-        let auc_offset = 32 + 72 + 4;
-        assert_eq!(obs[auc_offset], 0.0); // bid value
-        assert_eq!(obs[auc_offset + 1], 0.0); // suit 0
-        assert_eq!(obs[auc_offset + 2], 0.0); // suit 1
-        assert_eq!(obs[auc_offset + 3], 0.0); // suit 2
-        assert_eq!(obs[auc_offset + 4], 0.0); // suit 3
-        assert_eq!(obs[auc_offset + 5], 0.0); // coinche
-    }
-
-    #[test]
-    fn test_auction_state_after_bid() {
-        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
-        let mut state = GameState::new(0, hands);
-        let mut bid_history = Vec::new();
-
-        // Player 1 bids 80 Hearts (action = encode_bid(8, 1))
-        let action = crate::bidding::encode_bid(8, 1);
-        bid_history.push((1, action));
-        state.step(action);
-
-        // Now current_player=2
-        let obs = make_bid_observation(&state, &bid_history);
-
-        let auc_offset = 32 + 72 + 4;
-        assert!((obs[auc_offset] - 80.0 / 160.0).abs() < 1e-6); // bid_value = 80/160 = 0.5
-        assert_eq!(obs[auc_offset + 1], 0.0); // not spades
-        assert_eq!(obs[auc_offset + 2], 1.0); // hearts
-        assert_eq!(obs[auc_offset + 3], 0.0);
-        assert_eq!(obs[auc_offset + 4], 0.0);
-        assert_eq!(obs[auc_offset + 5], 0.0); // no coinche
     }
 
     #[test]

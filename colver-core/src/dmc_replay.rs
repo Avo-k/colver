@@ -275,6 +275,156 @@ impl PrioritizedReplayBuffer {
     }
 }
 
+/// A sampled batch from the flexible PER buffer (same fields as PERSample).
+pub struct FlexPERSample {
+    pub indices: Vec<usize>,
+    pub weights: Vec<f32>,
+    pub obs_data: Vec<f32>,
+    pub mask_data: Vec<f32>,
+    pub actions: Vec<u8>,
+    pub returns: Vec<f32>,
+}
+
+/// Flexible PER buffer with runtime-configurable obs_dim and mask_dim.
+/// Used for bid transitions (114/43) alongside the play buffer (415/32).
+pub struct FlexReplayBuffer {
+    obs_dim: usize,
+    mask_dim: usize,
+    alpha: f64,
+    tree: SumTree,
+    obs: Vec<f32>,
+    masks: Vec<f32>,
+    actions: Vec<u8>,
+    returns: Vec<f32>,
+    max_priority: f64,
+    cached_priority: f64,
+}
+
+impl FlexReplayBuffer {
+    pub fn new(capacity: usize, alpha: f64, obs_dim: usize, mask_dim: usize) -> Self {
+        let cached_priority = 1.0f64.powf(alpha);
+        FlexReplayBuffer {
+            obs_dim,
+            mask_dim,
+            alpha,
+            tree: SumTree::new(capacity),
+            obs: vec![0.0f32; capacity * obs_dim],
+            masks: vec![0.0f32; capacity * mask_dim],
+            actions: vec![0u8; capacity],
+            returns: vec![0.0f32; capacity],
+            max_priority: 1.0,
+            cached_priority,
+        }
+    }
+
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.tree.n_entries()
+    }
+
+    pub fn push(&mut self, obs: &[f32], mask: &[f32], action: u8, ret: f32) {
+        debug_assert_eq!(obs.len(), self.obs_dim);
+        debug_assert_eq!(mask.len(), self.mask_dim);
+
+        let p = self.cached_priority;
+        let idx = self.tree.add(p);
+        let obs_start = idx * self.obs_dim;
+        let mask_start = idx * self.mask_dim;
+        self.obs[obs_start..obs_start + self.obs_dim].copy_from_slice(obs);
+        self.masks[mask_start..mask_start + self.mask_dim].copy_from_slice(mask);
+        self.actions[idx] = action;
+        self.returns[idx] = ret;
+    }
+
+    pub fn sample(&self, batch_size: usize, beta: f64, rng: &mut impl Rng) -> FlexPERSample {
+        let total = self.tree.total();
+        let segment = total / batch_size as f64;
+        let size = self.size();
+
+        let mut indices = Vec::with_capacity(batch_size);
+        let mut priorities = Vec::with_capacity(batch_size);
+
+        for i in 0..batch_size {
+            let lo = segment * i as f64;
+            let hi = segment * (i + 1) as f64;
+            let s: f64 = lo + rng.gen::<f64>() * (hi - lo);
+            let mut idx = self.tree.get(s);
+            if idx >= size {
+                idx = size - 1;
+            }
+            indices.push(idx);
+            let p = self.tree.priority(idx);
+            priorities.push(if p > 1e-8 { p } else { 1e-8 });
+        }
+
+        // IS weights
+        let mut weights = Vec::with_capacity(batch_size);
+        let mut max_weight: f32 = 0.0;
+        let size_f = size as f64;
+        for &p in &priorities {
+            let prob = p / total;
+            let w = ((size_f * prob).powf(-beta)) as f32;
+            if w > max_weight {
+                max_weight = w;
+            }
+            weights.push(w);
+        }
+        if max_weight > 0.0 {
+            for w in weights.iter_mut() {
+                *w /= max_weight;
+            }
+        }
+
+        // Gather data
+        let od = self.obs_dim;
+        let md = self.mask_dim;
+        let mut obs_data = vec![0.0f32; batch_size * od];
+        let mut mask_data = vec![0.0f32; batch_size * md];
+        let mut act_data = Vec::with_capacity(batch_size);
+        let mut ret_data = Vec::with_capacity(batch_size);
+
+        for (j, &idx) in indices.iter().enumerate() {
+            let obs_src = idx * od;
+            let obs_dst = j * od;
+            obs_data[obs_dst..obs_dst + od].copy_from_slice(&self.obs[obs_src..obs_src + od]);
+            let mask_src = idx * md;
+            let mask_dst = j * md;
+            mask_data[mask_dst..mask_dst + md]
+                .copy_from_slice(&self.masks[mask_src..mask_src + md]);
+            act_data.push(self.actions[idx]);
+            ret_data.push(self.returns[idx]);
+        }
+
+        FlexPERSample {
+            indices,
+            weights,
+            obs_data,
+            mask_data,
+            actions: act_data,
+            returns: ret_data,
+        }
+    }
+
+    pub fn update_priorities(&mut self, indices: &[usize], td_errors: &[f32]) {
+        debug_assert_eq!(indices.len(), td_errors.len());
+        let alpha = self.alpha;
+        let mut max_p = self.max_priority;
+
+        for i in 0..indices.len() {
+            let p = (td_errors[i].abs() + 1e-6) as f64;
+            if p > max_p {
+                max_p = p;
+            }
+            self.tree.update(indices[i], p.powf(alpha));
+        }
+
+        if max_p > self.max_priority {
+            self.max_priority = max_p;
+            self.cached_priority = max_p.powf(alpha);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

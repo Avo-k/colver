@@ -1,34 +1,25 @@
 /// BidNet: pure Rust inference for the NN bidding model.
 ///
-/// Architecture (dueling): obs_dim → H (LN+ReLU) → H (LN+ReLU)
+/// Architecture (dueling): obs_dim → [H (LN+ReLU)]×N
 ///                            → Value head: H → 1 (V)
 ///                            → Advantage head: H → 43 (A)
 ///                            → Q = V + (A - mean(A))
 ///
-/// Architecture (standard): obs_dim → H (LN+ReLU) → H (LN+ReLU) → 43
+/// Architecture (standard): obs_dim → [H (LN+ReLU)]×N → 43
 ///
-/// where H = hidden size (default 256), LN = LayerNorm.
+/// where H = hidden size, N = number of layers, LN = LayerNorm.
+/// Layer count auto-detected from weight file size.
 ///
-/// Weight file layout — dueling (little-endian f32):
-///   For each of 2 hidden layers:
-///     W: in_dim × H (row-major), b: H, gamma: H, beta: H
-///   Value head: W_v: H, b_v: 1
-///   Advantage head: W_a: H × 43, b_a: 43
-///
-/// Weight file layout — standard:
-///   For each of 2 hidden layers:
-///     W: in_dim × H (row-major), b: H, gamma: H, beta: H
-///   Output: W: H × 43, b: 43
+/// Weight file layout (per layer): W: in_dim × H, b: H, gamma: H, beta: H
 
 const NUM_ACTIONS: usize = 43;
-const NUM_LAYERS: usize = 2;
 const LN_EPS: f32 = 1e-5;
 
 pub struct BidNet {
-    w: [Vec<f32>; NUM_LAYERS],
-    b: [Vec<f32>; NUM_LAYERS],
-    gamma: [Vec<f32>; NUM_LAYERS],
-    beta: [Vec<f32>; NUM_LAYERS],
+    w: Vec<Vec<f32>>,
+    b: Vec<Vec<f32>>,
+    gamma: Vec<Vec<f32>>,
+    beta: Vec<Vec<f32>>,
     // Standard output (dueling=false)
     w_out: Vec<f32>,
     b_out: Vec<f32>,
@@ -41,7 +32,8 @@ pub struct BidNet {
     // Dimensions
     obs_dim: usize,
     hidden: usize,
-    in_dims: [usize; NUM_LAYERS],
+    layers: usize,
+    in_dims: Vec<usize>,
     // Scratch buffers
     scratch_a: Vec<f32>,
     scratch_b: Vec<f32>,
@@ -50,7 +42,13 @@ pub struct BidNet {
 impl BidNet {
     /// Load weights from a raw binary file with default hidden size (256).
     pub fn load(path: &str) -> std::io::Result<Self> {
-        Self::load_with_hidden(path, 256)
+        // Try common hidden sizes for auto-detection
+        for &h in &[256, 512, 1024] {
+            if let Ok(net) = Self::load_with_hidden(path, h) {
+                return Ok(net);
+            }
+        }
+        Self::load_with_hidden(path, 256) // final attempt for error message
     }
 
     /// Load weights with custom hidden size. Architecture auto-detected.
@@ -70,50 +68,66 @@ impl BidNet {
 
         let h = hidden;
         let total = floats.len();
-
-        // trunk_fixed = layer1 (H*H + 3*H) + layer0 b/gamma/beta (3*H)
-        let trunk_fixed = h * h + 3 * h + 3 * h;
         let standard_tail = h * NUM_ACTIONS + NUM_ACTIONS;
         let dueling_tail = h + 1 + h * NUM_ACTIONS + NUM_ACTIONS;
+        let known_dims = [114];
 
-        // Try standard first
-        let standard_fixed = trunk_fixed + standard_tail;
-        if total > standard_fixed && (total - standard_fixed) % h == 0 {
-            let obs_dim = (total - standard_fixed) / h;
-            // Check dueling too
-            let dueling_fixed = trunk_fixed + dueling_tail;
-            if total > dueling_fixed && (total - dueling_fixed) % h == 0 {
-                let dueling_obs = (total - dueling_fixed) / h;
-                let known = [114];
-                if known.contains(&obs_dim) && !known.contains(&dueling_obs) {
-                    return Self::from_floats(&floats, hidden, obs_dim, false);
-                } else if !known.contains(&obs_dim) && known.contains(&dueling_obs) {
-                    return Self::from_floats(&floats, hidden, dueling_obs, true);
+        // Collect all valid (layers, dueling, obs_dim) candidates
+        let mut candidates = Vec::new();
+        for layers in 2..=4 {
+            let trunk_fixed = (layers - 1) * (h * h + 3 * h) + 3 * h;
+
+            for &(tail, dueling) in &[(dueling_tail, true), (standard_tail, false)] {
+                let fixed = trunk_fixed + tail;
+                if total > fixed && (total - fixed) % h == 0 {
+                    let obs_dim = (total - fixed) / h;
+                    if obs_dim > 0 && obs_dim <= 500 {
+                        candidates.push((layers, dueling, obs_dim));
+                    }
                 }
-                return Self::from_floats(&floats, hidden, obs_dim, false);
             }
-            return Self::from_floats(&floats, hidden, obs_dim, false);
         }
 
-        // Try dueling
-        let dueling_fixed = trunk_fixed + dueling_tail;
-        if total > dueling_fixed && (total - dueling_fixed) % h == 0 {
-            let obs_dim = (total - dueling_fixed) / h;
-            return Self::from_floats(&floats, hidden, obs_dim, true);
+        // Prefer: known obs_dim first, then more layers, then dueling
+        if let Some(&(layers, dueling, obs_dim)) = candidates.iter()
+            .filter(|&&(_, _, od)| known_dims.contains(&od))
+            .max_by_key(|&&(l, d, _)| (l, d as usize))
+        {
+            return Self::from_floats_with_layers(&floats, hidden, obs_dim, dueling, layers);
+        }
+        // Fallback: any valid candidate, prefer more layers
+        if let Some(&(layers, dueling, obs_dim)) = candidates.iter()
+            .max_by_key(|&&(l, d, _)| (l, d as usize))
+        {
+            return Self::from_floats_with_layers(&floats, hidden, obs_dim, dueling, layers);
         }
 
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "cannot infer obs_dim: {} floats, hidden={} (neither standard nor dueling fits)",
+                "cannot infer architecture: {} floats, hidden={} (tried 2-4 layers, standard+dueling)",
                 total, h,
             ),
         ))
     }
 
-    /// Construct from a flat array of f32 weights.
+    /// Construct from flat weights (default 2 layers for backward compat).
     pub fn from_floats(floats: &[f32], hidden: usize, obs_dim: usize, dueling: bool) -> std::io::Result<Self> {
-        let in_dims = [obs_dim, hidden];
+        Self::from_floats_with_layers(floats, hidden, obs_dim, dueling, 2)
+    }
+
+    /// Construct from flat weights with explicit layer count.
+    pub fn from_floats_with_layers(
+        floats: &[f32],
+        hidden: usize,
+        obs_dim: usize,
+        dueling: bool,
+        layers: usize,
+    ) -> std::io::Result<Self> {
+        let mut in_dims = vec![obs_dim];
+        for _ in 1..layers {
+            in_dims.push(hidden);
+        }
 
         let mut expected = 0;
         for &in_dim in &in_dims {
@@ -130,28 +144,28 @@ impl BidNet {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "weight file has {} floats, expected {} for obs_dim={}, hidden={}, dueling={}",
-                    floats.len(), expected, obs_dim, hidden, dueling,
+                    "weight file has {} floats, expected {} for obs_dim={}, hidden={}, layers={}, dueling={}",
+                    floats.len(), expected, obs_dim, hidden, layers, dueling,
                 ),
             ));
         }
 
         let mut offset = 0;
-        let mut w = [Vec::new(), Vec::new()];
-        let mut b = [Vec::new(), Vec::new()];
-        let mut gamma = [Vec::new(), Vec::new()];
-        let mut beta = [Vec::new(), Vec::new()];
+        let mut w = Vec::with_capacity(layers);
+        let mut b = Vec::with_capacity(layers);
+        let mut gamma = Vec::with_capacity(layers);
+        let mut beta = Vec::with_capacity(layers);
 
-        for layer in 0..NUM_LAYERS {
+        for layer in 0..layers {
             let in_dim = in_dims[layer];
             let w_size = in_dim * hidden;
-            w[layer] = floats[offset..offset + w_size].to_vec();
+            w.push(floats[offset..offset + w_size].to_vec());
             offset += w_size;
-            b[layer] = floats[offset..offset + hidden].to_vec();
+            b.push(floats[offset..offset + hidden].to_vec());
             offset += hidden;
-            gamma[layer] = floats[offset..offset + hidden].to_vec();
+            gamma.push(floats[offset..offset + hidden].to_vec());
             offset += hidden;
-            beta[layer] = floats[offset..offset + hidden].to_vec();
+            beta.push(floats[offset..offset + hidden].to_vec());
             offset += hidden;
         }
 
@@ -177,6 +191,7 @@ impl BidNet {
                 b_adv,
                 obs_dim,
                 hidden,
+                layers,
                 in_dims,
                 scratch_a: vec![0.0; hidden],
                 scratch_b: vec![0.0; hidden],
@@ -198,6 +213,7 @@ impl BidNet {
                 b_adv: Vec::new(),
                 obs_dim,
                 hidden,
+                layers,
                 in_dims,
                 scratch_a: vec![0.0; hidden],
                 scratch_b: vec![0.0; hidden],
@@ -210,31 +226,42 @@ impl BidNet {
     pub fn evaluate(&mut self, obs: &[f32]) -> [f32; NUM_ACTIONS] {
         debug_assert_eq!(obs.len(), self.obs_dim);
 
-        // Layer 0: scratch_a = ReLU(LN(W0 * obs + b0))
+        // Layer 0: obs → scratch_a
         linear(&self.w[0], &self.b[0], obs, &mut self.scratch_a, self.in_dims[0], self.hidden);
         layer_norm(&mut self.scratch_a, &self.gamma[0], &self.beta[0], self.hidden);
         relu(&mut self.scratch_a);
 
-        // Layer 1: scratch_b = ReLU(LN(W1 * scratch_a + b1))
-        linear(&self.w[1], &self.b[1], &self.scratch_a, &mut self.scratch_b, self.hidden, self.hidden);
-        layer_norm(&mut self.scratch_b, &self.gamma[1], &self.beta[1], self.hidden);
-        relu(&mut self.scratch_b);
+        // Remaining layers alternate between scratch buffers
+        for layer in 1..self.layers {
+            if layer % 2 == 1 {
+                // scratch_a → scratch_b
+                linear(&self.w[layer], &self.b[layer], &self.scratch_a, &mut self.scratch_b, self.hidden, self.hidden);
+                layer_norm(&mut self.scratch_b, &self.gamma[layer], &self.beta[layer], self.hidden);
+                relu(&mut self.scratch_b);
+            } else {
+                // scratch_b → scratch_a
+                linear(&self.w[layer], &self.b[layer], &self.scratch_b, &mut self.scratch_a, self.hidden, self.hidden);
+                layer_norm(&mut self.scratch_a, &self.gamma[layer], &self.beta[layer], self.hidden);
+                relu(&mut self.scratch_a);
+            }
+        }
+
+        // Final output is in scratch_b if layers is even, scratch_a if odd
+        let trunk_out = if self.layers % 2 == 0 { &self.scratch_b } else { &self.scratch_a };
 
         if self.dueling {
-            // Value head
             let mut v = self.b_value;
             for j in 0..self.hidden {
-                v += self.w_value[j] * self.scratch_b[j];
+                v += self.w_value[j] * trunk_out[j];
             }
 
-            // Advantage head
             let mut q = [0.0f32; NUM_ACTIONS];
             let mut adv_sum = 0.0f32;
             for i in 0..NUM_ACTIONS {
                 let row_start = i * self.hidden;
                 let mut a = self.b_adv[i];
                 for j in 0..self.hidden {
-                    a += self.w_adv[row_start + j] * self.scratch_b[j];
+                    a += self.w_adv[row_start + j] * trunk_out[j];
                 }
                 q[i] = a;
                 adv_sum += a;
@@ -251,7 +278,7 @@ impl BidNet {
                 let row_start = i * self.hidden;
                 let mut sum = self.b_out[i];
                 for j in 0..self.hidden {
-                    sum += self.w_out[row_start + j] * self.scratch_b[j];
+                    sum += self.w_out[row_start + j] * trunk_out[j];
                 }
                 q[i] = sum;
             }
@@ -312,6 +339,10 @@ impl BidNet {
         self.hidden
     }
 
+    pub fn layers(&self) -> usize {
+        self.layers
+    }
+
     pub fn is_dueling(&self) -> bool {
         self.dueling
     }
@@ -365,7 +396,7 @@ mod tests {
 
     const TEST_OBS_DIM: usize = 114;
 
-    fn build_standard_weights(obs_dim: usize, hidden: usize) -> Vec<f32> {
+    fn build_standard_weights(obs_dim: usize, hidden: usize, layers: usize) -> Vec<f32> {
         let mut floats = Vec::new();
 
         // Layer 0
@@ -374,15 +405,17 @@ mod tests {
         floats.extend(vec![1.0f32; hidden]);
         floats.extend(vec![0.0f32; hidden]);
 
-        // Layer 1: identity
-        let mut w1 = vec![0.0f32; hidden * hidden];
-        for i in 0..hidden {
-            w1[i * hidden + i] = 1.0;
+        // Layers 1+: identity
+        for _ in 1..layers {
+            let mut w = vec![0.0f32; hidden * hidden];
+            for i in 0..hidden {
+                w[i * hidden + i] = 1.0;
+            }
+            floats.extend(w);
+            floats.extend(vec![0.0f32; hidden]);
+            floats.extend(vec![1.0f32; hidden]);
+            floats.extend(vec![0.0f32; hidden]);
         }
-        floats.extend(w1);
-        floats.extend(vec![0.0f32; hidden]);
-        floats.extend(vec![1.0f32; hidden]);
-        floats.extend(vec![0.0f32; hidden]);
 
         // Output
         floats.extend(vec![0.0f32; hidden * NUM_ACTIONS]);
@@ -391,7 +424,7 @@ mod tests {
         floats
     }
 
-    fn build_dueling_weights(obs_dim: usize, hidden: usize) -> Vec<f32> {
+    fn build_dueling_weights(obs_dim: usize, hidden: usize, layers: usize) -> Vec<f32> {
         let mut floats = Vec::new();
 
         // Layer 0
@@ -400,15 +433,17 @@ mod tests {
         floats.extend(vec![1.0f32; hidden]);
         floats.extend(vec![0.0f32; hidden]);
 
-        // Layer 1: identity
-        let mut w1 = vec![0.0f32; hidden * hidden];
-        for i in 0..hidden {
-            w1[i * hidden + i] = 1.0;
+        // Layers 1+: identity
+        for _ in 1..layers {
+            let mut w = vec![0.0f32; hidden * hidden];
+            for i in 0..hidden {
+                w[i * hidden + i] = 1.0;
+            }
+            floats.extend(w);
+            floats.extend(vec![0.0f32; hidden]);
+            floats.extend(vec![1.0f32; hidden]);
+            floats.extend(vec![0.0f32; hidden]);
         }
-        floats.extend(w1);
-        floats.extend(vec![0.0f32; hidden]);
-        floats.extend(vec![1.0f32; hidden]);
-        floats.extend(vec![0.0f32; hidden]);
 
         // Value head
         floats.extend(vec![0.0f32; hidden]);
@@ -422,12 +457,13 @@ mod tests {
     }
 
     #[test]
-    fn test_standard_tiny() {
+    fn test_standard_2layer() {
         let hidden = 2;
-        let floats = build_standard_weights(TEST_OBS_DIM, hidden);
+        let floats = build_standard_weights(TEST_OBS_DIM, hidden, 2);
         let mut net = BidNet::from_floats(&floats, hidden, TEST_OBS_DIM, false).unwrap();
         assert!(!net.is_dueling());
         assert_eq!(net.obs_dim(), TEST_OBS_DIM);
+        assert_eq!(net.layers(), 2);
 
         let obs = vec![0.0f32; TEST_OBS_DIM];
         let q = net.evaluate(&obs);
@@ -437,17 +473,66 @@ mod tests {
     }
 
     #[test]
-    fn test_dueling_tiny() {
+    fn test_dueling_2layer() {
         let hidden = 4;
-        let floats = build_dueling_weights(TEST_OBS_DIM, hidden);
+        let floats = build_dueling_weights(TEST_OBS_DIM, hidden, 2);
         let mut net = BidNet::from_floats(&floats, hidden, TEST_OBS_DIM, true).unwrap();
         assert!(net.is_dueling());
+        assert_eq!(net.layers(), 2);
 
         let obs = vec![0.0f32; TEST_OBS_DIM];
         let q = net.evaluate(&obs);
         for &v in &q {
             assert!(v.abs() < 1e-4, "expected ~0, got {}", v);
         }
+    }
+
+    #[test]
+    fn test_3layer_dueling() {
+        let hidden = 4;
+        let floats = build_dueling_weights(TEST_OBS_DIM, hidden, 3);
+        let mut net = BidNet::from_floats_with_layers(&floats, hidden, TEST_OBS_DIM, true, 3).unwrap();
+        assert!(net.is_dueling());
+        assert_eq!(net.layers(), 3);
+
+        let obs = vec![0.0f32; TEST_OBS_DIM];
+        let q = net.evaluate(&obs);
+        for &v in &q {
+            assert!(v.abs() < 1e-4, "expected ~0, got {}", v);
+        }
+    }
+
+    #[test]
+    fn test_autodetect_2layer() {
+        let hidden = 4;
+        let floats = build_dueling_weights(TEST_OBS_DIM, hidden, 2);
+
+        // Write to temp file
+        let tmp = "/tmp/test_bid_autodetect_2.bin";
+        let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+        std::fs::write(tmp, bytes).unwrap();
+
+        let net = BidNet::load_with_hidden(tmp, hidden).unwrap();
+        assert_eq!(net.layers(), 2);
+        assert!(net.is_dueling());
+
+        std::fs::remove_file(tmp).ok();
+    }
+
+    #[test]
+    fn test_autodetect_3layer() {
+        let hidden = 4;
+        let floats = build_dueling_weights(TEST_OBS_DIM, hidden, 3);
+
+        let tmp = "/tmp/test_bid_autodetect_3.bin";
+        let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+        std::fs::write(tmp, bytes).unwrap();
+
+        let net = BidNet::load_with_hidden(tmp, hidden).unwrap();
+        assert_eq!(net.layers(), 3);
+        assert!(net.is_dueling());
+
+        std::fs::remove_file(tmp).ok();
     }
 
     #[test]

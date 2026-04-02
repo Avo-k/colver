@@ -32,7 +32,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY entrypoint.sh /app/entrypoint.sh
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV COLVER_MODEL_PATH="/app/models/dmc_35.bin"
+ENV COLVER_MODEL_PATH="/app/models/dmc_50.bin"
 WORKDIR /app
 EXPOSE 8000
 

@@ -25,12 +25,13 @@ use std::time::Instant;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use colver_core::belief_net::BeliefNet;
+use colver_core::belief_net::{self, BeliefNet};
 use colver_core::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3};
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs;
 use colver_core::card;
+use colver_core::card_beliefs::CardBeliefs;
 use colver_core::dmc_obs::EnvTracking;
 use colver_core::game_replay::GameReplay;
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
@@ -78,8 +79,9 @@ fn main() {
         "per_trick" => run_per_trick_eval(&model_path, &replays_path, num_games),
         "ablation" => run_ablation(&model_path, &replays_path, num_games),
         "ensemble" => run_ensemble_eval(&model_path, &replays_path, num_games),
+        "bidding" => run_bidding_eval(&model_path, &bid_model_path, num_games, seed),
         other => {
-            eprintln!("Unknown mode: {} (expected 'offline', 'match', 'diagnose', 'scenario', 'per_trick', 'ablation', or 'ensemble')", other);
+            eprintln!("Unknown mode: {} (expected 'offline', 'match', 'diagnose', 'scenario', 'per_trick', 'ablation', 'ensemble', or 'bidding')", other);
             std::process::exit(1);
         }
     }
@@ -1500,6 +1502,306 @@ fn run_ensemble_eval(model_paths: &str, replays_path: &str, num_games: usize) {
 
     let ensemble_acc = if total > 0 { correct as f64 / total as f64 } else { 0.0 };
     println!("\nEnsemble ({} models): {:.2}%", n_models, ensemble_acc * 100.0);
+}
+
+/// Evaluate belief accuracy at the start of play phase (after bidding, before any
+/// cards played). Compares NN beliefs vs CardBeliefs heuristic vs uniform random.
+///
+/// Usage:
+///   cargo run -p colver-core --bin belief_eval --release -- \
+///     --model models/belief_net.bin --bid-model models/bid_nn_final.bin \
+///     --mode bidding --games 5000 --seed 42
+fn run_bidding_eval(model_path: &str, bid_model_path: &str, num_deals: usize, seed: u64) {
+    println!("=== Bidding-Phase Belief Evaluation ===");
+    println!("Belief model: {}", model_path);
+    println!("Bid model:    {}", if bid_model_path.is_empty() { "(improved_v2)" } else { bid_model_path });
+    println!("Deals:        {}", num_deals);
+    println!("Seed:         {}", seed);
+
+    let mut belief_net = BeliefNet::load(model_path).unwrap_or_else(|e| {
+        eprintln!("Failed to load belief model: {}", e);
+        std::process::exit(1);
+    });
+    let obs_dim = belief_net.obs_dim();
+    let nc = belief_net.num_classes();
+    println!("Belief model loaded (obs_dim={}, hidden={}, {}-class)", obs_dim, belief_net.hidden(), nc);
+
+    let mut bid_net = if !bid_model_path.is_empty() {
+        match BidNet::load(bid_model_path) {
+            Ok(net) => { println!("Bid model loaded"); Some(net) }
+            Err(e) => { println!("Bid model not found ({}), using improved_v2", e); None }
+        }
+    } else {
+        None
+    };
+
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    // Accumulators: [nn, heuristic_soft, heuristic_hard, random]
+    let mut correct = [0u64; 4];
+    let mut total = [0u64; 4];
+    let mut ce_sum = [0.0f64; 4]; // Cross-entropy sum
+    let mut ce_count = [0u64; 4];
+
+    // Per-bidder-position accuracy (0 = opener, 1-3 = subsequent)
+    let mut nn_correct_by_pos = [0u64; 4];
+    let mut nn_total_by_pos = [0u64; 4];
+
+    // Track how many deals had a contract vs void
+    let mut void_deals = 0u32;
+    let mut contract_deals = 0u32;
+
+    // NN accuracy when bidder bid vs when bidder passed (for the bid-suit cards)
+    let mut nn_correct_bidder_trump = 0u64;
+    let mut nn_total_bidder_trump = 0u64;
+    let mut nn_correct_passer_trump = 0u64;
+    let mut nn_total_passer_trump = 0u64;
+
+    let start = Instant::now();
+
+    for deal_idx in 0..num_deals {
+        let dealer = rng.gen_range(0..4u8);
+        let mut state = GameState::deal_random(dealer, &mut rng);
+        let true_hands = state.hands;
+
+        let mut tracking = EnvTracking::new();
+        tracking.dealer = dealer;
+
+        // Run bidding
+        while state.phase == Phase::Bidding {
+            let action = bid_action(&state, &mut bid_net);
+            tracking.track_action(&state, action);
+            state.step(action);
+        }
+
+        if state.is_terminal() {
+            // Void deal (4 passes)
+            void_deals += 1;
+            continue;
+        }
+        contract_deals += 1;
+
+        let trump_suit = state.contract.trump;
+        let taker_team = state.contract.team;
+
+        // Evaluate from each player's perspective
+        for observer in 0..4u8 {
+            let observer_hand = state.hands[observer as usize];
+            let unknown_mask = !observer_hand; // All 24 cards not in hand
+
+            // --- 1. NN beliefs ---
+            let nn_weights = {
+                let logits = eval_belief(&mut belief_net, &state, &tracking, observer);
+                belief_net::belief_to_weights(&logits, nc, &state, observer)
+            };
+
+            // --- 2. CardBeliefs with soft inference ---
+            let heur_soft_weights = {
+                let mut beliefs = CardBeliefs::new(&GameState::new(dealer, true_hands), observer);
+                // Replay bidding actions
+                let mut replay_state = GameState::new(dealer, true_hands);
+                for &(player, action) in &tracking.bid_history {
+                    beliefs.record_action(&replay_state, player, action);
+                    replay_state.step(action);
+                }
+                beliefs.normalized_weights()
+            };
+
+            // --- 3. CardBeliefs hard only (no soft inference) ---
+            let heur_hard_weights = {
+                let mut beliefs = CardBeliefs::new(&GameState::new(dealer, true_hands), observer);
+                beliefs.use_soft_inference = false;
+                let mut replay_state = GameState::new(dealer, true_hands);
+                for &(player, action) in &tracking.bid_history {
+                    beliefs.record_action(&replay_state, player, action);
+                    replay_state.step(action);
+                }
+                beliefs.normalized_weights()
+            };
+
+            // Evaluate each unknown card
+            for c in 0..32u8 {
+                if unknown_mask & (1u32 << c) == 0 {
+                    continue;
+                }
+
+                // Ground truth: which player holds this card?
+                let mut true_abs = 0u8;
+                for p in 0..4u8 {
+                    if true_hands[p as usize] & (1u32 << c) != 0 {
+                        true_abs = p;
+                        break;
+                    }
+                }
+
+                // Player-relative mapping: 0=me, 1=left, 2=partner, 3=right
+                // For argmax: exclude observer (me)
+                let true_rel = ((true_abs + 4 - observer) % 4) as usize;
+                debug_assert!(true_rel >= 1 && true_rel <= 3);
+
+                // NN: argmax over non-observer players
+                let nn_pred = {
+                    let mut best_p = 1usize;
+                    let seats = [
+                        ((observer + 1) % 4) as usize,
+                        ((observer + 2) % 4) as usize,
+                        ((observer + 3) % 4) as usize,
+                    ];
+                    let mut best_w = nn_weights[seats[0]][c as usize];
+                    for (i, &seat) in seats.iter().enumerate().skip(1) {
+                        if nn_weights[seat][c as usize] > best_w {
+                            best_w = nn_weights[seat][c as usize];
+                            best_p = i + 1; // relative: 1=left, 2=partner, 3=right
+                        }
+                    }
+                    best_p
+                };
+
+                // Heuristic soft: argmax over non-observer
+                let heur_soft_pred = {
+                    let seats = [
+                        ((observer + 1) % 4) as usize,
+                        ((observer + 2) % 4) as usize,
+                        ((observer + 3) % 4) as usize,
+                    ];
+                    let mut best_p = 1usize;
+                    let mut best_w = heur_soft_weights[seats[0]][c as usize];
+                    for (i, &seat) in seats.iter().enumerate().skip(1) {
+                        if heur_soft_weights[seat][c as usize] > best_w {
+                            best_w = heur_soft_weights[seat][c as usize];
+                            best_p = i + 1;
+                        }
+                    }
+                    best_p
+                };
+
+                // Heuristic hard: argmax
+                let heur_hard_pred = {
+                    let seats = [
+                        ((observer + 1) % 4) as usize,
+                        ((observer + 2) % 4) as usize,
+                        ((observer + 3) % 4) as usize,
+                    ];
+                    let mut best_p = 1usize;
+                    let mut best_w = heur_hard_weights[seats[0]][c as usize];
+                    for (i, &seat) in seats.iter().enumerate().skip(1) {
+                        if heur_hard_weights[seat][c as usize] > best_w {
+                            best_w = heur_hard_weights[seat][c as usize];
+                            best_p = i + 1;
+                        }
+                    }
+                    best_p
+                };
+
+                // Random: always 33.3%
+                let random_pred = (rng.gen_range(0..3u8) + 1) as usize;
+
+                // Record accuracy
+                let preds = [nn_pred, heur_soft_pred, heur_hard_pred, random_pred];
+                for (i, &pred) in preds.iter().enumerate() {
+                    if pred == true_rel {
+                        correct[i] += 1;
+                    }
+                    total[i] += 1;
+                }
+
+                // Cross-entropy for NN
+                {
+                    let seats = [
+                        ((observer + 1) % 4) as usize,
+                        ((observer + 2) % 4) as usize,
+                        ((observer + 3) % 4) as usize,
+                    ];
+                    let true_seat = seats[true_rel - 1];
+                    let p_nn = nn_weights[true_seat][c as usize].max(1e-10);
+                    ce_sum[0] += -(p_nn as f64).ln();
+                    ce_count[0] += 1;
+
+                    let p_heur = heur_soft_weights[true_seat][c as usize].max(1e-10);
+                    ce_sum[1] += -(p_heur as f64).ln();
+                    ce_count[1] += 1;
+
+                    let p_hard = heur_hard_weights[true_seat][c as usize].max(1e-10);
+                    ce_sum[2] += -(p_hard as f64).ln();
+                    ce_count[2] += 1;
+
+                    ce_sum[3] += -(1.0f64 / 3.0).ln(); // random
+                    ce_count[3] += 1;
+                }
+
+                // NN per-position accuracy
+                let obs_pos = ((observer as usize) + 4 - dealer as usize) % 4;
+                if nn_pred == true_rel {
+                    nn_correct_by_pos[obs_pos] += 1;
+                }
+                nn_total_by_pos[obs_pos] += 1;
+
+                // NN accuracy for trump suit cards: bidder vs non-bidder
+                let card_suit = c / 8;
+                if card_suit == trump_suit {
+                    let card_holder_team = GameState::player_team(true_abs);
+                    if card_holder_team == taker_team {
+                        // Card belongs to the taker's team
+                        if nn_pred == true_rel { nn_correct_bidder_trump += 1; }
+                        nn_total_bidder_trump += 1;
+                    } else {
+                        if nn_pred == true_rel { nn_correct_passer_trump += 1; }
+                        nn_total_passer_trump += 1;
+                    }
+                }
+            }
+        }
+
+        if (deal_idx + 1) % 500 == 0 || deal_idx + 1 == num_deals {
+            let elapsed = start.elapsed().as_secs_f64();
+            let nn_acc = correct[0] as f64 / total[0].max(1) as f64 * 100.0;
+            let hs_acc = correct[1] as f64 / total[1].max(1) as f64 * 100.0;
+            println!(
+                "  [{}/{}] NN={:.1}% Heur={:.1}% ({:.1}s)",
+                deal_idx + 1, num_deals, nn_acc, hs_acc, elapsed,
+            );
+        }
+    }
+
+    let elapsed = start.elapsed().as_secs_f64();
+
+    println!("\n=== Results ({} deals, {} void, {} with contract) ===",
+        num_deals, void_deals, contract_deals);
+
+    let labels = ["NN Belief", "Heur Soft", "Heur Hard", "Random"];
+    println!("\n{:<12} {:>8} {:>12} {:>10}", "Method", "Acc%", "CE", "Cards");
+    println!("{}", "-".repeat(48));
+    for i in 0..4 {
+        let acc = correct[i] as f64 / total[i].max(1) as f64 * 100.0;
+        let ce = if ce_count[i] > 0 { ce_sum[i] / ce_count[i] as f64 } else { 0.0 };
+        println!(
+            "{:<12} {:>7.2}% {:>12.4} {:>10}",
+            labels[i], acc, ce, total[i],
+        );
+    }
+
+    // NN accuracy by observer position relative to dealer
+    println!("\n--- NN accuracy by observer position (relative to dealer) ---");
+    let pos_labels = ["Opener (dealer+1)", "2nd seat", "3rd seat", "4th seat (dealer)"];
+    for i in 0..4 {
+        if nn_total_by_pos[i] > 0 {
+            let acc = nn_correct_by_pos[i] as f64 / nn_total_by_pos[i] as f64 * 100.0;
+            println!("  {:<20}: {:.1}% ({}/{})", pos_labels[i], acc, nn_correct_by_pos[i], nn_total_by_pos[i]);
+        }
+    }
+
+    // NN accuracy on trump suit: taker team vs defender team
+    println!("\n--- NN accuracy on trump suit cards ---");
+    if nn_total_bidder_trump > 0 {
+        let acc = nn_correct_bidder_trump as f64 / nn_total_bidder_trump as f64 * 100.0;
+        println!("  Taker team trump:   {:.1}% ({}/{})", acc, nn_correct_bidder_trump, nn_total_bidder_trump);
+    }
+    if nn_total_passer_trump > 0 {
+        let acc = nn_correct_passer_trump as f64 / nn_total_passer_trump as f64 * 100.0;
+        println!("  Defender team trump: {:.1}% ({}/{})", acc, nn_correct_passer_trump, nn_total_passer_trump);
+    }
+
+    println!("\nElapsed: {:.1}s ({:.1}ms/deal)", elapsed, elapsed * 1000.0 / num_deals as f64);
 }
 
 fn format_bid_action(action: u8) -> String {

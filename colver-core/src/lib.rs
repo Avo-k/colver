@@ -7,6 +7,7 @@ pub mod scoring;
 pub mod game;
 pub mod cfn;
 pub mod rollout;
+pub mod rule_player;
 pub mod determinize;
 pub mod bid_eval;
 pub mod maxi;
@@ -41,6 +42,8 @@ pub mod is_dd;
 pub mod dd_bid;
 #[cfg(feature = "rand")]
 pub mod bid_train_env;
+#[cfg(feature = "rand")]
+pub mod joint_env;
 #[cfg(feature = "dmc_train")]
 pub mod dmc_candle;
 #[cfg(feature = "dmc_train")]

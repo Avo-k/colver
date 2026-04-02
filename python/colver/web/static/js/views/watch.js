@@ -39,22 +39,22 @@ function template() {
     <div class="watch-agents">
         <label>N\u00a0: <select class="agent-select" data-seat="0">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select></label>
         <label>E\u00a0: <select class="agent-select" data-seat="1">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select></label>
         <label>S\u00a0: <select class="agent-select" data-seat="2">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select></label>
         <label>O\u00a0: <select class="agent-select" data-seat="3">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select></label>
     </div>
@@ -810,7 +810,7 @@ export function mount(container) {
         if (!data.doudou_available) {
             document.querySelectorAll('#watch-config .agent-select option[value="doudou"]').forEach(opt => {
                 opt.disabled = true;
-                opt.textContent = 'DouDou27 (non dispo)';
+                opt.textContent = 'DouDou50 (non dispo)';
             });
         }
 

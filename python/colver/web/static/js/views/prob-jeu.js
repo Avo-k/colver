@@ -51,7 +51,7 @@ const TEMPLATE = `
             <div id="pj-isdd-meta" class="visit-total"></div>
         </div>
         <div id="pj-dmc-section" class="prob-section hidden">
-            <div class="prob-label">DouDou (DMC)</div>
+            <div class="prob-label">DouDou50 (DMC)</div>
             <div id="pj-dmc-best" class="prob-best"></div>
             <div id="pj-dmc-bars"></div>
         </div>
@@ -156,7 +156,7 @@ function handleCorrection(data) {
     const dmcSec = document.getElementById('pj-dmc-section');
     if (data.dmc_q_values && data.dmc_q_values.length) {
         dmcSec.classList.remove('hidden');
-        document.getElementById('pj-dmc-best').textContent = 'DouDou : ' + data.dmc_action_name;
+        document.getElementById('pj-dmc-best').textContent = 'DouDou50 : ' + data.dmc_action_name;
         const dmcBarsEl = document.getElementById('pj-dmc-bars');
         dmcBarsEl.innerHTML = '';
 

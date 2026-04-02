@@ -232,7 +232,7 @@ class PlaySession(TrickTracker):
 
 AGENT_NAMES = {
     "dede": "Dédé (IS-DD)",
-    "doudou": "DouDou27",
+    "doudou": "DouDou50",
     "oracle_dd": "Oracle (DD)",
 }
 
@@ -245,7 +245,7 @@ class WatchSession(TrickTracker):
     def __init__(self, agents, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dealer=None, hands=None, env=None, difficulty="difficile"):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
-        dmc_model_path: path to .bin weights file for DouDou (Rust inference)
+        dmc_model_path: path to .bin weights file for DouDou50 (Rust inference)
         bid_model_path: path to .bin weights file for Bid à DD (NN bidder)
         belief_model_path: path to .bin weights file for BeliefNet (NN card beliefs)
         dealer: optional dealer seat (for custom deals)
@@ -266,7 +266,7 @@ class WatchSession(TrickTracker):
             self.env = colver.Env()
             self.env.reset()
 
-        # Load DMC model if any seat uses DouDou
+        # Load DMC model if any seat uses DouDou50
         if dmc_model_path and any(a == "doudou" for a in agents.values()):
             self.env.load_dmc_model(dmc_model_path)
 

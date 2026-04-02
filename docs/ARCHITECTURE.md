@@ -60,13 +60,16 @@ Six fixed bidding functions (`BidFunction` enum) plus configurable `parametric_b
 
 `DdBidder` uses DD solver + determinization to estimate expected points per trump suit. ~300ms/opening. Pre-filters candidates, DD-solves each determinization, maps expected points to bid value.
 
-## NN Bidding — "Le Bide à Dédé" (`bid_net.rs`, `bid_obs.rs`, `bid_candle.rs`)
+## NN Bidding (`bid_net.rs`, `bid_obs.rs`, `bid_candle.rs`)
 
-DD-oracle-trained Dueling DQN. 114→256→256→43 with LayerNorm. ~421KB weights, ~0.1ms/eval.
+Two generations of bid NN:
 
-**Observation** (114 floats): hand (32) + bid history (72, 12 slots × 6 floats, player-relative) + dealer-relative position (4) + auction state (6).
+- **Bid a Doudou** (v1): 114→256→256→43, trained with DouZero self-play. ~421KB weights. Observation: hand (32) + bid history (72) + position (4) + auction state (6) = 114 floats.
+- **Bid a Dede** (v2, default): 108→512→512→512→43, trained with DD solver + 24x suit augmentation. Observation: hand (32) + bid history (72) + position (4) = 108 floats (auction state removed as redundant).
 
-**Rust inference:** `BidNet::load(path)` / `BidNet::evaluate(&mut self, obs) -> [f32; 43]` / `BidNet::best_action(&mut self, obs, legal_mask) -> (u8, Vec<(u8, f32)>)`. Auto-detects standard vs dueling from file size.
+Both use Dueling DQN with LayerNorm. ~0.1ms/eval.
+
+**Rust inference:** `BidNet::load(path)` auto-detects hidden size (tries 256, 512, 1024). `BidNet::evaluate(&mut self, obs) -> [f32; 43]` / `BidNet::best_action(&mut self, obs, legal_mask) -> (u8, Vec<(u8, f32)>)`.
 
 **Training infra:** `DealPool` (pre-solved deals, `COLVDD01` format), `BidTrainingEnv`, `VecBidEnv`, `BidReplayBuffer` (SumTree PER), `BiddingTrainer` (candle Dueling DQN). Opponent diversity annealing 40%→15% non-self-play.
 
@@ -74,9 +77,14 @@ DD-oracle-trained Dueling DQN. 114→256→256→43 with LayerNorm. ~421KB weigh
 
 DouZero-style Deep Monte-Carlo. Q-network picks card plays with single forward pass — no search tree.
 
-**Architecture:** 444→1024→1024→1024→32 MLP with LayerNorm, Dueling DQN (~2.6M params).
+Two generations:
 
-**Observation v4** (415 floats, player-relative): hand (32) + current trick per-player (128) + past tricks per-player (96) + contract (7) + void tracking (12) + scoring context (4) + bid history (72) + card trick index (32) + card sequence index (32).
+- **DouDou35** (legacy): 415→1024→1024→1024→32 MLP with LayerNorm, Dueling DQN (~2.6M params). Trained 35M steps with DouZero self-play. Uses legacy 415-dim observation.
+- **DouDou50** (default): 411→1024→1024→1024→32 ResNet Dueling DQN with skip connections (~2.6M params). Trained 50M steps with Bid a Dede frozen (triforge play-only). Uses canonical 411-dim observation.
+
+**Observation — legacy (415 floats, player-relative):** hand (32) + current trick per-player (128) + past tricks per-player (96) + contract (7) + void tracking (12) + scoring context (4) + bid history (72) + card trick index (32) + card sequence index (32).
+
+**Observation — canonical (411 floats):** Same layout but trump always in suit slot 0, non-trump suits canonically sorted. No trump one-hot (3 fewer dims). No suit augmentation needed.
 
 **Rust inference:** `DmcNet::load(path)` auto-detects obs_dim from file size. `DmcNet::evaluate(&mut self, obs) -> [f32; 32]`. ~1ms/eval, zero deps.
 

@@ -36,24 +36,24 @@ const TEMPLATE = `
     </div>
 
     <div class="docs-section">
-        <h4>DouDou <span class="docs-tag best">Recommand\u00e9</span></h4>
+        <h4>DouDou50 <span class="docs-tag best">Recommand\u00e9</span></h4>
         <p>
-            R\u00e9seau Q Deep Monte-Carlo entra\u00een\u00e9 par self-play (style DouZero).
-            Un MLP \u00e0 3 couches (1024 unit\u00e9s cach\u00e9es, ~2.6M param\u00e8tres) prend une observation de dimension 415
-            et produit les Q-values des 32 cartes en une seule passe \u2014 aucun arbre de recherche n\u00e9cessaire.
-            L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision. Agent le plus fort dans l'ensemble.
-            <em>DouDou</em> = en r\u00e9f\u00e9rence \u00e0 DouZero.
+            R\u00e9seau Q Deep Monte-Carlo de type ResNet avec Dueling DQN, entra\u00een\u00e9 par self-play iteratif (Triforge).
+            Architecture 411\u21921024\u00b3\u219232 avec skip connections, observation canonique (atout en slot 0, couleurs tri\u00e9es),
+            entra\u00een\u00e9 50M pas. L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision.
+            Agent le plus fort dans l'ensemble.
         </p>
     </div>
 
     <h3>Ench\u00e8res</h3>
 
     <div class="docs-section">
-        <h4>Le Bide \u00e0 D\u00e9d\u00e9 <span class="docs-tag best">D\u00e9faut</span></h4>
+        <h4>Bid \u00e0 D\u00e9d\u00e9 <span class="docs-tag best">D\u00e9faut</span></h4>
         <p>
             R\u00e9seau de neurones d'ench\u00e8res utilis\u00e9 par tous les agents.
-            Dueling DQN entra\u00een\u00e9 sur un million de donnes r\u00e9solues par le solveur double-dummy :
+            Dueling DQN (108\u2192512\u00b3\u219243) entra\u00een\u00e9 sur un million de donnes r\u00e9solues par le solveur double-dummy :
             pour chaque main, le r\u00e9seau apprend quelle annonce m\u00e8ne au meilleur r\u00e9sultat en jeu parfait.
+            Succ\u00e8de \u00e0 <em>Bid \u00e0 Doudou</em> (v1, entra\u00een\u00e9 avec DouZero).
         </p>
     </div>
 
@@ -118,14 +118,14 @@ const TEMPLATE = `
         <p>
             Composez une main de 8 cartes en cliquant sur la palette, choisissez votre position dans le tour d'ench\u00e8res
             (combien de passes ont pr\u00e9c\u00e9d\u00e9 votre tour), puis cliquez \u00ab \u00c9valuer \u00bb pour voir ce que
-            <em>Le Bide \u00e0 D\u00e9d\u00e9</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
+            <em>Bid \u00e0 D\u00e9d\u00e9</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
         </p>
         <p>
             Le tableau <strong>Oracle</strong> g\u00e9n\u00e8re des mains adverses al\u00e9atoires et r\u00e9sout chaque donne en jeu parfait (double-dummy).
             Chaque cellule indique le pourcentage de mondes o\u00f9 le contrat est r\u00e9alisable \u2014 un plafond th\u00e9orique.
         </p>
         <p>
-            Le tableau <strong>DouDou</strong> joue les m\u00eames distributions en partie compl\u00e8te via le r\u00e9seau de neurones
+            Le tableau <strong>D\u00e9d\u00e9</strong> joue les m\u00eames distributions en partie compl\u00e8te via le r\u00e9seau de neurones
             (ench\u00e8res NN + jeu DMC).
         </p>
     </div>
@@ -144,7 +144,7 @@ const TEMPLATE = `
         <h4>Probl\u00e8mes d'annonce</h4>
         <p>
             Probl\u00e8mes d'ench\u00e8res : voyez une main et l'historique des ench\u00e8res, puis trouvez la bonne annonce.
-            L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Le Bide \u00e0 D\u00e9d\u00e9</em>.
+            L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Bid \u00e0 D\u00e9d\u00e9</em>.
         </p>
     </div>
 

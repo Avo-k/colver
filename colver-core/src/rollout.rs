@@ -325,7 +325,6 @@ fn heuristic_lead(
             if in_suit == 0 {
                 continue;
             }
-            // Try all cards in suit from highest
             let mut remaining = in_suit;
             while remaining != 0 {
                 let top = (31 - remaining.leading_zeros()) as Card;
@@ -337,7 +336,7 @@ fn heuristic_lead(
         }
     }
 
-    // 4. Lead lowest-point card from shortest non-trump suit (set up void)
+    // 5. Lead lowest-point card from shortest non-trump suit (set up void)
     let mut best_card = EMPTY;
     let mut best_suit_len = u32::MAX;
     for &suit in &ALL_SUITS {
@@ -355,7 +354,7 @@ fn heuristic_lead(
         return best_card;
     }
 
-    // 5. Fallback: lowest point card overall
+    // 6. Fallback: lowest point card overall
     lowest_point_card(legal, ct)
 }
 

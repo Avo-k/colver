@@ -22,7 +22,7 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
 - **56-byte `Copy` game state** for fast MCTS cloning
 - **Six AI agents** — DMC Q-network, IS-DD with belief network, DD oracle, Smart/Naive IS-MCTS, and heuristic
-- **NN bidding** — "Le Bide a Dede", a Dueling DQN trained on DD-solved deals, used by all agents
+- **NN bidding** — "Bid a Dede" (v2), a Dueling DQN trained on DD-solved deals with suit augmentation, used by all agents
 - **Belief network** — NN-based card location prediction for IS-DD search
 - **Web interface** — play against AI, spectate, analyze, and solve problems (FastAPI + WebSocket)
 - **Python bindings** via PyO3 — `Env` class with full type stubs, installable from PyPI
@@ -48,7 +48,7 @@ uv run python -m colver.web
 
 **Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
 
-**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Le Bide a Dede* (the NN bidder) would bid — with Q-values for every legal action.
+**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Bid a Dede* (the NN bidder) would bid — with Q-values for every legal action.
 
 ![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
 
@@ -101,19 +101,23 @@ Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. A
 
 Information Set Double-Dummy search. Maintains a probabilistic belief model over hidden cards — updated after every action via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). Optionally augmented with a **belief network** (NN-based card location prediction, 330→512→512→128, ~2MB). Samples plausible opponent hands weighted by these beliefs, then solves each world exactly with the alpha-beta DD solver. IS-DD sounds like "is Dede" — hence the name.
 
-### DouDou — DMC Q-Network (`dmc_net.rs`)
+### DouDou50 — DMC Q-Network (`dmc_net.rs`)
 
-[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Trained by self-play with Prioritized Experience Replay over 35M steps.
+[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Default play model, trained 50M steps with Bid a Dede frozen (triforge play-only phase).
 
-**Architecture**: Dueling DQN 415→1024→1024→1024→32 with LayerNorm (~2.6M parameters). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent. *DouDou* = a reference to DouZero.
+**Architecture**: ResNet Dueling DQN 411→1024→1024→1024→32 with LayerNorm and skip connections (~2.6M parameters). Uses canonical suit encoding (no augmentation needed). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
+
+The previous model **DouDou35** (415→1024³→32, legacy obs, 35M steps) is still supported for backward compatibility. *DouDou* = a reference to DouZero.
 
 ### Older search agents
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Le Bide a Dede — NN Bidder (`bid_net.rs`)
+### Bid a Dede — NN Bidder (`bid_net.rs`)
 
-Dueling DQN (114→256→256→43) trained on 1M DD-solved deals. Default bidder for all agents. Beats the best heuristic bidder 70-76% across all play engines.
+Dueling DQN (108→512→512→512→43) trained on DD-solved deals with 24x suit augmentation. Default bidder for all agents. Beats the best heuristic bidder 70-76% across all play engines. `BidNet::load` auto-detects hidden size (tries 256, 512, 1024).
+
+The previous model **Bid a Doudou** (v1, 114→256→256→43, trained with DouZero self-play) is still supported.
 
 ## Agent Comparison
 
@@ -121,7 +125,7 @@ Dueling DQN (114→256→256→43) trained on 1M DD-solved deals. Default bidder
 |---|---|---|---|
 | Oracle (DD) | DD solver (cheats) | ~7ms | Perfect info upper bound |
 | Dede (IS-DD) | DD solver + beliefs | ~20ms | Strongest search-based |
-| **DouDou** | **Q-network** | **<1ms** | Strongest overall, no search |
+| **DouDou50** | **Q-network (ResNet)** | **<1ms** | Strongest overall, no search |
 | Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
 | Naive IS-MCTS | Search | ~8ms | Configurable budget |
 

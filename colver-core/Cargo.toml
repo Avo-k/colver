@@ -21,6 +21,10 @@ clap = { version = "4", optional = true, features = ["derive"] }
 rand = "0.8"
 
 [[bin]]
+name = "arena"
+path = "src/tests/arena.rs"
+
+[[bin]]
 name = "bench"
 path = "src/tests/bench.rs"
 
@@ -109,6 +113,11 @@ path = "src/tests/train_bid_nn.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
+name = "train_joint"
+path = "src/tests/train_joint.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
 name = "bid_compare"
 path = "src/tests/bid_compare.rs"
 
@@ -173,3 +182,7 @@ path = "src/tests/bid_dd_probe.rs"
 [[bin]]
 name = "bid_rules_iter"
 path = "src/tests/bid_rules_iter.rs"
+
+[[bin]]
+name = "distill_bid"
+path = "src/tests/distill_bid.rs"

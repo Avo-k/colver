@@ -37,24 +37,32 @@ impl ManualLayerNorm {
     }
 }
 
-/// Dueling Q-Network for bidding: 2-layer trunk + value/advantage heads.
+/// Dueling Q-Network for bidding: N-layer trunk + value/advantage heads.
 pub struct BiddingQNet {
-    trunk_fc: [Linear; 2],
-    trunk_ln: [ManualLayerNorm; 2],
+    trunk_fc: Vec<Linear>,
+    trunk_ln: Vec<ManualLayerNorm>,
     value_head: Linear,
     advantage_head: Linear,
+    pub layers: usize,
 }
 
 impl BiddingQNet {
+    /// Create with default 2 layers (backward compatible).
     pub fn new(hidden: usize, vb: VarBuilder) -> Result<Self> {
-        let trunk_fc = [
-            linear(BID_OBS_DIM, hidden, vb.pp("trunk.0"))?,
-            linear(hidden, hidden, vb.pp("trunk.1"))?,
-        ];
-        let trunk_ln = [
-            ManualLayerNorm::new(hidden, 1e-5, vb.pp("trunk_ln.0"))?,
-            ManualLayerNorm::new(hidden, 1e-5, vb.pp("trunk_ln.1"))?,
-        ];
+        Self::with_layers(2, hidden, vb)
+    }
+
+    /// Create with configurable layer count.
+    pub fn with_layers(layers: usize, hidden: usize, vb: VarBuilder) -> Result<Self> {
+        assert!(layers >= 1);
+        let mut trunk_fc = Vec::with_capacity(layers);
+        let mut trunk_ln = Vec::with_capacity(layers);
+        trunk_fc.push(linear(BID_OBS_DIM, hidden, vb.pp("trunk.0"))?);
+        trunk_ln.push(ManualLayerNorm::new(hidden, 1e-5, vb.pp("trunk_ln.0"))?);
+        for i in 1..layers {
+            trunk_fc.push(linear(hidden, hidden, vb.pp(format!("trunk.{}", i)))?);
+            trunk_ln.push(ManualLayerNorm::new(hidden, 1e-5, vb.pp(format!("trunk_ln.{}", i)))?);
+        }
         let value_head = linear(hidden, 1, vb.pp("value_head"))?;
         let advantage_head = linear(hidden, NUM_ACTIONS, vb.pp("advantage_head"))?;
 
@@ -63,13 +71,14 @@ impl BiddingQNet {
             trunk_ln,
             value_head,
             advantage_head,
+            layers,
         })
     }
 
     /// Forward pass: obs (batch, BID_OBS_DIM) → Q (batch, 43).
     pub fn forward(&self, obs: &Tensor) -> Result<Tensor> {
         let mut x = obs.clone();
-        for i in 0..2 {
+        for i in 0..self.layers {
             x = self.trunk_fc[i].forward(&x)?;
             x = self.trunk_ln[i].forward(&x)?;
             x = x.relu()?;
@@ -130,13 +139,20 @@ pub struct BiddingTrainer {
     optimizer: AdamW,
     device: Device,
     hidden: usize,
+    layers: usize,
 }
 
 impl BiddingTrainer {
+    /// Create with default 2 layers (backward compatible).
     pub fn new(hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+        Self::with_layers(2, hidden, lr, weight_decay, device)
+    }
+
+    /// Create with configurable layer count.
+    pub fn with_layers(layers: usize, hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = BiddingQNet::new(hidden, vb)?;
+        let net = BiddingQNet::with_layers(layers, hidden, vb)?;
 
         let adamw_params = ParamsAdamW {
             lr,
@@ -153,6 +169,7 @@ impl BiddingTrainer {
             optimizer,
             device,
             hidden,
+            layers,
         })
     }
 
@@ -213,9 +230,10 @@ impl BiddingTrainer {
     pub fn export_binary(&self, path: &str) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let data = self.varmap.data().lock().unwrap();
         let mut floats: Vec<f32> = Vec::new();
-        let in_dims = [BID_OBS_DIM, self.hidden];
+        let mut in_dims = vec![BID_OBS_DIM];
+        for _ in 1..self.layers { in_dims.push(self.hidden); }
 
-        for i in 0..2 {
+        for i in 0..self.layers {
             let w: Vec<f32> = data
                 .get(&format!("trunk.{}.weight", i))
                 .ok_or_else(|| format!("missing trunk.{}.weight", i))?
@@ -291,7 +309,7 @@ impl BiddingTrainer {
         let data = self.varmap.data().lock().unwrap();
         let mut floats: Vec<f32> = Vec::new();
 
-        for i in 0..2 {
+        for i in 0..self.layers {
             let w: Vec<f32> = data
                 .get(&format!("trunk.{}.weight", i))
                 .unwrap()

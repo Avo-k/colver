@@ -94,7 +94,7 @@ impl DealPool {
                         }
 
                         let done = progress_ref.fetch_add(1, Ordering::Relaxed) + 1;
-                        if done % 5_000 == 0 {
+                        if done % 50_000 == 0 {
                             let elapsed = start.elapsed().as_secs_f64();
                             let rate = done as f64 / elapsed;
                             let eta = (n - done) as f64 / rate;
@@ -104,8 +104,8 @@ impl DealPool {
                             let bar: String = (0..bar_width)
                                 .map(|i| if i < filled { '█' } else { '░' })
                                 .collect();
-                            eprint!(
-                                "\r  {} {:.0}% | {}/{} | {:.0} deals/s | ETA {:.0}s  ",
+                            eprintln!(
+                                "  {} {:.0}% | {}/{} | {:.0} deals/s | ETA {:.0}s",
                                 bar, pct * 100.0, done, n, rate, eta
                             );
                         }

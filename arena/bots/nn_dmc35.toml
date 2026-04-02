@@ -1,0 +1,8 @@
+# Neural champion: NN bidding + DMC play (DouDou35)
+[bid]
+strategy = "nn"
+model = "models/bid_nn_final.bin"
+
+[play]
+method = "dmc"
+model = "models/dmc_35.bin"

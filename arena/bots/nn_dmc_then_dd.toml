@@ -1,0 +1,15 @@
+# Hybrid: DMC for first 5 tricks, IS-DD solver for last 3
+[bid]
+strategy = "nn"
+model = "models/bid_nn_final.bin"
+
+[play]
+method = "dmc_then_dd"
+model = "models/dmc_35.bin"
+switch_at = 5
+time_ms = 50
+determinizations = 20
+
+[belief]
+model = "models/belief_v3.bin"
+use_hard_constraints = true

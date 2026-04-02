@@ -23,6 +23,7 @@ use colver_core::bid_candle::BiddingTrainer;
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::BID_OBS_DIM;
+use colver_core::suit_perm;
 use colver_core::bid_train_env::{BidReplayBuffer, DealPool, VecBidEnv};
 use colver_core::rollout;
 use colver_core::state::GameState;
@@ -118,6 +119,8 @@ struct Args {
     lr: f64,
     #[arg(long, default_value_t = 256)]
     hidden: usize,
+    #[arg(long, default_value_t = 2)]
+    layers: usize,
     #[arg(long, default_value_t = 0.3)]
     eps_start: f32,
     #[arg(long, default_value_t = 0.02)]
@@ -165,7 +168,7 @@ struct Args {
 /// Evaluate NN bidding vs improved_v2 bidding.
 /// Both use DD oracle for card play (same scoring).
 /// Returns (nn_wins, total_deals, avg_margin).
-fn evaluate(trainer: &BiddingTrainer, hidden: usize, num_matches: usize) -> (usize, usize, f64) {
+fn evaluate(trainer: &BiddingTrainer, hidden: usize, layers: usize, num_matches: usize) -> (usize, usize, f64) {
     let weights = match trainer.snapshot_weights() {
         Ok(w) => w,
         Err(e) => {
@@ -173,7 +176,7 @@ fn evaluate(trainer: &BiddingTrainer, hidden: usize, num_matches: usize) -> (usi
             return (0, 0, 0.0);
         }
     };
-    let mut bid_net = match BidNet::from_floats(&weights, hidden, BID_OBS_DIM, true) {
+    let mut bid_net = match BidNet::from_floats_with_layers(&weights, hidden, BID_OBS_DIM, true, layers) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to load eval net: {}", e);
@@ -310,8 +313,8 @@ fn main() {
     println!("=== NN Bidding Training (DD Oracle) ===");
     println!("Device: {}", device_name);
     println!(
-        "Envs: {}, Steps: {}, LR: {}, Hidden: {}",
-        args.num_envs, args.steps, args.lr, args.hidden
+        "Envs: {}, Steps: {}, LR: {}, Hidden: {}, Layers: {}",
+        args.num_envs, args.steps, args.lr, args.hidden, args.layers
     );
     println!(
         "Training: batch={}, freq={}, buffer={}",
@@ -332,7 +335,7 @@ fn main() {
     );
 
     // Initialize trainer
-    let mut trainer = BiddingTrainer::new(args.hidden, args.lr, 0.0, device)
+    let mut trainer = BiddingTrainer::with_layers(args.layers, args.hidden, args.lr, 0.0, device)
         .expect("Failed to create trainer");
 
     if let Some(ref path) = args.resume {
@@ -484,7 +487,15 @@ fn main() {
 
         // --- Train ---
         if replay_buffer.size() >= args.min_buffer && step % args.train_freq == 0 {
-            let sample = replay_buffer.sample(args.batch_size, beta, &mut rng);
+            let mut sample = replay_buffer.sample(args.batch_size, beta, &mut rng);
+
+            // 24× suit augmentation: random permutation per sample
+            suit_perm::augment_bid_batch(
+                &mut sample.obs_data,
+                &mut sample.mask_data,
+                &mut sample.actions,
+                &mut rng,
+            );
 
             match trainer.train_step(
                 &sample.obs_data,
@@ -540,7 +551,7 @@ fn main() {
         // --- Evaluate ---
         if (step + 1) % args.eval_freq == 0 {
             let eval_start = Instant::now();
-            let (wins, total, margin) = evaluate(&trainer, args.hidden, args.eval_matches);
+            let (wins, total, margin) = evaluate(&trainer, args.hidden, args.layers, args.eval_matches);
             let wr = if total > 0 {
                 wins as f64 / total as f64
             } else {
@@ -579,7 +590,7 @@ fn main() {
     // Final eval and save
     println!("\n--- Final Evaluation ---");
     let eval_start = Instant::now();
-    let (wins, total, margin) = evaluate(&trainer, args.hidden, args.eval_matches);
+    let (wins, total, margin) = evaluate(&trainer, args.hidden, args.layers, args.eval_matches);
     let wr = if total > 0 {
         wins as f64 / total as f64
     } else {

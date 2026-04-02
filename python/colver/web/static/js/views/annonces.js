@@ -113,7 +113,7 @@ const TEMPLATE = `
                 <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-doudou-panel">
                     <div id="annonces-doudou-header" class="section-title">
-                        <span>DouDou</span>
+                        <span>DouDou50</span>
                         <div id="doudou-progress" class="sim-progress hidden">
                             <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
                             <span class="sim-progress-text"></span>
@@ -296,7 +296,7 @@ function handleBidEvalResult(data) {
     const range = maxQ - minQ || 1;
 
     document.getElementById('annonces-results-header').innerHTML =
-        `Le Bide \u00e0 D\u00e9d\u00e9 : ${bidActionHtml(bestAction)}`;
+        `Bid \u00e0 D\u00e9d\u00e9 : ${bidActionHtml(bestAction)}`;
 
     let html = '<div class="visit-bars ann-qvalues-scroll">';
     for (const [action, q] of qValues) {
@@ -512,7 +512,7 @@ function handleDoudouDone(data) {
 
 function resetPanels(numSims) {
     document.getElementById('annonces-results-area').classList.remove('hidden');
-    document.getElementById('annonces-results-header').textContent = 'Le Bide \u00e0 D\u00e9d\u00e9';
+    document.getElementById('annonces-results-header').textContent = 'Bid \u00e0 D\u00e9d\u00e9';
     document.getElementById('annonces-results-body').innerHTML =
         '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
     document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');

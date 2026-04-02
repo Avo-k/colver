@@ -1,6 +1,6 @@
 #!/bin/sh
 # Auto-download the latest DMC model if not present or if update requested
-MODEL_PATH="${COLVER_MODEL_PATH:-/app/models/dmc_35.bin}"
+MODEL_PATH="${COLVER_MODEL_PATH:-/app/models/dmc_50.bin}"
 MODEL_DIR="$(dirname "$MODEL_PATH")"
 
 mkdir -p "$MODEL_DIR"
@@ -24,7 +24,7 @@ except Exception:
     os.unlink(tmp)
     raise
 " && echo "[entrypoint] Model ready at $MODEL_PATH" \
-  || echo "[entrypoint] WARNING: model download failed, continuing without DouDou35"
+  || echo "[entrypoint] WARNING: model download failed, continuing without DouDou50"
 else
     echo "[entrypoint] Model found at $MODEL_PATH"
 fi

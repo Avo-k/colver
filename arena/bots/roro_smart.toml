@@ -1,0 +1,7 @@
+# Expert heuristic: Roro bidding + Smart IS-MCTS
+[bid]
+strategy = "roro"
+
+[play]
+method = "smart_ismcts"
+time_ms = 20

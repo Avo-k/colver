@@ -37,14 +37,14 @@ const TEMPLATE = `
     <label>Adversaires :
         <select id="opponent-ai">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select>
     </label>
     <label>Partenaire :
         <select id="partner-ai">
             <option value="dede">D\u00e9d\u00e9 (IS-DD)</option>
-            <option value="doudou">DouDou27</option>
+            <option value="doudou">DouDou50</option>
             <option value="oracle_dd">Oracle (DD)</option>
         </select>
     </label>
@@ -638,7 +638,7 @@ function handleGameState(data) {
             const opt = document.querySelector(`#${selId} option[value="doudou"]`);
             if (opt) {
                 opt.disabled = true;
-                opt.textContent = 'DouDou27 (non dispo)';
+                opt.textContent = 'DouDou50 (non dispo)';
             }
             const sel = document.getElementById(selId);
             if (sel.value === 'doudou') sel.value = 'smart';

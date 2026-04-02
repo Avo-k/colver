@@ -256,6 +256,304 @@ fn encode_bid_history(
     }
 }
 
+// ====== Trump-relative canonical encoding ======
+//
+// Trump always in slot 0. Non-trump suits sorted by (card_count, rank_pattern)
+// descending — longest suit first, ties broken by higher-ranked cards first.
+// Two suits with identical count AND identical ranks are truly interchangeable.
+// This makes the encoding fully canonical: no suit augmentation needed.
+
+pub const OBS_DIM_TR: usize = 411;
+
+/// Canonical suit ordering for play: trump first, non-trump sorted by
+/// card count (descending), then by rank pattern (descending) for ties.
+///
+/// `initial_hand` is the player's 8-card hand at the start of play
+/// (before any cards were played). Reconstruct as `hands[me] | played_by[me]`.
+#[inline]
+pub fn canonical_play_order(trump: u8, initial_hand: u32) -> [u8; 4] {
+    let mut order = [0u8; 4];
+    order[0] = trump;
+
+    // Collect non-trump suits with sort key: (count << 8) | lane_bits
+    let mut non_trump = [(0u8, 0u32); 3]; // (suit, sort_key)
+    let mut idx = 0;
+    for s in 0..4u8 {
+        if s != trump {
+            let lane = (initial_hand >> (s * 8)) & 0xFF;
+            let count = lane.count_ones();
+            let key = (count << 8) | lane;
+            non_trump[idx] = (s, key);
+            idx += 1;
+        }
+    }
+    // Sort by key descending, then suit ascending for truly-equal ties
+    non_trump.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+    for (i, &(s, _)) in non_trump.iter().enumerate() {
+        order[i + 1] = s;
+    }
+    order
+}
+
+/// Simple trump-first ordering (non-trump in original S<H<D<C order).
+/// Used by legacy code and tests; prefer `canonical_play_order` for training.
+#[inline]
+pub fn suit_order(trump: u8) -> [u8; 4] {
+    match trump {
+        0 => [0, 1, 2, 3],
+        1 => [1, 0, 2, 3],
+        2 => [2, 0, 1, 3],
+        3 => [3, 0, 1, 2],
+        _ => unreachable!(),
+    }
+}
+
+/// Remap a CardSet (u32 bitmask) using a given suit ordering.
+#[inline]
+pub fn cardset_to_canonical(cards: u32, order: &[u8; 4]) -> u32 {
+    let mut result = 0u32;
+    for (canon_pos, &phys_suit) in order.iter().enumerate() {
+        let suit_bits = (cards >> (phys_suit * 8)) & 0xFF;
+        result |= suit_bits << (canon_pos as u32 * 8);
+    }
+    result
+}
+
+/// Legacy: remap using simple trump-first ordering.
+#[inline]
+pub fn remap_cardset(cards: u32, trump: u8) -> u32 {
+    cardset_to_canonical(cards, &suit_order(trump))
+}
+
+/// Convert a physical card index to canonical given a suit ordering.
+#[inline]
+pub fn card_to_canonical(card: u8, order: &[u8; 4]) -> u8 {
+    let phys_suit = card / 8;
+    let rank = card % 8;
+    let canon_pos = order.iter().position(|&s| s == phys_suit).unwrap() as u8;
+    canon_pos * 8 + rank
+}
+
+/// Convert a canonical card index back to physical given a suit ordering.
+#[inline]
+pub fn card_to_physical(card: u8, order: &[u8; 4]) -> u8 {
+    let canon_suit = card / 8;
+    let rank = card % 8;
+    order[canon_suit as usize] * 8 + rank
+}
+
+/// Legacy: physical→canonical using simple trump-first ordering.
+#[inline]
+pub fn physical_to_canonical(card: u8, trump: u8) -> u8 {
+    card_to_canonical(card, &suit_order(trump))
+}
+
+/// Legacy: canonical→physical using simple trump-first ordering.
+#[inline]
+pub fn canonical_to_physical(card: u8, trump: u8) -> u8 {
+    card_to_physical(card, &suit_order(trump))
+}
+
+/// Compute the canonical suit ordering for the current player.
+///
+/// Reconstructs the initial hand from current hand + played cards,
+/// then returns `canonical_play_order(trump, initial_hand)`.
+#[inline]
+pub fn current_player_order(state: &GameState, tracking: &EnvTracking) -> [u8; 4] {
+    let me = state.current_player() as usize;
+    let initial_hand = state.hands[me] | tracking.played_by[me];
+    canonical_play_order(state.contract.trump, initial_hand)
+}
+
+/// Write 411-float canonical observation into `buf[offset..offset+411]`.
+///
+/// Uses fully canonical suit ordering: trump first, non-trump sorted by
+/// (card_count, rank_pattern) descending.
+pub fn write_observation_tr(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    tracking: &EnvTracking,
+) {
+    debug_assert!(buf.len() >= offset + OBS_DIM_TR);
+    let out = &mut buf[offset..offset + OBS_DIM_TR];
+    for v in out.iter_mut() {
+        *v = 0.0;
+    }
+
+    let me = state.current_player() as usize;
+    let my_team = me & 1;
+    let opp_team = 1 - my_team;
+    let trump = state.contract.trump;
+    let seats = [me, (me + 1) % 4, (me + 2) % 4, (me + 3) % 4];
+
+    // Canonical ordering based on current player's initial hand
+    let initial_hand = state.hands[me] | tracking.played_by[me];
+    let order = canonical_play_order(trump, initial_hand);
+
+    let mut pos = 0;
+
+    // === Block 1: My hand (32) — canonical ===
+    let my_hand = cardset_to_canonical(state.hands[me], &order);
+    for i in 0..32u32 {
+        if my_hand & (1 << i) != 0 {
+            out[pos + i as usize] = 1.0;
+        }
+    }
+    pos += 32;
+
+    // === Block 2: Current trick, player-relative (128) — canonical ===
+    for &seat in &seats {
+        let c = state.current_trick[seat];
+        if c != card::EMPTY {
+            let cc = card_to_canonical(c, &order);
+            out[pos + cc as usize] = 1.0;
+        }
+        pos += 32;
+    }
+
+    let mut trick_union: u32 = 0;
+    for i in 0..4 {
+        let c = state.current_trick[i];
+        if c != card::EMPTY {
+            trick_union |= 1u32 << c;
+        }
+    }
+
+    // === Block 3: Per-player played cards in past tricks (96) — canonical ===
+    for &seat in &seats[1..] {
+        let past = tracking.played_by[seat] & !trick_union;
+        let past_canonical = cardset_to_canonical(past, &order);
+        for i in 0..32u32 {
+            if past_canonical & (1 << i) != 0 {
+                out[pos + i as usize] = 1.0;
+            }
+        }
+        pos += 32;
+    }
+
+    // === Block 4: Contract (3) — NO trump one-hot ===
+    out[pos] = state.contract.point_value() as f32 / 250.0;
+    pos += 1;
+    out[pos] = if state.contract.team as usize == my_team {
+        1.0
+    } else {
+        0.0
+    };
+    pos += 1;
+    out[pos] = state.contract.coinche as f32 / 2.0;
+    pos += 1;
+
+    // === Block 5: Void tracking (12) — canonical suit order ===
+    for &seat in &seats[1..] {
+        for &s in &order {
+            if state.voids[seat] & (1 << s) != 0 {
+                out[pos] = 1.0;
+            }
+            pos += 1;
+        }
+    }
+
+    // === Block 6: Scoring context (4) ===
+    out[pos] = state.points[my_team] as f32 / 252.0;
+    out[pos + 1] = state.points[opp_team] as f32 / 252.0;
+    out[pos + 2] = state.tricks_won[my_team] as f32 / 8.0;
+    out[pos + 3] = state.tricks_won[opp_team] as f32 / 8.0;
+    pos += 4;
+
+    // === Block 7: Bid history (72) — canonical suits ===
+    encode_bid_history_tr(out, pos, &tracking.bid_history, me, tracking.dealer, &order);
+    pos += BID_HISTORY_FLOATS;
+
+    // === Block 8: Card trick index (32) — canonical ===
+    for (i, &card_played) in tracking.play_order.iter().enumerate() {
+        let cc = card_to_canonical(card_played, &order) as usize;
+        out[pos + cc] = (i / 4 + 1) as f32 / 8.0;
+    }
+    pos += 32;
+
+    // === Block 9: Card sequence index (32) — canonical ===
+    for (i, &card_played) in tracking.play_order.iter().enumerate() {
+        let cc = card_to_canonical(card_played, &order) as usize;
+        out[pos + cc] = (i % 4 + 1) as f32 / 4.0;
+    }
+    pos += 32;
+
+    debug_assert_eq!(pos, OBS_DIM_TR);
+}
+
+/// Write canonical legal action mask (32 floats).
+pub fn write_mask_tr(buf: &mut [f32], offset: usize, state: &GameState, tracking: &EnvTracking) {
+    debug_assert!(buf.len() >= offset + MASK_DIM);
+    let out = &mut buf[offset..offset + MASK_DIM];
+    let mask = state.legal_actions() as u32;
+    let order = current_player_order(state, tracking);
+    let canonical_mask = cardset_to_canonical(mask, &order);
+    for i in 0..MASK_DIM {
+        out[i] = if canonical_mask & (1 << i) != 0 { 1.0 } else { 0.0 };
+    }
+}
+
+/// Convenience: allocate and return canonical observation.
+pub fn make_observation_tr(state: &GameState, tracking: &EnvTracking) -> Vec<f32> {
+    let mut buf = vec![0.0f32; OBS_DIM_TR];
+    write_observation_tr(&mut buf, 0, state, tracking);
+    buf
+}
+
+/// Encode bid history with canonical suit mapping.
+fn encode_bid_history_tr(
+    buf: &mut [f32],
+    offset: usize,
+    bid_history: &[(u8, u8)],
+    me: usize,
+    dealer: u8,
+    order: &[u8; 4],
+) {
+    let first_bidder = ((dealer + 1) % 4) as usize;
+    let rel_offset = (first_bidder + 4 - me) % 4;
+
+    let history = if bid_history.len() > 12 {
+        &bid_history[bid_history.len() - 12..]
+    } else {
+        bid_history
+    };
+
+    for (i, &(_seat, action)) in history.iter().enumerate() {
+        let slot = rel_offset + i;
+        if slot >= 12 {
+            break;
+        }
+        let base = offset + slot * 6;
+
+        match action {
+            0 => {
+                buf[base] = 0.2;
+            }
+            41 => {
+                buf[base] = 0.8;
+            }
+            42 => {
+                buf[base] = 1.0;
+            }
+            1..=40 => {
+                let (val_enc, suit_idx) = bidding::decode_bid(action);
+                if val_enc == 25 {
+                    buf[base] = 0.6;
+                    buf[base + 1] = 1.0;
+                } else {
+                    buf[base] = 0.4;
+                    buf[base + 1] = (val_enc as f32 * 10.0) / 250.0;
+                }
+                let canon_pos = order.iter().position(|&s| s == suit_idx).unwrap();
+                buf[base + 2 + canon_pos] = 1.0;
+            }
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +706,127 @@ mod tests {
         // but write_mask only writes 32 floats (for playing phase use)
         // At least PASS (bit 0) should be available
         assert_eq!(buf[0], 1.0, "PASS should be legal");
+    }
+
+    #[test]
+    fn test_obs_dim_tr_constant() {
+        assert_eq!(OBS_DIM_TR, 411);
+    }
+
+    #[test]
+    fn test_suit_order() {
+        assert_eq!(suit_order(0), [0, 1, 2, 3]);
+        assert_eq!(suit_order(1), [1, 0, 2, 3]);
+        assert_eq!(suit_order(2), [2, 0, 1, 3]);
+        assert_eq!(suit_order(3), [3, 0, 1, 2]);
+    }
+
+    #[test]
+    fn test_remap_cardset_identity_when_trump_spades() {
+        // When trump=0 (spades), suit_order=[0,1,2,3], remap is identity
+        let cards: u32 = 0xFF00_FF00;
+        assert_eq!(remap_cardset(cards, 0), cards);
+    }
+
+    #[test]
+    fn test_remap_cardset_trump_hearts() {
+        // Trump=1 (hearts), order=[1,0,2,3]
+        // Physical: S=0xFF in bits[0:8], H=0 in bits[8:16]
+        let cards: u32 = 0xFF; // only spades
+        let canonical = remap_cardset(cards, 1);
+        // Spades (phys suit 0) → canonical pos 1 → bits[8:16]
+        assert_eq!(canonical, 0xFF00);
+    }
+
+    #[test]
+    fn test_physical_canonical_roundtrip() {
+        for trump in 0..4u8 {
+            for card in 0..32u8 {
+                let canonical = physical_to_canonical(card, trump);
+                let back = canonical_to_physical(canonical, trump);
+                assert_eq!(back, card, "trump={}, card={}", trump, card);
+            }
+        }
+    }
+
+    #[test]
+    fn test_trump_always_canonical_slot0() {
+        // A trump card should always map to canonical slot 0 (indices 0-7)
+        for trump in 0..4u8 {
+            for rank in 0..8u8 {
+                let phys_card = trump * 8 + rank;
+                let canonical = physical_to_canonical(phys_card, trump);
+                assert!(canonical < 8, "trump card {} should map to slot 0, got {}", phys_card, canonical);
+                assert_eq!(canonical, rank); // rank preserved
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_tr_observation_hand_count() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..20 {
+            let dealer = rng.gen_range(0..4u8);
+            let mut state = GameState::deal_random(dealer, &mut rng);
+            let mut tracking = EnvTracking::new();
+            tracking.dealer = dealer;
+
+            // Play through bidding + some play
+            while !state.is_terminal() {
+                let legal = state.legal_actions();
+                let count = legal.count_ones();
+                let idx = rng.gen_range(0..count);
+                let action = crate::rollout::select_nth_bit(legal, idx);
+
+                tracking.track_action(&state, action);
+                state.step(action);
+
+                if !state.is_terminal() && state.phase == crate::state::Phase::Playing {
+                    let obs = make_observation_tr(&state, &tracking);
+                    assert_eq!(obs.len(), OBS_DIM_TR);
+                    // Hand block: same number of 1s as cards in hand
+                    let me = state.current_player() as usize;
+                    let hand_ones: usize = (0..32).filter(|&i| obs[i] != 0.0).count();
+                    let expected = state.hands[me].count_ones() as usize;
+                    assert_eq!(hand_ones, expected, "TR hand card count mismatch");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_tr_mask_matches_legal_actions() {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..20 {
+            let dealer = rng.gen_range(0..4u8);
+            let mut state = GameState::deal_random(dealer, &mut rng);
+            let mut tracking = EnvTracking::new();
+            tracking.dealer = dealer;
+
+            while !state.is_terminal() {
+                let legal = state.legal_actions();
+                let count = legal.count_ones();
+                let idx = rng.gen_range(0..count);
+                let action = crate::rollout::select_nth_bit(legal, idx);
+
+                if state.phase == crate::state::Phase::Playing {
+                    let mut mask_buf = vec![0.0f32; 32];
+                    write_mask_tr(&mut mask_buf, 0, &state, &tracking);
+                    // Count legal actions in canonical mask
+                    let mask_count: usize = mask_buf.iter().filter(|&&v| v > 0.5).count();
+                    let phys_count = (state.legal_actions() as u32).count_ones() as usize;
+                    assert_eq!(mask_count, phys_count, "TR mask legal count mismatch");
+                }
+
+                tracking.track_action(&state, action);
+                state.step(action);
+            }
+        }
     }
 }

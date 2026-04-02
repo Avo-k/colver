@@ -40,6 +40,8 @@ pub struct DmcNet {
     b_out: Vec<f32>,
     // Dueling heads (used when dueling=true)
     dueling: bool,
+    /// Residual skip connections on layers 1+ (same weights, different forward pass).
+    residual: bool,
     w_value: Vec<f32>,   // H × 1
     b_value: f32,
     w_adv: Vec<f32>,     // H × 32
@@ -190,6 +192,7 @@ impl DmcNet {
                 w_out: Vec::new(),
                 b_out: Vec::new(),
                 dueling: true,
+                residual: false,
                 w_value,
                 b_value,
                 w_adv,
@@ -211,6 +214,7 @@ impl DmcNet {
                 w_out,
                 b_out,
                 dueling: false,
+                residual: false,
                 w_value: Vec::new(),
                 b_value: 0.0,
                 w_adv: Vec::new(),
@@ -231,19 +235,25 @@ impl DmcNet {
     pub fn evaluate(&mut self, obs: &[f32]) -> [f32; NUM_ACTIONS] {
         debug_assert_eq!(obs.len(), self.obs_dim);
 
-        // Layer 0: scratch_a = ReLU(LN(W0 * obs + b0))
+        // Layer 0: scratch_a = ReLU(LN(W0 * obs + b0))  — no skip (obs_dim ≠ hidden)
         linear(&self.w[0], &self.b[0], obs, &mut self.scratch_a, self.in_dims[0], self.hidden);
         layer_norm(&mut self.scratch_a, &self.gamma[0], &self.beta[0], self.hidden);
         relu(&mut self.scratch_a);
 
-        // Layer 1: scratch_b = ReLU(LN(W1 * scratch_a + b1))
+        // Layer 1: scratch_b = ReLU(LN(W1 * scratch_a + b1) [+ scratch_a])
         linear(&self.w[1], &self.b[1], &self.scratch_a, &mut self.scratch_b, self.hidden, self.hidden);
         layer_norm(&mut self.scratch_b, &self.gamma[1], &self.beta[1], self.hidden);
+        if self.residual {
+            for k in 0..self.hidden { self.scratch_b[k] += self.scratch_a[k]; }
+        }
         relu(&mut self.scratch_b);
 
-        // Layer 2: scratch_a = ReLU(LN(W2 * scratch_b + b2))
+        // Layer 2: scratch_a = ReLU(LN(W2 * scratch_b + b2) [+ scratch_b])
         linear(&self.w[2], &self.b[2], &self.scratch_b, &mut self.scratch_a, self.hidden, self.hidden);
         layer_norm(&mut self.scratch_a, &self.gamma[2], &self.beta[2], self.hidden);
+        if self.residual {
+            for k in 0..self.hidden { self.scratch_a[k] += self.scratch_b[k]; }
+        }
         relu(&mut self.scratch_a);
 
         if self.dueling {
@@ -320,6 +330,11 @@ impl DmcNet {
     /// Return whether this is a dueling network.
     pub fn is_dueling(&self) -> bool {
         self.dueling
+    }
+
+    /// Enable/disable residual skip connections (same weights, different forward).
+    pub fn set_residual(&mut self, residual: bool) {
+        self.residual = residual;
     }
 
     /// Return hidden size.

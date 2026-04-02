@@ -40,18 +40,38 @@ impl ManualLayerNorm {
 }
 
 /// Dueling Q-Network: shared trunk + separate value/advantage heads.
+///
+/// When `residual` is true, layers 1+ use skip connections:
+///   x_new = ReLU(LN(FC(x)) + x)
+/// Same weights — only the forward pass changes.
 pub struct DuelingQNet {
     trunk_fc: [Linear; 3],
     trunk_ln: [ManualLayerNorm; 3],
     value_head: Linear,
     advantage_head: Linear,
+    pub obs_dim: usize,
+    pub residual: bool,
 }
 
 impl DuelingQNet {
     /// Create a new network with random initialization.
     pub fn new(hidden: usize, vb: VarBuilder) -> Result<Self> {
+        Self::with_obs_dim(OBS_DIM, hidden, vb)
+    }
+
+    /// Create with explicit obs_dim (e.g. 411 for trump-relative encoding).
+    pub fn with_obs_dim(obs_dim: usize, hidden: usize, vb: VarBuilder) -> Result<Self> {
+        Self::build(obs_dim, hidden, false, vb)
+    }
+
+    /// Create with explicit obs_dim and residual skip connections.
+    pub fn with_residual(obs_dim: usize, hidden: usize, vb: VarBuilder) -> Result<Self> {
+        Self::build(obs_dim, hidden, true, vb)
+    }
+
+    fn build(obs_dim: usize, hidden: usize, residual: bool, vb: VarBuilder) -> Result<Self> {
         let trunk_fc = [
-            linear(OBS_DIM, hidden, vb.pp("trunk.0"))?,
+            linear(obs_dim, hidden, vb.pp("trunk.0"))?,
             linear(hidden, hidden, vb.pp("trunk.1"))?,
             linear(hidden, hidden, vb.pp("trunk.2"))?,
         ];
@@ -68,17 +88,30 @@ impl DuelingQNet {
             trunk_ln,
             value_head,
             advantage_head,
+            obs_dim,
+            residual,
         })
     }
 
     /// Forward pass: obs (batch, OBS_DIM) → Q (batch, 32).
     pub fn forward(&self, obs: &Tensor) -> Result<Tensor> {
-        // Trunk: 3x (Linear → LayerNorm → ReLU)
-        let mut x = obs.clone();
-        for i in 0..3 {
-            x = self.trunk_fc[i].forward(&x)?;
-            x = self.trunk_ln[i].forward(&x)?;
-            x = x.relu()?;
+        // Layer 0: input projection (no skip — different dims)
+        let mut x = self.trunk_fc[0].forward(obs)?;
+        x = self.trunk_ln[0].forward(&x)?;
+        x = x.relu()?;
+
+        // Layers 1-2: with optional residual skip connections
+        for i in 1..3 {
+            if self.residual {
+                let residual = x.clone();
+                x = self.trunk_fc[i].forward(&x)?;
+                x = self.trunk_ln[i].forward(&x)?;
+                x = (x + residual)?.relu()?;
+            } else {
+                x = self.trunk_fc[i].forward(&x)?;
+                x = self.trunk_ln[i].forward(&x)?;
+                x = x.relu()?;
+            }
         }
 
         // Value head: (batch, H) → (batch, 1)
@@ -145,14 +178,29 @@ pub struct DuelingTrainer {
     optimizer: AdamW,
     device: Device,
     hidden: usize,
+    obs_dim: usize,
 }
 
 impl DuelingTrainer {
-    /// Create a new trainer with random initialization.
+    /// Create a new trainer with random initialization (default OBS_DIM=415).
     pub fn new(hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+        Self::with_obs_dim(OBS_DIM, hidden, lr, weight_decay, device)
+    }
+
+    /// Create with explicit obs_dim (e.g. 411 for trump-relative encoding).
+    pub fn with_obs_dim(obs_dim: usize, hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+        Self::build(obs_dim, hidden, false, lr, weight_decay, device)
+    }
+
+    /// Create with explicit obs_dim and residual skip connections.
+    pub fn with_residual(obs_dim: usize, hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+        Self::build(obs_dim, hidden, true, lr, weight_decay, device)
+    }
+
+    fn build(obs_dim: usize, hidden: usize, residual: bool, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = DuelingQNet::new(hidden, vb)?;
+        let net = DuelingQNet::build(obs_dim, hidden, residual, vb)?;
 
         let adamw_params = ParamsAdamW {
             lr,
@@ -169,6 +217,7 @@ impl DuelingTrainer {
             optimizer,
             device,
             hidden,
+            obs_dim,
         })
     }
 
@@ -196,7 +245,7 @@ impl DuelingTrainer {
         let device = &self.device;
 
         // Create tensors on device
-        let obs_t = Tensor::from_slice(obs, (batch_size, OBS_DIM), device)?;
+        let obs_t = Tensor::from_slice(obs, (batch_size, self.obs_dim), device)?;
         let returns_t = Tensor::from_slice(returns, batch_size, device)?;
         let weights_t = Tensor::from_slice(weights, batch_size, device)?;
 
@@ -226,7 +275,7 @@ impl DuelingTrainer {
 
     /// Get Q-values for a batch of observations (no grad).
     pub fn q_values(&self, obs: &[f32], batch_size: usize) -> Result<Vec<f32>> {
-        let obs_t = Tensor::from_slice(obs, (batch_size, OBS_DIM), &self.device)?;
+        let obs_t = Tensor::from_slice(obs, (batch_size, self.obs_dim), &self.device)?;
         let q = self.net.forward(&obs_t)?;
         q.flatten_all()?.to_vec1()
     }
@@ -249,7 +298,7 @@ impl DuelingTrainer {
     pub fn export_binary(&self, path: &str) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let data = self.varmap.data().lock().unwrap();
         let mut floats: Vec<f32> = Vec::new();
-        let in_dims = [OBS_DIM, self.hidden, self.hidden];
+        let in_dims = [self.obs_dim, self.hidden, self.hidden];
 
         for i in 0..3 {
             // Weight: Linear stores weight as (out_dim, in_dim), we need row-major (out_dim, in_dim)
@@ -353,22 +402,37 @@ pub struct PoolNet {
     varmap: VarMap,
     device: Device,
     hidden: usize,
+    obs_dim: usize,
 }
 
 impl PoolNet {
     /// Create a new PoolNet (random init, call `load_weights` before use).
     pub fn new(hidden: usize, device: &Device) -> Result<Self> {
+        Self::with_obs_dim(OBS_DIM, hidden, device)
+    }
+
+    /// Create with explicit obs_dim.
+    pub fn with_obs_dim(obs_dim: usize, hidden: usize, device: &Device) -> Result<Self> {
+        Self::build_pool(obs_dim, hidden, false, device)
+    }
+
+    /// Create with explicit obs_dim and residual skip connections.
+    pub fn with_residual(obs_dim: usize, hidden: usize, device: &Device) -> Result<Self> {
+        Self::build_pool(obs_dim, hidden, true, device)
+    }
+
+    fn build_pool(obs_dim: usize, hidden: usize, residual: bool, device: &Device) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, device);
-        let net = DuelingQNet::new(hidden, vb)?;
-        Ok(PoolNet { net, varmap, device: device.clone(), hidden })
+        let net = DuelingQNet::build(obs_dim, hidden, residual, vb)?;
+        Ok(PoolNet { net, varmap, device: device.clone(), hidden, obs_dim })
     }
 
     /// Load weights from flat f32 vector (same format as `snapshot_weights` output).
     pub fn load_weights(&self, weights: &[f32]) -> Result<()> {
         let data = self.varmap.data().lock().unwrap();
         let mut offset = 0;
-        let in_dims = [OBS_DIM, self.hidden, self.hidden];
+        let in_dims = [self.obs_dim, self.hidden, self.hidden];
 
         for i in 0..3 {
             let w_size = self.hidden * in_dims[i];

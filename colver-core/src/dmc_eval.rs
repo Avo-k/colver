@@ -200,6 +200,73 @@ pub fn play_match_eval(
     q_total >= 2000.0
 }
 
+/// Play a match to 2000 with separate bid NNs per team.
+/// q_team uses `q_bid_net`, opponent uses `opp_bid_net`.
+pub fn play_match_eval_dual_bid(
+    q_net: &mut DmcNet,
+    q_team: u8,
+    baseline: &str,
+    baseline_net: &mut Option<DmcNet>,
+    q_bid_net: &mut Option<BidNet>,
+    opp_bid_net: &mut Option<BidNet>,
+    rng: &mut StdRng,
+) -> bool {
+    let mut q_total = 0.0f32;
+    let mut opp_total = 0.0f32;
+    for _ in 0..50 {
+        let dealer = rng.gen_range(0..4u8);
+        let mut state = GameState::deal_random(dealer, rng);
+        let mut tracking = dmc_obs::EnvTracking::new();
+        tracking.dealer = dealer;
+
+        while !state.is_terminal() {
+            let player = state.current_player();
+            let team = GameState::player_team(player);
+
+            let action = if state.phase == Phase::Bidding {
+                if team == q_team {
+                    eval_bid_action(&state, &tracking.bid_history, q_bid_net)
+                } else {
+                    eval_bid_action(&state, &tracking.bid_history, opp_bid_net)
+                }
+            } else if team == q_team {
+                let obs = dmc_obs::make_observation(&state, &tracking);
+                let legal_mask = state.legal_actions() as u32;
+                let (best, _) = q_net.best_action(&obs, legal_mask);
+                best
+            } else {
+                match baseline {
+                    "random" => {
+                        let mask = state.legal_actions();
+                        let count = mask.count_ones();
+                        let idx = rng.gen_range(0..count);
+                        rollout::select_nth_bit(mask, idx)
+                    }
+                    "checkpoint" => {
+                        let net = baseline_net.as_mut().unwrap();
+                        let obs = dmc_obs::make_observation(&state, &tracking);
+                        let legal_mask = state.legal_actions() as u32;
+                        let (best, _) = net.best_action(&obs, legal_mask);
+                        best
+                    }
+                    _ => unreachable!(),
+                }
+            };
+
+            tracking.track_action(&state, action);
+            state.step(action);
+        }
+
+        let rewards = state.rewards();
+        q_total += rewards[q_team as usize];
+        opp_total += rewards[1 - q_team as usize];
+        if q_total >= 2000.0 || opp_total >= 2000.0 {
+            break;
+        }
+    }
+    q_total >= 2000.0
+}
+
 /// Play a match to 2000 vs IS-DD opponent.
 pub fn play_match_eval_isdd(
     q_net: &mut DmcNet,

@@ -13,6 +13,7 @@ use colver_core::card;
 use colver_core::card::Suit;
 use colver_core::bid_net::BidNet;
 use colver_core::dmc_net::DmcNet;
+use colver_core::dmc_obs::EnvTracking;
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout;
@@ -1077,6 +1078,12 @@ impl Env {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to load DMC model: {}", e))
         })?;
         self.dmc_net = Some(net);
+        // Canonical (411-dim) models use residual skip connections
+        if let Some(ref mut n) = self.dmc_net {
+            if n.obs_dim() == colver_core::dmc_obs::OBS_DIM_TR {
+                n.set_residual(true);
+            }
+        }
         Ok(())
     }
 
@@ -1098,13 +1105,30 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_dmc_model() first")
         })?;
 
-        let obs_full = make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer);
-        // Truncate obs to match model's expected obs_dim (backward compat with 372-dim models)
-        let obs = &obs_full[..net.obs_dim()];
-        let legal_mask = self.state.legal_actions() as u32;
-
         let start = Instant::now();
-        let (best_action, q_values) = net.best_action(obs, legal_mask);
+
+        let (best_action, q_values) = if net.obs_dim() == colver_core::dmc_obs::OBS_DIM_TR {
+            // Canonical obs (411-dim): build EnvTracking, use canonical mask/action
+            let tracking = EnvTracking {
+                played_by: self.played_by,
+                play_order: self.play_order.clone(),
+                bid_history: self.bid_history.clone(),
+                dealer: self.state.dealer,
+            };
+            let obs = colver_core::dmc_obs::make_observation_tr(&self.state, &tracking);
+            let order = colver_core::dmc_obs::current_player_order(&self.state, &tracking);
+            let canonical_mask = colver_core::dmc_obs::cardset_to_canonical(self.state.legal_actions() as u32, &order);
+            let (canonical_best, q_vals) = net.best_action(&obs, canonical_mask);
+            let physical_action = colver_core::dmc_obs::card_to_physical(canonical_best, &order);
+            (physical_action, q_vals)
+        } else {
+            // Legacy obs (415-dim): use existing make_observation
+            let obs_full = make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer);
+            let obs = &obs_full[..net.obs_dim()];
+            let legal_mask = self.state.legal_actions() as u32;
+            net.best_action(obs, legal_mask)
+        };
+
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
 
         let dict = PyDict::new_bound(py);
@@ -1118,8 +1142,11 @@ impl Env {
     /// Call once, then use action_bid_nn() for inference.
     #[pyo3(signature = (path, hidden=None))]
     fn load_bid_model(&mut self, path: &str, hidden: Option<usize>) -> PyResult<()> {
-        let h = hidden.unwrap_or(256);
-        let net = BidNet::load_with_hidden(path, h).map_err(|e| {
+        let net = if let Some(h) = hidden {
+            BidNet::load_with_hidden(path, h)
+        } else {
+            BidNet::load(path)  // auto-detects hidden size (tries 256, 512, 1024)
+        }.map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to load bid model: {}", e))
         })?;
         self.bid_net = Some(net);

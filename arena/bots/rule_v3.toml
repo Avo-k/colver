@@ -1,0 +1,6 @@
+# Fair rule-based: improved_v3 bidding + hidden-info rule player
+[bid]
+strategy = "improved_v3"
+
+[play]
+method = "rule"

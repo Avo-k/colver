@@ -5,13 +5,13 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlretrieve
 
-_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/dmc_27.bin"
-_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/bid_nn_final.bin"
+_DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.4.0/dmc_50.bin"
+_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.4.0/bid_nn_final.bin"
 _DEFAULT_BELIEF_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/belief_v3.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
-def model_path(name: str = "dmc_27.bin") -> Path | None:
+def model_path(name: str = "dmc_50.bin") -> Path | None:
     """Find a model weights file.
 
     Checks ``COLVER_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``,
@@ -65,7 +65,7 @@ def _progress_hook(block_num: int, block_size: int, total_size: int) -> None:
 
 def download_model(
     url: str | None = None,
-    name: str = "dmc_27.bin",
+    name: str = "dmc_50.bin",
     force: bool = False,
 ) -> Path:
     """Download model weights to ``~/.cache/colver/models/``.

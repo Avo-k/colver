@@ -6,7 +6,10 @@
 
 /// All 24 permutations of 4 suits.
 /// `perm[s]` = which output suit lane suit `s` maps to.
+///
+/// First 6 entries fix slot 0 (for trump-relative augmentation).
 pub const ALL_PERMS: [[u8; 4]; 24] = [
+    // --- 6 perms that fix slot 0 (for trump-relative encoding) ---
     [0, 1, 2, 3],
     [0, 1, 3, 2],
     [0, 2, 1, 3],
@@ -193,6 +196,275 @@ pub fn permute_mask(mask: u32, perm: &[u8; 4]) -> u32 {
     result
 }
 
+/// Permute a 415-float DMC play observation in-place.
+///
+/// Layout (see `dmc_obs.rs`):
+///   [0:32]    My hand — card block
+///   [32:160]  Current trick (4×32) — card blocks
+///   [160:256] Per-player played (3×32) — card blocks
+///   [256:260] Contract trump — suit one-hot
+///   [260:263] bid_value, is_my_team, coinche — no perm
+///   [263:275] Void tracking — 3×4 suit-indexed
+///   [275:279] Scoring context — no perm
+///   [279:351] Bid history — 12 slots × 6, suit one-hot at +2..+6
+///   [351:383] Card trick index — card block
+///   [383:415] Card sequence index — card block
+pub fn permute_dmc_obs(obs: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(obs.len() >= 415);
+
+    // Block 1 [0:32]: My hand
+    permute_card_block(&mut obs[0..32], perm);
+
+    // Block 2 [32:160]: Current trick — 4 card blocks
+    for i in 0..4 {
+        let start = 32 + i * 32;
+        permute_card_block(&mut obs[start..start + 32], perm);
+    }
+
+    // Block 3 [160:256]: Per-player played — 3 card blocks
+    for i in 0..3 {
+        let start = 160 + i * 32;
+        permute_card_block(&mut obs[start..start + 32], perm);
+    }
+
+    // Block 4 [256:260]: Contract trump suit one-hot
+    permute_suit_onehot(&mut obs[256..260], perm);
+    // [260:263]: bid_value, is_my_team, coinche — unchanged
+
+    // Block 5 [263:275]: Void tracking — 3 groups of 4 suit-indexed
+    permute_suit_onehot(&mut obs[263..267], perm);
+    permute_suit_onehot(&mut obs[267..271], perm);
+    permute_suit_onehot(&mut obs[271..275], perm);
+
+    // Block 6 [275:279]: Scoring context — unchanged
+
+    // Block 7 [279:351]: Bid history — 12 slots × 6
+    for slot in 0..12 {
+        let base = 279 + slot * 6;
+        permute_suit_onehot(&mut obs[base + 2..base + 6], perm);
+    }
+
+    // Block 8 [351:383]: Card trick index — card block
+    permute_card_block(&mut obs[351..383], perm);
+
+    // Block 9 [383:415]: Card sequence index — card block
+    permute_card_block(&mut obs[383..415], perm);
+}
+
+/// Permute a 114-float bid observation in-place.
+///
+/// Layout (see `bid_obs.rs`):
+///   [0:32]    My hand — card block
+///   [32:104]  Bid history — 12 slots × 6, suit one-hot at +2..+6
+///   [104:108] Dealer-relative position — no perm
+///   [108]     Bid value — no perm
+///   [109:113] Bid suit one-hot — suit one-hot
+///   [113]     Coinche state — no perm
+pub fn permute_bid_obs(obs: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(obs.len() >= 108);
+
+    // Block 1 [0:32]: My hand
+    permute_card_block(&mut obs[0..32], perm);
+
+    // Block 2 [32:104]: Bid history — 12 slots × 6
+    for slot in 0..12 {
+        let base = 32 + slot * 6;
+        permute_suit_onehot(&mut obs[base + 2..base + 6], perm);
+    }
+
+    // Block 3 [104:108]: Position — unchanged
+}
+
+/// Permute a card index (0-31) action by suit remapping.
+/// Card layout: suit = card/8, rank = card%8.
+#[inline]
+pub fn permute_play_action(action: u8, perm: &[u8; 4]) -> u8 {
+    let suit = action / 8;
+    let rank = action % 8;
+    perm[suit as usize] * 8 + rank
+}
+
+/// Permute a 32-float play mask (card mask) by swapping 8-float suit lanes.
+#[inline]
+pub fn permute_play_mask_f32(mask: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(mask.len() >= 32);
+    let mut tmp = [0.0f32; 32];
+    tmp.copy_from_slice(&mask[..32]);
+    for s in 0..4 {
+        let dst = perm[s] as usize;
+        mask[dst * 8..(dst + 1) * 8].copy_from_slice(&tmp[s * 8..(s + 1) * 8]);
+    }
+}
+
+/// Permute a bid action (0-42) by remapping suit indices.
+///
+/// Action encoding:
+///   0 = PASS, 1-36 = value_idx×4 + suit_idx + 1, 37-40 = capot×suit,
+///   41 = COINCHE, 42 = SURCOINCHE.
+#[inline]
+pub fn permute_bid_action(action: u8, perm: &[u8; 4]) -> u8 {
+    match action {
+        0 | 41 | 42 => action,
+        1..=36 => {
+            let idx = action - 1;
+            let value_idx = idx / 4;
+            let suit_idx = idx % 4;
+            value_idx * 4 + perm[suit_idx as usize] + 1
+        }
+        37..=40 => {
+            let suit_idx = action - 37;
+            37 + perm[suit_idx as usize]
+        }
+        _ => action,
+    }
+}
+
+/// Permute a 43-float bid mask by remapping suit positions within each value group.
+///
+/// Layout: [PASS] [80×4suits] [90×4suits] ... [160×4suits] [capot×4suits] [COINCHE] [SURCOINCHE]
+#[inline]
+pub fn permute_bid_mask_f32(mask: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(mask.len() >= 43);
+    // 9 regular value groups (actions 1-36) + 1 capot group (37-40) = 10 groups of 4
+    for group in 0..10 {
+        let base = if group < 9 { 1 + group * 4 } else { 37 };
+        permute_suit_onehot(&mut mask[base..base + 4], perm);
+    }
+    // mask[0] PASS, mask[41] COINCHE, mask[42] SURCOINCHE — unchanged
+}
+
+/// Apply suit augmentation to a batch of DMC play samples in-place.
+/// Each sample gets a random permutation from the 24 possible.
+///
+/// - obs_data: flat batch×415
+/// - mask_data: flat batch×32
+/// - actions: batch
+/// Permute a 411-float trump-relative DMC observation in-place.
+///
+/// Layout (trump already at slot 0):
+///   [0:32]    My hand — card block
+///   [32:160]  Current trick — 4×32 card blocks
+///   [160:256] Past played — 3×32 card blocks
+///   [256:259] Contract (value, team, coinche) — no trump one-hot
+///   [259:271] Voids — 3 groups of 4 suit-indexed
+///   [271:275] Scores — unchanged
+///   [275:347] Bid history — 12 slots × 6, suit one-hot at +2..+6
+///   [347:379] Card trick index — card block
+///   [379:411] Card sequence index — card block
+pub fn permute_dmc_obs_tr(obs: &mut [f32], perm: &[u8; 4]) {
+    debug_assert!(obs.len() >= 411);
+
+    // Block 1 [0:32]: My hand
+    permute_card_block(&mut obs[0..32], perm);
+
+    // Block 2 [32:160]: Current trick — 4 card blocks
+    for i in 0..4 {
+        let start = 32 + i * 32;
+        permute_card_block(&mut obs[start..start + 32], perm);
+    }
+
+    // Block 3 [160:256]: Per-player played — 3 card blocks
+    for i in 0..3 {
+        let start = 160 + i * 32;
+        permute_card_block(&mut obs[start..start + 32], perm);
+    }
+
+    // Block 4 [256:259]: Contract (value, team, coinche) — NO trump one-hot, unchanged
+
+    // Block 5 [259:271]: Void tracking — 3 groups of 4 suit-indexed
+    permute_suit_onehot(&mut obs[259..263], perm);
+    permute_suit_onehot(&mut obs[263..267], perm);
+    permute_suit_onehot(&mut obs[267..271], perm);
+
+    // Block 6 [271:275]: Scoring context — unchanged
+
+    // Block 7 [275:347]: Bid history — 12 slots × 6
+    for slot in 0..12 {
+        let base = 275 + slot * 6;
+        permute_suit_onehot(&mut obs[base + 2..base + 6], perm);
+    }
+
+    // Block 8 [347:379]: Card trick index — card block
+    permute_card_block(&mut obs[347..379], perm);
+
+    // Block 9 [379:411]: Card sequence index — card block
+    permute_card_block(&mut obs[379..411], perm);
+}
+
+/// Apply non-trump suit augmentation to a batch of trump-relative play samples.
+/// Uses only the 6 permutations that fix slot 0 (trump stays at position 0).
+///
+/// - obs_data: flat batch×411
+/// - mask_data: flat batch×32
+/// - actions: batch (canonical card indices)
+pub fn augment_play_batch_tr(
+    obs_data: &mut [f32],
+    mask_data: &mut [f32],
+    actions: &mut [u8],
+    rng: &mut impl rand::Rng,
+) {
+    let batch = actions.len();
+    for i in 0..batch {
+        let perm_idx = rng.gen_range(0..6usize);
+        if perm_idx == 0 {
+            continue; // identity permutation, skip
+        }
+        let perm = &ALL_PERMS[perm_idx]; // first 6 entries fix slot 0
+        let obs_start = i * 411;
+        permute_dmc_obs_tr(&mut obs_data[obs_start..obs_start + 411], perm);
+        let mask_start = i * 32;
+        permute_play_mask_f32(&mut mask_data[mask_start..mask_start + 32], perm);
+        actions[i] = permute_play_action(actions[i], perm);
+    }
+}
+
+pub fn augment_play_batch(
+    obs_data: &mut [f32],
+    mask_data: &mut [f32],
+    actions: &mut [u8],
+    rng: &mut impl rand::Rng,
+) {
+    let batch = actions.len();
+    for i in 0..batch {
+        let perm_idx = rng.gen_range(0..24usize);
+        if perm_idx == 0 {
+            continue; // identity permutation, skip
+        }
+        let perm = &ALL_PERMS[perm_idx];
+        let obs_start = i * 415;
+        permute_dmc_obs(&mut obs_data[obs_start..obs_start + 415], perm);
+        let mask_start = i * 32;
+        permute_play_mask_f32(&mut mask_data[mask_start..mask_start + 32], perm);
+        actions[i] = permute_play_action(actions[i], perm);
+    }
+}
+
+/// Apply suit augmentation to a batch of bid samples in-place.
+///
+/// - obs_data: flat batch×114
+/// - mask_data: flat batch×43
+/// - actions: batch
+pub fn augment_bid_batch(
+    obs_data: &mut [f32],
+    mask_data: &mut [f32],
+    actions: &mut [u8],
+    rng: &mut impl rand::Rng,
+) {
+    let batch = actions.len();
+    for i in 0..batch {
+        let perm_idx = rng.gen_range(0..24usize);
+        if perm_idx == 0 {
+            continue;
+        }
+        let perm = &ALL_PERMS[perm_idx];
+        let obs_start = i * crate::bid_obs::BID_OBS_DIM;
+        permute_bid_obs(&mut obs_data[obs_start..obs_start + crate::bid_obs::BID_OBS_DIM], perm);
+        let mask_start = i * 43;
+        permute_bid_mask_f32(&mut mask_data[mask_start..mask_start + 43], perm);
+        actions[i] = permute_bid_action(actions[i], perm);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,5 +626,145 @@ mod tests {
         assert_eq!(obs[205], 1.0);
         assert_eq!(obs[206], 0.0);
         assert_eq!(obs[207], 0.5);
+    }
+
+    #[test]
+    fn test_dmc_obs_identity() {
+        let perm = [0, 1, 2, 3];
+        let mut obs = vec![0.5f32; 415];
+        let original = obs.clone();
+        permute_dmc_obs(&mut obs, &perm);
+        assert_eq!(obs, original);
+    }
+
+    #[test]
+    fn test_dmc_obs_preserves_non_suit_blocks() {
+        let perm = [3, 2, 1, 0];
+        let mut obs = vec![0.0f32; 415];
+        // Scoring context [275:279]
+        obs[275] = 0.1;
+        obs[276] = 0.2;
+        obs[277] = 0.3;
+        obs[278] = 0.4;
+        // bid_value [260], is_my_team [261], coinche [262]
+        obs[260] = 0.32;
+        obs[261] = 1.0;
+        obs[262] = 0.5;
+        permute_dmc_obs(&mut obs, &perm);
+        assert_eq!(obs[275], 0.1);
+        assert_eq!(obs[276], 0.2);
+        assert_eq!(obs[260], 0.32);
+        assert_eq!(obs[261], 1.0);
+        assert_eq!(obs[262], 0.5);
+    }
+
+    #[test]
+    fn test_dmc_obs_hand_permutation() {
+        let perm = [1, 0, 2, 3]; // swap S<->H
+        let mut obs = vec![0.0f32; 415];
+        // Set spades (bits 0-7) to 1.0 in hand block
+        for i in 0..8 {
+            obs[i] = 1.0;
+        }
+        permute_dmc_obs(&mut obs, &perm);
+        // Spades data should now be in hearts lane (bits 8-15)
+        for i in 0..8 {
+            assert_eq!(obs[i], 0.0, "spades lane should be empty");
+            assert_eq!(obs[8 + i], 1.0, "hearts lane should have data");
+        }
+    }
+
+    #[test]
+    fn test_bid_obs_identity() {
+        let perm = [0, 1, 2, 3];
+        let mut obs = vec![0.5f32; 108];
+        let original = obs.clone();
+        permute_bid_obs(&mut obs, &perm);
+        assert_eq!(obs, original);
+    }
+
+    #[test]
+    fn test_bid_obs_preserves_position() {
+        let perm = [2, 3, 0, 1];
+        let mut obs = vec![0.0f32; 108];
+        // Position [104:108]
+        obs[105] = 1.0;
+        permute_bid_obs(&mut obs, &perm);
+        assert_eq!(obs[105], 1.0);
+    }
+
+    #[test]
+    fn test_play_action_roundtrip() {
+        let perm = [1, 0, 3, 2]; // swap S<->H, D<->C
+        for action in 0..32u8 {
+            let once = permute_play_action(action, &perm);
+            let twice = permute_play_action(once, &perm);
+            assert_eq!(twice, action, "roundtrip failed for action {}", action);
+        }
+    }
+
+    #[test]
+    fn test_bid_action_identity() {
+        let perm = [0, 1, 2, 3];
+        for action in 0..43u8 {
+            assert_eq!(permute_bid_action(action, &perm), action);
+        }
+    }
+
+    #[test]
+    fn test_bid_action_roundtrip() {
+        let perm = [1, 0, 3, 2];
+        for action in 0..43u8 {
+            let once = permute_bid_action(action, &perm);
+            let twice = permute_bid_action(once, &perm);
+            assert_eq!(twice, action, "roundtrip failed for bid action {}", action);
+        }
+    }
+
+    #[test]
+    fn test_bid_action_pass_coinche_unchanged() {
+        for &perm in &ALL_PERMS {
+            assert_eq!(permute_bid_action(0, &perm), 0);  // PASS
+            assert_eq!(permute_bid_action(41, &perm), 41); // COINCHE
+            assert_eq!(permute_bid_action(42, &perm), 42); // SURCOINCHE
+        }
+    }
+
+    #[test]
+    fn test_bid_mask_identity() {
+        let perm = [0, 1, 2, 3];
+        let mut mask = vec![0.0f32; 43];
+        mask[0] = 1.0; // PASS
+        mask[1] = 1.0; // 80S
+        mask[41] = 1.0; // COINCHE
+        let original = mask.clone();
+        permute_bid_mask_f32(&mut mask, &perm);
+        assert_eq!(mask, original);
+    }
+
+    #[test]
+    fn test_bid_mask_swap() {
+        let perm = [1, 0, 2, 3]; // swap S<->H
+        let mut mask = vec![0.0f32; 43];
+        mask[1] = 1.0; // 80S
+        permute_bid_mask_f32(&mut mask, &perm);
+        assert_eq!(mask[1], 0.0); // 80S should be gone
+        assert_eq!(mask[2], 1.0); // 80H should be set
+    }
+
+    #[test]
+    fn test_play_mask_f32_roundtrip() {
+        let perm = [2, 3, 0, 1]; // S->D, H->C, D->S, C->H
+        let mut mask = [0.0f32; 32];
+        mask[0] = 1.0; // first spade
+        mask[8] = 1.0; // first heart
+        let original = mask;
+        permute_play_mask_f32(&mut mask, &perm);
+        // Spade→Diamond, Heart→Club
+        assert_eq!(mask[16], 1.0); // first diamond
+        assert_eq!(mask[24], 1.0); // first club
+        // Apply again
+        permute_play_mask_f32(&mut mask, &perm);
+        assert_eq!(mask, original);
     }
 }

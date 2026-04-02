@@ -22,13 +22,13 @@ _WEB_DIR = os.path.dirname(__file__)
 FRONTEND_DIR = os.path.join(_WEB_DIR, "static")
 CARDS_DIR = os.path.join(_WEB_DIR, "cards")
 
-# DouDou27 model path (Rust inference, no PyTorch needed)
+# DouDou50 model path (Rust inference, no PyTorch needed)
 import colver as _colver_pkg
 
 _model = _colver_pkg.model_path()
 if _model is None:
     # Auto-download model if not found
-    print("[server] No DouDou27 model found, downloading...")
+    print("[server] No DouDou50 model found, downloading...")
     try:
         _model = _colver_pkg.download_model()
     except Exception as e:
@@ -38,9 +38,9 @@ if _model is None:
 DMC_MODEL_PATH = str(_model) if _model else None
 doudou_available = _model is not None
 if doudou_available:
-    print(f"[server] DouDou27 model available at {DMC_MODEL_PATH} (Rust inference)")
+    print(f"[server] DouDou50 model available at {DMC_MODEL_PATH} (Rust inference)")
 else:
-    print("[server] No DouDou27 model found and download failed")
+    print("[server] No DouDou50 model found and download failed")
 
 # Bid NN model path (DD-trained bidder)
 _bid_model = _colver_pkg.bid_model_path()
@@ -127,7 +127,7 @@ async def api_bug_report(game_id: str, request: Request):
 # ===== Annonces simulation tasks (cancellable) =====
 
 async def _run_annonces_sim(ws: WebSocket, data: dict):
-    """Oracle DD + DouDou simulation, runs as a background task."""
+    """Oracle DD + Dédé simulation, runs as a background task."""
     import time as _time
     import random as _random
 
@@ -189,7 +189,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "sampled_deals": sampled_deals,
         })
 
-        # Phase 2: DouDou (NN bid + DMC play) — slow
+        # Phase 2: Dédé (NN bid + DMC play) — slow
         if BID_MODEL_PATH and DMC_MODEL_PATH:
             doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)]
             doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
@@ -241,7 +241,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
 
 
 async def _run_annonces_doudou(ws: WebSocket, data: dict):
-    """DouDou-only simulation (used by local/WASM mode), runs as a background task."""
+    """Dédé-only simulation (used by local/WASM mode), runs as a background task."""
     import time as _time
 
     hand = data.get("hand", [])
@@ -253,7 +253,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
         await ws.send_json({"type": "annonces_doudou_update", "error": "8 cartes requises"})
         return
     if not BID_MODEL_PATH or not DMC_MODEL_PATH:
-        await ws.send_json({"type": "annonces_doudou_update", "error": "Modèles DouDou non disponibles"})
+        await ws.send_json({"type": "annonces_doudou_update", "error": "Modèles Dédé non disponibles"})
         return
 
     try:
@@ -919,7 +919,7 @@ def _run_dd_sim_with_hands(hands, dealer=0):
 
 def _run_doudou_sim_with_hands(hands, bid_model_path, dmc_model_path,
                                 dealer=0, prior_actions=None):
-    """Run DouDou (NN bid + DMC play) on pre-generated hands."""
+    """Run Dédé (NN bid + DMC play) on pre-generated hands."""
     env = _colver_pkg.Env.deal_with_hands(dealer, hands)
     env.load_bid_model(bid_model_path)
     env.load_dmc_model(dmc_model_path)
@@ -980,7 +980,7 @@ def _run_single_dd_sim(hand, remaining, dealer=0):
 
 def _run_single_combined_sim(hand, remaining, bid_model_path, dmc_model_path,
                              dealer=0, prior_actions=None):
-    """Run ONE combined sim: same deal for DD solve + DouDou full game."""
+    """Run ONE combined sim: same deal for DD solve + Dédé full game."""
     import random
 
     remaining = list(remaining)
@@ -997,19 +997,19 @@ def _run_single_combined_sim(hand, remaining, bid_model_path, dmc_model_path,
     dd_result = env_dd.solve_all_suits()
     deal_hands = {str(p): list(hands[p]) for p in others}
 
-    # 2. DouDou full game (if models available)
+    # 2. Dédé full game (if models available)
     doudou = None
     if bid_model_path and dmc_model_path:
         env = _colver_pkg.Env.deal_with_hands(dealer, hands)
         env.load_bid_model(bid_model_path)
         env.load_dmc_model(dmc_model_path)
 
-        # Replay user's bid history before letting DouDou continue
+        # Replay user's bid history before letting Dédé continue
         if prior_actions:
             for action in prior_actions:
                 env.step(action)
 
-        # Bidding phase (DouDou continues from where history left off)
+        # Bidding phase (Dédé continues from where history left off)
         safety = 0
         while env.phase() == 0 and not env.is_terminal() and safety < 50:
             env.step(int(env.bid_a_dd()))
@@ -1039,7 +1039,7 @@ def _run_single_combined_sim(hand, remaining, bid_model_path, dmc_model_path,
 
 def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
                             dealer=0, prior_actions=None):
-    """Run ONE DouDou-only sim: shuffle opponent hands, NN bid + DMC play (no DD solve)."""
+    """Run ONE Dédé-only sim: shuffle opponent hands, NN bid + DMC play (no DD solve)."""
     import random
 
     remaining = list(remaining)

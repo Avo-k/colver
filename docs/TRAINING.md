@@ -88,11 +88,16 @@ python scripts/export_dmc_weights.py models/dmc_final.pt models/dmc_final.bin
 ## NN Bidding Training
 
 ```bash
+# Bid a Dede (v2, default): 3×512, DD solver + 24× suit augmentation
+cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
+  --hidden 512 --layers 3 --steps 20000000 --pool-file data/dd_pool_1M.bin
+
+# Bid a Doudou (v1, legacy): 2×256, DouZero self-play
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
   --num-envs 64 --steps 5000000 --pool-size 1000000
 ```
 
-Phase 1: pre-solves deal pool (1M deals × 4 suits). Phase 2: trains Dueling DQN with PER + opponent diversity.
+Phase 1: pre-solves deal pool (1M deals x 4 suits). Phase 2: trains Dueling DQN with PER + opponent diversity. `BidNet::load` auto-detects hidden size (tries 256, 512, 1024).
 
 ## NN Value Function Training (feature `nn`, parked)
 
@@ -152,8 +157,10 @@ All binaries: `cargo run -p colver-core --bin NAME --release -- ARGS`
 
 ## IS-DD Sweep Results
 
-Recommended web configs based on sweep (200 deals, vs DouDou35 DMC):
+Recommended web configs based on sweep (200 deals, vs DouDou35 DMC play model):
 - **20ms time-limited + soft inference**: ~48% vs DouDou35, ~230ms/deal
 - **50ms time-limited**: ~57%, 515ms/deal (higher quality)
 - Gains plateau sharply after D=8 determinizations
 - Soft inference worth it at D≥16 (+3.5% for 7% more compute)
+
+Note: The default play model is now **DouDou50** (411-dim canonical ResNet, 50M steps). DouDou35 (415-dim legacy, 35M steps) remains available for backward compatibility.
