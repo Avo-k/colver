@@ -18,7 +18,7 @@
 /// Usage:
 ///   cargo run -p colver-core --bin distill_bid --release -- [model_path] [n_deals] [output_path]
 ///
-/// Defaults: models/bid_v2/bid_nn_final.bin, 200000 deals, data/bid_distill.csv
+/// Defaults: models/bid_v2/bid_nn_final.bin, 200000 deals, data/distill/bid_distill.csv
 
 use colver_core::bid_eval::evaluate_for_trump;
 use colver_core::bid_net::BidNet;
@@ -351,7 +351,7 @@ fn main() {
     let output_path = args
         .get(3)
         .map(|s| s.as_str())
-        .unwrap_or("data/bid_distill.csv");
+        .unwrap_or("data/distill/bid_distill.csv");
 
     eprintln!("Loading model: {}", model_path);
     let mut net = BidNet::load_with_hidden(model_path, 512)

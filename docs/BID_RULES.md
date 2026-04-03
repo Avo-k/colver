@@ -266,7 +266,7 @@ Un 7 d'atout (+0.07) contribue **plus** à l'annonce qu'un 10 d'atout (+0.05). L
 
 ### Plots SHAP
 
-Tous dans `data/shap_*.png`: `shap_card_heatmap.png`, `shap_card_contributions.png`, `shap_xgb_summary.png`, `shap_xgb_dep_has_ace.png`.
+Tous dans `data/shap/`: `shap_card_heatmap.png`, `shap_card_contributions.png`, `shap_xgb_summary.png`, `shap_xgb_dep_has_ace.png`.
 
 ---
 
@@ -512,8 +512,8 @@ Avec 9+7+8 (3 atouts), les coupes latérales changent tout :
 - **SHAP:** Monte Carlo marginal contributions (20k deals, perturbation-based)
 - **Modèles proxy:** Decision Tree (depth 5-6, ~93%) + XGBoost (~94%) + TreeExplainer SHAP
 - **Fichiers source:**
-  - `colver-core/src/tests/distill_bid.rs` — génération CSV (Rust)
-  - `scripts/distill_bid.py` — entraînement des modèles proxy (Python)
-  - `scripts/shap_bid.py` — analyse SHAP (XGBoost + NN direct)
-  - `data/bid_distill.csv` — données brutes (7.2M lignes)
-  - `data/bid_distill_analysis.log` — log complet avec tous les arbres de décision
+  - `colver-core/src/bin/distill_bid.rs` — génération CSV (Rust)
+  - `scripts/analysis/distill_bid.py` — entraînement des modèles proxy (Python)
+  - `scripts/analysis/shap_bid.py` — analyse SHAP (XGBoost + NN direct)
+  - `data/distill/bid_distill.csv` — données brutes (7.2M lignes)
+  - `data/distill/bid_distill_analysis.log` — log complet avec tous les arbres de décision

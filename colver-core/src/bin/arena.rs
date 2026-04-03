@@ -31,6 +31,63 @@ const RESULTS_PATH: &str = "arena/results/matches.csv";
 const BOTS_DIR: &str = "arena/bots";
 
 // ══════════════════════════════════════════════════════════════════════
+//  DD calibration penalty for bid NN Q-values
+// ══════════════════════════════════════════════════════════════════════
+
+/// Select best bid action with a penalty on high bids to correct DD overestimation.
+///
+/// The NN was trained with DD-optimal rewards which overestimate success at high
+/// contract levels. This wrapper subtracts a scaled penalty from Q-values.
+///
+/// Penalty shape is linear in bid value (calibrated from DD vs DouDou50 data):
+///   - PASS (0): no penalty
+///   - Bids 80 (actions 1-4): no penalty (DD well-calibrated here)
+///   - Bids 90-160: penalty scales linearly with (value - 80)
+///   - Capot (37-40): max penalty (DD says 252, real ≈ 162)
+///   - Coinche/Surcoinche (41-42): moderate penalty
+///
+/// `penalty` is the scaling factor — try 0.05 to 0.3.
+fn bid_action_with_penalty(
+    bn: &mut BidNet,
+    obs: &[f32],
+    legal_mask: u64,
+    penalty: f32,
+) -> u8 {
+    let q = bn.evaluate(obs);
+
+    // Penalty per action based on bid level
+    // Calibrated from DD vs DouDou50 data (4M samples):
+    //   80: Δ≈0, 90: Δ≈-2, 100: Δ≈-4, 110: Δ≈-7, 120: Δ≈-9, 130: Δ≈-12, capot: Δ≈-90
+    let bid_penalty = |action: u8| -> f32 {
+        if action == 0 { return 0.0; }             // PASS
+        if action >= 41 { return penalty * 0.5; }   // COINCHE/SURCOINCHE
+        if action >= 37 { return penalty * 2.5; }   // CAPOT (massive DD gap)
+
+        // Regular bids 1-36: value_idx = (action-1)/4, value = 80 + value_idx*10
+        let value_idx = (action - 1) / 4;
+        // Linear scaling: 0 at 80, penalty at 160
+        let level = value_idx as f32 / 8.0; // 0.0 at 80, 1.0 at 160
+        penalty * level
+    };
+
+    let mut best_action = 0u8;
+    let mut best_q = f32::NEG_INFINITY;
+    let mut mask = legal_mask;
+    while mask != 0 {
+        let bit = mask.trailing_zeros() as u8;
+        if (bit as usize) < 43 {
+            let q_adj = q[bit as usize] - bid_penalty(bit);
+            if q_adj > best_q {
+                best_q = q_adj;
+                best_action = bit;
+            }
+        }
+        mask &= mask - 1;
+    }
+    best_action
+}
+
+// ══════════════════════════════════════════════════════════════════════
 //  Bot config (parsed from TOML)
 // ══════════════════════════════════════════════════════════════════════
 
@@ -47,6 +104,7 @@ struct BotConfig {
     oracle_iters: u32,
     switch_at: u8,        // for dmc_then_dd: switch to DD after this many tricks (default 5)
     bid_hidden: usize,        // hidden size for bid NN (default 256)
+    bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
     belief_model: Option<String>,
     belief_hard_constraints: bool,
 }
@@ -65,6 +123,7 @@ impl Default for BotConfig {
             oracle_iters: 2000,
             switch_at: 5,
             bid_hidden: 256,
+            bid_penalty: 0.0,
             belief_model: None,
             belief_hard_constraints: true,
         }
@@ -141,6 +200,7 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("bid", "strategy") => cfg.bid_strategy = val.to_string(),
                 ("bid", "model") => cfg.bid_model = Some(val.to_string()),
                 ("bid", "hidden") => cfg.bid_hidden = val.parse().unwrap_or(256),
+                ("bid", "penalty") => cfg.bid_penalty = val.parse().unwrap_or(0.0),
                 ("play", "method") => cfg.play_method = val.to_string(),
                 ("play", "model") => cfg.play_model = Some(val.to_string()),
                 ("play", "residual") => cfg.play_residual = val == "true",
@@ -275,6 +335,7 @@ struct Agent {
     bid_function: BidFunction,
     card_play: CardPlayMethod,
     bid_weights_idx: Option<usize>,  // index into shared bid_weights, None = use bid_function
+    bid_penalty: f32,                // Q-value penalty scaling for high bids
     belief_path: Option<String>,
     time_ms: u32,
     determinizations: u32,
@@ -359,6 +420,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         bid_function,
         card_play,
         bid_weights_idx,
+        bid_penalty: cfg.bid_penalty,
         belief_path: cfg.belief_model.clone(),
         time_ms: cfg.time_ms,
         determinizations: cfg.determinizations,
@@ -503,7 +565,11 @@ fn play_match(
                             &mut bid_obs_buf, 0, &state, &tracking.bid_history,
                         );
                         let legal_mask = state.legal_actions();
-                        bn.best_action_fast(&bid_obs_buf, legal_mask)
+                        if agent.bid_penalty > 0.0 {
+                            bid_action_with_penalty(bn, &bid_obs_buf, legal_mask, agent.bid_penalty)
+                        } else {
+                            bn.best_action_fast(&bid_obs_buf, legal_mask)
+                        }
                     } else {
                         agent.bid_function.bid(&state)
                     }
@@ -1408,7 +1474,11 @@ fn play_deal_traced(
                 if let Some(ref mut bn) = bid_nets[idx] {
                     bid_obs::write_bid_observation(bid_obs_buf, 0, &state, &tracking.bid_history);
                     let legal_mask = state.legal_actions();
-                    bn.best_action_fast(bid_obs_buf, legal_mask)
+                    if agent.bid_penalty > 0.0 {
+                        bid_action_with_penalty(bn, bid_obs_buf, legal_mask, agent.bid_penalty)
+                    } else {
+                        bn.best_action_fast(bid_obs_buf, legal_mask)
+                    }
                 } else {
                     agent.bid_function.bid(&state)
                 }

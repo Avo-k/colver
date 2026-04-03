@@ -7,9 +7,9 @@ Bidding is handled by improved_bid (not learned).
 v2: richer observation (444 with bid history), bigger model (1024), PER, opponent pool.
 
 Usage:
-    uv run python scripts/train_dmc.py
-    uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
-    uv run python scripts/train_dmc.py --resume models/dmc_latest.pt
+    uv run python scripts/training/train_dmc.py
+    uv run python scripts/training/train_dmc.py --num-envs 256 --steps 20000000
+    uv run python scripts/training/train_dmc.py --resume models/dmc_latest.pt
 """
 
 import argparse

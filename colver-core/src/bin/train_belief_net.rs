@@ -16,17 +16,17 @@
 ///
 /// Usage:
 ///   cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-///     --replays data/games_500k.bin --epochs 100 --batch-size 512 --lr 3e-4 \
+///     --replays data/training/games_500k.bin --epochs 100 --batch-size 512 --lr 3e-4 \
 ///     --v2 --augment --cosine-lr --warmup-epochs 5 --output models/belief_net_v2.bin
 ///
 ///   # V3 temporal features:
 ///   cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-///     --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+///     --replays data/training/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
 ///     --v3 --augment --cosine-lr --warmup-epochs 3 --output models/race_v3.bin
 ///
 ///   # Cross-attention variant:
 ///   cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-///     --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+///     --replays data/training/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
 ///     --v2 --augment --variant cross_attn --output models/race_crossattn.bin
 
 use std::io::Read;

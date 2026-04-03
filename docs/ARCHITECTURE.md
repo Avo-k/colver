@@ -141,7 +141,7 @@ V3 est systématiquement meilleur à chaque pli, en accuracy comme en cross-entr
 
 ```bash
 cargo run -p colver-core --bin belief_eval --release -- \
-  --model models/belief_v3.bin --replays data/games_500k.bin \
+  --model models/belief_v3.bin --replays data/training/games_500k.bin \
   --mode per_trick --games 100000
 ```
 

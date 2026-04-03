@@ -106,7 +106,7 @@ cargo run -p colver-core --bin train_joint --features dmc_train --release -- \
     --save-dir models/triforge/cycle1_play
 
 # Full triforge: 3 cycles of bid→play alternation
-./scripts/triforge.sh --cycles 3 --play-steps 10000000 --bid-steps 5000000
+./scripts/training/triforge.sh --cycles 3 --play-steps 10000000 --bid-steps 5000000
 ```
 
 The script chains phases, passing each phase's output as the next phase's frozen model. Results saved to `models/triforge/cycleN_{bid,play}/`.
@@ -175,10 +175,10 @@ Compare: joint training ran for 35M steps (~6 hours) with worse results.
 
 ## File Reference
 
-- [train_joint.rs](../colver-core/src/tests/train_joint.rs) — training binary (`--mode` flag)
-- [dmc_candle.rs](../colver-core/src/dmc_candle.rs) — play NN (ResNet DuelingQNet)
-- [bid_candle.rs](../colver-core/src/bid_candle.rs) — bid NN (variable layers)
-- [dmc_obs.rs](../colver-core/src/dmc_obs.rs) — canonical play encoding (411-dim)
+- [train_joint.rs](../colver-core/src/bin/train_joint.rs) — training binary (`--mode` flag)
+- [dmc_candle.rs](../colver-core/src/dmc/dmc_candle.rs) — play NN (ResNet DuelingQNet)
+- [bid_candle.rs](../colver-core/src/bid/bid_candle.rs) — bid NN (variable layers)
+- [dmc_obs.rs](../colver-core/src/dmc/dmc_obs.rs) — canonical play encoding (411-dim)
 - [joint_env.rs](../colver-core/src/joint_env.rs) — vectorized environment
-- [scripts/triforge.sh](../scripts/triforge.sh) — orchestration script
-- [scripts/monitor_joint.py](../scripts/monitor_joint.py) — training dashboard
+- [scripts/training/triforge.sh](../scripts/training/triforge.sh) — orchestration script
+- [scripts/training/monitor_joint.py](../scripts/training/monitor_joint.py) — training dashboard

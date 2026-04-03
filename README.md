@@ -85,10 +85,10 @@ uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 uv run python -m colver.web
 
 # DMC training (Q-network)
-PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
+PYTHONPATH=scripts/training uv run python scripts/training/train_dmc.py --num-envs 256 --steps 20000000
 
 # DMC evaluation vs IS-MCTS
-PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt --baseline smart --time-ms 20 --both-sides
+uv run python scripts/analysis/eval_dmc.py models/dmc_final.pt --baseline smart --time-ms 20 --both-sides
 ```
 
 ## AI Agents

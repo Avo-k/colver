@@ -49,6 +49,8 @@ class TorchEngine:
 
     def __init__(self, path: str, hidden: int = 1024):
         import torch
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'training'))
         from dmc_model import QNetwork
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

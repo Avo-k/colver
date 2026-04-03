@@ -1,7 +1,7 @@
 /// Bidding training environment with pre-solved DD deal pool.
 ///
 /// Phase 1: `DealPool::generate(n, seed)` pre-solves N deals in parallel
-///          using all CPU cores (~5 min for 100K deals on 16 cores).
+///          using all CPU cores (~100 deals/s on 32 cores, ~77ms/solve).
 /// Phase 2: Training envs sample deals from the pool (instant reset).
 ///          Bidding runs in microseconds, throughput becomes GPU-bound.
 ///
@@ -24,12 +24,26 @@ use crate::scoring::compute_deal_score;
 use crate::solver;
 use crate::state::{GameState, Phase};
 
+/// How to compute reward points from a deal's pre-solved data.
+#[derive(Clone, Copy, Debug)]
+pub enum RewardMode {
+    /// Use DD-optimal points only (bid v2 default).
+    DdOnly,
+    /// Use real (DouDou50 rollout) points only.
+    RealOnly,
+    /// Blend: alpha * DD + (1-alpha) * real.
+    Blend(f32),
+}
+
 /// A pre-solved deal: hands + DD results for all 4 trump suits.
+#[derive(Clone)]
 pub struct PresolvedDeal {
     pub dealer: u8,
     pub hands: [u32; 4],
     /// NS points for each trump suit (indexed by suit 0-3).
     pub dd_pts: [u8; 4],
+    /// Real (DouDou50) NS points per suit. None if not enriched.
+    pub real_pts: Option<[u8; 4]>,
 }
 
 /// Pool of pre-solved deals for fast training resets.
@@ -38,10 +52,94 @@ pub struct DealPool {
 }
 
 impl DealPool {
-    /// Generate `n` random deals with DD solutions using all CPU cores.
-    /// Uses work-stealing (atomic counter) so fast threads do more work
-    /// and no thread sits idle waiting for others with hard deals.
+    /// Generate `n` deals in parallel using all CPU cores (work-stealing).
     pub fn generate(n: usize, seed: u64) -> Self {
+        let mut deals = Vec::with_capacity(n);
+        Self::generate_chunk_into(&mut deals, n, seed, 0);
+        DealPool { deals }
+    }
+
+    /// Generate `n` deals with checkpoints every `chunk_size` deals.
+    /// Saves to `path` after each chunk. Resumes from existing file.
+    pub fn generate_with_checkpoints(
+        n: usize,
+        seed: u64,
+        path: &str,
+        chunk_size: usize,
+    ) -> Self {
+        // Resume from existing partial pool
+        let mut deals = if std::path::Path::new(path).exists() {
+            match Self::load(path) {
+                Ok(pool) => {
+                    let existing = pool.deals.len();
+                    if existing >= n {
+                        eprintln!("  Pool already has {} deals (requested {}), done.", existing, n);
+                        return pool;
+                    }
+                    eprintln!("  Resuming from {} existing deals in {}", existing, path);
+                    pool.deals
+                }
+                Err(e) => {
+                    eprintln!("  Failed to load {}: {}, starting fresh", path, e);
+                    Vec::with_capacity(n)
+                }
+            }
+        } else {
+            Vec::with_capacity(n)
+        };
+
+        let overall_start = Instant::now();
+
+        while deals.len() < n {
+            let remaining = n - deals.len();
+            let chunk_n = remaining.min(chunk_size);
+            let chunk_seed = seed.wrapping_add(deals.len() as u64 * 37);
+            let chunk_idx = deals.len() / chunk_size;
+
+            eprintln!(
+                "\n  --- Chunk {} : generating {} deals ({}/{} total) ---",
+                chunk_idx + 1,
+                chunk_n,
+                deals.len(),
+                n
+            );
+
+            let offset = deals.len();
+            Self::generate_chunk_into(&mut deals, chunk_n, chunk_seed, offset);
+
+            // Checkpoint: save entire pool so far
+            let pool = DealPool {
+                deals: deals.clone(),
+            };
+            match pool.save(path) {
+                Ok(()) => {
+                    let size_mb = (deals.len() * 21 + 16) as f64 / 1_048_576.0;
+                    let elapsed = overall_start.elapsed().as_secs_f64();
+                    let rate = deals.len() as f64 / elapsed;
+                    let eta = (n - deals.len()) as f64 / rate;
+                    eprintln!(
+                        "  Checkpoint: {}/{} deals saved to {} ({:.1}MB) | {:.0} deals/s | ETA {:.0}s",
+                        deals.len(), n, path, size_mb, rate, eta
+                    );
+                }
+                Err(e) => eprintln!("  Warning: failed to save checkpoint: {}", e),
+            }
+        }
+
+        let total_time = overall_start.elapsed().as_secs_f64();
+        eprintln!(
+            "\n  Done: {} deals in {:.1}s ({:.0} deals/s)",
+            deals.len(),
+            total_time,
+            deals.len() as f64 / total_time
+        );
+
+        DealPool { deals }
+    }
+
+    /// Generate `n` deals in parallel, appending to `out`.
+    /// `global_offset` is used for progress display only.
+    fn generate_chunk_into(out: &mut Vec<PresolvedDeal>, n: usize, seed: u64, global_offset: usize) {
         let num_threads = std::thread::available_parallelism()
             .map(|p| p.get())
             .unwrap_or(4);
@@ -49,17 +147,15 @@ impl DealPool {
         let progress = AtomicUsize::new(0);
         let start_time = Instant::now();
 
-        // Pre-allocate output slots
-        let mut deals: Vec<Option<PresolvedDeal>> = (0..n).map(|_| None).collect();
-        let deals_ptr = deals.as_mut_ptr();
+        let mut slots: Vec<Option<PresolvedDeal>> = (0..n).map(|_| None).collect();
+        let slots_ptr = slots.as_mut_ptr();
 
-        // SAFETY: Each thread writes to disjoint indices (grabbed via atomic counter).
-        // No two threads ever write to the same slot. The pointer is valid for the
-        // entire scope lifetime since `deals` lives on the stack above.
         struct SendPtr<T>(*mut T);
         unsafe impl<T> Send for SendPtr<T> {}
         unsafe impl<T> Sync for SendPtr<T> {}
-        let shared_ptr = SendPtr(deals_ptr);
+        let shared_ptr = SendPtr(slots_ptr);
+
+        let total_target = global_offset + n;
 
         std::thread::scope(|s| {
             let next_ref = &next_idx;
@@ -84,21 +180,22 @@ impl DealPool {
                         let state = GameState::deal_random(dealer, &mut rng);
                         let dd_pts = solve_all_suits(&state, &mut tt_buf);
 
-                        // Write directly to our slot (no contention, unique index)
                         unsafe {
                             (*ptr_ref.0.add(idx)) = Some(PresolvedDeal {
                                 dealer,
                                 hands: state.hands,
                                 dd_pts,
+                                real_pts: None,
                             });
                         }
 
                         let done = progress_ref.fetch_add(1, Ordering::Relaxed) + 1;
                         if done % 50_000 == 0 {
+                            let global_done = global_offset + done;
                             let elapsed = start.elapsed().as_secs_f64();
                             let rate = done as f64 / elapsed;
                             let eta = (n - done) as f64 / rate;
-                            let pct = done as f64 / n as f64;
+                            let pct = global_done as f64 / total_target as f64;
                             let bar_width = 40;
                             let filled = (pct * bar_width as f64) as usize;
                             let bar: String = (0..bar_width)
@@ -106,7 +203,7 @@ impl DealPool {
                                 .collect();
                             eprintln!(
                                 "  {} {:.0}% | {}/{} | {:.0} deals/s | ETA {:.0}s",
-                                bar, pct * 100.0, done, n, rate, eta
+                                bar, pct * 100.0, global_done, total_target, rate, eta
                             );
                         }
                     }
@@ -116,17 +213,13 @@ impl DealPool {
 
         let total_time = start_time.elapsed().as_secs_f64();
         eprintln!(
-            "\r  {} 100% | {}/{} | {:.0} deals/s | {:.1}s total       ",
-            "█".repeat(40),
+            "  Chunk done: {} deals in {:.1}s ({:.0} deals/s)",
             n,
-            n,
-            n as f64 / total_time,
-            total_time
+            total_time,
+            n as f64 / total_time
         );
 
-        // Unwrap all Options — all slots are guaranteed filled after scope join
-        let deals: Vec<PresolvedDeal> = deals.into_iter().map(|d| d.unwrap()).collect();
-        DealPool { deals }
+        out.extend(slots.into_iter().map(|d| d.unwrap()));
     }
 
     /// Sample a random deal from the pool.
@@ -138,6 +231,12 @@ impl DealPool {
     #[inline]
     pub fn len(&self) -> usize {
         self.deals.len()
+    }
+
+    /// Get deal by index.
+    #[inline]
+    pub fn get(&self, idx: usize) -> &PresolvedDeal {
+        &self.deals[idx]
     }
 
     /// Save pool to binary file.
@@ -195,39 +294,88 @@ impl DealPool {
                 dealer: dealer[0],
                 hands,
                 dd_pts,
+                real_pts: None,
             });
         }
 
         Ok(DealPool { deals })
     }
 
-    /// Load if file exists, otherwise generate and save.
+    /// Load enriched pool (COLVDR01): dd_pts + real_pts per deal.
+    pub fn load_enriched(path: &str) -> std::io::Result<Self> {
+        use std::io::Read;
+        let mut f = std::io::BufReader::new(std::fs::File::open(path)?);
+
+        let mut magic = [0u8; 8];
+        f.read_exact(&mut magic)?;
+        if &magic != b"COLVDR01" {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Bad magic: expected COLVDR01, got {:?}", &magic),
+            ));
+        }
+
+        let mut count_buf = [0u8; 8];
+        f.read_exact(&mut count_buf)?;
+        let count = u64::from_le_bytes(count_buf) as usize;
+
+        let mut deals = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut dealer = [0u8; 1];
+            f.read_exact(&mut dealer)?;
+
+            let mut hands = [0u32; 4];
+            for h in &mut hands {
+                let mut buf = [0u8; 4];
+                f.read_exact(&mut buf)?;
+                *h = u32::from_le_bytes(buf);
+            }
+
+            let mut dd_pts = [0u8; 4];
+            f.read_exact(&mut dd_pts)?;
+
+            let mut real_pts = [0u8; 4];
+            f.read_exact(&mut real_pts)?;
+
+            deals.push(PresolvedDeal {
+                dealer: dealer[0],
+                hands,
+                dd_pts,
+                real_pts: Some(real_pts),
+            });
+        }
+
+        eprintln!("  Loaded enriched pool: {} deals from {}", count, path);
+        Ok(DealPool { deals })
+    }
+
+    /// Load if file exists with enough deals, otherwise generate with 500k checkpoints.
     pub fn load_or_generate(path: &str, n: usize, seed: u64) -> Self {
         if std::path::Path::new(path).exists() {
             eprintln!("  Loading deal pool from {}...", path);
             let start = Instant::now();
-            let pool = Self::load(path).unwrap_or_else(|e| {
-                eprintln!("  Failed to load {}: {}, regenerating...", path, e);
-                let pool = Self::generate(n, seed);
-                pool.save(path).ok();
-                pool
-            });
-            eprintln!(
-                "  Loaded {} deals in {:.1}s",
-                pool.len(),
-                start.elapsed().as_secs_f64()
-            );
-            pool
-        } else {
-            let pool = Self::generate(n, seed);
-            if let Err(e) = pool.save(path) {
-                eprintln!("  Warning: failed to save pool to {}: {}", path, e);
-            } else {
-                let size_mb = (pool.len() * 21 + 16) as f64 / 1_048_576.0;
-                eprintln!("  Saved pool to {} ({:.1}MB)", path, size_mb);
+            match Self::load(path) {
+                Ok(pool) if pool.len() >= n => {
+                    eprintln!(
+                        "  Loaded {} deals in {:.1}s",
+                        pool.len(),
+                        start.elapsed().as_secs_f64()
+                    );
+                    return pool;
+                }
+                Ok(pool) => {
+                    eprintln!(
+                        "  Pool has {} deals but {} requested, generating more...",
+                        pool.len(),
+                        n
+                    );
+                }
+                Err(e) => {
+                    eprintln!("  Failed to load {}: {}, regenerating...", path, e);
+                }
             }
-            pool
         }
+        Self::generate_with_checkpoints(n, seed, path, 500_000)
     }
 }
 
@@ -245,6 +393,10 @@ pub struct BidTrainingEnv {
     bid_history: Vec<(u8, u8)>,
     /// DD-solved NS points per trump suit (indexed by suit 0-3).
     dd_pts: [u8; 4],
+    /// Real (DouDou50) NS points per suit (if enriched pool).
+    real_pts: Option<[u8; 4]>,
+    /// How to compute reward points.
+    reward_mode: RewardMode,
     /// Reusable TT buffer (2MB) to avoid repeated allocation.
     tt_buf: Vec<u64>,
     /// Buffered transitions for this episode.
@@ -262,6 +414,8 @@ impl BidTrainingEnv {
             state,
             bid_history: Vec::with_capacity(12),
             dd_pts,
+            real_pts: None,
+            reward_mode: RewardMode::DdOnly,
             tt_buf,
             transitions: Vec::with_capacity(12),
         }
@@ -269,11 +423,18 @@ impl BidTrainingEnv {
 
     /// Create from a pre-solved deal (no DD solving needed).
     pub fn from_deal(deal: &PresolvedDeal) -> Self {
+        Self::from_deal_with_mode(deal, RewardMode::DdOnly)
+    }
+
+    /// Create from a pre-solved deal with a specific reward mode.
+    pub fn from_deal_with_mode(deal: &PresolvedDeal, reward_mode: RewardMode) -> Self {
         BidTrainingEnv {
             state: GameState::new(deal.dealer, deal.hands),
             bid_history: Vec::with_capacity(12),
             dd_pts: deal.dd_pts,
-            tt_buf: Vec::new(), // not used with pool
+            real_pts: deal.real_pts,
+            reward_mode,
+            tt_buf: Vec::new(),
             transitions: Vec::with_capacity(12),
         }
     }
@@ -285,6 +446,7 @@ impl BidTrainingEnv {
         self.bid_history.clear();
         self.transitions.clear();
         self.dd_pts = solve_all_suits(&self.state, &mut self.tt_buf);
+        self.real_pts = None;
     }
 
     /// Reset from a pre-solved deal (instant, no DD solving).
@@ -293,6 +455,7 @@ impl BidTrainingEnv {
         self.bid_history.clear();
         self.transitions.clear();
         self.dd_pts = deal.dd_pts;
+        self.real_pts = deal.real_pts;
     }
 
     /// Record the current observation as a transition (before stepping).
@@ -354,7 +517,7 @@ impl BidTrainingEnv {
         result
     }
 
-    /// Compute deal scores from DD results.
+    /// Compute deal scores using reward mode (DD, real, or blend).
     fn compute_scores(&self) -> (i16, i16) {
         if self.state.contract.value == 0 {
             // Void deal (4 passes) → 0/0
@@ -362,12 +525,31 @@ impl BidTrainingEnv {
         }
 
         let trump = self.state.contract.trump;
+
+        // Select NS points based on reward mode
         let ns_dd_pts = self.dd_pts[trump as usize];
-        let ew_dd_pts = if ns_dd_pts == 252 || ns_dd_pts == 0 {
-            252 - ns_dd_pts
-        } else {
-            162 - ns_dd_pts
+        let ns_pts_raw = match self.reward_mode {
+            RewardMode::DdOnly => ns_dd_pts,
+            RewardMode::RealOnly => {
+                self.real_pts.map(|r| r[trump as usize]).unwrap_or(ns_dd_pts)
+            }
+            RewardMode::Blend(alpha) => {
+                if let Some(real) = self.real_pts {
+                    let blended = alpha * ns_dd_pts as f32
+                        + (1.0 - alpha) * real[trump as usize] as f32;
+                    blended.round().max(0.0).min(252.0) as u8
+                } else {
+                    ns_dd_pts
+                }
+            }
         };
+
+        let ew_dd_pts = if ns_pts_raw == 252 || ns_pts_raw == 0 {
+            252 - ns_pts_raw
+        } else {
+            162 - ns_pts_raw
+        };
+        let ns_dd_pts = ns_pts_raw;
 
         // Build a synthetic terminal state for compute_deal_score
         let taker = self.state.contract.team as usize;
@@ -457,9 +639,19 @@ impl VecBidEnv {
 
     /// Create from a pre-solved deal pool (instant, no DD solving).
     pub fn new_with_pool(n_envs: usize, seed: u64, pool: &DealPool) -> Self {
+        Self::new_with_pool_and_mode(n_envs, seed, pool, RewardMode::DdOnly)
+    }
+
+    /// Create from a deal pool with a specific reward mode.
+    pub fn new_with_pool_and_mode(
+        n_envs: usize,
+        seed: u64,
+        pool: &DealPool,
+        reward_mode: RewardMode,
+    ) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let envs: Vec<_> = (0..n_envs)
-            .map(|_| BidTrainingEnv::from_deal(pool.sample(&mut rng)))
+            .map(|_| BidTrainingEnv::from_deal_with_mode(pool.sample(&mut rng), reward_mode))
             .collect();
         let obs_buf = vec![0.0f32; n_envs * BID_OBS_DIM];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];

@@ -10,8 +10,9 @@ cargo test -p colver-core --release            # Tests in release mode
 cargo run -p colver-core --bin bench --release # Performance benchmark (~1.3M rollouts/sec)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000  # Joint bid+play training
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --mode play-only --resume-bid models/bid_v2/bid_nn_final.safetensors --bid-hidden 512 --bid-layers 3 --num-envs 256 --steps 50000000 --eval-freq 1000000 --save-freq 2000000  # Triforge: play-only phase with bid_v2
-./scripts/triforge.sh --cycles 3  # Full triforge: alternating bid/play training
-cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/dd_pool_1M.bin  # Standalone bid NN training
+./scripts/training/triforge.sh --cycles 3  # Full triforge: alternating bid/play training
+cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/pools/dd_2.5M.bin  # Standalone bid NN training
+RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/pools/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
 uv sync                                        # Build and install Python bindings
 uv run python -m colver.web                    # Run web frontend → http://localhost:8000
 ```
@@ -25,6 +26,16 @@ See [docs/TRAINING.md](docs/TRAINING.md) for all training, evaluation, and exper
 Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core with PyO3 Python bindings.
 
 **Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `python/colver/web/` (FastAPI/WebSocket frontend)
+
+**`colver-core/src/` module layout:**
+- `engine/` — card, state, bidding, trick, play, scoring, game, cfn (foundation, no external deps)
+- `search/` — mcts, ismcts variants, solver, determinize, rollout
+- `bid/` — bid_eval (split into strategy files: heuristic, smart, roro, improved, parametric, petit_bide, moelleux), bid_obs, bid_net, bid_candle, dd_bid, maxi
+- `dmc/` — dmc_net, dmc_obs, dmc_replay, dmc_env, dmc_candle, dmc_eval
+- `belief/` — belief_net, belief_obs, belief_candle, card_beliefs
+- root — suit_perm, game_replay, joint_env, rule_player, features, value_net
+
+All modules re-exported at crate root (`use colver_core::card` still works). Binaries in `src/bin/` (auto-discovered by Cargo). Scripts in `scripts/{training,analysis,export}/`.
 
 ### Card Representation (`card.rs`)
 
@@ -59,14 +70,15 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 ## Key Subsystems (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details)
 
-- **MCTS** (`mcts.rs`): Arena-based UCT, 1000 iters default, C=sqrt(2)
-- **Smart IS-MCTS** (`smart_ismcts.rs` + `card_beliefs.rs`): Belief-weighted IS-MCTS, ~+7.5% vs naive
-- **DD Solver** (`solver.rs`): Alpha-beta with TT, PVS, killer/history heuristics. ~13.5ms/solve avg
-- **DMC Agent "DouDou35"** (`dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
-- **NN Bidder** (`bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`).
-- **Belief Network** (`belief_net.rs`): Card location prediction, V1/V2/V3 obs, multiple architecture variants
-- **Bidding strategies** (`bid_eval.rs`): `BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`, `BidParams` (parametric)
-- **Triforge Training** (`joint_env.rs` + `train_joint.rs`): Iterative best-response training — alternates bid-only and play-only phases with frozen partner. `--mode play-only|bid-only|joint`. Play NN: ResNet Dueling DQN (411→1024³→32, skip connections on layers 1-2). Bid NN: Dueling DQN (114→512³→43, configurable layers). Canonical play encoding (no suit augmentation), bid uses 24× augmentation. See [docs/TRIFORGE.md](docs/TRIFORGE.md).
+- **MCTS** (`search/mcts.rs`): Arena-based UCT, 1000 iters default, C=sqrt(2)
+- **Smart IS-MCTS** (`search/smart_ismcts.rs` + `belief/card_beliefs.rs`): Belief-weighted IS-MCTS, ~+7.5% vs naive
+- **DD Solver** (`search/solver.rs`): Alpha-beta with TT, PVS, killer/history heuristics. ~77ms/solve from full deal (4 suits ≈ 310ms), ~13.5ms mid-game. Pool generation: ~244 deals/s on 32 cores with LTO+native (`gen_pool` binary). 1M pool ≈ 68min. Without LTO: ~100 deals/s.
+- **Pool generator** (`gen_pool` binary): Standalone DD pool generation, no CUDA dep. Uses `RUSTFLAGS="-C target-cpu=native"` + workspace `[profile.release] lto="fat", codegen-units=1` for 2.4× speedup. Checkpoints every 100k deals (resumable).
+- **DMC Agent "DouDou35"** (`dmc/dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
+- **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`).
+- **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3 obs, multiple architecture variants
+- **Bidding strategies** (`bid/bid_eval/`): `BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`, `BidParams` (parametric). Each strategy in its own file under `bid_eval/`.
+- **Triforge Training** (`joint_env.rs` + `train_joint` binary): Iterative best-response training — alternates bid-only and play-only phases with frozen partner. `--mode play-only|bid-only|joint`. Play NN: ResNet Dueling DQN (411→1024³→32, skip connections on layers 1-2). Bid NN: Dueling DQN (114→512³→43, configurable layers). Canonical play encoding (no suit augmentation), bid uses 24× augmentation. See [docs/TRIFORGE.md](docs/TRIFORGE.md).
   - **Weight formats:** Training checkpoints (candle) use `.safetensors` — required for `--resume-bid`/`--resume-play`. Inference weights use `.bin` (raw f32) — used by `BidNet::load`/`DmcNet::load` and arena TOML `model` paths. Triforge saves both formats at each checkpoint.
   - **Triforge play NN (DouDou50) in arena:** Use `residual = true` in TOML. Canonical obs (411-dim) auto-detected from weight file. Models saved to `models/play_v2/play_*.bin`.
 - **Suit Augmentation** (`suit_perm.rs`): 24 suit permutations for data augmentation. Functions for belief obs (V1/V2/V3), DMC obs (415-dim), bid obs (108-dim), actions, and masks. TR variants (`permute_dmc_obs_tr` / `augment_play_batch_tr`) exist but unused since canonical ordering eliminates the need.
@@ -81,7 +93,7 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 **Bid obs (108):** [0:32] hand, [32:104] bid history 12×6, [104:108] position. Auction state (bid value, suit, coinche) removed — redundant with bid history.
 
-**Replay buffers** (`dmc_replay.rs`): `PrioritizedReplayBuffer` is hardcoded to OBS_DIM=415/MASK=32. Use `FlexReplayBuffer` for other dims (e.g. joint training play: 411/32, bid: 114/43).
+**Replay buffers** (`dmc/dmc_replay.rs`): `PrioritizedReplayBuffer` is hardcoded to OBS_DIM=415/MASK=32. Use `FlexReplayBuffer` for other dims (e.g. joint training play: 411/32, bid: 114/43).
 
 ## Python Layer (`colver-py/` → `python/colver/`)
 
@@ -101,7 +113,7 @@ FastAPI + WebSocket + vanilla JS. Three modes: Play, Watch, Analysis. Models aut
 
 Systematic head-to-head and round-robin evaluation of bot architectures on 2000-point matches. Bots are TOML configs — no recompilation needed to test new combinations.
 
-**Directory structure:** `arena/bots/*.toml` (bot definitions), `arena/results/matches.csv` (persistent results). Binary: `colver-core/src/tests/arena.rs`.
+**Directory structure:** `arena/bots/*.toml` (bot definitions), `arena/results/matches.csv` (persistent results). Binary: `colver-core/src/bin/arena.rs`.
 
 ```bash
 cargo run --bin arena --release -- list                                          # List all bots
@@ -145,3 +157,23 @@ use_hard_constraints = true
 **PyPI:** push `v*` tag → CI builds manylinux/macOS/Windows wheels via maturin → publishes automatically (trusted publishing).
 
 **Docker:** `docker build -t colver . && docker run -p 8000:8000 colver`. Cross-builds for ARM64.
+
+## Data Directory Layout
+
+```
+data/
+  pools/              DD deal pools
+    dd_2.5M.bin         2.5M pre-solved deals (COLVDD01, 51MB)
+    dd_pool_enriched_1M.bin  1M deals with DD + DouDou50 real pts (COLVDR01, 24MB)
+  belief/             Belief net training data
+    belief_train_500k.bin  (COLVBL01, 20GB)
+  training/           Game replay / value data
+    games_500k.bin       500K full game replays (28MB)
+    value_train.bin      Value net training data (171MB)
+  distill/            Bid distillation analysis
+    bid_distill.csv      7.2M rows of bid NN Q-values + features (1GB)
+    bid_distill_analysis.log
+    bid_distill_console.log
+  shap/               SHAP analysis plots
+  colver.db           SQLite (web frontend)
+```

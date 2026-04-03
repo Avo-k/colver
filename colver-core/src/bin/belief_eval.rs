@@ -8,7 +8,7 @@
 /// Usage:
 ///   # Offline eval
 ///   cargo run -p colver-core --bin belief_eval --release -- \
-///     --model models/belief_net.bin --data data/belief_train.bin --mode offline
+///     --model models/belief_net.bin --data data/belief/belief_train.bin --mode offline
 ///
 ///   # Online match play
 ///   cargo run -p colver-core --bin belief_eval --release -- \
@@ -17,7 +17,7 @@
 ///
 ///   # Diagnose (concrete predictions)
 ///   cargo run -p colver-core --bin belief_eval --release -- \
-///     --model models/belief_net.bin --replays data/games_500k.bin --mode diagnose
+///     --model models/belief_net.bin --replays data/training/games_500k.bin --mode diagnose
 
 use std::io::Read;
 use std::time::Instant;

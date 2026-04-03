@@ -30,19 +30,19 @@ cargo run -p colver-core --bin generate_game_data --release --features parallel 
 
 # V2 training (304-dim, standard architecture)
 cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-  --replays data/games_500k.bin --epochs 200 --batch-size 512 --lr 3e-4 \
+  --replays data/training/games_500k.bin --epochs 200 --batch-size 512 --lr 3e-4 \
   --v2 --augment --cosine-lr --warmup-epochs 10 --val-split 0.05 \
   --output models/belief_net_v2.bin
 
 # V3 temporal features (380-dim)
 cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-  --replays data/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
+  --replays data/training/games_500k.bin --epochs 15 --batch-size 512 --lr 3e-4 \
   --v3 --augment --cosine-lr --warmup-epochs 3 --output models/race_v3.bin
 
 # V3 3-class output (observer excluded, 3 classes: left/partner/right)
 # count-reg default is now 0.1; 300 epochs for overnight training
 cargo run -p colver-core --bin train_belief_net --features dmc_train --release -- \
-  --replays data/games_500k.bin --epochs 300 --batch-size 512 --lr 3e-4 \
+  --replays data/training/games_500k.bin --epochs 300 --batch-size 512 --lr 3e-4 \
   --cosine-lr --warmup-epochs 10 --seed 42 --v2 --augment \
   --count-reg 0.1 --output models/belief_v3.bin
 
@@ -56,7 +56,7 @@ cargo run -p colver-core --bin train_belief_net --features dmc_train --release -
 
 ```bash
 cargo run --bin belief_eval --release -- --model models/belief_net_v2.bin \
-  --replays data/games_500k.bin --mode MODE --games 5000
+  --replays data/training/games_500k.bin --mode MODE --games 5000
 ```
 
 Modes: `offline` (accuracy/CE/calibration), `match` (IS-DD NN vs heuristic), `diagnose` (per-card predictions), `scenario` (hand-crafted tests), `per_trick` (per-trick accuracy), `ablation` (input block importance), `ensemble` (multi-model averaging via `--model m1.bin,m2.bin`).
@@ -75,14 +75,14 @@ cargo run -p colver-core --bin train_dmc --features dmc_train --release -- \
   --eval-checkpoint models/dmc_35.bin --eval-checkpoint-matches 50
 
 # Python training (slower, ~140 steps/s)
-PYTHONPATH=scripts uv run python scripts/train_dmc.py --num-envs 256 --steps 20000000
+PYTHONPATH=scripts/training uv run python scripts/training/train_dmc.py --num-envs 256 --steps 20000000
 
 # Evaluation
-PYTHONPATH=scripts uv run python scripts/eval_dmc.py models/dmc_final.pt \
+uv run python scripts/analysis/eval_dmc.py models/dmc_final.pt \
   --games 200 --baseline smart --time-ms 20 --both-sides
 
 # Export PyTorch weights to Rust binary format
-python scripts/export_dmc_weights.py models/dmc_final.pt models/dmc_final.bin
+python scripts/export/export_dmc_weights.py models/dmc_final.pt models/dmc_final.bin
 ```
 
 ## NN Bidding Training
@@ -90,7 +90,7 @@ python scripts/export_dmc_weights.py models/dmc_final.pt models/dmc_final.bin
 ```bash
 # Bid a Dede (v2, default): 3×512, DD solver + 24× suit augmentation
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
-  --hidden 512 --layers 3 --steps 20000000 --pool-file data/dd_pool_1M.bin
+  --hidden 512 --layers 3 --steps 20000000 --pool-file data/pools/dd_2.5M.bin
 
 # Bid a Doudou (v1, legacy): 2×256, DouZero self-play
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
@@ -104,14 +104,14 @@ Phase 1: pre-solves deal pool (1M deals x 4 suits). Phase 2: trains Dueling DQN 
 ```bash
 # Generate training data
 cargo run -p colver-core --bin generate_value_data --release --features nn -- \
-  10000 data/value_train.bin --fast
+  10000 data/training/value_train.bin --fast
 
 # Train (PyTorch)
-python scripts/train_value_net.py --data data/value_train.bin --output models/value_net.bin
+python scripts/training/train_value_net.py --data data/training/value_train.bin --output models/value_net.bin
 
 # Evaluate
 cargo run -p colver-core --bin nn_experiment --release --features nn -- \
-  models/value_net.bin 50 --data data/value_train.bin
+  models/value_net.bin 50 --data data/training/value_train.bin
 ```
 
 ## PyPI Publishing

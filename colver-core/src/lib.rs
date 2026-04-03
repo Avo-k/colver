@@ -1,55 +1,36 @@
-pub mod card;
-pub mod state;
-pub mod bidding;
-pub mod trick;
-pub mod play;
-pub mod scoring;
-pub mod game;
-pub mod cfn;
-pub mod rollout;
+pub mod engine;
+pub use engine::{card, state, bidding, trick, play, scoring, game, cfn};
+pub mod search;
+pub use search::{solver, determinize, rollout};
+#[cfg(feature = "rand")]
+pub use search::{mcts, naive_ismcts, smart_ismcts, single_tree_ismcts, is_dd};
+
+pub mod bid;
+pub use bid::{bid_eval, bid_obs, bid_net, maxi};
+#[cfg(feature = "rand")]
+pub use bid::{dd_bid, bid_train_env};
+#[cfg(feature = "dmc_train")]
+pub use bid::bid_candle;
+
+pub mod dmc;
+pub use dmc::{dmc_net, dmc_obs};
+#[cfg(feature = "rand")]
+pub use dmc::{dmc_eval, dmc_replay, dmc_env};
+#[cfg(feature = "dmc_train")]
+pub use dmc::dmc_candle;
+
+pub mod belief;
+pub use belief::{belief_obs, belief_net};
+#[cfg(feature = "rand")]
+pub use belief::card_beliefs;
+#[cfg(feature = "dmc_train")]
+pub use belief::belief_candle;
+
 pub mod rule_player;
-pub mod determinize;
-pub mod bid_eval;
-pub mod maxi;
-pub mod solver;
-pub mod dmc_net;
-pub mod dmc_obs;
-pub mod bid_obs;
-pub mod bid_net;
-pub mod belief_obs;
-pub mod belief_net;
 pub mod suit_perm;
 pub mod game_replay;
 #[cfg(feature = "rand")]
-pub mod dmc_eval;
-#[cfg(feature = "rand")]
-pub mod dmc_replay;
-#[cfg(feature = "rand")]
-pub mod dmc_env;
-#[cfg(feature = "rand")]
-pub mod mcts;
-#[cfg(feature = "rand")]
-pub mod naive_ismcts;
-#[cfg(feature = "rand")]
-pub mod card_beliefs;
-#[cfg(feature = "rand")]
-pub mod smart_ismcts;
-#[cfg(feature = "rand")]
-pub mod single_tree_ismcts;
-#[cfg(feature = "rand")]
-pub mod is_dd;
-#[cfg(feature = "rand")]
-pub mod dd_bid;
-#[cfg(feature = "rand")]
-pub mod bid_train_env;
-#[cfg(feature = "rand")]
 pub mod joint_env;
-#[cfg(feature = "dmc_train")]
-pub mod dmc_candle;
-#[cfg(feature = "dmc_train")]
-pub mod bid_candle;
-#[cfg(feature = "dmc_train")]
-pub mod belief_candle;
 #[cfg(feature = "nn")]
 pub mod features;
 #[cfg(feature = "nn")]

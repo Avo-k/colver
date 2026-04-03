@@ -216,6 +216,11 @@ impl BiddingTrainer {
         Ok((loss_val, td_errors))
     }
 
+    /// Run backward pass and optimizer step on an arbitrary loss.
+    pub fn backward_step(&mut self, loss: &Tensor) -> Result<()> {
+        self.optimizer.backward_step(loss)
+    }
+
     pub fn save_checkpoint(&self, path: &str) -> Result<()> {
         self.varmap.save(path)?;
         Ok(())

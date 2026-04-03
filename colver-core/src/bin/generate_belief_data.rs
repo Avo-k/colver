@@ -17,7 +17,7 @@
 ///   cargo run -p colver-core --bin generate_belief_data --release --features parallel -- \
 ///     --dmc-model models/dmc_final.bin \
 ///     --bid-model models/bid_nn_final.bin \
-///     --games 500000 --output data/belief_train.bin
+///     --games 500000 --output data/belief/belief_train.bin
 
 use std::io::Write;
 use std::time::Instant;
@@ -50,7 +50,7 @@ fn main() {
     let mut dmc_model_path = String::from("models/dmc_final.bin");
     let mut bid_model_path = String::from("models/bid_nn_final.bin");
     let mut num_games: u64 = 50_000;
-    let mut output_path = String::from("data/belief_train.bin");
+    let mut output_path = String::from("data/belief/belief_train.bin");
     let mut seed: u64 = 42;
     let mut num_threads: usize = 0; // 0 = auto-detect
 

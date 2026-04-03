@@ -24,7 +24,7 @@ use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::BID_OBS_DIM;
 use colver_core::suit_perm;
-use colver_core::bid_train_env::{BidReplayBuffer, DealPool, VecBidEnv};
+use colver_core::bid_train_env::{BidReplayBuffer, DealPool, RewardMode, VecBidEnv};
 use colver_core::rollout;
 use colver_core::state::GameState;
 
@@ -161,8 +161,11 @@ struct Args {
     #[arg(long, default_value_t = 1_000_000)]
     pool_size: usize,
     /// Path to save/load deal pool (auto-generates if missing).
-    #[arg(long, default_value = "data/dd_pool_1M.bin")]
+    #[arg(long, default_value = "data/pools/dd_2.5M.bin")]
     pool_file: String,
+    /// Reward mode: "dd" (default), "real", or "blend:0.7" (alpha for DD weight).
+    #[arg(long, default_value = "dd")]
+    reward: String,
 }
 
 /// Evaluate NN bidding vs improved_v2 bidding.
@@ -348,17 +351,38 @@ fn main() {
     // Initialize replay buffer
     let mut replay_buffer = BidReplayBuffer::new(args.buffer_size, args.per_alpha);
 
-    // Phase 1: Load or generate deal pool
+    // Parse reward mode
+    let reward_mode = if args.reward == "dd" {
+        RewardMode::DdOnly
+    } else if args.reward == "real" {
+        RewardMode::RealOnly
+    } else if args.reward.starts_with("blend:") {
+        let alpha: f32 = args.reward[6..].parse().expect("Bad blend alpha, use e.g. blend:0.7");
+        RewardMode::Blend(alpha)
+    } else {
+        panic!("Unknown reward mode '{}'. Use: dd, real, blend:0.7", args.reward);
+    };
+    println!("Reward mode: {:?}", reward_mode);
+
+    // Phase 1: Load deal pool
     println!(
-        "\n--- Phase 1: {} DD-solved deals (file: {}) ---",
-        args.pool_size, args.pool_file
+        "\n--- Phase 1: Deal pool (file: {}) ---",
+        args.pool_file
     );
     // Ensure data directory exists
     if let Some(parent) = std::path::Path::new(&args.pool_file).parent() {
         std::fs::create_dir_all(parent).ok();
     }
     let pool_start = Instant::now();
-    let pool = DealPool::load_or_generate(&args.pool_file, args.pool_size, args.seed + 100);
+    let pool = if args.pool_file.contains("enriched") || matches!(reward_mode, RewardMode::RealOnly | RewardMode::Blend(_)) {
+        // Try enriched format first, fall back to standard
+        match DealPool::load_enriched(&args.pool_file) {
+            Ok(p) => p,
+            Err(_) => DealPool::load_or_generate(&args.pool_file, args.pool_size, args.seed + 100),
+        }
+    } else {
+        DealPool::load_or_generate(&args.pool_file, args.pool_size, args.seed + 100)
+    };
     println!(
         "Deal pool ready: {} deals in {:.1}s",
         pool.len(),
@@ -367,7 +391,7 @@ fn main() {
 
     // Phase 2: Initialize envs from pool (instant)
     println!("\n--- Phase 2: Training ---");
-    let mut vec_env = VecBidEnv::new_with_pool(args.num_envs, args.seed, &pool);
+    let mut vec_env = VecBidEnv::new_with_pool_and_mode(args.num_envs, args.seed, &pool, reward_mode);
 
     let mut rng = StdRng::seed_from_u64(args.seed + 1);
 

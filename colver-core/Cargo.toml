@@ -20,169 +20,80 @@ clap = { version = "4", optional = true, features = ["derive"] }
 [dev-dependencies]
 rand = "0.8"
 
-[[bin]]
-name = "arena"
-path = "src/tests/arena.rs"
-
-[[bin]]
-name = "bench"
-path = "src/tests/bench.rs"
-
-[[bin]]
-name = "mcts_demo"
-path = "src/tests/mcts_demo.rs"
-
-[[bin]]
-name = "ismcts_demo"
-path = "src/tests/ismcts_demo.rs"
-
-[[bin]]
-name = "smart_ismcts_demo"
-path = "src/tests/smart_ismcts_demo.rs"
-
-[[bin]]
-name = "bidding_experiment"
-path = "src/tests/bidding_experiment.rs"
-
-[[bin]]
-name = "bid_analysis"
-path = "src/tests/bid_analysis.rs"
-
-[[bin]]
-name = "oracle_experiment"
-path = "src/tests/oracle_experiment.rs"
-
-[[bin]]
-name = "single_tree_ismcts_demo"
-path = "src/tests/single_tree_ismcts_demo.rs"
-
-[[bin]]
-name = "strength_experiment"
-path = "src/tests/strength_experiment.rs"
-
-[[bin]]
-name = "diagnose_smart"
-path = "src/tests/diagnose_smart.rs"
-
-[[bin]]
-name = "match_experiment"
-path = "src/tests/match_experiment.rs"
-
-[[bin]]
-name = "bid_debug"
-path = "src/tests/bid_debug.rs"
-
-[[bin]]
-name = "bid_tournament"
-path = "src/tests/bid_tournament.rs"
+# Binaries without required-features are auto-discovered from src/bin/
+# Only entries with required-features need explicit declaration.
 
 [[bin]]
 name = "generate_value_data"
-path = "src/tests/generate_value_data.rs"
+path = "src/bin/generate_value_data.rs"
 required-features = ["nn"]
 
 [[bin]]
 name = "nn_experiment"
-path = "src/tests/nn_experiment.rs"
+path = "src/bin/nn_experiment.rs"
 required-features = ["nn"]
 
 [[bin]]
-name = "agent_tournament"
-path = "src/tests/agent_tournament.rs"
-
-[[bin]]
-name = "maxi_diagnose"
-path = "src/tests/maxi_diagnose.rs"
-
-[[bin]]
-name = "maxi_tournament"
-path = "src/tests/maxi_tournament.rs"
-
-[[bin]]
-name = "v2_tournament"
-path = "src/tests/v2_tournament.rs"
-
-[[bin]]
 name = "train_dmc"
-path = "src/tests/train_dmc.rs"
+path = "src/bin/train_dmc.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
 name = "train_bid_nn"
-path = "src/tests/train_bid_nn.rs"
+path = "src/bin/train_bid_nn.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
 name = "train_joint"
-path = "src/tests/train_joint.rs"
+path = "src/bin/train_joint.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
-name = "bid_compare"
-path = "src/tests/bid_compare.rs"
+name = "enrich_pool"
+path = "src/bin/enrich_pool.rs"
+required-features = ["dmc_train"]
 
 [[bin]]
-name = "dd_calibrate"
-path = "src/tests/dd_calibrate.rs"
+name = "penalty_sweep"
+path = "src/bin/penalty_sweep.rs"
+required-features = ["dmc_train"]
 
 [[bin]]
-name = "bid_nn_eval"
-path = "src/tests/bid_nn_eval.rs"
+name = "train_belief_net"
+path = "src/bin/train_belief_net.rs"
+required-features = ["dmc_train"]
 
 [[bin]]
-name = "bid_nn_tournament"
-path = "src/tests/bid_nn_tournament.rs"
+name = "train_bid_supervised"
+path = "src/bin/train_bid_supervised.rs"
+required-features = ["dmc_train"]
 
 [[bin]]
 name = "retro_eval"
-path = "src/tests/retro_eval.rs"
+path = "src/bin/retro_eval.rs"
 required-features = ["rand"]
 
 [[bin]]
-name = "dd_bench"
-path = "src/tests/dd_bench.rs"
-
-[[bin]]
-name = "tree_size"
-path = "src/tests/tree_size.rs"
-
-[[bin]]
 name = "isdd_sweep"
-path = "src/tests/isdd_sweep.rs"
+path = "src/bin/isdd_sweep.rs"
 required-features = ["rand"]
 
 [[bin]]
 name = "generate_game_data"
-path = "src/tests/generate_game_data.rs"
+path = "src/bin/generate_game_data.rs"
 required-features = ["rand"]
 
 [[bin]]
 name = "generate_belief_data"
-path = "src/tests/generate_belief_data.rs"
+path = "src/bin/generate_belief_data.rs"
 required-features = ["rand"]
-
-[[bin]]
-name = "train_belief_net"
-path = "src/tests/train_belief_net.rs"
-required-features = ["dmc_train"]
 
 [[bin]]
 name = "belief_eval"
-path = "src/tests/belief_eval.rs"
+path = "src/bin/belief_eval.rs"
 required-features = ["rand"]
 
 [[bin]]
-name = "bid_nn_probe"
-path = "src/tests/bid_nn_probe.rs"
-
-[[bin]]
-name = "bid_dd_probe"
-path = "src/tests/bid_dd_probe.rs"
-
-[[bin]]
-name = "bid_rules_iter"
-path = "src/tests/bid_rules_iter.rs"
-
-[[bin]]
-name = "distill_bid"
-path = "src/tests/distill_bid.rs"
+name = "gen_pool"
+path = "src/bin/gen_pool.rs"
+required-features = ["rand"]
