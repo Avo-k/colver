@@ -252,8 +252,8 @@ def marginal_contribution(net, n_deals=20000, seed=42):
     ax.axvline(x=0, color="black", linewidth=0.5)
 
     plt.tight_layout()
-    plt.savefig("data/shap_card_contributions.png", dpi=150)
-    print("\nSaved: data/shap_card_contributions.png")
+    plt.savefig("data/shap/shap_card_contributions.png", dpi=150)
+    print("\nSaved: data/shap/shap_card_contributions.png")
 
     # === Rank × position heatmap ===
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -274,8 +274,8 @@ def marginal_contribution(net, n_deals=20000, seed=42):
             ax.text(r, s, f"{heatmap[s, r]:+.3f}", ha="center", va="center", fontsize=9)
     plt.colorbar(im, ax=ax)
     plt.tight_layout()
-    plt.savefig("data/shap_card_heatmap.png", dpi=150)
-    print("Saved: data/shap_card_heatmap.png")
+    plt.savefig("data/shap/shap_card_heatmap.png", dpi=150)
+    print("Saved: data/shap/shap_card_heatmap.png")
 
     return card_mean, card_trump_mean
 
@@ -324,15 +324,15 @@ def shap_xgboost(csv_path: str):
     plt.figure(figsize=(10, 8))
     shap.summary_plot(sv, sample, feature_names=features, show=False)
     plt.tight_layout()
-    plt.savefig("data/shap_xgb_summary.png", dpi=150, bbox_inches="tight")
-    print("Saved: data/shap_xgb_summary.png")
+    plt.savefig("data/shap/shap_xgb_summary.png", dpi=150, bbox_inches="tight")
+    print("Saved: data/shap/shap_xgb_summary.png")
 
     # Bar plot
     plt.figure(figsize=(10, 6))
     shap.summary_plot(sv, sample, feature_names=features, plot_type="bar", show=False)
     plt.tight_layout()
-    plt.savefig("data/shap_xgb_bar.png", dpi=150, bbox_inches="tight")
-    print("Saved: data/shap_xgb_bar.png")
+    plt.savefig("data/shap/shap_xgb_bar.png", dpi=150, bbox_inches="tight")
+    print("Saved: data/shap/shap_xgb_bar.png")
 
     # Dependence plots
     for feat_idx, feat_name in [(1, "has_jack"), (2, "has_nine"), (0, "trump_count"),
@@ -340,8 +340,8 @@ def shap_xgboost(csv_path: str):
         plt.figure(figsize=(8, 5))
         shap.dependence_plot(feat_idx, sv, sample, feature_names=features, show=False)
         plt.tight_layout()
-        plt.savefig(f"data/shap_xgb_dep_{feat_name}.png", dpi=150)
-    print("Saved: data/shap_xgb_dep_*.png")
+        plt.savefig(f"data/shap/shap_xgb_dep_{feat_name}.png", dpi=150)
+    print("Saved: data/shap/shap_xgb_dep_*.png")
 
     # SHAP interaction
     print("\n--- Mean |SHAP| per feature ---")
@@ -369,7 +369,7 @@ def shap_xgboost(csv_path: str):
 
 def main():
     model_path = "models/bid_v2/bid_nn_final.bin"
-    csv_path = "data/bid_distill.csv"
+    csv_path = "data/distill/bid_distill.csv"
 
     # 1. SHAP on XGBoost
     if Path(csv_path).exists():
@@ -392,7 +392,7 @@ def main():
         marginal_contribution(net, n_deals=20000)
 
     print("\n" + "=" * 80)
-    print("  All plots saved to data/shap_*.png")
+    print("  All plots saved to data/shap/shap_*.png")
     print("=" * 80)
 
 

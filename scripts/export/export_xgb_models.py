@@ -149,7 +149,7 @@ def train_and_export(X, y, features, label):
 
 
 def main():
-    csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/bid_distill.csv"
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/distill/bid_distill.csv"
     if not Path(csv_path).exists():
         print(f"Error: {csv_path} not found.")
         print("Generate: cargo run -p colver-core --bin distill_bid --release")

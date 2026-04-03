@@ -10,7 +10,7 @@ Usage:
     cargo run -p colver-core --bin distill_bid --release
 
     # 2. Train interpretable models (Python):
-    PYTHONPATH=scripts uv run python scripts/distill_bid.py [data/bid_distill.csv]
+    PYTHONPATH=scripts uv run python scripts/distill_bid.py [data/distill/bid_distill.csv]
 """
 
 import sys
@@ -299,7 +299,7 @@ def extract_stats(deal_df: pd.DataFrame, group_name: str, out):
 
 
 def main():
-    csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/bid_distill.csv"
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/distill/bid_distill.csv"
 
     if not Path(csv_path).exists():
         print(f"Error: {csv_path} not found.")
@@ -308,7 +308,7 @@ def main():
 
     df = load_data(csv_path)
 
-    log_path = "data/bid_distill_analysis.log"
+    log_path = "data/distill/bid_distill_analysis.log"
 
     class TeeWriter:
         def __init__(self, *writers):

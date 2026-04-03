@@ -1,0 +1,9 @@
+[bid]
+strategy = "nn"
+model = "models/bid_v3_dd/bid_nn_final.bin"
+hidden = 512
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

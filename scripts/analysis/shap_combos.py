@@ -537,7 +537,7 @@ def main():
     net = load_bid_net(model_path, hidden=512)
     print(f"Loaded NN (obs={net['obs_dim']}, hidden={net['hidden']}, layers={net['layers']})")
 
-    log_path = "data/shap_combos.log"
+    log_path = "data/shap/shap_combos.log"
     log_file = open(log_path, "w")
 
     class Tee:
