@@ -397,6 +397,58 @@ pub fn write_belief_observation_v3(
     debug_assert_eq!(pos, BELIEF_OBS_DIM_V3);
 }
 
+/// Dimension for bid-only belief observations: hand(32) + bid_history(72) + position(4) = 108.
+/// Matches `bid_obs::BID_OBS_DIM` but parameterized by explicit observer.
+pub const BID_BELIEF_OBS_DIM: usize = 108;
+
+/// Write the 108-float bid-phase belief observation into `buf[offset..offset+BID_BELIEF_OBS_DIM]`.
+///
+/// Same encoding as `bid_obs::write_bid_observation` but with an explicit `observer`
+/// parameter instead of using `state.current_player()`. This lets us generate observations
+/// from all 4 players' perspectives at each bid step (for belief net training data).
+///
+/// Layout (108 floats):
+///   Block 1: Observer's hand (32)  — binary card presence
+///   Block 2: Bid history (72)      — 12 slots × 6 floats, player-relative to observer
+///   Block 3: Position (4)          — one-hot dealer-relative seat
+pub fn write_bid_belief_obs(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    observer: u8,
+) {
+    debug_assert!(buf.len() >= offset + BID_BELIEF_OBS_DIM);
+
+    let out = &mut buf[offset..offset + BID_BELIEF_OBS_DIM];
+    for v in out.iter_mut() {
+        *v = 0.0;
+    }
+
+    let me = observer as usize;
+    let mut pos = 0;
+
+    // === Block 1: Observer's hand (32) ===
+    let my_hand = state.hands[me];
+    for i in 0..32u32 {
+        if my_hand & (1 << i) != 0 {
+            out[pos + i as usize] = 1.0;
+        }
+    }
+    pos += 32;
+
+    // === Block 2: Bid history (72) ===
+    encode_bid_history(out, pos, bid_history, me, state.dealer);
+    pos += 72;
+
+    // === Block 3: Dealer-relative position (4) ===
+    let rel_pos = (me + 4 - state.dealer as usize) % 4;
+    out[pos + rel_pos] = 1.0;
+    pos += 4;
+
+    debug_assert_eq!(pos, BID_BELIEF_OBS_DIM);
+}
+
 /// Convenience wrapper that allocates and returns a Vec<f32>.
 pub fn make_belief_observation(
     state: &GameState,
@@ -591,5 +643,64 @@ mod tests {
                 state.step(action);
             }
         }
+    }
+
+    #[test]
+    fn test_bid_belief_obs_basic() {
+        // Dealer=0, first bidder=1
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(0, hands);
+
+        // Observer=2 has hand 0xFF_0000 (bits 16-23)
+        let mut buf = vec![0.0f32; BID_BELIEF_OBS_DIM];
+        write_bid_belief_obs(&mut buf, 0, &state, &[], 2);
+
+        // Check observer has exactly 8 cards
+        let hand_ones: usize = (0..32).filter(|&i| buf[i] != 0.0).count();
+        assert_eq!(hand_ones, 8);
+
+        // Check the right bits are set (bits 16-23)
+        for i in 0..32 {
+            let expected = if (0xFF_0000u32 >> i) & 1 != 0 { 1.0 } else { 0.0 };
+            assert_eq!(buf[i], expected, "hand bit {} mismatch", i);
+        }
+
+        // Check position encoding: observer=2, dealer=0 → rel_pos = (2+4-0)%4 = 2
+        let pos_offset = 32 + 72; // after hand + bid_history
+        assert_eq!(buf[pos_offset + 0], 0.0);
+        assert_eq!(buf[pos_offset + 1], 0.0);
+        assert_eq!(buf[pos_offset + 2], 1.0); // position 2
+        assert_eq!(buf[pos_offset + 3], 0.0);
+    }
+
+    #[test]
+    fn test_bid_belief_obs_different_observers() {
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(2, hands); // dealer=2
+
+        let mut buf0 = vec![0.0f32; BID_BELIEF_OBS_DIM];
+        let mut buf1 = vec![0.0f32; BID_BELIEF_OBS_DIM];
+        write_bid_belief_obs(&mut buf0, 0, &state, &[], 0);
+        write_bid_belief_obs(&mut buf1, 0, &state, &[], 1);
+
+        // Different observers should have different hand blocks
+        let hand0: Vec<f32> = buf0[..32].to_vec();
+        let hand1: Vec<f32> = buf1[..32].to_vec();
+        assert_ne!(hand0, hand1, "different observers must have different hands");
+
+        // Observer 0 sees hand 0xFF (bits 0-7)
+        assert_eq!(buf0[0], 1.0);
+        assert_eq!(buf0[8], 0.0);
+
+        // Observer 1 sees hand 0xFF00 (bits 8-15)
+        assert_eq!(buf1[0], 0.0);
+        assert_eq!(buf1[8], 1.0);
+
+        // Different position encodings: dealer=2
+        // Observer=0: rel_pos = (0+4-2)%4 = 2
+        // Observer=1: rel_pos = (1+4-2)%4 = 3
+        let pos_offset = 32 + 72;
+        assert_eq!(buf0[pos_offset + 2], 1.0);
+        assert_eq!(buf1[pos_offset + 3], 1.0);
     }
 }
