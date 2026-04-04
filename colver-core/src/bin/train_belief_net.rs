@@ -46,12 +46,13 @@ use colver_core::belief_obs::{BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_
 use colver_core::game_replay::GameReplay;
 use colver_core::suit_perm;
 
-const MAGIC: &[u8; 8] = b"COLVBL01";
+const MAGIC_BL: &[u8; 8] = b"COLVBL01";
+const MAGIC_BB: &[u8; 8] = b"COLVBB01";
 
 #[derive(Parser)]
 #[command(name = "train_belief_net")]
 struct Args {
-    /// Path to training data binary (COLVBL01 format).
+    /// Path to training data binary (COLVBL01 play obs or COLVBB01 bid obs format).
     #[arg(long)]
     data: Option<String>,
 
@@ -158,43 +159,46 @@ impl Dataset {
         // Read header
         let mut magic = [0u8; 8];
         file.read_exact(&mut magic).unwrap();
-        if &magic != MAGIC {
-            eprintln!("Invalid magic bytes in {}", path);
+        let format_label = if &magic == MAGIC_BL {
+            "COLVBL01"
+        } else if &magic == MAGIC_BB {
+            "COLVBB01"
+        } else {
+            eprintln!("Invalid magic bytes in {} (expected COLVBL01 or COLVBB01)", path);
             std::process::exit(1);
-        }
+        };
 
         let mut buf4 = [0u8; 4];
         file.read_exact(&mut buf4).unwrap();
         let obs_dim = u32::from_le_bytes(buf4) as usize;
-        assert_eq!(obs_dim, BELIEF_OBS_DIM, "obs_dim mismatch: file has {}, expected {}", obs_dim, BELIEF_OBS_DIM);
 
         let mut buf8 = [0u8; 8];
         file.read_exact(&mut buf8).unwrap();
         let num_samples = u64::from_le_bytes(buf8) as usize;
 
-        println!("Loading {} samples from {}", num_samples, path);
+        println!("Loading {} samples from {} (format={}, obs_dim={})", num_samples, path, format_label, obs_dim);
 
         // Read all samples
-        let sample_bytes = BELIEF_OBS_DIM * 4 + 32 + 4; // obs (f32) + target (u8) + mask (u32)
+        let sample_bytes = obs_dim * 4 + 32 + 4; // obs (f32) + target (u8) + mask (u32)
         let mut raw = vec![0u8; num_samples * sample_bytes];
         file.read_exact(&mut raw).unwrap();
 
-        let mut obs = Vec::with_capacity(num_samples * BELIEF_OBS_DIM);
+        let mut obs = Vec::with_capacity(num_samples * obs_dim);
         let mut targets = Vec::with_capacity(num_samples * 32);
         let mut masks = Vec::with_capacity(num_samples);
 
         for i in 0..num_samples {
             let base = i * sample_bytes;
 
-            // obs: BELIEF_OBS_DIM × f32
-            for j in 0..BELIEF_OBS_DIM {
+            // obs: obs_dim × f32
+            for j in 0..obs_dim {
                 let off = base + j * 4;
                 let f = f32::from_le_bytes([raw[off], raw[off + 1], raw[off + 2], raw[off + 3]]);
                 obs.push(f);
             }
 
             // target: 32 × u8
-            let target_off = base + BELIEF_OBS_DIM * 4;
+            let target_off = base + obs_dim * 4;
             targets.extend_from_slice(&raw[target_off..target_off + 32]);
 
             // mask: u32
@@ -206,7 +210,7 @@ impl Dataset {
         }
 
         Dataset {
-            obs, targets, masks, obs_dim: BELIEF_OBS_DIM, num_samples,
+            obs, targets, masks, obs_dim, num_samples,
             aux_trick_winners: None, aux_void_labels: None,
         }
     }
@@ -423,8 +427,22 @@ fn main() {
         std::process::exit(1);
     }
 
-    // V2/V3 requires --replays (COLVBL01 doesn't store hard constraints)
-    if (args.v2 || args.v3) && args.data.is_some() {
+    // Detect data format when --data is provided (peek at magic bytes)
+    let data_is_bb = if let Some(ref path) = args.data {
+        let mut f = std::fs::File::open(path).unwrap_or_else(|e| {
+            eprintln!("Failed to open data file {}: {}", path, e);
+            std::process::exit(1);
+        });
+        let mut magic = [0u8; 8];
+        f.read_exact(&mut magic).unwrap();
+        &magic == MAGIC_BB
+    } else {
+        false
+    };
+
+    // V2/V3 requires --replays for COLVBL01 (doesn't store hard constraints).
+    // For COLVBB01, V2/V3 flags are ignored — obs_dim comes from header.
+    if (args.v2 || args.v3) && args.data.is_some() && !data_is_bb {
         eprintln!("Error: --v2/--v3 requires --replays (COLVBL01 format doesn't contain hard constraints)");
         std::process::exit(1);
     }
@@ -447,11 +465,30 @@ fn main() {
     };
 
     let version_str = if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
-    let obs_dim = if args.v3 { BELIEF_OBS_DIM_V3 } else if args.v2 { BELIEF_OBS_DIM_V2 } else { BELIEF_OBS_DIM };
+
+    // Load data
+    let mut dataset = if let Some(ref path) = args.data {
+        Dataset::load(path)
+    } else {
+        Dataset::from_replays(args.replays.as_ref().unwrap(), version_str)
+    };
+    println!("Loaded {} samples", dataset.num_samples);
+
+    // For --data, obs_dim comes from the file header; for --replays, from V1/V2/V3 flag
+    let obs_dim = dataset.obs_dim;
+
+    // Auto-adjust hidden size for small obs_dim (e.g. COLVBB01 bid data with obs_dim=108)
+    let hidden = if args.hidden == 512 && obs_dim <= 128 {
+        println!("Auto-adjusting hidden size: 512 -> 256 (small obs_dim={})", obs_dim);
+        256
+    } else {
+        args.hidden
+    };
 
     println!("=== Belief Network Training ===");
     println!("Source:      {}", source);
-    println!("Obs dim:     {} ({})", obs_dim, version_str.to_uppercase());
+    let obs_label = if data_is_bb { "COLVBB01".to_string() } else { version_str.to_uppercase() };
+    println!("Obs dim:     {} ({})", obs_dim, obs_label);
     println!("Variant:     {}", args.variant);
     if args.variant == "var_mlp" {
         println!("Layers:      {}", args.num_layers);
@@ -464,21 +501,13 @@ fn main() {
     }
     println!("Epochs:      {}", args.epochs);
     println!("Batch size:  {}", args.batch_size);
-    println!("Hidden:      {}", args.hidden);
+    println!("Hidden:      {}", hidden);
     println!("LR:          {}", args.lr);
     if args.cosine_lr {
         println!("LR schedule: cosine (min_lr={}, warmup={})", args.min_lr, args.warmup_epochs);
     }
     println!("Val split:   {}", args.val_split);
     println!("Output:      {}", args.output);
-
-    // Load data
-    let mut dataset = if let Some(ref path) = args.data {
-        Dataset::load(path)
-    } else {
-        Dataset::from_replays(args.replays.as_ref().unwrap(), version_str)
-    };
-    println!("Loaded {} samples", dataset.num_samples);
 
     // Generate aux targets if needed
     if args.variant == "aux_loss" {
@@ -499,20 +528,20 @@ fn main() {
     let cr = args.count_reg;
     match args.variant.as_str() {
         "standard" => {
-            let mut trainer = BeliefTrainer::new(obs_dim, args.hidden, args.lr, args.weight_decay, device).unwrap();
+            let mut trainer = BeliefTrainer::new(obs_dim, hidden, args.lr, args.weight_decay, device).unwrap();
             trainer.set_count_reg(cr);
             run_training(trainer, &args, &dataset);
         }
         "var_mlp" => {
             let mut trainer = BeliefVarMlpTrainer::new(
-                obs_dim, args.hidden, args.num_layers, args.lr, args.weight_decay, device,
+                obs_dim, hidden, args.num_layers, args.lr, args.weight_decay, device,
             ).unwrap();
             trainer.set_count_reg(cr);
             run_training(trainer, &args, &dataset);
         }
         "suit_shared" => {
             let mut trainer = BeliefSuitNetTrainer::new(
-                args.hidden, args.hidden, args.lr, args.weight_decay, device,
+                hidden, hidden, args.lr, args.weight_decay, device,
             ).unwrap();
             trainer.set_count_reg(cr);
             run_training(trainer, &args, &dataset);
@@ -526,7 +555,7 @@ fn main() {
         }
         "aux_loss" => {
             let mut trainer = BeliefAuxTrainer::new(
-                obs_dim, args.hidden, args.lr, args.weight_decay, device,
+                obs_dim, hidden, args.lr, args.weight_decay, device,
             ).unwrap();
             trainer.set_count_reg(cr);
             run_training_aux(&mut trainer, &args, &dataset);
