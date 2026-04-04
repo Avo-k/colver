@@ -9,18 +9,20 @@ use rand::Rng;
 /// to the minimum `evaluate_for_trump` score that would justify that bid.
 /// This is the inverse of `score_to_bid_value` from eval_helpers.
 pub fn bid_value_to_threshold(bid_value: u8) -> u16 {
+    // Relaxed thresholds: different bidding strategies have different requirements,
+    // so we use lower bounds to avoid rejecting valid hands from opponents.
     match bid_value {
-        8 => 10,  // 80  requires score >= 10
-        9 => 14,  // 90  requires score >= 14
-        10 => 17, // 100 requires score >= 17
-        11 => 20, // 110 requires score >= 20
-        12 => 23, // 120 requires score >= 23
-        13 => 26, // 130 requires score >= 26
-        14 => 29, // 140
-        15 => 32, // 150
-        16 => 35, // 160
-        25 => 35, // capot — same as 160
-        _ => 10,  // fallback
+        8 => 7,   // 80  requires score >= 7
+        9 => 10,  // 90  requires score >= 10
+        10 => 12, // 100 requires score >= 12
+        11 => 15, // 110 requires score >= 15
+        12 => 18, // 120 requires score >= 18
+        13 => 20, // 130 requires score >= 20
+        14 => 23, // 140
+        15 => 26, // 150
+        16 => 29, // 160
+        25 => 29, // capot — same as 160
+        _ => 7,   // fallback
     }
 }
 
@@ -28,26 +30,7 @@ pub fn bid_value_to_threshold(bid_value: u8) -> u16 {
 #[derive(Clone, Debug)]
 pub enum ConstraintKind {
     /// Player bid `suit` at a level implying `evaluate_for_trump >= min_score`.
-    Bid {
-        suit: Suit,
-        min_score: u16,
-    },
-    /// Player passed. The constraint logic depends on context:
-    /// - Opening pass (min_overbid_value == 0): reject hands with J+9 in any suit,
-    ///   or any suit scoring >= threshold (10 normally, 8 if position >= 2).
-    /// - Pass after a bid with partner bidding: only check active_suit < threshold.
-    /// - Pass after a bid without partner: check ALL suits < threshold.
-    Pass {
-        /// The minimum bid value (encoded /10) that would have been needed to overbid.
-        /// 0 means this was an opening pass (no bid on the table yet).
-        min_overbid_value: u8,
-        /// Seat position in the auction (0-based from dealer).
-        auction_position: u8,
-        /// Whether this player's partner had already placed a bid.
-        partner_had_bid: bool,
-        /// The suit of the current active bid (only meaningful when min_overbid_value > 0).
-        active_suit: Suit,
-    },
+    Bid { suit: Suit, min_score: u16 },
 }
 
 /// A constraint derived from an observed action, tied to a specific player.
@@ -67,47 +50,6 @@ impl ActionConstraint {
         match &self.kind {
             ConstraintKind::Bid { suit, min_score } => {
                 evaluate_for_trump(hand, *suit) >= *min_score
-            }
-            ConstraintKind::Pass {
-                min_overbid_value,
-                auction_position,
-                partner_had_bid,
-                active_suit,
-            } => {
-                if *min_overbid_value == 0 {
-                    // Opening pass: reject if any suit has J+9 combo
-                    for suit_idx in 0..4u8 {
-                        let suit = Suit::from_u8(suit_idx);
-                        let bits = suit_bits(hand, suit);
-                        // J = rank 3, 9 = rank 2
-                        if bits & (1 << 3) != 0 && bits & (1 << 2) != 0 {
-                            return false;
-                        }
-                    }
-                    // Reject if any suit has evaluate_for_trump >= threshold
-                    let threshold = if *auction_position >= 2 { 8 } else { 10 };
-                    for suit_idx in 0..4u8 {
-                        let suit = Suit::from_u8(suit_idx);
-                        if evaluate_for_trump(hand, suit) >= threshold {
-                            return false;
-                        }
-                    }
-                    true
-                } else if *partner_had_bid {
-                    // Pass after partner bid: only check active suit
-                    let threshold = bid_value_to_threshold(*min_overbid_value);
-                    evaluate_for_trump(hand, *active_suit) < threshold
-                } else {
-                    // Pass after opponent bid (no partner bid): check ALL suits
-                    let threshold = bid_value_to_threshold(*min_overbid_value);
-                    for suit_idx in 0..4u8 {
-                        let suit = Suit::from_u8(suit_idx);
-                        if evaluate_for_trump(hand, suit) >= threshold {
-                            return false;
-                        }
-                    }
-                    true
-                }
             }
         }
     }
@@ -315,37 +257,29 @@ impl BeliefState {
     }
 
     fn record_pass(&mut self, player: u8, state: &GameState) {
-        // Build Pass constraint context
-        let min_overbid_value = if state.last_bid_value > 0 {
-            state.last_bid_value + 1
-        } else {
-            0
-        };
-        let partner_had_bid =
-            state.last_bid_value > 0 && state.last_bidder == GameState::partner(player);
-        let active_suit = if state.last_bid_value > 0 {
-            Suit::from_u8(state.last_bid_suit)
-        } else {
-            Suit::Spades // irrelevant for opening pass
-        };
-        let auction_position = state.consecutive_passes;
+        // Pass constraints are soft-only: hard rejection caused 48.5% coverage
+        // (reality rejected half the time). Soft weights bias sampling correctly
+        // without rejecting valid determinizations.
 
-        self.constraints.push(ActionConstraint {
-            player,
-            kind: ConstraintKind::Pass {
-                min_overbid_value,
-                auction_position,
-                partner_had_bid,
-                active_suit,
-            },
-        });
-
-        // Soft: reduce J/9 weights for passer in all suits
+        // Reduce J/9 weights for passer in all suits
         for suit_idx in 0..4u8 {
             let jack = make_card(Suit::from_u8(suit_idx), 3);
             let nine = make_card(Suit::from_u8(suit_idx), 2);
-            self.apply_factor(player, jack, 0.6);
-            self.apply_factor(player, nine, 0.7);
+            self.apply_factor(player, jack, 0.5);
+            self.apply_factor(player, nine, 0.6);
+        }
+
+        // If there's a bid on the table, reduce weights in the bid suit
+        // (passer couldn't overbid → less likely to have strong trump there)
+        if state.last_bid_value > 0 {
+            let bid_suit = state.last_bid_suit;
+            // Reduce all trump cards in bid suit
+            self.apply_suit_factor(player, bid_suit, 0.7);
+            // Extra reduction for high trumps
+            let jack = make_card(Suit::from_u8(bid_suit), 3);
+            let nine = make_card(Suit::from_u8(bid_suit), 2);
+            self.apply_factor(player, jack, 0.5);
+            self.apply_factor(player, nine, 0.5);
         }
     }
 
@@ -359,19 +293,19 @@ impl BeliefState {
             kind: ConstraintKind::Bid { suit, min_score },
         });
 
-        // Soft: boost trump card weights
+        // Soft: aggressively boost trump card weights to improve acceptance rate
         let jack = make_card(suit, 3);
         let nine = make_card(suit, 2);
         let ace = make_card(suit, 7);
         let ten = make_card(suit, 6);
-        self.apply_factor(player, jack, 5.0);
-        self.apply_factor(player, nine, 3.0);
-        self.apply_factor(player, ace, 2.0);
-        self.apply_factor(player, ten, 1.5);
-        // Other trump cards (7, 8, Q, K) get 1.5x
+        self.apply_factor(player, jack, 10.0);
+        self.apply_factor(player, nine, 6.0);
+        self.apply_factor(player, ace, 4.0);
+        self.apply_factor(player, ten, 3.0);
+        // Other trump cards (7, 8, Q, K) get 2.5x (length matters for eval)
         for rank in [0u8, 1, 4, 5] {
             let card = make_card(suit, rank);
-            self.apply_factor(player, card, 1.5);
+            self.apply_factor(player, card, 2.5);
         }
     }
 
@@ -577,46 +511,35 @@ mod tests {
     }
 
     #[test]
-    fn test_opening_pass_rejects_j9() {
-        // Hand with J♠ (card 3) + 9♠ (card 2) — should be inconsistent with opening pass
-        let hand = hand_from_cards(&[3, 2, 8, 9, 16, 17, 24, 25]);
-        let hands = [hand, 0, 0, 0];
+    fn test_pass_reduces_j9_soft_weights() {
+        // After a pass, J/9 weights should decrease for the passer
+        let observer_hand = hand_from_cards(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        let mut bs = BeliefState::new(0, observer_hand);
 
-        let constraint = ActionConstraint {
-            player: 0,
-            kind: ConstraintKind::Pass {
-                min_overbid_value: 0,
-                auction_position: 0,
-                partner_had_bid: false,
-                active_suit: Suit::Spades, // irrelevant for opening pass
-            },
-        };
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(0, hands);
 
+        let jack_h = make_card(Suit::Hearts, 3) as usize;
+        let nine_h = make_card(Suit::Hearts, 2) as usize;
+        let before_j = bs.soft_weights[1][jack_h];
+        let before_9 = bs.soft_weights[1][nine_h];
+
+        // P1 passes
+        bs.record_bid(1, BID_PASS, &state);
+
+        // No hard constraints added (pass is soft-only)
+        assert!(bs.constraints().is_empty(), "Pass should not add hard constraints");
+
+        // Soft weights should decrease
         assert!(
-            !constraint.is_satisfied(&hands),
-            "Hand with J♠+9♠ should be rejected for opening pass"
+            bs.soft_weights[1][jack_h] < before_j,
+            "J♥ weight for P1 should decrease after pass: {} -> {}",
+            before_j, bs.soft_weights[1][jack_h]
         );
-    }
-
-    #[test]
-    fn test_opening_pass_accepts_weak_hand() {
-        // Weak hand of 7s and 8s: cards 0,1,8,9,16,17,24,25
-        let hand = hand_from_cards(&[0, 1, 8, 9, 16, 17, 24, 25]);
-        let hands = [hand, 0, 0, 0];
-
-        let constraint = ActionConstraint {
-            player: 0,
-            kind: ConstraintKind::Pass {
-                min_overbid_value: 0,
-                auction_position: 0,
-                partner_had_bid: false,
-                active_suit: Suit::Spades,
-            },
-        };
-
         assert!(
-            constraint.is_satisfied(&hands),
-            "Weak hand of 7s and 8s should be consistent with opening pass"
+            bs.soft_weights[1][nine_h] < before_9,
+            "9♥ weight for P1 should decrease after pass: {} -> {}",
+            before_9, bs.soft_weights[1][nine_h]
         );
     }
 
@@ -707,28 +630,17 @@ mod tests {
     }
 
     #[test]
-    fn test_record_pass_adds_constraint() {
+    fn test_record_pass_no_hard_constraint() {
         let observer_hand = hand_from_cards(&[0, 1, 2, 3, 4, 5, 6, 7]);
         let mut bs = BeliefState::new(0, observer_hand);
 
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
 
-        // P1 passes (opening pass)
+        // P1 passes (opening pass) — should NOT add hard constraint
         bs.record_bid(1, BID_PASS, &state);
 
-        assert_eq!(bs.constraints().len(), 1);
-        match &bs.constraints()[0].kind {
-            ConstraintKind::Pass {
-                min_overbid_value,
-                partner_had_bid,
-                ..
-            } => {
-                assert_eq!(*min_overbid_value, 0, "Opening pass should have min_overbid_value=0");
-                assert!(!partner_had_bid, "No partner bid in opening pass");
-            }
-            _ => panic!("Expected Pass constraint"),
-        }
+        assert!(bs.constraints().is_empty(), "Pass should not add hard constraints");
 
         // Verify soft weights for J/9 decreased
         let jack_h = make_card(Suit::Hearts, 3) as usize;

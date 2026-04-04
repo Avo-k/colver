@@ -29,16 +29,19 @@ pub struct BisDdConfig {
     pub prefilter_threshold: u16,
     /// Whether to evaluate capot bids (default true).
     pub evaluate_capot: bool,
+    /// Maximum bid value (encoded /10, default 12 = 120). DD overestimates at high levels.
+    pub max_bid_value: u8,
 }
 
 impl Default for BisDdConfig {
     fn default() -> Self {
         BisDdConfig {
-            min_dets: 20,
-            bid_time_ms: 2000,
-            play_time_ms: 500,
+            min_dets: 10,
+            bid_time_ms: 500,
+            play_time_ms: 200,
             prefilter_threshold: 6,
             evaluate_capot: true,
+            max_bid_value: 12, // cap at 120
         }
     }
 }
@@ -46,6 +49,7 @@ impl Default for BisDdConfig {
 /// Unified DD-based agent that decides both bids and plays.
 pub struct BisDdAgent {
     belief: Option<BeliefState>,
+    #[cfg(not(feature = "parallel"))]
     tt_buf: Vec<u64>,
     config: BisDdConfig,
     rng: rand::rngs::StdRng,
@@ -56,10 +60,16 @@ impl BisDdAgent {
     pub fn new(config: BisDdConfig, seed: u64) -> Self {
         BisDdAgent {
             belief: None,
+            #[cfg(not(feature = "parallel"))]
             tt_buf: new_tt_buffer(),
             config,
             rng: rand::rngs::StdRng::seed_from_u64(seed),
         }
+    }
+
+    /// Access the current belief state (if initialized).
+    pub fn belief(&self) -> Option<&BeliefState> {
+        self.belief.as_ref()
     }
 
     /// Initialize beliefs for a new deal.
@@ -118,13 +128,13 @@ impl BisDdAgent {
             return BID_PASS;
         }
 
-        // Step 2: Time-bounded determinization + DD solving
+        // Step 2: Generate determinizations (sequential — needs mutable rng)
         let deadline = Instant::now() + Duration::from_millis(self.config.bid_time_ms as u64);
         let max_attempts = (self.config.min_dets * 10) as usize;
-        let mut results: Vec<[u8; 4]> = Vec::new();
+        let mut dets: Vec<[CardSet; 4]> = Vec::new();
 
         for _ in 0..max_attempts {
-            if results.len() >= self.config.min_dets as usize && Instant::now() >= deadline {
+            if dets.len() >= self.config.min_dets as usize && Instant::now() >= deadline {
                 break;
             }
 
@@ -132,52 +142,48 @@ impl BisDdAgent {
                 Some(belief) => belief.determinize(state, &mut self.rng),
                 None => None,
             };
-            let det = match det {
-                Some(d) => d,
-                None => continue,
-            };
-
-            let mut ns_pts = [0u8; 4];
-            for &suit_idx in &candidates {
-                let result = solve_for_trump_reuse_tt(
-                    det.hands,
-                    state.dealer,
-                    suit_idx,
-                    &mut self.tt_buf,
-                );
-                ns_pts[suit_idx as usize] = result[0];
+            if let Some(d) = det {
+                dets.push(d.hands);
             }
-            results.push(ns_pts);
         }
 
-        if results.is_empty() {
+        if dets.is_empty() {
             return BID_PASS;
         }
 
-        // Step 3: Evaluate all candidate actions by EV
-        let mut best_action = BID_PASS;
-        let mut best_ev = Self::ev_pass(&results, state, team);
+        // Step 3: Solve all determinizations (parallel with rayon, sequential fallback)
+        let results = self.solve_bid_dets(&dets, state.dealer, &candidates);
 
-        // Evaluate suit x value bids
+        // Step 4: Evaluate all candidate actions by EV
+        // DD-based EV overestimates because it assumes perfect play.
+        // Apply a margin that scales with bid level to compensate.
+        let pass_ev = Self::ev_pass(&results, state, team);
+        let base_margin = 50.0f32;
+
+        let mut best_action = BID_PASS;
+        let mut best_ev = pass_ev;
+
         for &suit_idx in &candidates {
-            for bid_value in 8..=16u8 {
+            for bid_value in 8..=self.config.max_bid_value {
                 let action = bidding::encode_bid(bid_value, suit_idx);
                 if legal & (1u64 << action) == 0 {
                     continue;
                 }
                 let ev = Self::ev_bid(&results, suit_idx as usize, bid_value, team);
-                if ev > best_ev {
+                // Scale margin: 50 for bid 80, +10 per level → 130 for bid 160
+                let margin = base_margin + (bid_value - 8) as f32 * 10.0;
+                if ev - pass_ev > margin && ev > best_ev {
                     best_ev = ev;
                     best_action = action;
                 }
             }
 
-            // Evaluate capot
+            // Evaluate capot (very high margin — DD capots rarely hold)
             if self.config.evaluate_capot {
                 let capot_action = 37 + suit_idx;
                 if legal & (1u64 << capot_action) != 0 {
                     let ev = Self::ev_capot(&results, suit_idx as usize, team);
-                    if ev > best_ev {
+                    if ev - pass_ev > 200.0 && ev > best_ev {
                         best_ev = ev;
                         best_action = capot_action;
                     }
@@ -188,7 +194,7 @@ impl BisDdAgent {
         // Evaluate coinche
         if legal & (1u64 << BID_COINCHE) != 0 {
             let ev = Self::ev_coinche(&results, state, team);
-            if ev > best_ev {
+            if ev - pass_ev > base_margin && ev > best_ev {
                 best_ev = ev;
                 best_action = BID_COINCHE;
             }
@@ -196,6 +202,52 @@ impl BisDdAgent {
 
         let _ = best_ev; // suppress unused warning
         best_action
+    }
+
+    /// Solve determinizations for bid evaluation.
+    /// With `parallel` feature: uses rayon, each thread gets its own TT buffer.
+    /// Without: sequential with shared TT buffer.
+    #[cfg(feature = "parallel")]
+    fn solve_bid_dets(
+        &mut self,
+        dets: &[[CardSet; 4]],
+        dealer: u8,
+        candidates: &[u8],
+    ) -> Vec<[u8; 4]> {
+        use rayon::prelude::*;
+
+        let candidates = candidates.to_vec();
+        dets.par_iter()
+            .map(|hands| {
+                let mut tt = new_tt_buffer();
+                let mut ns_pts = [0u8; 4];
+                for &suit_idx in &candidates {
+                    let result = solve_for_trump_reuse_tt(*hands, dealer, suit_idx, &mut tt);
+                    ns_pts[suit_idx as usize] = result[0];
+                }
+                ns_pts
+            })
+            .collect()
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn solve_bid_dets(
+        &mut self,
+        dets: &[[CardSet; 4]],
+        dealer: u8,
+        candidates: &[u8],
+    ) -> Vec<[u8; 4]> {
+        dets.iter()
+            .map(|hands| {
+                let mut ns_pts = [0u8; 4];
+                for &suit_idx in candidates {
+                    let result =
+                        solve_for_trump_reuse_tt(*hands, dealer, suit_idx, &mut self.tt_buf);
+                    ns_pts[suit_idx as usize] = result[0];
+                }
+                ns_pts
+            })
+            .collect()
     }
 
     // ---- EV helpers ----
@@ -341,13 +393,12 @@ impl BisDdAgent {
         let scaled_ms = (self.config.play_time_ms as u64 * cards_left as u64) / 8;
         let deadline = Instant::now() + Duration::from_millis(scaled_ms.max(1));
 
-        let mut score_sum = [0i64; 32];
-        let mut score_count = [0u32; 32];
-        let mut successful_dets = 0u32;
-
+        // Step 1: Generate determinizations (sequential)
         let max_attempts = (self.config.min_dets * 10) as usize;
+        let mut det_states: Vec<GameState> = Vec::new();
+
         for _ in 0..max_attempts {
-            if successful_dets >= self.config.min_dets && Instant::now() >= deadline {
+            if det_states.len() >= self.config.min_dets as usize && Instant::now() >= deadline {
                 break;
             }
 
@@ -355,21 +406,20 @@ impl BisDdAgent {
                 Some(belief) => belief.determinize(state, &mut self.rng),
                 None => None,
             };
-            let det = match det {
-                Some(d) => d,
-                None => continue,
-            };
-
-            let scores = solve_with_scores(&det, Some(&mut self.tt_buf));
-            for i in 0..scores.count {
-                let (card, ns_pts) = scores.scores[i];
-                score_sum[card as usize] += ns_pts as i64;
-                score_count[card as usize] += 1;
+            if let Some(d) = det {
+                det_states.push(d);
             }
-            successful_dets += 1;
         }
 
-        // Pick best card
+        if det_states.is_empty() {
+            let legal = state.legal_actions();
+            return legal.trailing_zeros() as u8;
+        }
+
+        // Step 2: Solve all determinizations (parallel or sequential)
+        let (score_sum, score_count) = self.solve_play_dets(&det_states);
+
+        // Step 3: Pick best card
         let legal = state.legal_actions();
         let mut best_action = legal.trailing_zeros() as u8;
         let mut best_avg: f32 = if maximizing {
@@ -388,24 +438,66 @@ impl BisDdAgent {
                 81.0 // neutral fallback
             };
 
-            let dominated = if maximizing {
+            let better = if maximizing {
                 avg > best_avg
             } else {
                 avg < best_avg
             };
-            if dominated {
+            if better {
                 best_avg = avg;
                 best_action = card;
             }
             mask &= mask - 1;
         }
 
-        // Fallback: if no det succeeded, first legal action
-        if successful_dets == 0 {
-            best_action = legal.trailing_zeros() as u8;
-        }
-
         best_action
+    }
+
+    /// Solve determinizations for play evaluation.
+    #[cfg(feature = "parallel")]
+    fn solve_play_dets(&mut self, dets: &[GameState]) -> ([i64; 32], [u32; 32]) {
+        use rayon::prelude::*;
+
+        let per_det: Vec<([i64; 32], [u32; 32])> = dets
+            .par_iter()
+            .map(|det| {
+                let mut tt = new_tt_buffer();
+                let scores = solve_with_scores(det, Some(&mut tt));
+                let mut sum = [0i64; 32];
+                let mut count = [0u32; 32];
+                for i in 0..scores.count {
+                    let (card, ns_pts) = scores.scores[i];
+                    sum[card as usize] += ns_pts as i64;
+                    count[card as usize] += 1;
+                }
+                (sum, count)
+            })
+            .collect();
+
+        let mut total_sum = [0i64; 32];
+        let mut total_count = [0u32; 32];
+        for (sum, count) in per_det {
+            for i in 0..32 {
+                total_sum[i] += sum[i];
+                total_count[i] += count[i];
+            }
+        }
+        (total_sum, total_count)
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn solve_play_dets(&mut self, dets: &[GameState]) -> ([i64; 32], [u32; 32]) {
+        let mut total_sum = [0i64; 32];
+        let mut total_count = [0u32; 32];
+        for det in dets {
+            let scores = solve_with_scores(det, Some(&mut self.tt_buf));
+            for i in 0..scores.count {
+                let (card, ns_pts) = scores.scores[i];
+                total_sum[card as usize] += ns_pts as i64;
+                total_count[card as usize] += 1;
+            }
+        }
+        (total_sum, total_count)
     }
 }
 
@@ -510,11 +602,12 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = BisDdConfig::default();
-        assert_eq!(config.min_dets, 20);
-        assert_eq!(config.bid_time_ms, 2000);
-        assert_eq!(config.play_time_ms, 500);
+        assert_eq!(config.min_dets, 10);
+        assert_eq!(config.bid_time_ms, 500);
+        assert_eq!(config.play_time_ms, 200);
         assert_eq!(config.prefilter_threshold, 6);
         assert!(config.evaluate_capot);
+        assert_eq!(config.max_bid_value, 12);
     }
 
     #[test]

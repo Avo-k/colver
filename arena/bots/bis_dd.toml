@@ -1,0 +1,6 @@
+[bid]
+strategy = "bis_dd"
+
+[play]
+method = "bis_dd"
+determinizations = 10
