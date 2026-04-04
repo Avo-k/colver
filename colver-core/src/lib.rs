@@ -23,6 +23,8 @@ pub mod belief;
 pub use belief::{belief_obs, belief_net};
 #[cfg(feature = "rand")]
 pub use belief::card_beliefs;
+#[cfg(feature = "rand")]
+pub use belief::belief_state;
 #[cfg(feature = "dmc_train")]
 pub use belief::belief_candle;
 
