@@ -10,12 +10,10 @@ Instead of training a bid NN or play NN, sample possible card distributions cons
 Observe bid/play actions
         │
   BeliefState accumulates:
-    - Hard constraints (bid: evaluate_for_trump ≥ threshold)
-    - Soft weights (J/9 boosts for bidders, reductions for passers, void inference)
+    - Soft weights (J/9 boosts for bidders, reductions for passers, play inference)
+    - Hard constraints from play only (voids, trump ceiling)
         │
-  determinize_weighted() → candidate world
-        │
-  check_constraints() → reject if hard constraints violated
+  determinize_weighted() → candidate world biased by soft weights
         │
   DD solver (solve_for_trump / solve_with_scores)
         │
@@ -45,28 +43,22 @@ Diagnostic binary uses higher budgets (20 dets, 2000ms bid, 500ms play) for qual
 
 ## Belief System
 
-### Hard constraints (only for positive bids)
-When a player bids suit X at value V, we require `evaluate_for_trump(hand, X) >= threshold(V)`.
+### No hard constraints from bids
+Originally, positive bids added a hard constraint requiring `evaluate_for_trump(hand, suit) >= threshold`. This was **removed** because eval_beliefs measurement showed it rejected reality ~72% of the time against NN bidders — the NN bidding strategy doesn't follow heuristic hand evaluation patterns. Soft weights alone bias sampling correctly without rejecting valid hands.
 
-Thresholds (relaxed to accommodate different bidding strategies):
-
-| Bid | Threshold | | Bid | Threshold |
-|-----|-----------|---|-----|-----------|
-| 80  | 7 | | 120 | 18 |
-| 90  | 10 | | 130 | 20 |
-| 100 | 12 | | 140 | 23 |
-| 110 | 15 | | 150+ | 26-29 |
+### Hard constraints (from play only, 0% false exclusion rate)
+- **Void inference**: didn't follow suit → void in that suit
+- **Trump void**: didn't trump when forced (opponent winning, no prior trump on trick) → void in trump. Correctly handles **"ne pisse pas"**: when an opponent has already trumped and the player can't overtrump, discarding is legal — we apply a **trump ceiling** instead of void.
+- **Trump ceiling**: undertrumped → no stronger trump than the best trump on the trick. Only applied when player was forced (opponent winning or following trump lead).
 
 ### Soft weights (for passes, bids, play)
 - **Bidder**: J ×10, 9 ×6, A ×4, 10 ×3, other trump ×2.5
 - **Passer**: J ×0.5, 9 ×0.6 in all suits. If bid on table: bid suit ×0.7, bid suit J ×0.25, 9 ×0.3
 - **Coinche**: J ×3, 9 ×2.5 in bid suit, side aces ×2
-- **Play**: void inference (hard), trump ceiling (hard), leader/cut inference (soft)
+- **Play**: lead trump → boost remaining trump ×1.8; lead ace → boost 10/K for player, reduce for others; lead low → reduce A/10/K for player, boost for others; lead 10 → boost A ×2; lead K → boost A ×1.8; cut with strong trump → boost trump ×1.4; discard → reduce A/10 for player, boost for others
 
 ### Determinization
-Hybrid weighted + rejection: `determinize_weighted()` biased by soft weights, then `check_constraints()` for hard bid constraints. Falls back to `determinize_greedy()` after 500 failed attempts.
-
-With `parallel` feature: DD solves run in parallel (rayon), each thread gets its own TT buffer.
+`determinize_weighted()` biased by soft weights, falls back to `determinize_greedy()`. No retry loop when no hard constraints (the common case). With `parallel` feature: DD solves run in parallel (rayon), each thread gets its own TT buffer.
 
 ## Bid EV Formula
 
@@ -145,31 +137,87 @@ Bid breakdown (all 80-120 range, 61-71% success):
 - Dir 1 (BisDd=NS): 3-7 | Dir 2 (BisDd=EW): 6-4
 - Wall: 474s (2.5 matches/min)
 
-### Ideas for v2
+### v2 — Belief quality audit + constraint fix (2025-04-04)
 
-**Bidding:**
-- [ ] Tune risk margin (maybe too conservative at base 50?)
-- [ ] Try `max_bid_value = 13` (130) with higher margin
-- [ ] Partner response: when partner bid, lower the margin for same suit overbids
-- [ ] Calibrate `bid_value_to_threshold` empirically from game data
-- [ ] Try discounting DD points instead of EV margin (e.g., team_pts × 0.85)
+Built `eval_beliefs` binary to measure belief quality against ground truth (known hands). Played 200 deals with NN bots (bid_v2 + doudou50), tracked CardBeliefs and BeliefState at every play decision.
 
-**Beliefs:**
-- [ ] Calibrate soft weight multipliers from actual game statistics
-- [ ] Track belief coverage per bid level (are 80-bids well-calibrated but 120 not?)
-- [ ] Acceptance rate is still 28% — more aggressive weighting could help
+**Critical finding:** BeliefState hard bid constraints rejected reality 72% of the time. The `evaluate_for_trump` thresholds don't match NN bidding behavior — the NN bids based on learned Q-values, not heuristic hand evaluation.
 
-**Play:**
-- [ ] Profile play time breakdown (determinize vs solve)
-- [ ] Try more dets in early tricks (more uncertainty) vs fewer in late tricks
-- [ ] Compare play quality vs Smart IS-DD on same deals
+Changes:
+1. **Removed hard bid constraints** from BeliefState — soft weights only (rejection rate 72% → 0%)
+2. **Simplified `determinize()`** — no retry loop when no hard constraints (was 500 attempts)
+3. **Improved play inference** (both CardBeliefs and BeliefState):
+   - Bidirectional signals: lead ace boosts 10/K for player AND reduces for others
+   - New inferences: lead 10 → boost A, lead K → boost A, cut with strong trump → boost trump
+   - Low lead → reduce A/10/K for player (was only boosting for others)
+   - Discard → reduce A/10 for player in discarded suit
+4. **Fixed "ne pisse pas" bug** in hard constraints: when an opponent already trumped and the player can't overtrump, the player may legally discard (not trump). Old code wrongly inferred "void in trump" → now applies a trump ceiling instead. Also fixed trump ceiling to not apply when partner is master (voluntary undertrump is valid strategy).
+5. **Evaluated belief_v3.bin NN**: catastrophically bad (log(p) = -2.1 play, -7.2 bid vs -1.1 uniform). Was trained on different bots — useless for NN bidder/player patterns.
+
+**eval_beliefs results (500 deals, before → after all fixes):**
+
+| Metric | Before | After |
+|--------|--------|-------|
+| CB log(p) | -1.0515 | **-1.0209** |
+| CB false exclusions | 0.215% | **0.000%** |
+| Ground truth reachable | ~99% | **100.0%** |
+| CB placement accuracy | ~36% | **40.1%** |
+| BS constraint rejections | 72.2% | **0%** |
+
+**Arena (200×2 matches, seed 42):**
+
+| Matchup | Win% |
+|---------|------|
+| nn_v2_isdd vs doudou50 | 52% (first 200), 47.8% (next 400) |
+| nn_v2_isdd_no_belief vs doudou50 | 47% |
+| nn_v2_isdd is #1 in overall leaderboard (61.1%) | |
+
+### v3 — Bid Belief NN (2026-04-04)
+
+Trained a neural network to predict card locations from auction history, replacing the weak heuristic bid soft weights in BeliefState.
+
+**Architecture:** 108→256→256→96 MLP (LayerNorm+ReLU), 3-class output (left/partner/right per card).
+
+**Training:**
+- Data: 500K deals × bid_v2 auctions → 14.2M samples (4 observers × ~7 bid steps/deal)
+- 24× suit augmentation, cosine LR with warmup, count regularization
+- Format: COLVBB01 (108-float bid obs + 32-byte target + mask)
+- 30 epochs, val_loss 1.0283 (baseline uniform = 1.099), val_acc 42.7%
+
+**Integration:** `BeliefState::apply_nn_bid_beliefs()` runs the NN once after bidding, replacing heuristic bid weights. Play heuristic weights multiply on top during the play phase: `NN_bid_prior × play_heuristic`.
+
+**eval_beliefs results (500 deals, bid_v2 + doudou50):**
+
+| Metric | CB | BS (heuristic) | BS+NN |
+|--------|-----|----------------|-------|
+| Play log(p) | -1.0209 | -1.0564 | **-0.9565** |
+| Trick 0 log(p) | -1.0745 | -1.1218 | **-1.0086** |
+| Trick 4 log(p) | -0.9729 | -0.9995 | **-0.9088** |
+
+BS+NN is the best belief system at every trick. The NN bid priors carry through the entire game, providing ~0.06-0.07 log(p) improvement over the best heuristic at every data point.
+
+**Files:**
+- `belief_obs.rs`: `write_bid_belief_obs()` — 108-float bid observation from any observer's perspective
+- `belief_state.rs`: `apply_nn_bid_weights_raw()`, `apply_nn_bid_beliefs()` — NN integration
+- `belief_net.rs`: obs_dim=108 auto-detection added
+- `bin/gen_bid_belief_data.rs`: training data generator (COLVBB01 format)
+- `bin/train_belief_net.rs`: COLVBB01 + bid augmentation support
+- `bin/eval_beliefs.rs`: `--bid-belief` flag for NN evaluation
+- Model: `models/bid_belief_v4.bin` (477KB)
+
+**Arena integration:** Pending. BisDdAgent uses BeliefState and would naturally benefit via `apply_nn_bid_beliefs()`, but arena.rs doesn't yet wire the bid_belief model. SmartIsDd uses CardBeliefs (not BeliefState) and would need a different integration path.
+
+### Ideas for v4
+
+**Arena integration** (priority):
+- [ ] Wire `bid_belief` model into BisDdAgent via arena TOML `[belief] bid_model = "..."`
+- [ ] Wire into SmartIsDd (requires CardBeliefs → BeliefState migration or NN weight injection)
+
+**Belief NN improvements:**
+- [ ] Larger architecture (512 hidden, 3 layers) for more capacity
+- [ ] Play-phase belief NN (using bid NN output as input feature)
+- [ ] Hypothesis-based bid inference (discrete hand profiles)
 
 **Speed:**
-- [ ] Pre-generate determinizations in batch (amortize RNG overhead)
-- [ ] Share TT buffer across dets when not parallel (currently each gets 2MB)
-- [ ] Profile: how much time in determinize vs solve?
-
-**Arena:**
-- [ ] Compare vs nn_v2_dmc35, nn_dmc35 (NN-based bots)
-- [ ] Compare vs heuristic-only bots to isolate bid vs play contribution
-- [ ] Create a mixed bot: bis_dd bid + smart_isdd play (or vice versa)
+- [ ] Pre-generate determinizations in batch
+- [ ] Profile: determinize vs solve time breakdown

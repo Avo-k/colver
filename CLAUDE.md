@@ -13,6 +13,7 @@ cargo run -p colver-core --bin train_joint --features dmc_train --release -- --m
 ./scripts/training/triforge.sh --cycles 3  # Full triforge: alternating bid/play training
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/pools/dd_2.5M.bin  # Standalone bid NN training
 RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/pools/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
+cargo run -p colver-core --bin gen_bid_belief_data --release --features parallel -- --bid-model models/bid_v2/bid_nn_final.bin --bid-hidden 512 --deals 500000 --output data/belief/bid_belief_500k.bin  # Bid belief training data (COLVBB01, ~14M samples, ~65s)
 uv sync                                        # Build and install Python bindings
 uv run python -m colver.web                    # Run web frontend → http://localhost:8000
 ```
@@ -76,7 +77,8 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 - **Pool generator** (`gen_pool` binary): Standalone DD pool generation, no CUDA dep. Uses `RUSTFLAGS="-C target-cpu=native"` + workspace `[profile.release] lto="fat", codegen-units=1` for 2.4× speedup. Checkpoints every 100k deals (resumable).
 - **DMC Agent "DouDou35"** (`dmc/dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
 - **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`).
-- **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3 obs, multiple architecture variants
+- **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3/bid obs, multiple architecture variants. `CardBeliefs` (heuristic, deprecated) uses bidirectional soft inference from bids and play with **0% false exclusion rate** on hard constraints (voids, trump ceiling). Correctly handles "ne pisse pas" (discard when can't overtrump opponent's cut → trump ceiling, not void). `BeliefState` (for BisDd) uses soft weights — hard bid constraints were removed (rejected reality 72% of the time against NN bidders). **Bid Belief NN v4** (`bid_belief_v4.bin`): 108→256²→96, trained on bid_v2 auctions (14.2M samples, 24× suit augmentation), replaces heuristic bid soft weights in BeliefState via `apply_nn_bid_beliefs()`. Play log(p) = -0.9565 (vs -1.0209 heuristic, -1.099 uniform). Old `belief_v3.bin` is **not usable** with NN bots. See [docs/BIS_DD.md](docs/BIS_DD.md).
+- **Belief Evaluation** (`bin/eval_beliefs.rs`): Measures belief quality against ground truth per bid step and per trick. Plays deals with NN bots, tracks log-probability, placement accuracy, false exclusion rate, entropy, constraint tightness, and ground truth reachability. Supports `--nn` for play belief NN and `--bid-belief` for bid belief NN. Run: `cargo run --bin eval_beliefs --features "parallel,nn" --release -- --deals 500 [--bid-belief models/bid_belief_v4.bin]`
 - **Bidding strategies** (`bid/bid_eval/`): `BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`, `BidParams` (parametric). Each strategy in its own file under `bid_eval/`.
 - **Triforge Training** (`joint_env.rs` + `train_joint` binary): Iterative best-response training — alternates bid-only and play-only phases with frozen partner. `--mode play-only|bid-only|joint`. Play NN: ResNet Dueling DQN (411→1024³→32, skip connections on layers 1-2). Bid NN: Dueling DQN (114→512³→43, configurable layers). Canonical play encoding (no suit augmentation), bid uses 24× augmentation. See [docs/TRIFORGE.md](docs/TRIFORGE.md).
   - **Weight formats:** Training checkpoints (candle) use `.safetensors` — required for `--resume-bid`/`--resume-play`. Inference weights use `.bin` (raw f32) — used by `BidNet::load`/`DmcNet::load` and arena TOML `model` paths. Triforge saves both formats at each checkpoint.
@@ -146,7 +148,7 @@ use_hard_constraints = true
 
 **Options:** `--matches N` (per direction, default 100), `--threads N` (default auto), `--seed N` (default 42). Each H2H runs both directions (duplicate matching) for variance reduction.
 
-**Reference bots:** `nn_v2_isdd_no_belief` (Bid a Dede+SmartIsDd, **champion**), `nn_v2_isdd` (Bid a Dede+SmartIsDd+Belief), `nn_v2_dmc35` (Bid a Dede+DouDou35), `nn_dmc35` (Bid a Doudou+DouDou35), `nn_isdd` (Bid a Doudou+SmartIsDd+Belief).
+**Reference bots:** `nn_v2_isdd` (Bid a Dede+SmartIsDd+Belief, **#1 leaderboard**), `nn_v2_isdd_no_belief` (Bid a Dede+SmartIsDd, #2), `nn_v2_dmc50` (Bid a Dede+DouDou50, fast baseline), `nn_v2_dmc35` (Bid a Dede+DouDou35), `nn_dmc35` (Bid a Doudou+DouDou35), `nn_isdd` (Bid a Doudou+SmartIsDd+Belief).
 
 **CSV format:** Columns include `bid_a,play_a,bid_b,play_b` labels. Parser auto-detects old (11-col) and new (15-col) formats.
 
@@ -166,7 +168,8 @@ data/
     dd_2.5M.bin         2.5M pre-solved deals (COLVDD01, 51MB)
     dd_pool_enriched_1M.bin  1M deals with DD + DouDou50 real pts (COLVDR01, 24MB)
   belief/             Belief net training data
-    belief_train_500k.bin  (COLVBL01, 20GB)
+    belief_train_500k.bin  (COLVBL01, 20GB, play-phase samples)
+    bid_belief_500k.bin    (COLVBB01, 6.3GB, 14.2M bid-phase samples from bid_v2)
   training/           Game replay / value data
     games_500k.bin       500K full game replays (28MB)
     value_train.bin      Value net training data (171MB)
