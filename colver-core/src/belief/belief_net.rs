@@ -66,8 +66,8 @@ impl BeliefNet {
         let trunk_fixed = h * h + 3 * h + 3 * h;
 
         // Try both 3-class (V3) and 4-class (legacy), prefer the one matching a known obs_dim
-        use crate::belief_obs::{BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3};
-        let known_dims = [BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3];
+        use crate::belief_obs::{BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3, BID_BELIEF_OBS_DIM};
+        let known_dims = [BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3, BID_BELIEF_OBS_DIM];
 
         let mut candidates: Vec<(usize, usize)> = Vec::new(); // (nc, obs_dim)
         for &nc in &[3usize, 4usize] {
@@ -547,5 +547,47 @@ mod tests {
         let floats = vec![0.0f32; 100]; // Too small
         let result = BeliefNet::from_floats(&floats, 4, BELIEF_OBS_DIM);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bid_belief_net_obs_dim_108() {
+        use crate::belief_obs::BID_BELIEF_OBS_DIM;
+
+        // Create a minimal weight buffer for obs_dim=108, hidden=256, 3-class
+        let obs_dim = BID_BELIEF_OBS_DIM;
+        assert_eq!(obs_dim, 108);
+        let hidden = 256usize;
+        let num_classes = 3usize;
+
+        let floats = build_test_weights_nc(obs_dim, hidden, num_classes);
+        let mut net =
+            BeliefNet::from_floats_with_classes(&floats, hidden, obs_dim, num_classes).unwrap();
+
+        assert_eq!(net.obs_dim(), obs_dim);
+        assert_eq!(net.hidden(), hidden);
+        assert_eq!(net.num_classes(), num_classes);
+
+        // Forward pass should not panic
+        let obs = vec![0.0f32; obs_dim];
+        let logits = net.evaluate(&obs);
+        for i in 0..96 {
+            assert!(!logits[i].is_nan());
+        }
+    }
+
+    #[test]
+    fn test_bid_belief_net_auto_detect_108() {
+        use crate::belief_obs::BID_BELIEF_OBS_DIM;
+
+        // Verify auto-detection from weight file picks up obs_dim=108
+        let hidden = 4;
+        let floats = build_test_weights_nc(BID_BELIEF_OBS_DIM, hidden, 3);
+        let tmp = "/tmp/test_belief_bid_108.bin";
+        let bytes: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+        std::fs::write(tmp, &bytes).unwrap();
+        let net = BeliefNet::load_with_hidden(tmp, hidden).unwrap();
+        assert_eq!(net.obs_dim(), BID_BELIEF_OBS_DIM);
+        assert_eq!(net.num_classes(), 3);
+        std::fs::remove_file(tmp).ok();
     }
 }
