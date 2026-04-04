@@ -8,7 +8,7 @@ pub use search::{mcts, naive_ismcts, smart_ismcts, single_tree_ismcts, is_dd};
 pub mod bid;
 pub use bid::{bid_eval, bid_obs, bid_net, maxi};
 #[cfg(feature = "rand")]
-pub use bid::{dd_bid, bid_train_env};
+pub use bid::{bis_dd, dd_bid, bid_train_env};
 #[cfg(feature = "dmc_train")]
 pub use bid::bid_candle;
 
