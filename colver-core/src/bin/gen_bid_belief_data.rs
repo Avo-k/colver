@@ -284,13 +284,14 @@ fn write_bid_belief_sample(
 ) {
     belief_obs::write_bid_belief_obs(obs_buf, 0, state, bid_history, observer);
 
-    // Target: player-relative IDs (0=observer, 1=left, 2=partner, 3=right)
+    // Target: 3-class indices (0=left, 1=partner, 2=right)
+    // Observer's own cards get 0 (masked out anyway)
     let mut target = [0u8; 32];
     for p in 0..4u8 {
         for c in 0..32u8 {
             if true_hands[p as usize] & (1u32 << c) != 0 {
                 let rel_p = (p + 4 - observer) % 4;
-                target[c as usize] = rel_p;
+                target[c as usize] = if rel_p == 0 { 0 } else { rel_p - 1 };
             }
         }
     }

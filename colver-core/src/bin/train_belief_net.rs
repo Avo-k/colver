@@ -464,7 +464,7 @@ fn main() {
         args.replays.as_ref().unwrap().clone()
     };
 
-    let version_str = if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
+    let version_str = if data_is_bb { "bid" } else if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
 
     // Load data
     let mut dataset = if let Some(ref path) = args.data {
@@ -570,7 +570,7 @@ fn main() {
 /// Shared training loop for all standard variants.
 fn run_training<T: BeliefTrainerTrait>(mut trainer: T, args: &Args, dataset: &Dataset) {
     let obs_dim = dataset.obs_dim;
-    let version_str = if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
+    let version_str = if obs_dim <= 128 { "bid" } else if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
 
     // Split into train/val
     let mut rng = StdRng::seed_from_u64(args.seed);
@@ -677,7 +677,7 @@ fn run_training<T: BeliefTrainerTrait>(mut trainer: T, args: &Args, dataset: &Da
 /// Training loop for aux_loss variant with auxiliary losses.
 fn run_training_aux(trainer: &mut BeliefAuxTrainer, args: &Args, dataset: &Dataset) {
     let obs_dim = dataset.obs_dim;
-    let version_str = if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
+    let version_str = if obs_dim <= 128 { "bid" } else if args.v3 { "v3" } else if args.v2 { "v2" } else { "v1" };
 
     // Split into train/val
     let mut rng = StdRng::seed_from_u64(args.seed);
@@ -875,6 +875,7 @@ fn build_augmented_batch(
             match version {
                 "v3" => suit_perm::permute_belief_obs_v3(&mut obs, perm),
                 "v2" => suit_perm::permute_belief_obs_v2(&mut obs, perm),
+                "bid" => suit_perm::permute_bid_obs(&mut obs, perm),
                 _ => suit_perm::permute_belief_obs_v1(&mut obs, perm),
             }
             suit_perm::permute_target(&mut target, perm);
