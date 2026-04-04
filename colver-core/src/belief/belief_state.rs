@@ -284,16 +284,14 @@ impl BeliefState {
     }
 
     fn record_positive_bid(&mut self, player: u8, action: u8) {
-        let (bid_value, suit_idx) = decode_bid(action);
+        let (_bid_value, suit_idx) = decode_bid(action);
         let suit = Suit::from_u8(suit_idx);
-        let min_score = bid_value_to_threshold(bid_value);
 
-        self.constraints.push(ActionConstraint {
-            player,
-            kind: ConstraintKind::Bid { suit, min_score },
-        });
+        // NOTE: No hard constraint. The evaluate_for_trump threshold rejects reality
+        // ~72% of the time against NN bidders, because NN bidding doesn't follow
+        // heuristic hand evaluation. Soft weights bias sampling effectively instead.
 
-        // Soft: aggressively boost trump card weights to improve acceptance rate
+        // Soft: aggressively boost trump card weights to bias determinization
         let jack = make_card(suit, 3);
         let nine = make_card(suit, 2);
         let ace = make_card(suit, 7);
@@ -355,15 +353,27 @@ impl BeliefState {
                 self.mark_void(player, lead_suit_idx);
 
                 if card_s != trump_suit {
-                    // Didn't follow AND didn't trump
-                    // If partner is NOT winning -> player is void in trump too
+                    // Didn't follow AND didn't trump.
+                    // "Ne pisse pas": if opponent already trumped and player can't
+                    // overtrump, they may discard — NOT void in trump.
                     if !self.partner_is_master(state, player) {
-                        self.mark_void(player, trump_suit);
+                        let opponent_trumped = self.best_trump_rank_on_trick(state, trump_suit).is_some();
+                        if !opponent_trumped {
+                            self.mark_void(player, trump_suit);
+                        }
+                        if opponent_trumped {
+                            if let Some(best_rank) = self.best_trump_rank_on_trick(state, trump_suit) {
+                                self.apply_trump_ceiling(player, trump_suit, best_rank);
+                            }
+                        }
                     }
                 }
 
-                // Trump undertrump: played trump but couldn't overtrump
-                if card_s == trump_suit {
+                // Trump ceiling: only when player was forced to trump (opponent winning).
+                // When partner is master, voluntary undertrump is valid strategy.
+                if card_s == trump_suit
+                    && !self.partner_is_master(state, player)
+                {
                     let best_trump_rank = self.best_trump_rank_on_trick(state, trump_suit);
                     if let Some(best_rank) = best_trump_rank {
                         let played_strength = TRUMP_STRENGTH[card_rank(card) as usize];
@@ -392,14 +402,42 @@ impl BeliefState {
             let played_rank = card_rank(card);
 
             if card_s == trump_suit {
-                // Led trump -> boost this player's trump weights
-                self.apply_suit_factor(player, trump_suit, 1.5);
+                // Led trump (drawing trumps) -> good trump holding
+                self.apply_suit_factor(player, trump_suit, 1.8);
             } else if played_rank == 7 {
-                // Led ace -> boost 10/K of that suit for this player
+                // Led Ace -> strong in that suit, likely has 10 and K
                 let ten = make_card(Suit::from_u8(card_s), 6);
                 let king = make_card(Suit::from_u8(card_s), 5);
-                self.apply_factor(player, ten, 2.0);
-                self.apply_factor(player, king, 1.5);
+                self.apply_factor(player, ten, 2.5);
+                self.apply_factor(player, king, 1.8);
+                for p in 0..4u8 {
+                    if p == self.observer || p == player {
+                        continue;
+                    }
+                    self.apply_factor(p, ten, 0.7);
+                    self.apply_factor(p, king, 0.8);
+                }
+            } else if played_rank == 6 {
+                // Led 10 -> likely also has A
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                self.apply_factor(player, ace, 2.0);
+            } else if played_rank <= 1 {
+                // Led low card (7 or 8) -> weak in that suit
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                let ten = make_card(Suit::from_u8(card_s), 6);
+                self.apply_factor(player, ace, 0.65);
+                self.apply_factor(player, ten, 0.7);
+                for p in 0..4u8 {
+                    if p == self.observer || p == player {
+                        continue;
+                    }
+                    self.apply_factor(p, ace, 1.3);
+                    self.apply_factor(p, ten, 1.2);
+                }
+            } else if played_rank == 5 {
+                // Led King -> likely has Ace
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                self.apply_factor(player, ace, 1.8);
             }
         } else {
             // Not the leader
@@ -410,32 +448,91 @@ impl BeliefState {
                 // Cut with trump
                 let played_strength = TRUMP_STRENGTH[card_rank(card) as usize];
                 if played_strength <= 2 {
-                    // Cut with low trump (7/8/Q) -> boost J/9 for other players
+                    // Cut with low trump (7/8/Q) -> others more likely to have J/9
                     for p in 0..4u8 {
                         if p == self.observer || p == player {
                             continue;
                         }
                         let jack = make_card(Suit::from_u8(trump_suit), 3);
                         let nine = make_card(Suit::from_u8(trump_suit), 2);
-                        self.apply_factor(p, jack, 1.3);
+                        self.apply_factor(p, jack, 1.4);
                         self.apply_factor(p, nine, 1.3);
                     }
+                } else if played_strength >= 6 {
+                    // Cut with 9 or J -> strong trump holding
+                    self.apply_suit_factor(player, trump_suit, 1.4);
+                }
+            } else if card_s != lead_suit_idx && card_s != trump_suit {
+                // Discarded -> less likely to have high cards in discarded suit
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                let ten = make_card(Suit::from_u8(card_s), 6);
+                self.apply_factor(player, ace, 0.75);
+                self.apply_factor(player, ten, 0.8);
+                for p in 0..4u8 {
+                    if p == self.observer || p == player {
+                        continue;
+                    }
+                    self.apply_factor(p, ace, 1.2);
+                    self.apply_factor(p, ten, 1.15);
                 }
             }
         }
+    }
+
+    // ---- Task 5: NN bid weights ----
+
+    /// Replace bid-phase soft weights with NN-predicted weights.
+    ///
+    /// `nn_weights[player][card]` = probability that absolute player holds card.
+    /// Observer's own cards and known cards are preserved (not overwritten).
+    pub fn apply_nn_bid_weights_raw(&mut self, nn_weights: &[[f32; 32]; 4]) {
+        for card in 0..32u8 {
+            let bit = card_to_bit(card);
+            if self.observer_hand & bit != 0 {
+                continue; // Observer's card — keep existing weights
+            }
+            for p in 0..4u8 {
+                if p == self.observer {
+                    self.soft_weights[p as usize][card as usize] = 0.0;
+                } else {
+                    self.soft_weights[p as usize][card as usize] =
+                        nn_weights[p as usize][card as usize];
+                }
+            }
+        }
+    }
+
+    /// Run the bid belief NN and apply its output as initial soft weights.
+    ///
+    /// Call this once after bidding completes (or mid-auction for bid EV).
+    /// Requires a loaded `BeliefNet` with obs_dim=108.
+    pub fn apply_nn_bid_beliefs(
+        &mut self,
+        net: &mut crate::belief_net::BeliefNet,
+        state: &GameState,
+        bid_history: &[(u8, u8)],
+    ) {
+        use crate::belief_net::belief_to_weights;
+        use crate::belief_obs::{write_bid_belief_obs, BID_BELIEF_OBS_DIM};
+
+        let mut obs = [0.0f32; BID_BELIEF_OBS_DIM];
+        write_bid_belief_obs(&mut obs, 0, state, bid_history, self.observer);
+        let logits = net.evaluate(&obs);
+        let nn_weights = belief_to_weights(&logits, net.num_classes(), state, self.observer);
+        self.apply_nn_bid_weights_raw(&nn_weights);
     }
 
     // ---- Task 4: determinize ----
 
     /// Produce a belief-consistent determinization of the current state.
     ///
-    /// Uses weighted sampling biased by soft weights, then checks hard constraints.
-    /// Falls back to greedy determinization after 500 failed attempts.
+    /// Uses weighted sampling biased by soft weights, falling back to greedy.
+    /// If hard constraints exist (rare), retries up to `max_retries` times.
     pub fn determinize(&self, state: &GameState, rng: &mut impl Rng) -> Option<GameState> {
         let has_constraints = !self.constraints.is_empty();
+        let max_retries = if has_constraints { 100 } else { 1 };
 
-        for _ in 0..500 {
-            // Try weighted sampling first, fall back to greedy
+        for _ in 0..max_retries {
             let candidate = determinize_weighted(state, self.observer, &self.soft_weights, rng)
                 .or_else(|| determinize_greedy(state, self.observer, rng));
 
@@ -574,27 +671,28 @@ mod tests {
     }
 
     #[test]
-    fn test_record_bid_adds_constraint() {
-        // Observer = P0 with spades (cards 0..7)
+    fn test_record_bid_no_hard_constraint() {
+        // Bid constraints are soft-only (hard constraints rejected reality ~72% of the time
+        // against NN bidders because evaluate_for_trump doesn't match NN bidding).
         let observer_hand = hand_from_cards(&[0, 1, 2, 3, 4, 5, 6, 7]);
         let mut bs = BeliefState::new(0, observer_hand);
 
-        // Create a game state where P1 is about to bid
         let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
         let state = GameState::new(0, hands);
 
-        // P1 bids 80 Hearts: encode_bid(8, 1) = action 2
+        // P1 bids 80 Hearts
         let action = crate::bidding::encode_bid(8, 1);
         bs.record_bid(1, action, &state);
 
-        assert_eq!(bs.constraints().len(), 1);
-        match &bs.constraints()[0].kind {
-            ConstraintKind::Bid { suit, min_score } => {
-                assert_eq!(*suit, Suit::Hearts);
-                assert_eq!(*min_score, bid_value_to_threshold(8));
-            }
-            _ => panic!("Expected Bid constraint"),
-        }
+        // No hard constraints — bids use soft weights only
+        assert!(bs.constraints().is_empty(), "Bid should not add hard constraints");
+
+        // But soft weights should be boosted
+        let jack_h = make_card(Suit::Hearts, 3) as usize;
+        assert!(
+            bs.soft_weights[1][jack_h] > 1.0,
+            "J♥ weight for P1 should increase after bid"
+        );
     }
 
     #[test]
@@ -664,6 +762,35 @@ mod tests {
         bs.record_bid(0, action, &state);
 
         assert!(bs.constraints().is_empty(), "Observer's bid should not add constraints");
+    }
+
+    #[test]
+    fn test_apply_nn_bid_weights() {
+        let observer = 0u8;
+        let observer_hand = 0xFF00u32; // cards 8-15
+
+        let mut bs = BeliefState::new(observer, observer_hand);
+
+        // Create NN weights: card 0 → strongly predict player 1 (left of observer 0)
+        let mut nn_weights = [[1.0f32 / 3.0; 32]; 4];
+        nn_weights[0] = [0.0; 32]; // observer can't hold unknown cards
+        nn_weights[1][0] = 0.8;
+        nn_weights[2][0] = 0.1;
+        nn_weights[3][0] = 0.1;
+
+        bs.apply_nn_bid_weights_raw(&nn_weights);
+
+        // Card 0 (unknown) should have NN weights
+        assert!((bs.soft_weights[1][0] - 0.8).abs() < 0.01);
+        assert!((bs.soft_weights[2][0] - 0.1).abs() < 0.01);
+        assert!((bs.soft_weights[3][0] - 0.1).abs() < 0.01);
+        assert_eq!(bs.soft_weights[0][0], 0.0); // observer can't hold it
+
+        // Observer's cards (8-15) should be unchanged
+        assert_eq!(bs.soft_weights[0][8], 1.0);
+        assert_eq!(bs.soft_weights[1][8], 0.0);
+        assert_eq!(bs.soft_weights[2][8], 0.0);
+        assert_eq!(bs.soft_weights[3][8], 0.0);
     }
 
     #[test]
