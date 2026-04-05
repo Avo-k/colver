@@ -107,6 +107,7 @@ struct BotConfig {
     bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
     belief_model: Option<String>,
     belief_hard_constraints: bool,
+    bid_belief_model: Option<String>,
 }
 
 impl Default for BotConfig {
@@ -126,6 +127,7 @@ impl Default for BotConfig {
             bid_penalty: 0.0,
             belief_model: None,
             belief_hard_constraints: true,
+            bid_belief_model: None,
         }
     }
 }
@@ -210,6 +212,7 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("play", "switch_at") => cfg.switch_at = val.parse().unwrap_or(5),
                 ("belief", "model") => cfg.belief_model = Some(val.to_string()),
                 ("belief", "use_hard_constraints") => cfg.belief_hard_constraints = val == "true",
+                ("belief", "bid_model") => cfg.bid_belief_model = Some(val.to_string()),
                 _ => {} // ignore unknown keys
             }
         }
@@ -325,6 +328,7 @@ enum CardPlayMethod {
         dmc_idx: usize,
         switch_at: u8, // switch to DD when tricks_completed >= this (e.g. 5 = last 3 tricks)
     },
+    BisDd,            // Unified DD-based agent (bid + play via BisDdAgent)
 }
 
 #[derive(Clone)]
@@ -337,6 +341,7 @@ struct Agent {
     bid_weights_idx: Option<usize>,  // index into shared bid_weights, None = use bid_function
     bid_penalty: f32,                // Q-value penalty scaling for high bids
     belief_path: Option<String>,
+    bid_belief_path: Option<String>,
     time_ms: u32,
     determinizations: u32,
     oracle_iters: u32,
@@ -359,6 +364,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         "petit_bide" => BidFunction::PetitBide,
         "moelleux" => BidFunction::Moelleux,
         "maxi" => BidFunction::Maxi,
+        "bis_dd" => BidFunction::BisDd, // placeholder, actual decisions via stateful BisDdAgent
         "nn" => BidFunction::ImprovedV2, // placeholder, actual NN used via bid_weights_idx
         other => return Err(format!("unknown bid strategy '{}' for bot {}", other, cfg.name)),
     };
@@ -410,6 +416,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
             models.dmc_weights.push(w);
             CardPlayMethod::DmcThenDd { dmc_idx: idx, switch_at: cfg.switch_at }
         }
+        "bis_dd" => CardPlayMethod::BisDd,
         other => return Err(format!("unknown play method '{}' for bot {}", other, cfg.name)),
     };
 
@@ -422,6 +429,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         bid_weights_idx,
         bid_penalty: cfg.bid_penalty,
         belief_path: cfg.belief_model.clone(),
+        bid_belief_path: cfg.bid_belief_model.clone(),
         time_ms: cfg.time_ms,
         determinizations: cfg.determinizations,
         oracle_iters: cfg.oracle_iters,
@@ -518,6 +526,42 @@ fn play_match(
         }
     }
 
+    // BisDd agents (2 per team: one per player)
+    let ns_bis_dd_bid = matches!(ns_agent.bid_function, BidFunction::BisDd);
+    let ns_bis_dd_play = matches!(ns_agent.card_play, CardPlayMethod::BisDd);
+    let ns_is_bis_dd = ns_bis_dd_bid || ns_bis_dd_play;
+    let ew_bis_dd_bid = matches!(ew_agent.bid_function, BidFunction::BisDd);
+    let ew_bis_dd_play = matches!(ew_agent.card_play, CardPlayMethod::BisDd);
+    let ew_is_bis_dd = ew_bis_dd_bid || ew_bis_dd_play;
+    let bis_dd_config_ns = colver_core::bis_dd::BisDdConfig {
+        min_dets: ns_agent.determinizations,
+        ..Default::default()
+    };
+    let bis_dd_config_ew = colver_core::bis_dd::BisDdConfig {
+        min_dets: ew_agent.determinizations,
+        ..Default::default()
+    };
+    let mut ns_bis_dd = [
+        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ns.clone(), rng.gen()),
+        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ns, rng.gen()),
+    ];
+    let mut ew_bis_dd = [
+        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ew.clone(), rng.gen()),
+        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ew, rng.gen()),
+    ];
+
+    // Load bid belief nets for BisDd agents
+    let mut ns_bid_belief_net = if ns_is_bis_dd {
+        ns_agent.bid_belief_path.as_ref().and_then(|path| {
+            colver_core::belief_net::BeliefNet::load_with_hidden(path, 256).ok()
+        })
+    } else { None };
+    let mut ew_bid_belief_net = if ew_is_bis_dd {
+        ew_agent.bid_belief_path.as_ref().and_then(|path| {
+            colver_core::belief_net::BeliefNet::load_with_hidden(path, 256).ok()
+        })
+    } else { None };
+
     while ns_cumulative < MATCH_TARGET && ew_cumulative < MATCH_TARGET {
         let mut state = GameState::deal_random(dealer, rng);
         let mut tracking = EnvTracking::new();
@@ -551,6 +595,14 @@ fn play_match(
             ew_smart_dd[0].init_deal(&state, 1, true);
             ew_smart_dd[1].init_deal(&state, 3, true);
         }
+        if ns_is_bis_dd {
+            ns_bis_dd[0].init_deal(0, state.hands[0]);
+            ns_bis_dd[1].init_deal(2, state.hands[2]);
+        }
+        if ew_is_bis_dd {
+            ew_bis_dd[0].init_deal(1, state.hands[1]);
+            ew_bis_dd[1].init_deal(3, state.hands[3]);
+        }
 
         while !state.is_terminal() {
             let player = state.current_player();
@@ -559,7 +611,13 @@ fn play_match(
             let state_before = state;
 
             let action = if state.phase == Phase::Bidding {
-                if let Some(idx) = agent.bid_weights_idx {
+                if ns_bis_dd_bid && is_ns {
+                    let idx = if player == 0 { 0 } else { 1 };
+                    ns_bis_dd[idx].decide(&state)
+                } else if ew_bis_dd_bid && !is_ns {
+                    let idx = if player == 1 { 0 } else { 1 };
+                    ew_bis_dd[idx].decide(&state)
+                } else if let Some(idx) = agent.bid_weights_idx {
                     if let Some(ref mut bn) = bid_nets[idx] {
                         bid_obs::write_bid_observation(
                             &mut bid_obs_buf, 0, &state, &tracking.bid_history,
@@ -671,6 +729,15 @@ fn play_match(
                             }
                         }
                     }
+                    CardPlayMethod::BisDd => {
+                        if is_ns {
+                            let idx = if player == 0 { 0 } else { 1 };
+                            ns_bis_dd[idx].decide(&state)
+                        } else {
+                            let idx = if player == 1 { 0 } else { 1 };
+                            ew_bis_dd[idx].decide(&state)
+                        }
+                    }
                 }
             };
 
@@ -691,8 +758,32 @@ fn play_match(
                 ew_smart_dd[0].record_action(&state_before, player, action);
                 ew_smart_dd[1].record_action(&state_before, player, action);
             }
+            if ns_is_bis_dd {
+                ns_bis_dd[0].observe(player, action, &state_before);
+                ns_bis_dd[1].observe(player, action, &state_before);
+            }
+            if ew_is_bis_dd {
+                ew_bis_dd[0].observe(player, action, &state_before);
+                ew_bis_dd[1].observe(player, action, &state_before);
+            }
             tracking.track_action(&state_before, action);
             state.step(action);
+
+            // Apply bid belief NN when bidding just ended
+            if state_before.phase == Phase::Bidding && state.phase == Phase::Playing {
+                if let Some(ref mut net) = ns_bid_belief_net {
+                    if ns_is_bis_dd {
+                        ns_bis_dd[0].apply_bid_belief(net, &state, &tracking.bid_history);
+                        ns_bis_dd[1].apply_bid_belief(net, &state, &tracking.bid_history);
+                    }
+                }
+                if let Some(ref mut net) = ew_bid_belief_net {
+                    if ew_is_bis_dd {
+                        ew_bis_dd[0].apply_bid_belief(net, &state, &tracking.bid_history);
+                        ew_bis_dd[1].apply_bid_belief(net, &state, &tracking.bid_history);
+                    }
+                }
+            }
         }
 
         let score = state.deal_score();

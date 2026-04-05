@@ -77,6 +77,21 @@ impl BisDdAgent {
         self.belief = Some(BeliefState::new(observer, hand));
     }
 
+    /// Apply NN bid beliefs to replace heuristic bid soft weights.
+    ///
+    /// Call once after bidding completes (when phase transitions to Playing).
+    /// `net` must be a loaded BeliefNet with obs_dim=108.
+    pub fn apply_bid_belief(
+        &mut self,
+        net: &mut crate::belief_net::BeliefNet,
+        state: &GameState,
+        bid_history: &[(u8, u8)],
+    ) {
+        if let Some(ref mut belief) = self.belief {
+            belief.apply_nn_bid_beliefs(net, state, bid_history);
+        }
+    }
+
     /// Record an observed action (bid or play) by any player.
     ///
     /// `state` must be the state BEFORE the action was applied.
@@ -393,13 +408,16 @@ impl BisDdAgent {
         let scaled_ms = (self.config.play_time_ms as u64 * cards_left as u64) / 8;
         let deadline = Instant::now() + Duration::from_millis(scaled_ms.max(1));
 
-        // Step 1: Generate determinizations (sequential)
+        // Step 1: Generate determinizations (sequential, time-bounded)
         let max_attempts = (self.config.min_dets * 10) as usize;
         let mut det_states: Vec<GameState> = Vec::new();
 
         for _ in 0..max_attempts {
-            if det_states.len() >= self.config.min_dets as usize && Instant::now() >= deadline {
-                break;
+            if det_states.len() >= self.config.min_dets as usize {
+                break; // got enough
+            }
+            if Instant::now() >= deadline {
+                break; // time's up
             }
 
             let det = match self.belief.as_ref() {

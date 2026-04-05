@@ -1,0 +1,12 @@
+# NN bid (bid_v2) + BisDd play + bid belief NN priors
+[bid]
+strategy = "nn"
+model = "models/bid_v2/bid_nn_final.bin"
+hidden = 512
+
+[play]
+method = "bis_dd"
+determinizations = 5
+
+[belief]
+bid_model = "models/bid_belief_v4.bin"
