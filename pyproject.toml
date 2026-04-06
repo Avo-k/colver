@@ -3,7 +3,7 @@ name = "colver"
 version = "0.3.3"
 description = "Fast Belote Contree game engine with AI agents"
 readme = "README.md"
-license = { text = "WTFPL" }
+license = { text = "MIT" }
 requires-python = ">=3.10"
 keywords = ["belote", "card-game", "reinforcement-learning", "mcts"]
 classifiers = [

@@ -2,6 +2,7 @@
 name = "colver-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [features]
 default = ["rand"]
@@ -96,4 +97,9 @@ required-features = ["rand"]
 [[bin]]
 name = "gen_pool"
 path = "src/bin/gen_pool.rs"
+required-features = ["rand"]
+
+[[bin]]
+name = "bis_dd_diag"
+path = "src/bin/bis_dd_diag.rs"
 required-features = ["rand"]
