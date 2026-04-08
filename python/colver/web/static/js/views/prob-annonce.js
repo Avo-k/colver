@@ -200,7 +200,7 @@ function handleProblemReady(data) {
     }
     const you = document.createElement('span');
     you.className = 'bid-entry pa-your-turn';
-    you.textContent = 'Sud : ?';
+    you.textContent = 'Sud ?';
     entries.appendChild(you);
 
     // Render South's hand

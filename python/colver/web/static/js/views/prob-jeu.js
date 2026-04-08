@@ -103,7 +103,7 @@ function handleProblemReady(data) {
     for (const e of data.bid_history) {
         const sp = document.createElement('span');
         sp.className = 'watch-bid-entry ' + (e.player % 2 === 0 ? 'team-ns' : 'team-ew');
-        sp.innerHTML = SEAT_NAMES_FR[e.player] + ' : ' + bidActionHtml(e.action);
+        sp.innerHTML = SEAT_NAMES_FR[e.player] + ' ' + bidActionHtml(e.action);
         bh.appendChild(sp);
     }
 

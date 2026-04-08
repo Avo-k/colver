@@ -298,7 +298,7 @@ function renderBidHistory() {
         // Team: 0=NS (players 0,2), 1=EO (players 1,3)
         const isPartnerTeam = (entry.player % 2) === (HUMAN_SEAT % 2);
         span.className = 'bid-entry' + (isPartnerTeam ? ' team-partner' : ' team-opponent');
-        span.innerHTML = `${SEAT_NAMES_FR[entry.player]} : ${bidActionHtml(entry.action)}`;
+        span.innerHTML = `${SEAT_NAMES_FR[entry.player]} ${bidActionHtml(entry.action)}`;
         el.appendChild(span);
     }
 }
@@ -532,7 +532,7 @@ function showEndOfGameReview(state) {
         const el = document.createElement('span');
         const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
         el.className = `watch-bid-entry ${team}`;
-        el.innerHTML = `${SEAT_NAMES_FR[bid.player]} : ${bidActionHtml(bid.action)}`;
+        el.innerHTML = `${SEAT_NAMES_FR[bid.player]} ${bidActionHtml(bid.action)}`;
         bidContainer.appendChild(el);
     }
 

@@ -303,11 +303,15 @@ export async function analyzeAllSuits(hand, priorActions, qValues) {
         return null;
     }
 
-    // Get Q(80) per suit from NN to sort suits
-    const q80PerSuit = [0, 0, 0, 0];
+    // Get best Q-value per suit across all thresholds (80-160 + capot)
+    const bestQPerSuit = [-Infinity, -Infinity, -Infinity, -Infinity];
     for (const [action, q] of qValues) {
-        if (action >= 1 && action <= 4) {
-            q80PerSuit[action - 1] = q;
+        if (action >= 1 && action <= 36) {
+            const suitIdx = (action - 1) % 4;
+            if (q > bestQPerSuit[suitIdx]) bestQPerSuit[suitIdx] = q;
+        } else if (action >= 37 && action <= 40) {
+            const suitIdx = action - 37;
+            if (q > bestQPerSuit[suitIdx]) bestQPerSuit[suitIdx] = q;
         }
     }
 
@@ -319,7 +323,7 @@ export async function analyzeAllSuits(hand, priorActions, qValues) {
         const result = predict(suitModel, features);
         results.push({
             suit: suitIdx,
-            q80: q80PerSuit[suitIdx],
+            bestQ: bestQPerSuit[suitIdx],
             probability: result.probability,
             contributions: result.contributions,
             features,
@@ -328,8 +332,8 @@ export async function analyzeAllSuits(hand, priorActions, qValues) {
         });
     }
 
-    // Sort by NN Q(80) descending (best suit first)
-    results.sort((a, b) => b.q80 - a.q80);
+    // Sort by best NN Q-value descending (most promising suit first)
+    results.sort((a, b) => b.bestQ - a.bestQ);
 
     return results;
 }
