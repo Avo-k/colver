@@ -36,30 +36,39 @@ const TEMPLATE = `
             <div class="hand" id="pj-hand-display"></div>
         </div>
     </div>
-    <div id="pj-correction" class="prob-correction hidden">
-        <div class="section-title">Correction</div>
-        <div id="pj-player-badge" class="prob-badge"></div>
-        <div class="prob-section">
-            <div class="prob-label">Oracle DD (information parfaite)</div>
-            <div id="pj-oracle-best" class="prob-best"></div>
-            <div id="pj-oracle-elapsed" class="visit-total"></div>
+    <div id="pj-correction-overlay" class="prob-overlay hidden">
+        <div id="pj-correction" class="prob-correction-modal">
+            <div class="prob-correction-header">
+                <span class="section-title" style="margin:0">Correction</span>
+                <button id="pj-close-correction" class="prob-close-btn">\u00d7</button>
+            </div>
+            <div class="prob-correction-body">
+                <div id="pj-player-badge" class="prob-badge"></div>
+                <div class="prob-correction-grid">
+                    <div class="prob-section">
+                        <div class="prob-label">Oracle DD (information parfaite)</div>
+                        <div id="pj-oracle-best" class="prob-best"></div>
+                        <div id="pj-oracle-elapsed" class="visit-total"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="prob-label">IS-DD (D\u00e9d\u00e9)</div>
+                        <div id="pj-isdd-best" class="prob-best"></div>
+                        <div id="pj-isdd-bars"></div>
+                        <div id="pj-isdd-meta" class="visit-total"></div>
+                    </div>
+                    <div id="pj-dmc-section" class="prob-section hidden">
+                        <div class="prob-label">DouDou50 (DMC)</div>
+                        <div id="pj-dmc-best" class="prob-best"></div>
+                        <div id="pj-dmc-bars"></div>
+                    </div>
+                    <div class="prob-section">
+                        <div class="section-title" style="margin-bottom:6px">Distribution compl\u00e8te</div>
+                        <div id="pj-all-hands"></div>
+                    </div>
+                </div>
+            </div>
+            <button id="pj-next-btn" class="prob-next-btn">Probl\u00e8me suivant</button>
         </div>
-        <div class="prob-section">
-            <div class="prob-label">IS-DD (D\u00e9d\u00e9)</div>
-            <div id="pj-isdd-best" class="prob-best"></div>
-            <div id="pj-isdd-bars"></div>
-            <div id="pj-isdd-meta" class="visit-total"></div>
-        </div>
-        <div id="pj-dmc-section" class="prob-section hidden">
-            <div class="prob-label">DouDou50 (DMC)</div>
-            <div id="pj-dmc-best" class="prob-best"></div>
-            <div id="pj-dmc-bars"></div>
-        </div>
-        <div class="prob-section">
-            <div class="section-title" style="margin-bottom:6px">Distribution compl\u00e8te</div>
-            <div id="pj-all-hands"></div>
-        </div>
-        <button id="pj-next-btn" class="prob-next-btn">Probl\u00e8me suivant</button>
     </div>
 </div>
 `;
@@ -87,7 +96,7 @@ function pjPlayCard(cardIdx) {
 function handleProblemReady(data) {
     document.getElementById('pj-loading').classList.add('hidden');
     document.getElementById('pj-main').classList.remove('hidden');
-    document.getElementById('pj-correction').classList.add('hidden');
+    document.getElementById('pj-correction-overlay').classList.add('hidden');
     pjLegalActions = data.legal_actions;
     pjLocked = false;
 
@@ -115,7 +124,7 @@ function handleProblemReady(data) {
 }
 
 function handleCorrection(data) {
-    document.getElementById('pj-correction').classList.remove('hidden');
+    document.getElementById('pj-correction-overlay').classList.remove('hidden');
 
     const correct = data.player_action === data.oracle_action;
     const badge = document.getElementById('pj-player-badge');
@@ -216,6 +225,8 @@ export function mount(container) {
     });
 
     document.getElementById('pj-next-btn').onclick = () => document.getElementById('pj-generate-btn').click();
+    document.getElementById('pj-close-correction').onclick = () =>
+        document.getElementById('pj-correction-overlay').classList.add('hidden');
 
     onMessage('play_problem_ready', handleProblemReady);
     onMessage('play_problem_correction', handleCorrection);
