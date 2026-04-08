@@ -1151,6 +1151,22 @@
     font-weight: 700;
     color: #d4af37;
 }
+.pa-study-btn {
+    display: block;
+    text-align: center;
+    padding: 6px 12px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #d4af37;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-radius: 4px;
+    background: rgba(212, 175, 55, 0.08);
+    text-decoration: none;
+    transition: background 0.15s;
+}
+.pa-study-btn:hover {
+    background: rgba(212, 175, 55, 0.18);
+}
 .prob-next-btn {
     background: #4a4a4a;
     color: #ddd;

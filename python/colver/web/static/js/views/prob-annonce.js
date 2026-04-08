@@ -87,6 +87,7 @@ const TEMPLATE = `
             </table>
             <div id="pa-dd-elapsed" class="visit-total"></div>
         </div>
+        <a id="pa-study-btn" class="pa-study-btn" href="#">\u00c9tudier cette main</a>
         <button id="pa-next-btn" class="prob-next-btn">Probl\u00e8me suivant</button>
     </div>
 </div>
@@ -334,6 +335,12 @@ async function runPaXgbAnalysis(qValues) {
 function handleCorrection(data) {
     document.getElementById('pa-bid-panel').style.display = 'none';
     document.getElementById('pa-correction').classList.remove('hidden');
+
+    // Set study link with hand + bid history
+    const studyBtn = document.getElementById('pa-study-btn');
+    const handStr = paHand.join(',');
+    const histStr = paBidHistory.join(',');
+    studyBtn.href = `/analyse/annonces?hand=${handStr}${histStr.length ? '&history=' + histStr : ''}`;
 
     const correct = data.nn_action !== null && data.player_action === data.nn_action;
     const badge = document.getElementById('pa-player-badge');

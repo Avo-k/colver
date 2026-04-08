@@ -651,8 +651,25 @@ export function mount(container) {
 
     initAnnoncesGrid();
     initActionSelect();
+
+    // Pre-fill from URL params (e.g. ?hand=0,1,2,...&history=5,0,17)
+    const params = new URLSearchParams(window.location.search);
+    const handParam = params.get('hand');
+    const histParam = params.get('history');
+    if (handParam) {
+        annoncesHand = new Set(handParam.split(',').map(Number).filter(n => n >= 0 && n < 32));
+    }
+    if (histParam) {
+        annoncesHistory = histParam.split(',').map(Number).filter(n => n >= 0 && n <= 42);
+    }
+
     renderAnnoncesHistory();
     updateAnnoncesDisplay();
+
+    // Auto-evaluate if pre-filled with 8 cards
+    if (annoncesHand.size === 8) {
+        setTimeout(() => document.getElementById('annonces-eval-btn').click(), 100);
+    }
 
     // Restore toggle state from localStorage
     const toggle = document.getElementById('annonces-local-toggle');
