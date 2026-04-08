@@ -65,8 +65,8 @@ button:disabled { background: #555; color: #888; cursor: default; transform: non
 /* ===== UTILITY CLASSES ===== */
 .hidden { display: none !important; }
 
-.suit-red { color: #ef9a9a; }
-.suit-black { color: #ddd; }
+.suit-red { color: #f44336; }
+.suit-black { color: #e0e0e0; }
 
 .section-title {
     font-size: 0.7rem;
