@@ -1,7 +1,7 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SUITS, SEAT_NAMES_FR, renderHand, renderFaceDownHand, actionName, encodeBidAction, bidActionHtml } from '../shared/cards.js';
+import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidActionHtml } from '../shared/cards.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
@@ -72,9 +72,7 @@ const TEMPLATE = `
         </div>
         <div class="prob-section hidden" id="pa-xgb-section">
             <div class="prob-label">Facteurs cl\u00e9s <span style="font-size:0.7rem;color:#777">(XGBoost, pas le NN)</span></div>
-            <select id="pa-xgb-suit-select" style="margin-bottom:4px"></select>
-            <div id="pa-xgb-waterfall"></div>
-            <div id="pa-xgb-probability"></div>
+            <div id="pa-xgb-boxes"></div>
         </div>
         <div class="prob-section">
             <div class="prob-label">Analyse Double-Dummy</div>
@@ -93,29 +91,11 @@ const TEMPLATE = `
 </div>
 `;
 
-const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
-
 let paLegalActions = [];
 let paLocked = false;
 let paHand = [];
 let paBidHistory = [];
-let paXgbResults = null;
 let paHintData = null;
-
-function bidActionName(action) {
-    if (action === 0) return 'Passe';
-    if (action >= 37 && action <= 40) return `Capot ${SUITS[action - 37]}`;
-    if (action === 41) return 'Coinche';
-    if (action === 42) return 'Surcoinche';
-    if (action >= 1 && action <= 36) {
-        const bidIdx = action - 1;
-        const valueIdx = Math.floor(bidIdx / 4);
-        const suitIdx = bidIdx % 4;
-        const value = 80 + valueIdx * 10;
-        return `${value} ${SUITS[suitIdx]}`;
-    }
-    return `Action ${action}`;
-}
 
 const SUIT_EMOJI = ['\u2660\uFE0F', '\u2665\uFE0F', '\u2666\uFE0F', '\u2663\uFE0F'];
 const TOP_N_HINT = 5;
@@ -179,8 +159,7 @@ function revealHint() {
     // Suit boxes — open if probability > 0%
     for (const box of suitBoxes) {
         const open = box.probability >= 0.05 ? ' open' : '';
-        const pct = (box.probability * 100).toFixed(0);
-        html += `<details class="pa-hint-box"${open}><summary>${SUIT_EMOJI[box.suit]} <span class="pa-hint-pct">${pct}%</span></summary>`;
+        html += `<details class="pa-hint-box"${open}><summary>${SUIT_EMOJI[box.suit]}</summary>`;
         if (box.entries.length > 0) {
             html += '<div class="pa-hint-rows">';
             for (const [feat, val] of box.entries) {
@@ -196,8 +175,6 @@ function revealHint() {
     // Pass / Coinche box
     if (specialActions.length > 0) {
         const passQ = qMap[0];
-        const bestSuitQ = Math.max(...suitBoxes.map(b => b.entries.length > 0 ? qMap[0] ?? -Infinity : -Infinity));
-        // Open if pass is a reasonable option (Q >= 0)
         const open = passQ !== undefined && passQ >= 0 ? ' open' : '';
         html += `<details class="pa-hint-box"${open}><summary>Passe / Coinche</summary>`;
         html += '<div class="pa-hint-rows">';
@@ -275,38 +252,24 @@ function handleProblemReady(data) {
     }
 }
 
-function renderPaXgbWaterfall(result, containerId, probId) {
-    const container = document.getElementById(containerId);
-    const probEl = document.getElementById(probId);
-    if (!container || !result) return;
+function renderXgbBox(result, open) {
+    const pct = (result.probability * 100).toFixed(0);
     const entries = Object.entries(result.contributions)
         .filter(([, v]) => Math.abs(v) > 0.001)
-        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
-    if (entries.length === 0) {
-        container.innerHTML = '';
-        probEl.innerHTML = '';
-        return;
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+        .slice(0, TOP_N_HINT);
+    let html = `<details class="pa-hint-box"${open ? ' open' : ''}><summary>${SUIT_EMOJI[result.suit]} <span class="pa-hint-pct">${pct}%</span></summary>`;
+    if (entries.length > 0) {
+        html += '<div class="pa-hint-rows">';
+        for (const [feat, val] of entries) {
+            html += renderHintRow(feat, val, result.features);
+        }
+        html += '</div>';
+    } else {
+        html += '<div class="pa-hint-empty">Pas assez de donn\u00e9es</div>';
     }
-    const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(v)));
-    let html = '<div class="xgb-waterfall-chart">';
-    for (const [feat, val] of entries) {
-        const label = xgbExplain.featureLabel(feat);
-        const featVal = result.features[feat];
-        const pct = Math.abs(val) / maxAbs * 100;
-        const cls = val > 0 ? 'xgb-bar-pos' : 'xgb-bar-neg';
-        const sign = val > 0 ? '+' : '';
-        const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
-        html += `<div class="xgb-row">
-            <span class="xgb-feat-name" title="${feat}${valDisplay}">${label}<span class="xgb-feat-val">${valDisplay}</span></span>
-            <div class="xgb-bar-wrap"><div class="xgb-bar ${cls}" style="width:${pct.toFixed(0)}%"></div></div>
-            <span class="xgb-contrib">${sign}${val.toFixed(3)}</span>
-        </div>`;
-    }
-    html += '</div>';
-    container.innerHTML = html;
-    const pctVal = (result.probability * 100).toFixed(0);
-    const pcls = result.probability >= 0.5 ? 'xgb-prob-high' : 'xgb-prob-low';
-    probEl.innerHTML = `<span class="${pcls}">P(enchérir) : ${pctVal}%</span>`;
+    html += '</details>';
+    return html;
 }
 
 async function runPaXgbAnalysis(qValues) {
@@ -316,17 +279,32 @@ async function runPaXgbAnalysis(qValues) {
         paXgbResults = results;
         const section = document.getElementById('pa-xgb-section');
         if (section) section.classList.remove('hidden');
-        const select = document.getElementById('pa-xgb-suit-select');
-        select.innerHTML = '';
-        for (let i = 0; i < results.length; i++) {
-            const r = results[i];
-            const opt = document.createElement('option');
-            opt.value = i;
-            opt.innerHTML = `${SUIT_SYMBOLS[r.suit]} (${(r.probability * 100).toFixed(0)}%)`;
-            select.appendChild(opt);
+        const boxesEl = document.getElementById('pa-xgb-boxes');
+
+        let html = '';
+        for (const r of results) {
+            const pct = r.probability * 100;
+            html += renderXgbBox(r, pct > 1);
         }
-        select.value = '0';
-        renderPaXgbWaterfall(results[0], 'pa-xgb-waterfall', 'pa-xgb-probability');
+
+        // Pass / Coinche box
+        const qMap = Object.fromEntries(qValues);
+        const specialActions = [];
+        if (qMap[0] !== undefined) specialActions.push({ name: 'Passe', q: qMap[0] });
+        if (qMap[41] !== undefined) specialActions.push({ name: 'Coinche', q: qMap[41] });
+        if (qMap[42] !== undefined) specialActions.push({ name: 'Surcoinche', q: qMap[42] });
+        if (specialActions.length > 0) {
+            const passOpen = qMap[0] !== undefined && qMap[0] >= 0;
+            html += `<details class="pa-hint-box"${passOpen ? ' open' : ''}><summary>Passe / Coinche</summary>`;
+            html += '<div class="pa-hint-rows">';
+            for (const sa of specialActions) {
+                const cls = sa.q >= 0 ? 'pa-hint-pos' : 'pa-hint-neg';
+                html += `<div class="pa-hint-row ${cls}"><span class="pa-hint-arrow">${sa.q >= 0 ? '\u2191' : '\u2193'}</span><span class="pa-hint-label">${sa.name}</span><span class="pa-hint-strength">Q ${sa.q.toFixed(2)}</span></div>`;
+            }
+            html += '</div></details>';
+        }
+
+        boxesEl.innerHTML = html;
     } catch (err) {
         console.warn('[pa-xgb] Analysis failed:', err);
     }
@@ -424,11 +402,6 @@ export function mount(container) {
     document.getElementById('pa-coinche-btn').onclick = () => paBidSubmit(41);
     document.getElementById('pa-surcoinche-btn').onclick = () => paBidSubmit(42);
     document.getElementById('pa-next-btn').onclick = () => document.getElementById('pa-generate-btn').click();
-    document.getElementById('pa-xgb-suit-select').addEventListener('change', (e) => {
-        if (paXgbResults) {
-            renderPaXgbWaterfall(paXgbResults[parseInt(e.target.value)], 'pa-xgb-waterfall', 'pa-xgb-probability');
-        }
-    });
 
     onMessage('bid_problem_ready', handleProblemReady);
     onMessage('bid_problem_correction', handleCorrection);
