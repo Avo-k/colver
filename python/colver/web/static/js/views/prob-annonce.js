@@ -44,6 +44,8 @@ const TEMPLATE = `
                         <button id="pa-coinche-btn" class="bid-btn coinche hidden">Coinche</button>
                         <button id="pa-surcoinche-btn" class="bid-btn coinche hidden">Surcoinche</button>
                     </div>
+                    <button id="pa-hint-btn" class="pa-hint-btn hidden">Indice</button>
+                    <div id="pa-hint-content" class="pa-hint-content hidden"></div>
                 </div>
             </div>
         </div>
@@ -97,6 +99,7 @@ let paLocked = false;
 let paHand = [];
 let paBidHistory = [];
 let paXgbResults = null;
+let paHintData = null;
 
 function bidActionName(action) {
     if (action === 0) return 'Passe';
@@ -113,6 +116,61 @@ function bidActionName(action) {
     return `Action ${action}`;
 }
 
+async function prepareHint(hand, bidHistory, qValues) {
+    paHintData = null;
+    const hintBtn = document.getElementById('pa-hint-btn');
+    const hintContent = document.getElementById('pa-hint-content');
+    hintBtn.classList.add('hidden');
+    hintContent.classList.add('hidden');
+    hintContent.innerHTML = '';
+
+    if (!qValues || !qValues.length || hand.length !== 8) return;
+
+    try {
+        const results = await xgbExplain.analyzeAllSuits(hand, bidHistory, qValues);
+        if (!results || results.length === 0) return;
+
+        // Pick the suit with highest probability of bidding
+        const best = results[0]; // already sorted by probability
+        const entries = Object.entries(best.contributions)
+            .filter(([, v]) => Math.abs(v) > 0.001)
+            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+            .slice(0, 3);
+
+        if (entries.length === 0) return;
+
+        const suitCls = (best.suit === 1 || best.suit === 2) ? 'suit-red' : 'suit-black';
+        const suitSym = SUIT_SYMBOLS[best.suit];
+
+        paHintData = { entries, suit: best.suit, suitSym, suitCls, features: best.features };
+        hintBtn.classList.remove('hidden');
+    } catch (err) {
+        console.warn('[pa-hint] XGB analysis failed:', err);
+    }
+}
+
+function revealHint() {
+    if (!paHintData) return;
+    const { entries, suitSym, suitCls, features } = paHintData;
+    const hintContent = document.getElementById('pa-hint-content');
+    const hintBtn = document.getElementById('pa-hint-btn');
+
+    let html = `<div class="pa-hint-title">Facteurs cl\u00e9s pour <span class="${suitCls}">${suitSym}</span></div>`;
+    for (const [feat, val] of entries) {
+        const label = xgbExplain.featureLabel(feat);
+        const featVal = features[feat];
+        const arrow = val > 0 ? '\u2191' : '\u2193';
+        const cls = val > 0 ? 'pa-hint-pos' : 'pa-hint-neg';
+        const abs = Math.abs(val);
+        const strength = abs >= 1.0 ? '\u25cf\u25cf\u25cf' : abs >= 0.3 ? '\u25cf\u25cf' : '\u25cf';
+        const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
+        html += `<div class="pa-hint-row ${cls}"><span class="pa-hint-arrow">${arrow}</span><span class="pa-hint-label">${label}<span class="pa-hint-val">${valDisplay}</span></span><span class="pa-hint-strength">${strength}</span></div>`;
+    }
+    hintContent.innerHTML = html;
+    hintContent.classList.remove('hidden');
+    hintBtn.classList.add('hidden');
+}
+
 function handleProblemReady(data) {
     document.getElementById('pa-loading').classList.add('hidden');
     document.getElementById('pa-table').classList.remove('hidden');
@@ -122,6 +180,7 @@ function handleProblemReady(data) {
     paLocked = false;
     paHand = data.south_hand || [];
     paXgbResults = null;
+    paHintData = null;
     // Extract bid actions from history for XGB scenario detection
     paBidHistory = (data.bid_history || []).map(e => e.action);
 
@@ -167,6 +226,11 @@ function handleProblemReady(data) {
     document.getElementById('pa-pass-btn').classList.toggle('hidden', !legalSet.has(0));
     document.getElementById('pa-coinche-btn').classList.toggle('hidden', !legalSet.has(41));
     document.getElementById('pa-surcoinche-btn').classList.toggle('hidden', !legalSet.has(42));
+
+    // Prepare hint from NN Q-values (async, non-blocking)
+    if (data.nn_q_values) {
+        prepareHint(paHand, paBidHistory, data.nn_q_values);
+    }
 }
 
 function renderPaXgbWaterfall(result, containerId, probId) {
@@ -291,8 +355,11 @@ export function mount(container) {
     paLegalActions = [];
     paLocked = false;
 
+    document.getElementById('pa-hint-btn').addEventListener('click', revealHint);
+
     document.getElementById('pa-generate-btn').addEventListener('click', () => {
         paLocked = false;
+        paHintData = null;
         document.getElementById('pa-loading').classList.remove('hidden');
         document.getElementById('pa-table').classList.add('hidden');
         send({ type: 'bid_problem_generate' });

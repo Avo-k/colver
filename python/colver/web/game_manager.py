@@ -454,12 +454,17 @@ class BidProblemSession:
             self.env = env
             self.hands = hands
             self.bid_history = bid_history
-            return {
+            result = {
                 "south_hand": hands[2],
                 "bid_history": bid_history,
                 "legal_actions": list(env.legal_actions()),
                 "dealer": int(env.get_dealer()),
             }
+            # Include NN Q-values for client-side XGB hint analysis
+            if env.has_bid_model():
+                nn_result = env.action_bid_nn()
+                result["nn_q_values"] = [[int(a), round(float(q), 3)] for a, q in nn_result["q_values"]]
+            return result
         raise RuntimeError("Could not generate bid problem")
 
     def evaluate(self, player_action: int) -> dict:
