@@ -2,7 +2,7 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, bidActionHtml, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -15,36 +15,6 @@ const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', 
 function suitHtml(suitIdx) {
     const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
     return `<span class="${cls}">${SUIT_SYMBOLS[suitIdx]}</span>`;
-}
-
-function bidActionHtml(action) {
-    if (action === 0) return 'Passe';
-    if (action >= 37 && action <= 40) return `Capot ${suitHtml(action - 37)}`;
-    if (action === 41) return 'Coinche';
-    if (action === 42) return 'Surcoinche';
-    if (action >= 1 && action <= 36) {
-        const bidIdx = action - 1;
-        const valueIdx = Math.floor(bidIdx / 4);
-        const suitIdx = bidIdx % 4;
-        const value = 80 + valueIdx * 10;
-        return `${value} ${suitHtml(suitIdx)}`;
-    }
-    return `Action ${action}`;
-}
-
-function bidActionName(action) {
-    if (action === 0) return 'Passe';
-    if (action >= 37 && action <= 40) return `Capot ${SUITS[action - 37]}`;
-    if (action === 41) return 'Coinche';
-    if (action === 42) return 'Surcoinche';
-    if (action >= 1 && action <= 36) {
-        const bidIdx = action - 1;
-        const valueIdx = Math.floor(bidIdx / 4);
-        const suitIdx = bidIdx % 4;
-        const value = 80 + valueIdx * 10;
-        return `${value} ${SUITS[suitIdx]}`;
-    }
-    return `Action ${action}`;
 }
 
 const TEMPLATE = `

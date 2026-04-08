@@ -5,7 +5,7 @@ import { send, onMessage, offMessage } from '../ws.js';
 import * as SFX from '../sounds.js';
 import {
     RANKS, SUITS, SEAT_NAMES_FR, cardSuit, cardRank, cardSvgPath, cardToHtml,
-    renderHand, renderTrick, renderLastTrick, contractStr, actionName,
+    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     _prevTrick, _animatingTrick, detectTrickCompletion, animateTrickFlush,
     SUIT_DISPLAY_ORDER, suitSortKeys
 } from '../shared/cards.js';
@@ -221,7 +221,7 @@ function watchRenderMoveStats(move, state) {
 
     header.innerHTML = `<span class="stats-player ${teamClass}">${seatName}</span>` +
         `<span class="stats-agent">${stats.agent_label}</span>` +
-        `<span class="stats-action">${move.name}</span>` +
+        `<span class="stats-action">${move.phase === 0 ? bidActionHtml(move.action) : move.name}</span>` +
         (stats.elapsed_ms !== undefined ? `<span class="stats-time">${stats.elapsed_ms}ms</span>` : '');
 
     body.innerHTML = '';

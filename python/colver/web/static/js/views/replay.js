@@ -1,7 +1,7 @@
 // Replay view — browse and replay saved games
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, actionName } from '../shared/cards.js';
+import { SEAT_NAMES_FR, actionName, bidActionHtml } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
@@ -105,7 +105,7 @@ function replayRenderMoveStats(move, state) {
 
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> ` +
         `<span class="stats-player ${teamClass}">${seatName}</span>` +
-        `<span class="stats-action">${move.name}</span>`;
+        `<span class="stats-action">${move.phase === 0 ? bidActionHtml(move.action) : move.name}</span>`;
     body.innerHTML = '';
 }
 

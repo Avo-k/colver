@@ -165,6 +165,31 @@ export function contractStr(contract) {
     return `${val}${suit} par ${team}${coinche}`;
 }
 
+function suitSpan(suitIdx) {
+    const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
+    return `<span class="${cls}">${SUITS[suitIdx]}</span>`;
+}
+
+export function bidActionHtml(action) {
+    if (action === 0) return 'Passe';
+    if (action === 41) return 'Coinche';
+    if (action === 42) return 'Surcoinche';
+    if (action >= 1 && action <= 40) {
+        let valIdx, suitIdx;
+        if (action <= 36) {
+            const idx = action - 1;
+            valIdx = Math.floor(idx / 4);
+            suitIdx = idx % 4;
+            const values = [80,90,100,110,120,130,140,150,160];
+            return `${values[valIdx]} ${suitSpan(suitIdx)}`;
+        } else {
+            suitIdx = action - 37;
+            return `Capot ${suitSpan(suitIdx)}`;
+        }
+    }
+    return `?${action}`;
+}
+
 export function actionName(action, phase) {
     if (phase === 0) {
         if (action === 0) return 'Passe';

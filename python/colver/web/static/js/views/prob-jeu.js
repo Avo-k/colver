@@ -2,7 +2,7 @@
 
 import { send, onMessage, offMessage } from '../ws.js';
 import * as SFX from '../sounds.js';
-import { RANKS, SUITS, SEAT_NAMES_FR, cardRank, cardSuit, cardToHtml, renderHand, renderTrick, contractStr, actionName } from '../shared/cards.js';
+import { RANKS, SUITS, SEAT_NAMES_FR, cardRank, cardSuit, cardToHtml, renderHand, renderTrick, contractStr, actionName, bidActionHtml } from '../shared/cards.js';
 
 const TEMPLATE = `
 <div id="pj-config">
@@ -103,7 +103,7 @@ function handleProblemReady(data) {
     for (const e of data.bid_history) {
         const sp = document.createElement('span');
         sp.className = 'watch-bid-entry ' + (e.player % 2 === 0 ? 'team-ns' : 'team-ew');
-        sp.textContent = ['N', 'E', 'S', 'O'][e.player] + ':' + e.name;
+        sp.innerHTML = ['N', 'E', 'S', 'O'][e.player] + ' : ' + bidActionHtml(e.action);
         bh.appendChild(sp);
     }
 

@@ -1,7 +1,7 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SUITS, renderHand, actionName, encodeBidAction } from '../shared/cards.js';
+import { SUITS, renderHand, renderFaceDownHand, actionName, encodeBidAction, bidActionHtml } from '../shared/cards.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
@@ -10,37 +10,50 @@ const TEMPLATE = `
     <button id="pa-generate-btn">Nouveau probl\u00e8me</button>
     <span id="pa-loading" class="hidden" style="color:#888;font-size:.85rem">G\u00e9n\u00e9ration\u2026</span>
 </div>
-<div id="pa-main" class="hidden">
-    <div id="pa-left">
-        <div class="prob-box">
-            <div class="section-title">Ench\u00e8res pr\u00e9c\u00e9dentes</div>
-            <div id="pa-bid-history-entries" style="display:flex;gap:4px;flex-wrap:wrap;min-height:20px"></div>
+<div id="pa-table" class="hidden">
+    <div class="seats">
+        <div class="seat north">
+            <div class="seat-label">Nord (partenaire)</div>
+            <div class="hand" id="pa-hand-north"></div>
         </div>
-        <div class="prob-box">
-            <div class="section-title">Votre main (Sud)</div>
-            <div class="hand" id="pa-hand-display"></div>
+        <div class="seat west">
+            <div class="seat-label">Ouest</div>
+            <div class="hand" id="pa-hand-west"></div>
         </div>
-        <div class="prob-box" id="pa-bid-panel">
-            <div id="pa-bid-selectors" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                <select id="pa-bid-value">
-                    <option value="">Valeur...</option>
-                    <option value="80">80</option><option value="90">90</option>
-                    <option value="100">100</option><option value="110">110</option>
-                    <option value="120">120</option><option value="130">130</option>
-                    <option value="140">140</option><option value="150">150</option>
-                    <option value="160">160</option><option value="250">Capot</option>
-                </select>
-                <select id="pa-bid-suit">
-                    <option value="0">\u2660</option><option value="1">\u2665</option>
-                    <option value="2">\u2666</option><option value="3">\u2663</option>
-                </select>
-                <button id="pa-bid-submit" class="bid-btn bid-action">Annoncer</button>
+        <div id="pa-center" class="pa-center-area">
+            <div id="pa-bidding-panel">
+                <div id="pa-bid-history-entries"></div>
+                <div id="pa-bid-panel">
+                    <div id="pa-bid-selectors">
+                        <select id="pa-bid-value">
+                            <option value="">Valeur...</option>
+                            <option value="80">80</option><option value="90">90</option>
+                            <option value="100">100</option><option value="110">110</option>
+                            <option value="120">120</option><option value="130">130</option>
+                            <option value="140">140</option><option value="150">150</option>
+                            <option value="160">160</option><option value="250">Capot</option>
+                        </select>
+                        <select id="pa-bid-suit">
+                            <option value="0">\u2660</option><option value="1">\u2665</option>
+                            <option value="2">\u2666</option><option value="3">\u2663</option>
+                        </select>
+                        <button id="pa-bid-submit" class="bid-btn bid-action">Annoncer</button>
+                    </div>
+                    <div id="pa-bid-special">
+                        <button id="pa-pass-btn" class="bid-btn pass hidden">Passe</button>
+                        <button id="pa-coinche-btn" class="bid-btn coinche hidden">Coinche</button>
+                        <button id="pa-surcoinche-btn" class="bid-btn coinche hidden">Surcoinche</button>
+                    </div>
+                </div>
             </div>
-            <div style="display:flex;gap:6px;margin-top:6px">
-                <button id="pa-pass-btn" class="bid-btn pass hidden">Passe</button>
-                <button id="pa-coinche-btn" class="bid-btn coinche hidden">Coinche</button>
-                <button id="pa-surcoinche-btn" class="bid-btn coinche hidden">Surcoinche</button>
-            </div>
+        </div>
+        <div class="seat east">
+            <div class="seat-label">Est</div>
+            <div class="hand" id="pa-hand-east"></div>
+        </div>
+        <div class="seat south">
+            <div class="seat-label">Sud (vous)</div>
+            <div class="hand" id="pa-hand-south"></div>
         </div>
     </div>
     <div id="pa-correction" class="prob-correction hidden">
@@ -102,7 +115,7 @@ function bidActionName(action) {
 
 function handleProblemReady(data) {
     document.getElementById('pa-loading').classList.add('hidden');
-    document.getElementById('pa-main').classList.remove('hidden');
+    document.getElementById('pa-table').classList.remove('hidden');
     document.getElementById('pa-correction').classList.add('hidden');
     document.getElementById('pa-bid-panel').style.display = '';
     paLegalActions = data.legal_actions;
@@ -112,23 +125,27 @@ function handleProblemReady(data) {
     // Extract bid actions from history for XGB scenario detection
     paBidHistory = (data.bid_history || []).map(e => e.action);
 
-    // Render bid history
+    // Render face-down hands for N/E/W
+    renderFaceDownHand(document.getElementById('pa-hand-north'), 8);
+    renderFaceDownHand(document.getElementById('pa-hand-east'), 8);
+    renderFaceDownHand(document.getElementById('pa-hand-west'), 8);
+
+    // Render bid history in center panel
     const entries = document.getElementById('pa-bid-history-entries');
     entries.innerHTML = '';
     for (const e of data.bid_history) {
         const sp = document.createElement('span');
-        sp.className = 'watch-bid-entry ' + (e.player % 2 === 0 ? 'team-ns' : 'team-ew');
-        sp.textContent = ['N', 'E', 'S', 'O'][e.player] + ':' + e.name;
+        sp.className = 'bid-entry ' + (e.player % 2 === 0 ? 'team-partner' : 'team-opponent');
+        sp.innerHTML = `<span class="pa-bid-seat">${['N', 'E', 'S', 'O'][e.player]}</span> ${bidActionHtml(e.action)}`;
         entries.appendChild(sp);
     }
     const you = document.createElement('span');
-    you.className = 'watch-bid-entry';
-    you.style.cssText = 'color:#d4af37;font-style:italic';
-    you.textContent = 'S:?';
+    you.className = 'bid-entry pa-your-turn';
+    you.textContent = 'S : ?';
     entries.appendChild(you);
 
     // Render South's hand
-    renderHand(document.getElementById('pa-hand-display'), data.south_hand);
+    renderHand(document.getElementById('pa-hand-south'), data.south_hand);
 
     // Configure bid controls
     const legalSet = new Set(data.legal_actions);
@@ -216,13 +233,13 @@ function handleCorrection(data) {
     const correct = data.nn_action !== null && data.player_action === data.nn_action;
     const badge = document.getElementById('pa-player-badge');
     badge.className = 'prob-badge ' + (correct ? 'prob-badge-correct' : 'prob-badge-wrong');
-    badge.textContent = 'Votre annonce : ' + data.player_action_name;
+    badge.innerHTML = 'Votre annonce : ' + bidActionHtml(data.player_action);
 
     const nnBestEl = document.getElementById('pa-nn-best');
     const nnBarsEl = document.getElementById('pa-nn-bars');
     nnBarsEl.innerHTML = '';
     if (data.nn_q_values && data.nn_q_values.length) {
-        nnBestEl.textContent = 'NN : ' + (data.nn_action_name || '\u2014');
+        nnBestEl.innerHTML = 'NN : ' + (data.nn_action != null ? bidActionHtml(data.nn_action) : '\u2014');
         const sorted = [...data.nn_q_values].sort((a, b) => b[1] - a[1]).slice(0, 8);
         const mn = Math.min(...sorted.map(x => x[1]));
         const mx = Math.max(...sorted.map(x => x[1]));
@@ -235,7 +252,7 @@ function handleCorrection(data) {
             const row = document.createElement('div');
             row.className = 'visit-row' + (isBest ? ' best' : '') + (isPlayer ? ' prob-player-pick' : '');
             const pct = ((q - mn) / rng * 100).toFixed(0);
-            row.innerHTML = `<span class="visit-name">${bidActionName(a)}</span>` +
+            row.innerHTML = `<span class="visit-name">${bidActionHtml(a)}</span>` +
                 `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
                 `<span class="visit-count">${q.toFixed(3)}</span>`;
             div.appendChild(row);
@@ -245,7 +262,7 @@ function handleCorrection(data) {
         nnBestEl.textContent = 'NN : non disponible';
     }
 
-    document.getElementById('pa-heuristic-best').textContent = 'Am\u00e9lior\u00e9 : ' + data.heuristic_action_name;
+    document.getElementById('pa-heuristic-best').innerHTML = 'Am\u00e9lior\u00e9 : ' + bidActionHtml(data.heuristic_action);
 
     const keys = ['s', 'h', 'd', 'c'];
     if (data.dd_suits) {
@@ -277,7 +294,7 @@ export function mount(container) {
     document.getElementById('pa-generate-btn').addEventListener('click', () => {
         paLocked = false;
         document.getElementById('pa-loading').classList.remove('hidden');
-        document.getElementById('pa-main').classList.add('hidden');
+        document.getElementById('pa-table').classList.add('hidden');
         send({ type: 'bid_problem_generate' });
     });
 

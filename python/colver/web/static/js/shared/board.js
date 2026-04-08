@@ -3,7 +3,7 @@
 import * as SFX from '../sounds.js';
 import {
     RANKS, SUITS, SEAT_NAMES_FR, cardRank, cardSuit,
-    renderHand, renderTrick, renderLastTrick, contractStr, actionName,
+    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -273,8 +273,7 @@ export class BoardRenderer {
             const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
             el.className = `watch-bid-entry ${team}`;
             const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-            const name = actionName(bid.action, 0);
-            el.textContent = `${seatLetter}:${name}`;
+            el.innerHTML = `${seatLetter} : ${bidActionHtml(bid.action)}`;
             container.appendChild(el);
         }
 
@@ -301,8 +300,7 @@ export class BoardRenderer {
             const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
             el.className = `watch-bid-entry ${team}`;
             const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-            const name = actionName(bid.action, 0);
-            el.textContent = `${seatLetter}:${name}`;
+            el.innerHTML = `${seatLetter} : ${bidActionHtml(bid.action)}`;
             entries.appendChild(el);
         }
     }

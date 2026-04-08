@@ -6,7 +6,7 @@ import {
     RANKS, SUITS, SEAT_NAMES_FR,
     cardSuit, cardRank, cardToHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
-    contractStr, actionName, encodeBidAction,
+    contractStr, actionName, encodeBidAction, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -298,7 +298,7 @@ function renderBidHistory() {
         // Team: 0=NS (players 0,2), 1=EO (players 1,3)
         const isPartnerTeam = (entry.player % 2) === (HUMAN_SEAT % 2);
         span.className = 'bid-entry' + (isPartnerTeam ? ' team-partner' : ' team-opponent');
-        span.textContent = `${SEAT_NAMES_FR[entry.player]} : ${entry.name}`;
+        span.innerHTML = `${SEAT_NAMES_FR[entry.player]} : ${bidActionHtml(entry.action)}`;
         el.appendChild(span);
     }
 }
@@ -533,8 +533,7 @@ function showEndOfGameReview(state) {
         const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
         el.className = `watch-bid-entry ${team}`;
         const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-        const name = actionName(bid.action, 0);
-        el.textContent = `${seatLetter}:${name}`;
+        el.innerHTML = `${seatLetter} : ${bidActionHtml(bid.action)}`;
         bidContainer.appendChild(el);
     }
 

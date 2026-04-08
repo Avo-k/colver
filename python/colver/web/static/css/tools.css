@@ -861,13 +861,109 @@
     align-items: center;
     flex-wrap: wrap;
 }
-#pa-main, #pj-main {
+
+/* Prob-annonce: play-style table layout */
+#pa-table {
+    --card-w: clamp(42px, min(5vw, calc((100vh - 160px) / 11)), 110px);
+    --card-h: calc(var(--card-w) * 1.43);
+    --card-overlap: calc(var(--card-w) * -0.22);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: 1fr;
+    flex: 1;
+    min-height: 0;
+    gap: 0 12px;
+}
+
+#pa-table .seats {
+    grid-column: 1;
+    grid-row: 1;
+    min-height: 0;
+    max-height: calc(100vh - 120px);
+    overflow: visible;
+    align-content: center;
+    grid-template-rows: auto 1fr auto;
+    gap: 2px;
+}
+
+#pa-table #pa-correction {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+}
+
+/* Center bidding area in the trick-area position */
+.pa-center-area {
+    grid-area: trick;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+
+#pa-bidding-panel {
+    background: rgba(10, 10, 10, 0.82);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 20px 24px;
+    min-width: 260px;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+#pa-bid-history-entries {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    min-height: 28px;
+    font-size: clamp(0.9rem, 1.1vw, 1.15rem);
+}
+
+#pa-bid-history-entries .bid-entry {
+    padding: 4px 12px;
+    font-size: clamp(0.9rem, 1.05vw, 1.1rem);
+}
+
+.pa-bid-seat {
+    font-weight: 700;
+    margin-right: 2px;
+}
+
+.pa-your-turn {
+    background: rgba(212, 175, 55, 0.2) !important;
+    border-color: rgba(212, 175, 55, 0.5) !important;
+    color: #d4af37 !important;
+    font-weight: 600;
+    font-style: italic;
+}
+
+#pa-bid-selectors {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+#pa-bid-special {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+#pj-main {
     display: flex;
     gap: 20px;
     align-items: flex-start;
     flex-wrap: wrap;
 }
-#pa-left, #pj-left {
+#pj-left {
     flex: 1;
     min-width: 280px;
     display: flex;
@@ -1560,8 +1656,22 @@
     .belief-cards-row { gap: 3px; }
 
     /* Problems: stack vertically */
-    #pa-main, #pj-main { flex-direction: column; }
-    #pa-left, #pj-left { min-width: 0; }
+    #pj-main { flex-direction: column; }
+    #pj-left { min-width: 0; }
+
+    /* Prob-annonce: stack table + correction vertically */
+    #pa-table {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto;
+    }
+    #pa-table .seats { grid-column: 1; grid-row: 1; }
+    #pa-table .seats .seat.west,
+    #pa-table .seats .seat.east { display: none; }
+    #pa-table #pa-correction {
+        grid-column: 1;
+        grid-row: 2;
+        width: 100%;
+    }
     .prob-correction { width: 100%; }
 
     /* Docs: tighter padding */
