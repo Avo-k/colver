@@ -165,9 +165,10 @@ export function contractStr(contract) {
     return `${val}${suit} par ${team}${coinche}`;
 }
 
+const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
+
 function suitSpan(suitIdx) {
-    const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
-    return `<span class="${cls}">${SUITS[suitIdx]}</span>`;
+    return SUIT_EMOJI[suitIdx];
 }
 
 export function bidActionHtml(action) {

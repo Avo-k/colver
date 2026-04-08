@@ -12,9 +12,9 @@ const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
 const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
+const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
 function suitHtml(suitIdx) {
-    const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
-    return `<span class="${cls}">${SUIT_SYMBOLS[suitIdx]}</span>`;
+    return SUIT_EMOJI[suitIdx];
 }
 
 const TEMPLATE = `

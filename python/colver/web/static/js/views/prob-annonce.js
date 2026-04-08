@@ -139,10 +139,9 @@ async function prepareHint(hand, bidHistory, qValues) {
 
         if (entries.length === 0) return;
 
-        const suitCls = (best.suit === 1 || best.suit === 2) ? 'suit-red' : 'suit-black';
-        const suitSym = SUIT_SYMBOLS[best.suit];
+        const suitEmoji = ['\u2660\uFE0F', '\u2665\uFE0F', '\u2666\uFE0F', '\u2663\uFE0F'][best.suit];
 
-        paHintData = { entries, suit: best.suit, suitSym, suitCls, features: best.features };
+        paHintData = { entries, suit: best.suit, suitEmoji, features: best.features };
         hintBtn.classList.remove('hidden');
     } catch (err) {
         console.warn('[pa-hint] XGB analysis failed:', err);
@@ -151,11 +150,11 @@ async function prepareHint(hand, bidHistory, qValues) {
 
 function revealHint() {
     if (!paHintData) return;
-    const { entries, suitSym, suitCls, features } = paHintData;
+    const { entries, suitEmoji, features } = paHintData;
     const hintContent = document.getElementById('pa-hint-content');
     const hintBtn = document.getElementById('pa-hint-btn');
 
-    let html = `<div class="pa-hint-title">Facteurs cl\u00e9s pour <span class="${suitCls}">${suitSym}</span></div>`;
+    let html = `<div class="pa-hint-title">Facteurs cl\u00e9s pour ${suitEmoji}</div>`;
     for (const [feat, val] of entries) {
         const label = xgbExplain.featureLabel(feat);
         const featVal = features[feat];

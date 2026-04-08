@@ -11,9 +11,9 @@ const SEAT_COLORS = ['#5b9ff5', '#e06080', '#d4af37', '#8c6fe6'];
 // Display order within a suit: A 10 R D V 9 8 7
 const DISPLAY_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
 
+const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
 function suitHtml(suitIdx) {
-    const cls = (suitIdx === 1 || suitIdx === 2) ? 'suit-red' : 'suit-black';
-    return `<span class="${cls}">${SUIT_SYMBOLS[suitIdx]}</span>`;
+    return SUIT_EMOJI[suitIdx];
 }
 
 function actionHtml(action, phase) {
