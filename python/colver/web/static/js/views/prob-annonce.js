@@ -1,7 +1,7 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SUITS, renderHand, renderFaceDownHand, actionName, encodeBidAction, bidActionHtml } from '../shared/cards.js';
+import { SUITS, SEAT_NAMES_FR, renderHand, renderFaceDownHand, actionName, encodeBidAction, bidActionHtml } from '../shared/cards.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
@@ -195,12 +195,12 @@ function handleProblemReady(data) {
     for (const e of data.bid_history) {
         const sp = document.createElement('span');
         sp.className = 'bid-entry ' + (e.player % 2 === 0 ? 'team-partner' : 'team-opponent');
-        sp.innerHTML = `<span class="pa-bid-seat">${['N', 'E', 'S', 'O'][e.player]}</span> ${bidActionHtml(e.action)}`;
+        sp.innerHTML = `<span class="pa-bid-seat">${SEAT_NAMES_FR[e.player]}</span> ${bidActionHtml(e.action)}`;
         entries.appendChild(sp);
     }
     const you = document.createElement('span');
     you.className = 'bid-entry pa-your-turn';
-    you.textContent = 'S : ?';
+    you.textContent = 'Sud : ?';
     entries.appendChild(you);
 
     // Render South's hand

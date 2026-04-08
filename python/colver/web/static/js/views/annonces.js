@@ -7,7 +7,7 @@ import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
-const SEAT_NAMES = ['N', 'E', 'S', 'O'];
+const SEAT_NAMES = ['Nord', 'Est', 'Sud', 'Ouest'];
 const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
 const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
@@ -252,7 +252,7 @@ function renderAnnoncesHistory() {
     yourRow.className = 'ann-history-row ann-your-turn';
     const yourBadge = document.createElement('span');
     yourBadge.className = 'ann-seat-badge';
-    yourBadge.textContent = 'S';
+    yourBadge.textContent = 'Sud';
     yourBadge.style.color = SEAT_COLORS[2];
     const yourLabel = document.createElement('span');
     yourLabel.className = 'ann-action-name';

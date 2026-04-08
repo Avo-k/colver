@@ -532,8 +532,7 @@ function showEndOfGameReview(state) {
         const el = document.createElement('span');
         const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
         el.className = `watch-bid-entry ${team}`;
-        const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-        el.innerHTML = `${seatLetter} : ${bidActionHtml(bid.action)}`;
+        el.innerHTML = `${SEAT_NAMES_FR[bid.player]} : ${bidActionHtml(bid.action)}`;
         bidContainer.appendChild(el);
     }
 

@@ -1,6 +1,6 @@
 // Shared bid history chip rendering — deduplicated from 4 locations
 
-import { actionName } from './cards.js';
+import { SEAT_NAMES_FR, bidActionHtml } from './cards.js';
 
 export function renderBidHistoryChips(container, bidHistory) {
     container.innerHTML = '';
@@ -10,9 +10,7 @@ export function renderBidHistoryChips(container, bidHistory) {
         const el = document.createElement('span');
         const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
         el.className = `watch-bid-entry ${team}`;
-        const seatLetter = ['N', 'E', 'S', 'O'][bid.player];
-        const name = bid.name || actionName(bid.action, 0);
-        el.textContent = `${seatLetter}:${name}`;
+        el.innerHTML = `${SEAT_NAMES_FR[bid.player]} : ${bidActionHtml(bid.action)}`;
         container.appendChild(el);
     }
 }
