@@ -913,9 +913,13 @@
     padding: 20px 24px;
     min-width: 260px;
     max-width: 420px;
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 14px;
+    scrollbar-width: thin;
+    scrollbar-color: #444 transparent;
 }
 
 #pa-bid-history-entries {
@@ -978,16 +982,51 @@
     font-size: 0.82rem;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
 }
 
-.pa-hint-title {
-    font-size: 0.75rem;
-    color: #999;
+.pa-hint-box {
+    background: rgba(255,255,255,0.04);
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.pa-hint-box summary {
+    cursor: pointer;
+    padding: 4px 8px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 2px;
+    font-size: 0.82rem;
+    color: #ccc;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.pa-hint-box summary::before {
+    content: '\u25b6';
+    font-size: 0.55rem;
+    color: #666;
+    transition: transform 0.15s;
+}
+.pa-hint-box[open] summary::before {
+    transform: rotate(90deg);
+}
+.pa-hint-box summary::-webkit-details-marker { display: none; }
+.pa-hint-pct {
+    font-size: 0.72rem;
+    color: #888;
+    font-weight: 400;
+}
+.pa-hint-rows {
+    padding: 2px 8px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.pa-hint-empty {
+    padding: 4px 8px 6px;
+    color: #555;
+    font-size: 0.75rem;
 }
 
 .pa-hint-row {

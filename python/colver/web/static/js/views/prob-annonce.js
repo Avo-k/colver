@@ -116,6 +116,9 @@ function bidActionName(action) {
     return `Action ${action}`;
 }
 
+const SUIT_EMOJI = ['\u2660\uFE0F', '\u2665\uFE0F', '\u2666\uFE0F', '\u2663\uFE0F'];
+const TOP_N_HINT = 5;
+
 async function prepareHint(hand, bidHistory, qValues) {
     paHintData = null;
     const hintBtn = document.getElementById('pa-hint-btn');
@@ -130,41 +133,80 @@ async function prepareHint(hand, bidHistory, qValues) {
         const results = await xgbExplain.analyzeAllSuits(hand, bidHistory, qValues);
         if (!results || results.length === 0) return;
 
-        // Pick the suit with highest probability of bidding
-        const best = results[0]; // already sorted by probability
-        const entries = Object.entries(best.contributions)
-            .filter(([, v]) => Math.abs(v) > 0.001)
-            .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-            .slice(0, 3);
+        // Build hint boxes for all 4 suits
+        const suitBoxes = results.map(r => {
+            const entries = Object.entries(r.contributions)
+                .filter(([, v]) => Math.abs(v) > 0.001)
+                .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+                .slice(0, TOP_N_HINT);
+            return { suit: r.suit, probability: r.probability, entries, features: r.features };
+        });
 
-        if (entries.length === 0) return;
+        // Build pass/coinche box from Q-values
+        const qMap = Object.fromEntries(qValues);
+        const specialActions = [];
+        if (qMap[0] !== undefined) specialActions.push({ name: 'Passe', q: qMap[0] });
+        if (qMap[41] !== undefined) specialActions.push({ name: 'Coinche', q: qMap[41] });
+        if (qMap[42] !== undefined) specialActions.push({ name: 'Surcoinche', q: qMap[42] });
 
-        const suitEmoji = ['\u2660\uFE0F', '\u2665\uFE0F', '\u2666\uFE0F', '\u2663\uFE0F'][best.suit];
-
-        paHintData = { entries, suit: best.suit, suitEmoji, features: best.features };
+        paHintData = { suitBoxes, specialActions, qMap };
         hintBtn.classList.remove('hidden');
     } catch (err) {
         console.warn('[pa-hint] XGB analysis failed:', err);
     }
 }
 
+function renderHintRow(feat, val, features) {
+    const label = xgbExplain.featureLabel(feat);
+    const featVal = features[feat];
+    const arrow = val > 0 ? '\u2191' : '\u2193';
+    const cls = val > 0 ? 'pa-hint-pos' : 'pa-hint-neg';
+    const abs = Math.abs(val);
+    const strength = abs >= 1.0 ? '\u25cf\u25cf\u25cf' : abs >= 0.3 ? '\u25cf\u25cf' : '\u25cf';
+    const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
+    return `<div class="pa-hint-row ${cls}"><span class="pa-hint-arrow">${arrow}</span><span class="pa-hint-label">${label}<span class="pa-hint-val">${valDisplay}</span></span><span class="pa-hint-strength">${strength}</span></div>`;
+}
+
 function revealHint() {
     if (!paHintData) return;
-    const { entries, suitEmoji, features } = paHintData;
+    const { suitBoxes, specialActions, qMap } = paHintData;
     const hintContent = document.getElementById('pa-hint-content');
     const hintBtn = document.getElementById('pa-hint-btn');
 
-    let html = `<div class="pa-hint-title">Facteurs cl\u00e9s pour ${suitEmoji}</div>`;
-    for (const [feat, val] of entries) {
-        const label = xgbExplain.featureLabel(feat);
-        const featVal = features[feat];
-        const arrow = val > 0 ? '\u2191' : '\u2193';
-        const cls = val > 0 ? 'pa-hint-pos' : 'pa-hint-neg';
-        const abs = Math.abs(val);
-        const strength = abs >= 1.0 ? '\u25cf\u25cf\u25cf' : abs >= 0.3 ? '\u25cf\u25cf' : '\u25cf';
-        const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
-        html += `<div class="pa-hint-row ${cls}"><span class="pa-hint-arrow">${arrow}</span><span class="pa-hint-label">${label}<span class="pa-hint-val">${valDisplay}</span></span><span class="pa-hint-strength">${strength}</span></div>`;
+    let html = '';
+
+    // Suit boxes — open if probability > 0%
+    for (const box of suitBoxes) {
+        const open = box.probability >= 0.05 ? ' open' : '';
+        const pct = (box.probability * 100).toFixed(0);
+        html += `<details class="pa-hint-box"${open}><summary>${SUIT_EMOJI[box.suit]} <span class="pa-hint-pct">${pct}%</span></summary>`;
+        if (box.entries.length > 0) {
+            html += '<div class="pa-hint-rows">';
+            for (const [feat, val] of box.entries) {
+                html += renderHintRow(feat, val, box.features);
+            }
+            html += '</div>';
+        } else {
+            html += '<div class="pa-hint-empty">Pas assez de donn\u00e9es</div>';
+        }
+        html += '</details>';
     }
+
+    // Pass / Coinche box
+    if (specialActions.length > 0) {
+        const passQ = qMap[0];
+        const bestSuitQ = Math.max(...suitBoxes.map(b => b.entries.length > 0 ? qMap[0] ?? -Infinity : -Infinity));
+        // Open if pass is a reasonable option (Q >= 0)
+        const open = passQ !== undefined && passQ >= 0 ? ' open' : '';
+        html += `<details class="pa-hint-box"${open}><summary>Passe / Coinche</summary>`;
+        html += '<div class="pa-hint-rows">';
+        for (const sa of specialActions) {
+            const cls = sa.q >= 0 ? 'pa-hint-pos' : 'pa-hint-neg';
+            html += `<div class="pa-hint-row ${cls}"><span class="pa-hint-arrow">${sa.q >= 0 ? '\u2191' : '\u2193'}</span><span class="pa-hint-label">${sa.name}</span><span class="pa-hint-strength">Q ${sa.q.toFixed(2)}</span></div>`;
+        }
+        html += '</div></details>';
+    }
+
     hintContent.innerHTML = html;
     hintContent.classList.remove('hidden');
     hintBtn.classList.add('hidden');
