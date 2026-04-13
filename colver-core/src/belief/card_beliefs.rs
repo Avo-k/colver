@@ -15,6 +15,11 @@ pub struct CardBeliefs {
     observer: u8,
     /// Whether to apply soft (probabilistic) inference.
     pub use_soft_inference: bool,
+    /// Multiplicative factor for play dominance inference.
+    /// When a player follows suit with a lower card while an opponent wins,
+    /// reduce weight for each higher unknown card of the same suit by this factor.
+    /// 1.0 = disabled, 0.3 = aggressive. Default 1.0 (off).
+    pub dominance_factor: f32,
 }
 
 impl CardBeliefs {
@@ -28,6 +33,7 @@ impl CardBeliefs {
             weights: [[0.0; 32]; 4],
             observer,
             use_soft_inference: true,
+            dominance_factor: 1.0,
         };
 
         let observer_hand = state.hands[observer as usize];
@@ -139,7 +145,6 @@ impl CardBeliefs {
                     return;
                 }
                 // Coinche suggests strong defense: J/9 of opponent's trump, side Aces
-                // We need to know which suit was bid - use _state
                 let bid_suit = _state.last_bid_suit;
                 let jack = make_card(Suit::from_u8(bid_suit), 3);
                 let nine = make_card(Suit::from_u8(bid_suit), 2);
@@ -235,23 +240,50 @@ impl CardBeliefs {
                 // Check for trump void inference
                 if card_s != trump_suit {
                     // Player didn't follow AND didn't play trump.
-                    // If partner is NOT master, rules require trumping if possible.
-                    // So if partner isn't winning -> player is void in trump too.
+                    // Can we conclude void in trump?
+                    //
+                    // Rules:
+                    //   - Must trump if opponent is winning and you can follow
+                    //   - Must OVERTRUMP if an opponent already trumped
+                    //   - "Ne pisse pas": if you CAN'T overtrump an opponent's
+                    //     trump, you may DISCARD instead of undertrumping
+                    //
+                    // So discarding (no trump) does NOT mean void in trump when
+                    // an opponent has already cut — the player might have weaker
+                    // trump they chose not to play (ne pisse pas).
+                    //
+                    // Only conclude void in trump when:
+                    //   1. Partner is not master (player was forced to act), AND
+                    //   2. No opponent has trumped on this trick (no "ne pisse pas"
+                    //      escape — player HAD to trump if they could)
                     if !self.partner_is_master_before_play(state, player) {
-                        self.mark_void(player, trump_suit);
+                        let opponent_trumped = self.best_trump_rank_on_trick(state, trump_suit).is_some();
+                        if !opponent_trumped {
+                            self.mark_void(player, trump_suit);
+                        }
+                        // If an opponent trumped, player might have weak trump but
+                        // used "ne pisse pas" to discard. Apply trump ceiling instead.
+                        if opponent_trumped {
+                            if let Some(best_rank) = self.best_trump_rank_on_trick(state, trump_suit) {
+                                self.apply_trump_ceiling(player, trump_suit, best_rank);
+                            }
+                        }
                     }
                 }
 
-                // Trump ceiling: if player played trump but couldn't overtrump
-                if card_s == trump_suit {
-                    // Player cut with trump - check if they could have overtrumped
+                // Trump ceiling: if player cut with trump but couldn't overtrump.
+                // Only valid when the player was REQUIRED to trump (opponent winning).
+                // When partner is master, player may voluntarily undertrump to save
+                // strong trump for later — ceiling would be a false exclusion.
+                if card_s == trump_suit
+                    && !self.partner_is_master_before_play(state, player)
+                {
                     let best_trump_rank = self.best_trump_rank_on_trick(state, trump_suit);
                     if let Some(best_rank) = best_trump_rank {
                         let played_rank = card_rank(card);
                         let played_strength = TRUMP_STRENGTH[played_rank as usize];
                         let best_strength = TRUMP_STRENGTH[best_rank as usize];
                         if played_strength < best_strength {
-                            // Player couldn't overtrump -> no stronger trump
                             self.apply_trump_ceiling(player, trump_suit, best_rank);
                         }
                     }
@@ -284,42 +316,44 @@ impl CardBeliefs {
 
             if card_s == trump_suit {
                 // Led trump (drawing trumps) -> good trump holding
-                for p in 0..4u8 {
-                    if p == self.observer || p == player {
-                        continue;
-                    }
-                    // Others more likely to have remaining trump
-                    self.apply_suit_factor(p, trump_suit, 1.0); // no change for others
-                }
-                // Player likely has more trump
-                self.apply_suit_factor(player, trump_suit, 1.5);
+                self.apply_suit_factor(player, trump_suit, 1.8);
             } else if played_rank == 7 {
-                // Led Ace -> strong in that suit
-                for p in 0..4u8 {
-                    if p == self.observer || p == player {
-                        continue;
-                    }
-                    let ten = make_card(Suit::from_u8(card_s), 6);
-                    let king = make_card(Suit::from_u8(card_s), 5);
-                    self.apply_factor(p, ten, 1.0); // neutral for others
-                    self.apply_factor(p, king, 1.0);
-                }
-                // Player likely has 10 and K of that suit
+                // Led Ace -> strong in that suit, likely has 10 and K
                 let ten = make_card(Suit::from_u8(card_s), 6);
                 let king = make_card(Suit::from_u8(card_s), 5);
-                self.apply_factor(player, ten, 2.0);
-                self.apply_factor(player, king, 1.5);
-            } else if played_rank <= 1 {
-                // Led low card (7 or 8) -> weak in that suit
+                self.apply_factor(player, ten, 2.5);
+                self.apply_factor(player, king, 1.8);
+                // Others slightly less likely to have 10/K
                 for p in 0..4u8 {
                     if p == self.observer || p == player {
                         continue;
                     }
-                    let ace = make_card(Suit::from_u8(card_s), 7);
-                    let ten = make_card(Suit::from_u8(card_s), 6);
-                    self.apply_factor(p, ace, 1.2);
+                    self.apply_factor(p, ten, 0.7);
+                    self.apply_factor(p, king, 0.8);
+                }
+            } else if played_rank == 6 {
+                // Led 10 -> likely also has A (or A already played)
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                self.apply_factor(player, ace, 2.0);
+            } else if played_rank <= 1 {
+                // Led low card (7 or 8) -> weak in that suit
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                let ten = make_card(Suit::from_u8(card_s), 6);
+                // Player somewhat less likely to have high cards
+                self.apply_factor(player, ace, 0.65);
+                self.apply_factor(player, ten, 0.7);
+                // Others more likely to have them
+                for p in 0..4u8 {
+                    if p == self.observer || p == player {
+                        continue;
+                    }
+                    self.apply_factor(p, ace, 1.3);
                     self.apply_factor(p, ten, 1.2);
                 }
+            } else if played_rank == 5 {
+                // Led King -> likely has Ace (K-A combination)
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                self.apply_factor(player, ace, 1.8);
             }
         } else {
             // Not the leader
@@ -328,30 +362,71 @@ impl CardBeliefs {
 
             if card_s != lead_suit_idx && card_s == trump_suit {
                 // Cut with trump
-                let played_rank = card_rank(card);
-                let played_strength = TRUMP_STRENGTH[played_rank as usize];
+                let played_strength = TRUMP_STRENGTH[card_rank(card) as usize];
                 if played_strength <= 2 {
-                    // Cut with low trump (7/8/Q) -> likely lacks stronger trump
+                    // Cut with low trump (7/8/Q) -> others more likely to have J/9
                     for p in 0..4u8 {
                         if p == self.observer || p == player {
                             continue;
                         }
                         let jack = make_card(Suit::from_u8(trump_suit), 3);
                         let nine = make_card(Suit::from_u8(trump_suit), 2);
-                        self.apply_factor(p, jack, 1.3);
+                        self.apply_factor(p, jack, 1.4);
                         self.apply_factor(p, nine, 1.3);
                     }
+                } else if played_strength >= 6 {
+                    // Cut with 9 or J -> strong trump holding, boost remaining trump
+                    self.apply_suit_factor(player, trump_suit, 1.4);
                 }
             } else if card_s != lead_suit_idx && card_s != trump_suit {
                 // Discarded (non-trump, non-lead) -> shedding weak suit
+                let ace = make_card(Suit::from_u8(card_s), 7);
+                let ten = make_card(Suit::from_u8(card_s), 6);
+                // Player slightly less likely to have high cards in that suit
+                self.apply_factor(player, ace, 0.75);
+                self.apply_factor(player, ten, 0.8);
+                // Others slightly more likely
                 for p in 0..4u8 {
                     if p == self.observer || p == player {
                         continue;
                     }
-                    let ace = make_card(Suit::from_u8(card_s), 7);
-                    let ten = make_card(Suit::from_u8(card_s), 6);
                     self.apply_factor(p, ace, 1.2);
-                    self.apply_factor(p, ten, 1.2);
+                    self.apply_factor(p, ten, 1.15);
+                }
+            }
+        }
+
+        // === Play dominance inference ===
+        // When following suit in a plain suit and opponent is winning,
+        // player probably doesn't have higher cards they didn't play.
+        if self.dominance_factor < 1.0 && state.trick_count > 0 {
+            let lead_card = state.current_trick[state.trick_lead as usize];
+            let lead_suit_idx = card_suit(lead_card) as u8;
+            let trump_suit = state.contract.trump;
+
+            // Only for plain suits (trump has hard constraints already).
+            // Only when following suit (card_s == lead_suit_idx).
+            // Only when opponent is winning (not partner master).
+            if card_s == lead_suit_idx
+                && card_s != trump_suit
+                && !self.partner_is_master_before_play(state, player)
+            {
+                let played_rank = card_rank(card);
+                // For each higher-rank card of the same suit, still unknown:
+                // reduce weight that this player has it.
+                let suit_base = (card_s as usize) * 8;
+                for rank in (played_rank + 1)..8 {
+                    let higher_card = (suit_base + rank as usize) as u8;
+                    // Only if this card is still unknown (weight > 0 for this player).
+                    if self.weights[player as usize][higher_card as usize] > 0.0 {
+                        self.apply_factor(player, higher_card, self.dominance_factor);
+                        // Others become slightly more likely to have it.
+                        let boost = 1.0 + (1.0 - self.dominance_factor) * 0.3;
+                        for p in 0..4u8 {
+                            if p == self.observer || p == player { continue; }
+                            self.apply_factor(p, higher_card, boost);
+                        }
+                    }
                 }
             }
         }

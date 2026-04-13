@@ -10,3 +10,7 @@ pub mod dd_bid;
 pub mod bid_train_env;
 #[cfg(feature = "dmc_train")]
 pub mod bid_candle;
+#[cfg(feature = "dmc_train")]
+pub mod bumblebid_candle;
+#[cfg(feature = "tch_train")]
+pub mod bumblebid_tch;

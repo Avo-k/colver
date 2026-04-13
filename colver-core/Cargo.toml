@@ -10,6 +10,7 @@ rand = ["dep:rand"]
 parallel = ["dep:rayon", "rand"]
 nn = ["rand"]
 dmc_train = ["rand", "dep:candle-core", "dep:candle-nn", "dep:clap"]
+tch_train = ["rand", "dep:tch", "dep:clap"]
 
 [dependencies]
 rand = { version = "0.8", optional = true }
@@ -17,6 +18,7 @@ rayon = { version = "1.10", optional = true }
 candle-core = { version = "0.9", optional = true, features = ["cuda"] }
 candle-nn = { version = "0.9", optional = true }
 clap = { version = "4", optional = true, features = ["derive"] }
+tch = { version = "0.23", optional = true, features = ["download-libtorch"] }
 
 [dev-dependencies]
 rand = "0.8"
@@ -68,6 +70,11 @@ required-features = ["dmc_train"]
 name = "train_bid_supervised"
 path = "src/bin/train_bid_supervised.rs"
 required-features = ["dmc_train"]
+
+[[bin]]
+name = "train_bid_tch"
+path = "src/bin/train_bid_tch.rs"
+required-features = ["tch_train"]
 
 [[bin]]
 name = "retro_eval"

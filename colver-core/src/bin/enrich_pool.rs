@@ -39,6 +39,8 @@ fn main() {
     let mut batch_size: usize = 4096;
     let mut model_path = String::from("models/play_v2/play_final.bin");
     let mut seed: u64 = 42;
+    let mut sequential: bool = false;
+    let mut offset: usize = 0;
 
     let mut i = 1;
     while i < args.len() {
@@ -49,6 +51,8 @@ fn main() {
             "--batch" => { i += 1; batch_size = args[i].parse().unwrap(); }
             "--model" => { i += 1; model_path = args[i].clone(); }
             "--seed" => { i += 1; seed = args[i].parse().unwrap(); }
+            "--sequential" => { sequential = true; }
+            "--offset" => { i += 1; offset = args[i].parse().unwrap(); }
             _ => { eprintln!("Unknown arg: {}", args[i]); }
         }
         i += 1;
@@ -59,12 +63,22 @@ fn main() {
     let pool = DealPool::load(&pool_path).expect("Failed to load pool");
     eprintln!("  Pool has {} deals", pool.len());
 
-    // Sample deals
-    let mut rng = StdRng::seed_from_u64(seed);
-    let sampled: Vec<_> = (0..num_deals).map(|_| {
-        let deal = pool.sample(&mut rng);
-        (deal.dealer, deal.hands, deal.dd_pts)
-    }).collect();
+    // Sample deals (random with replacement, or sequential from offset)
+    let sampled: Vec<_> = if sequential {
+        eprintln!("  Using sequential deals [{}..{})", offset, offset + num_deals);
+        assert!(offset + num_deals <= pool.len(),
+            "sequential range {}..{} exceeds pool size {}", offset, offset + num_deals, pool.len());
+        (offset..offset + num_deals).map(|i| {
+            let deal = pool.get(i);
+            (deal.dealer, deal.hands, deal.dd_pts)
+        }).collect()
+    } else {
+        let mut rng = StdRng::seed_from_u64(seed);
+        (0..num_deals).map(|_| {
+            let deal = pool.sample(&mut rng);
+            (deal.dealer, deal.hands, deal.dd_pts)
+        }).collect()
+    };
 
     // Load GPU model
     let device = Device::cuda_if_available(0).expect("No CUDA device");

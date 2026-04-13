@@ -1,0 +1,19 @@
+# Dédéléfant: IS-DD with elephant memory (particle filter from past determinizations)
+# Same as nn_v2_isdd but with elephant_memory = true
+[bid]
+strategy = "nn"
+model = "models/bid_v2/bid_nn_final.bin"
+hidden = 512
+
+[play]
+method = "smart_is_dd"
+time_ms = 50
+determinizations = 20
+elephant_memory = true
+elephant_use_dominance = true
+elephant_dominance_penalty = 0.5
+elephant_smoothing = 0.05
+
+[belief]
+model = "models/belief_v3.bin"
+use_hard_constraints = true

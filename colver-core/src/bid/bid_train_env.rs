@@ -46,9 +46,24 @@ pub struct PresolvedDeal {
     pub real_pts: Option<[u8; 4]>,
 }
 
+/// A named score layer: play-method points for each deal × 4 suits.
+/// Stored as a parallel array aligned with the deal pool.
+pub struct ScoreLayer {
+    /// Name of the play method (e.g. "dmc", "isdd").
+    pub name: String,
+    /// Offset into the deal pool (these scores correspond to deals[offset..offset+len]).
+    pub offset: usize,
+    /// Per-deal NS points for each trump suit [u8; 4].
+    pub scores: Vec<[u8; 4]>,
+}
+
 /// Pool of pre-solved deals for fast training resets.
 pub struct DealPool {
     deals: Vec<PresolvedDeal>,
+    /// Named score layers (e.g. DMC, IS-DD) as parallel arrays.
+    score_layers: Vec<ScoreLayer>,
+    /// Which score layer to use for `real_pts` (index into score_layers, or None).
+    active_score: Option<usize>,
 }
 
 impl DealPool {
@@ -56,7 +71,7 @@ impl DealPool {
     pub fn generate(n: usize, seed: u64) -> Self {
         let mut deals = Vec::with_capacity(n);
         Self::generate_chunk_into(&mut deals, n, seed, 0);
-        DealPool { deals }
+        DealPool { deals, score_layers: Vec::new(), active_score: None }
     }
 
     /// Generate `n` deals with checkpoints every `chunk_size` deals.
@@ -110,6 +125,8 @@ impl DealPool {
             // Checkpoint: save entire pool so far
             let pool = DealPool {
                 deals: deals.clone(),
+                score_layers: Vec::new(),
+                active_score: None,
             };
             match pool.save(path) {
                 Ok(()) => {
@@ -134,7 +151,7 @@ impl DealPool {
             deals.len() as f64 / total_time
         );
 
-        DealPool { deals }
+        DealPool { deals, score_layers: Vec::new(), active_score: None }
     }
 
     /// Generate `n` deals in parallel, appending to `out`.
@@ -298,10 +315,12 @@ impl DealPool {
             });
         }
 
-        Ok(DealPool { deals })
+        Ok(DealPool { deals, score_layers: Vec::new(), active_score: None })
     }
 
     /// Load enriched pool (COLVDR01): dd_pts + real_pts per deal.
+    /// The real_pts are stored as a score layer named after the file.
+    /// For backward compat, also sets real_pts on each PresolvedDeal.
     pub fn load_enriched(path: &str) -> std::io::Result<Self> {
         use std::io::Read;
         let mut f = std::io::BufReader::new(std::fs::File::open(path)?);
@@ -320,6 +339,7 @@ impl DealPool {
         let count = u64::from_le_bytes(count_buf) as usize;
 
         let mut deals = Vec::with_capacity(count);
+        let mut scores = Vec::with_capacity(count);
         for _ in 0..count {
             let mut dealer = [0u8; 1];
             f.read_exact(&mut dealer)?;
@@ -343,10 +363,132 @@ impl DealPool {
                 dd_pts,
                 real_pts: Some(real_pts),
             });
+            scores.push(real_pts);
         }
 
-        eprintln!("  Loaded enriched pool: {} deals from {}", count, path);
-        Ok(DealPool { deals })
+        // Infer layer name from filename
+        let name = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("real")
+            .to_string();
+
+        let layer = ScoreLayer {
+            name: name.clone(),
+            offset: 0,
+            scores,
+        };
+
+        eprintln!("  Loaded enriched pool: {} deals from {} (score layer: {})", count, path, name);
+        Ok(DealPool {
+            deals,
+            score_layers: vec![layer],
+            active_score: Some(0),
+        })
+    }
+
+    /// Load a separate score file (COLVSC01) and attach it as a score layer.
+    /// Format: magic "COLVSC01" (8B) + name_len (u16 LE) + name (utf8) + count (u32 LE) + offset (u32 LE) + count × [u8; 4].
+    /// The offset says these scores correspond to deals[offset..offset+count] in the base pool.
+    pub fn load_scores(&mut self, path: &str) -> std::io::Result<()> {
+        use std::io::Read;
+        let mut f = std::io::BufReader::new(std::fs::File::open(path)?);
+
+        let mut magic = [0u8; 8];
+        f.read_exact(&mut magic)?;
+        if &magic != b"COLVSC01" {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Bad magic: expected COLVSC01, got {:?}", &magic),
+            ));
+        }
+
+        let mut name_len_buf = [0u8; 2];
+        f.read_exact(&mut name_len_buf)?;
+        let name_len = u16::from_le_bytes(name_len_buf) as usize;
+
+        let mut name_buf = vec![0u8; name_len];
+        f.read_exact(&mut name_buf)?;
+        let name = String::from_utf8(name_buf).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })?;
+
+        let mut count_buf = [0u8; 4];
+        f.read_exact(&mut count_buf)?;
+        let count = u32::from_le_bytes(count_buf) as usize;
+
+        let mut offset_buf = [0u8; 4];
+        f.read_exact(&mut offset_buf)?;
+        let offset = u32::from_le_bytes(offset_buf) as usize;
+
+        let mut scores = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut pts = [0u8; 4];
+            f.read_exact(&mut pts)?;
+            scores.push(pts);
+        }
+
+        eprintln!(
+            "  Loaded score layer '{}': {} scores at offset {} from {}",
+            name, count, offset, path
+        );
+
+        self.score_layers.push(ScoreLayer { name, offset, scores });
+        Ok(())
+    }
+
+    /// Save a score layer to a separate file (COLVSC01).
+    pub fn save_scores(name: &str, offset: usize, scores: &[[u8; 4]], path: &str) -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+        f.write_all(b"COLVSC01")?;
+        let name_bytes = name.as_bytes();
+        f.write_all(&(name_bytes.len() as u16).to_le_bytes())?;
+        f.write_all(name_bytes)?;
+        f.write_all(&(scores.len() as u32).to_le_bytes())?;
+        f.write_all(&(offset as u32).to_le_bytes())?;
+        for pts in scores {
+            f.write_all(pts)?;
+        }
+        f.flush()?;
+        Ok(())
+    }
+
+    /// Select which score layer to use as `real_pts` when sampling deals.
+    /// Pass None to disable (DD-only mode). Pass a name to select by layer name.
+    pub fn select_score_layer(&mut self, name: Option<&str>) {
+        match name {
+            None => {
+                self.active_score = None;
+                // Clear real_pts on all deals
+                for deal in &mut self.deals {
+                    deal.real_pts = None;
+                }
+            }
+            Some(n) => {
+                let idx = self.score_layers.iter().position(|l| l.name == n);
+                if let Some(idx) = idx {
+                    self.active_score = Some(idx);
+                    let layer = &self.score_layers[idx];
+                    // Apply scores to deals in range
+                    for (i, pts) in layer.scores.iter().enumerate() {
+                        let deal_idx = layer.offset + i;
+                        if deal_idx < self.deals.len() {
+                            self.deals[deal_idx].real_pts = Some(*pts);
+                        }
+                    }
+                    eprintln!("  Activated score layer '{}' ({} deals)", n, layer.scores.len());
+                } else {
+                    let names: Vec<_> = self.score_layers.iter().map(|l| l.name.as_str()).collect();
+                    panic!("Score layer '{}' not found. Available: {:?}", n, names);
+                }
+            }
+        }
+    }
+
+    /// List available score layer names.
+    pub fn score_layer_names(&self) -> Vec<&str> {
+        self.score_layers.iter().map(|l| l.name.as_str()).collect()
     }
 
     /// Load if file exists with enough deals, otherwise generate with 500k checkpoints.
@@ -753,6 +895,13 @@ impl VecBidEnv {
         } else {
             self.refresh_env(i);
             None
+        }
+    }
+
+    /// Update reward mode for all envs (used for curriculum scheduling).
+    pub fn set_reward_mode(&mut self, mode: RewardMode) {
+        for env in &mut self.envs {
+            env.reward_mode = mode;
         }
     }
 

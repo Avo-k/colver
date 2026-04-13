@@ -3,7 +3,7 @@ pub use engine::{card, state, bidding, trick, play, scoring, game, cfn};
 pub mod search;
 pub use search::{solver, determinize, rollout};
 #[cfg(feature = "rand")]
-pub use search::{mcts, naive_ismcts, smart_ismcts, single_tree_ismcts, is_dd};
+pub use search::{mcts, naive_ismcts, smart_ismcts, single_tree_ismcts, is_dd, elephant};
 
 pub mod bid;
 pub use bid::{bid_eval, bid_obs, bid_net, maxi};

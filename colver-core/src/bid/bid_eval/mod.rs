@@ -40,6 +40,10 @@ pub enum BidFunction {
     /// Creates a temporary DdBidder per call (requires `rand` feature).
     #[cfg(feature = "rand")]
     BidADd,
+    /// Placeholder for BisDd — actual decisions handled by stateful BisDdAgent
+    /// in arena (this variant exists so build_agent can parse the strategy).
+    #[cfg(feature = "rand")]
+    BisDd,
 }
 
 impl BidFunction {
@@ -61,6 +65,16 @@ impl BidFunction {
                     crate::dd_bid::DdBidder::new(crate::dd_bid::DdBidConfig::default());
                 let mut rng = rand::thread_rng();
                 bidder.bid(state, &mut rng)
+            }
+            #[cfg(feature = "rand")]
+            BidFunction::BisDd => {
+                // Standalone mode: no persistent beliefs (each call is independent)
+                let mut agent = crate::bis_dd::BisDdAgent::new(
+                    crate::bis_dd::BisDdConfig::default(),
+                    rand::random(),
+                );
+                agent.init_deal(state.current_player, state.hands[state.current_player as usize]);
+                agent.decide(state)
             }
         }
     }

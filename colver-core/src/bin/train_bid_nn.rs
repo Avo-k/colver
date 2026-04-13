@@ -20,6 +20,7 @@ use rand::{Rng, SeedableRng};
 use candle_core::Device;
 
 use colver_core::bid_candle::BiddingTrainer;
+use colver_core::bid::bumblebid_candle::BumblebidTrainer;
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::BID_OBS_DIM;
@@ -29,6 +30,76 @@ use colver_core::rollout;
 use colver_core::state::GameState;
 
 const NUM_ACTIONS: usize = 43;
+
+/// Wrapper enum so the training loop works with both MLP and transformer.
+enum Trainer {
+    Mlp(BiddingTrainer),
+    Transformer(BumblebidTrainer),
+}
+
+impl Trainer {
+    fn act(
+        &self,
+        obs: &candle_core::Tensor,
+        mask: &candle_core::Tensor,
+        epsilon: f32,
+        rng: &mut impl Rng,
+    ) -> candle_core::Result<Vec<u8>> {
+        match self {
+            Trainer::Mlp(t) => t.net.act(obs, mask, epsilon, rng),
+            Trainer::Transformer(t) => t.net.act(obs, mask, epsilon, rng),
+        }
+    }
+
+    fn train_step(
+        &mut self,
+        obs: &[f32],
+        masks: &[f32],
+        actions: &[u8],
+        returns: &[f32],
+        weights: &[f32],
+    ) -> candle_core::Result<(f32, Vec<f32>)> {
+        match self {
+            Trainer::Mlp(t) => t.train_step(obs, masks, actions, returns, weights),
+            Trainer::Transformer(t) => t.train_step(obs, masks, actions, returns, weights),
+        }
+    }
+
+    fn save_checkpoint(&self, path: &str) -> candle_core::Result<()> {
+        match self {
+            Trainer::Mlp(t) => t.save_checkpoint(path),
+            Trainer::Transformer(t) => t.save_checkpoint(path),
+        }
+    }
+
+    fn load_checkpoint(&mut self, path: &str) -> candle_core::Result<()> {
+        match self {
+            Trainer::Mlp(t) => t.load_checkpoint(path),
+            Trainer::Transformer(t) => t.load_checkpoint(path),
+        }
+    }
+
+    fn device(&self) -> &Device {
+        match self {
+            Trainer::Mlp(t) => t.device(),
+            Trainer::Transformer(t) => t.device(),
+        }
+    }
+
+    fn set_lr(&mut self, lr: f64) {
+        match self {
+            Trainer::Mlp(t) => t.set_lr(lr),
+            Trainer::Transformer(t) => t.set_lr(lr),
+        }
+    }
+
+    fn snapshot_weights(&self) -> std::result::Result<Vec<f32>, Box<dyn std::error::Error>> {
+        match self {
+            Trainer::Mlp(t) => t.snapshot_weights(),
+            Trainer::Transformer(t) => t.snapshot_weights().map_err(|e| e.into()),
+        }
+    }
+}
 
 /// Opponent bidding strategy for non-self-play environments.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -163,9 +234,21 @@ struct Args {
     /// Path to save/load deal pool (auto-generates if missing).
     #[arg(long, default_value = "data/pools/dd_2.5M.bin")]
     pool_file: String,
-    /// Reward mode: "dd" (default), "real", or "blend:0.7" (alpha for DD weight).
+    /// Reward mode: "dd", "real", "blend:0.7" (alpha=DD weight), or "curriculum:0.95:0.3" (DD weight start:end).
     #[arg(long, default_value = "dd")]
     reward: String,
+    /// Score file(s) to load (COLVSC01 format). Can be repeated. Last one loaded becomes the active score layer.
+    #[arg(long)]
+    scores: Vec<String>,
+    /// Use Bumblebid transformer instead of MLP.
+    #[arg(long)]
+    transformer: bool,
+    /// Transformer model dimension (d_model). Only used with --transformer.
+    #[arg(long, default_value_t = 128)]
+    d_model: usize,
+    /// Transformer number of heads. Only used with --transformer.
+    #[arg(long, default_value_t = 4)]
+    n_heads: usize,
 }
 
 /// Evaluate NN bidding vs improved_v2 bidding.
@@ -338,8 +421,22 @@ fn main() {
     );
 
     // Initialize trainer
-    let mut trainer = BiddingTrainer::with_layers(args.layers, args.hidden, args.lr, 0.0, device)
-        .expect("Failed to create trainer");
+    let mut trainer = if args.transformer {
+        println!(
+            "Model: Bumblebid transformer d={} L={} H={}",
+            args.d_model, args.layers, args.n_heads
+        );
+        Trainer::Transformer(
+            BumblebidTrainer::new(args.d_model, args.layers, args.n_heads, args.lr, 0.0, device)
+                .expect("Failed to create Bumblebid trainer"),
+        )
+    } else {
+        println!("Model: Dueling MLP H={} L={}", args.hidden, args.layers);
+        Trainer::Mlp(
+            BiddingTrainer::with_layers(args.layers, args.hidden, args.lr, 0.0, device)
+                .expect("Failed to create trainer"),
+        )
+    };
 
     if let Some(ref path) = args.resume {
         trainer
@@ -351,7 +448,8 @@ fn main() {
     // Initialize replay buffer
     let mut replay_buffer = BidReplayBuffer::new(args.buffer_size, args.per_alpha);
 
-    // Parse reward mode
+    // Parse reward mode (and optional curriculum schedule)
+    let mut curriculum: Option<(f32, f32)> = None; // (dd_start, dd_end)
     let reward_mode = if args.reward == "dd" {
         RewardMode::DdOnly
     } else if args.reward == "real" {
@@ -359,8 +457,16 @@ fn main() {
     } else if args.reward.starts_with("blend:") {
         let alpha: f32 = args.reward[6..].parse().expect("Bad blend alpha, use e.g. blend:0.7");
         RewardMode::Blend(alpha)
+    } else if args.reward.starts_with("curriculum:") {
+        let parts: Vec<&str> = args.reward[11..].split(':').collect();
+        assert!(parts.len() == 2, "Use curriculum:0.95:0.3 (dd_start:dd_end)");
+        let dd_start: f32 = parts[0].parse().expect("Bad curriculum dd_start");
+        let dd_end: f32 = parts[1].parse().expect("Bad curriculum dd_end");
+        curriculum = Some((dd_start, dd_end));
+        println!("Curriculum: DD weight {:.0}% -> {:.0}%", dd_start * 100.0, dd_end * 100.0);
+        RewardMode::Blend(dd_start)
     } else {
-        panic!("Unknown reward mode '{}'. Use: dd, real, blend:0.7", args.reward);
+        panic!("Unknown reward mode '{}'. Use: dd, real, blend:0.7, curriculum:0.95:0.3", args.reward);
     };
     println!("Reward mode: {:?}", reward_mode);
 
@@ -374,7 +480,7 @@ fn main() {
         std::fs::create_dir_all(parent).ok();
     }
     let pool_start = Instant::now();
-    let pool = if args.pool_file.contains("enriched") || matches!(reward_mode, RewardMode::RealOnly | RewardMode::Blend(_)) {
+    let mut pool = if args.pool_file.contains("enriched") || matches!(reward_mode, RewardMode::RealOnly | RewardMode::Blend(_)) {
         // Try enriched format first, fall back to standard
         match DealPool::load_enriched(&args.pool_file) {
             Ok(p) => p,
@@ -383,10 +489,26 @@ fn main() {
     } else {
         DealPool::load_or_generate(&args.pool_file, args.pool_size, args.seed + 100)
     };
+
+    // Load score files (COLVSC01) if provided
+    let mut last_score_name = None;
+    for score_path in &args.scores {
+        pool.load_scores(score_path).unwrap_or_else(|e| {
+            panic!("Failed to load score file {}: {}", score_path, e);
+        });
+        // Track last loaded name for activation
+        last_score_name = pool.score_layer_names().last().map(|s| s.to_string());
+    }
+    // Activate the last loaded score layer for real_pts
+    if let Some(name) = &last_score_name {
+        pool.select_score_layer(Some(name));
+    }
+
     println!(
-        "Deal pool ready: {} deals in {:.1}s",
+        "Deal pool ready: {} deals in {:.1}s (score layers: {:?})",
         pool.len(),
-        pool_start.elapsed().as_secs_f64()
+        pool_start.elapsed().as_secs_f64(),
+        pool.score_layer_names(),
     );
 
     // Phase 2: Initialize envs from pool (instant)
@@ -438,12 +560,21 @@ fn main() {
         let beta =
             args.per_beta_start + (args.per_beta_end - args.per_beta_start) * beta_progress;
 
+        // Curriculum: update DD blend ratio over training
+        if let Some((dd_start, dd_end)) = curriculum {
+            if step % 1000 == 0 {
+                let t = (step as f32 / args.steps as f32).min(1.0);
+                let alpha = dd_start + (dd_end - dd_start) * t;
+                vec_env.set_reward_mode(RewardMode::Blend(alpha));
+            }
+        }
+
         // --- Collect actions for all envs ---
         // GPU batch forward pass for all envs (even opponent-controlled ones, for simplicity)
         let obs_flat = &vec_env.obs_buf;
         let mask_flat = &vec_env.mask_buf;
 
-        let nn_actions = match trainer.net.act(
+        let nn_actions = match trainer.act(
             &candle_core::Tensor::from_slice(obs_flat, (n, BID_OBS_DIM), trainer.device())
                 .unwrap(),
             &candle_core::Tensor::from_slice(mask_flat, (n, NUM_ACTIONS), trainer.device())
@@ -575,7 +706,12 @@ fn main() {
         // --- Evaluate ---
         if (step + 1) % args.eval_freq == 0 {
             let eval_start = Instant::now();
-            let (wins, total, margin) = evaluate(&trainer, args.hidden, args.layers, args.eval_matches);
+            let (wins, total, margin) = if let Trainer::Mlp(ref t) = trainer {
+                evaluate(t, args.hidden, args.layers, args.eval_matches)
+            } else {
+                // TODO: implement GPU-based eval for transformer
+                (0, 0, 0.0)
+            };
             let wr = if total > 0 {
                 wins as f64 / total as f64
             } else {
@@ -599,14 +735,18 @@ fn main() {
             if let Err(e) = trainer.save_checkpoint(&st_path) {
                 eprintln!("Failed to save safetensors: {}", e);
             }
-            if let Err(e) = trainer.export_binary(&bin_path) {
-                eprintln!("Failed to export binary: {}", e);
+            if let Trainer::Mlp(ref t) = trainer {
+                if let Err(e) = t.export_binary(&bin_path) {
+                    eprintln!("Failed to export binary: {}", e);
+                }
             }
             // Also save as latest
             let latest_st = format!("{}/bid_nn_latest.safetensors", args.save_dir);
-            let latest_bin = format!("{}/bid_nn_latest.bin", args.save_dir);
             trainer.save_checkpoint(&latest_st).ok();
-            trainer.export_binary(&latest_bin).ok();
+            if let Trainer::Mlp(ref t) = trainer {
+                let latest_bin = format!("{}/bid_nn_latest.bin", args.save_dir);
+                t.export_binary(&latest_bin).ok();
+            }
             println!("  [SAVE] {}", st_path);
         }
     }
@@ -614,16 +754,24 @@ fn main() {
     // Final eval and save
     println!("\n--- Final Evaluation ---");
     let eval_start = Instant::now();
-    let (wins, total, margin) = evaluate(&trainer, args.hidden, args.layers, args.eval_matches);
+    let (wins, total, margin) = if let Trainer::Mlp(ref t) = trainer {
+        evaluate(t, args.hidden, args.layers, args.eval_matches)
+    } else {
+        (0, 0, 0.0)
+    };
     let wr = if total > 0 {
         wins as f64 / total as f64
     } else {
         0.0
     };
-    println!(
-        "vs improved_v2: {:.1}% ({}/{}) margin={:+.0}",
-        wr * 100.0, wins, total, margin
-    );
+    if total > 0 {
+        println!(
+            "vs improved_v2: {:.1}% ({}/{}) margin={:+.0}",
+            wr * 100.0, wins, total, margin
+        );
+    } else {
+        println!("(eval skipped for transformer — use arena for evaluation)");
+    }
     println!(
         "Self-play: {} episodes, Diverse: {} episodes ({:.0}%)",
         self_play_episodes,
@@ -648,6 +796,8 @@ fn main() {
     let final_st = format!("{}/bid_nn_final.safetensors", args.save_dir);
     let final_bin = format!("{}/bid_nn_final.bin", args.save_dir);
     trainer.save_checkpoint(&final_st).ok();
-    trainer.export_binary(&final_bin).ok();
-    println!("Saved final model to {} and {}", final_st, final_bin);
+    if let Trainer::Mlp(ref t) = trainer {
+        t.export_binary(&final_bin).ok();
+    }
+    println!("Saved final model to {}", final_st);
 }
