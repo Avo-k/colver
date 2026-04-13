@@ -20,7 +20,13 @@ uv run python -m colver.web                    # Run web frontend → http://loc
 
 **Cargo features:** `rand` (default), `parallel` (rayon), `nn` (NN value function), `dmc_train` (candle GPU training for DMC + bid NN + belief net)
 
-See [docs/TRAINING.md](docs/TRAINING.md) for all training, evaluation, and experiment commands.
+See [docs/](docs/) for all documentation. Key entry points:
+- [docs/README.md](docs/README.md) — full doc index
+- [docs/training/overview.md](docs/training/overview.md) — training/eval commands
+- [docs/arena_results.md](docs/arena_results.md) — global arena leaderboard (king metric)
+- [docs/bid/](docs/bid/) — bidding strategies, NN bidders, reward studies, interpretability
+- [docs/play/](docs/play/) — DD, IS-DD, DMC, IS-MCTS
+- [docs/belief/](docs/belief/), [docs/data_gen/](docs/data_gen/)
 
 ## Architecture
 
@@ -69,21 +75,31 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 
 `play.rs::legal_plays()` is the hottest function — all bitwise, no allocations. Target: >1M rollouts/sec single-threaded.
 
-## Key Subsystems (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details)
+## Key Subsystems (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full details, [docs/play/](docs/play/) and [docs/bid/](docs/bid/) for per-component docs)
 
 - **MCTS** (`search/mcts.rs`): Arena-based UCT, 1000 iters default, C=sqrt(2)
 - **Smart IS-MCTS** (`search/smart_ismcts.rs` + `belief/card_beliefs.rs`): Belief-weighted IS-MCTS, ~+7.5% vs naive
 - **DD Solver** (`search/solver.rs`): Alpha-beta with TT, PVS, killer/history heuristics. ~77ms/solve from full deal (4 suits ≈ 310ms), ~13.5ms mid-game. Pool generation: ~244 deals/s on 32 cores with LTO+native (`gen_pool` binary). 1M pool ≈ 68min. Without LTO: ~100 deals/s.
 - **Pool generator** (`gen_pool` binary): Standalone DD pool generation, no CUDA dep. Uses `RUSTFLAGS="-C target-cpu=native"` + workspace `[profile.release] lto="fat", codegen-units=1` for 2.4× speedup. Checkpoints every 100k deals (resumable).
+- **IS-DD** (`search/is_dd.rs`): Information Set DD — samples determinized worlds from beliefs, solves each with DD, aggregates. **Hard constraints** (voids, trump ceiling, played cards) are facts and are always applied, with no flag. **Soft beliefs** (heuristic `use_soft_inference`, NN beliefs `use_nn_beliefs`, `use_elephant_memory`) are all **off by default** — they're optional probabilistic adjustments. `early_termination` is also on by default (skip search when forced or when beliefs uniquely resolve all hands). `enrich_pool_isdd` binary generates play scores with IS-DD for training data. See [docs/play/is_dd.md](docs/play/is_dd.md).
 - **DMC Agent "DouDou35"** (`dmc/dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
-- **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`).
-- **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3/bid obs, multiple architecture variants. `CardBeliefs` (heuristic, deprecated) uses bidirectional soft inference from bids and play with **0% false exclusion rate** on hard constraints (voids, trump ceiling). Correctly handles "ne pisse pas" (discard when can't overtrump opponent's cut → trump ceiling, not void). `BeliefState` (for BisDd) uses soft weights — hard bid constraints were removed (rejected reality 72% of the time against NN bidders). **Bid Belief NN v4** (`bid_belief_v4.bin`): 108→256²→96, trained on bid_v2 auctions (14.2M samples, 24× suit augmentation), replaces heuristic bid soft weights in BeliefState via `apply_nn_bid_beliefs()`. Play log(p) = -0.9565 (vs -1.0209 heuristic, -1.099 uniform). Old `belief_v3.bin` is **not usable** with NN bots. See [docs/BIS_DD.md](docs/BIS_DD.md).
+- **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`). **Bumblebid** (experimental): transformer encoder, d=64 L=2 H=4 (105K params), supervised on DD oracle Q-values with 24× suit augmentation. See [docs/bid/architectures/bumblebid.md](docs/bid/architectures/bumblebid.md). **Bid v3 Max** (`bid_v3_max_20M`): same arch as v2, trained on `max(DMC, ISDD)` real points instead of DD — only model that doesn't lose to nn_v2 in either DMC or IS-DD eval. See [docs/bid/strategies/bid_v3_max.md](docs/bid/strategies/bid_v3_max.md).
+- **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3/bid obs, multiple architecture variants. `CardBeliefs` (heuristic, deprecated) uses bidirectional soft inference from bids and play with **0% false exclusion rate** on hard constraints (voids, trump ceiling). Correctly handles "ne pisse pas" (discard when can't overtrump opponent's cut → trump ceiling, not void). `BeliefState` (for BisDd) uses soft weights — hard bid constraints were removed (rejected reality 72% of the time against NN bidders). **Bid Belief NN v4** (`bid_belief_v4.bin`): 108→256²→96, trained on bid_v2 auctions (14.2M samples, 24× suit augmentation), replaces heuristic bid soft weights in BeliefState via `apply_nn_bid_beliefs()`. Play log(p) = -0.9565 (vs -1.0209 heuristic, -1.099 uniform). Old `belief_v3.bin` is **not usable** with NN bots. See [docs/belief/bis_dd.md](docs/belief/bis_dd.md).
 - **Belief Evaluation** (`bin/eval_beliefs.rs`): Measures belief quality against ground truth per bid step and per trick. Plays deals with NN bots, tracks log-probability, placement accuracy, false exclusion rate, entropy, constraint tightness, and ground truth reachability. Supports `--nn` for play belief NN and `--bid-belief` for bid belief NN. Run: `cargo run --bin eval_beliefs --features "parallel,nn" --release -- --deals 500 [--bid-belief models/bid_belief_v4.bin]`
 - **Bidding strategies** (`bid/bid_eval/`): `BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`, `BidParams` (parametric). Each strategy in its own file under `bid_eval/`.
-- **Triforge Training** (`joint_env.rs` + `train_joint` binary): Iterative best-response training — alternates bid-only and play-only phases with frozen partner. `--mode play-only|bid-only|joint`. Play NN: ResNet Dueling DQN (411→1024³→32, skip connections on layers 1-2). Bid NN: Dueling DQN (114→512³→43, configurable layers). Canonical play encoding (no suit augmentation), bid uses 24× augmentation. See [docs/TRIFORGE.md](docs/TRIFORGE.md).
+- **Triforge Training** (`joint_env.rs` + `train_joint` binary): Iterative best-response training — alternates bid-only and play-only phases with frozen partner. `--mode play-only|bid-only|joint`. Play NN: ResNet Dueling DQN (411→1024³→32, skip connections on layers 1-2). Bid NN: Dueling DQN (114→512³→43, configurable layers). Canonical play encoding (no suit augmentation), bid uses 24× augmentation. See [docs/play/experiments/triforge.md](docs/play/experiments/triforge.md).
   - **Weight formats:** Training checkpoints (candle) use `.safetensors` — required for `--resume-bid`/`--resume-play`. Inference weights use `.bin` (raw f32) — used by `BidNet::load`/`DmcNet::load` and arena TOML `model` paths. Triforge saves both formats at each checkpoint.
   - **Triforge play NN (DouDou50) in arena:** Use `residual = true` in TOML. Canonical obs (411-dim) auto-detected from weight file. Models saved to `models/play_v2/play_*.bin`.
 - **Suit Augmentation** (`suit_perm.rs`): 24 suit permutations for data augmentation. Functions for belief obs (V1/V2/V3), DMC obs (415-dim), bid obs (108-dim), actions, and masks. TR variants (`permute_dmc_obs_tr` / `augment_play_batch_tr`) exist but unused since canonical ordering eliminates the need.
+
+### DD Oracle: Training Signal, Not a Player
+
+DD solver values are a **training signal** (direction to optimize toward), never a substitute for the model's own policy during data collection. In Contrée, bidding is a communication game — players probe, signal holdings, and iteratively discover the best contract through dialogue. The DD oracle sees all 4 hands and knows the answer instantly, so it has no reason to communicate. Using oracle actions for data collection produces degenerate auctions (optimal bid → 3 passes → done) that teach the model nothing about the signaling dynamics it must learn.
+
+**Rules for bid model training on DD pools:**
+- The **model plays its own auctions** (ε-greedy on the model's policy). Oracle targets supervise the loss, but the model's own actions drive the auction trajectory.
+- DD Q-values are an **approximation**: the solver assumes perfect play, but real opponents don't play perfectly. Treat DD targets as a useful direction, not ground truth.
+- A single hand predicts only ~17% of DD outcome variance (R²). Most of the signal comes from bid history (partner/opponent communication) — which only exists if the model plays realistic auctions.
 
 ### Observation Layouts (for suit permutation / NN inputs)
 
