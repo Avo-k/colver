@@ -106,8 +106,14 @@ struct BotConfig {
     bid_hidden: usize,        // hidden size for bid NN (default 256)
     bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
     belief_model: Option<String>,
-    belief_hard_constraints: bool,
     bid_belief_model: Option<String>,
+    early_termination: Option<bool>,
+    elephant_memory: bool,
+    elephant_smoothing: f32,
+    elephant_dominance_penalty: f32,
+    elephant_use_dominance: bool,
+    elephant_decay: f32,
+    dominance_factor: f32,
 }
 
 impl Default for BotConfig {
@@ -126,8 +132,14 @@ impl Default for BotConfig {
             bid_hidden: 256,
             bid_penalty: 0.0,
             belief_model: None,
-            belief_hard_constraints: true,
             bid_belief_model: None,
+            early_termination: None,
+            elephant_memory: false,
+            elephant_smoothing: 0.05,
+            elephant_dominance_penalty: 0.5,
+            elephant_use_dominance: true,
+            elephant_decay: 0.8,
+            dominance_factor: 1.0,
         }
     }
 }
@@ -155,15 +167,19 @@ impl BotConfig {
 
     /// Short label for the play method, e.g. "dmc:play_20M" or "smart_is_dd:50ms"
     fn play_label(&self) -> String {
-        if let Some(ref model) = self.play_model {
+        let mut label = if let Some(ref model) = self.play_model {
             format!("{}:{}", self.play_method, Self::short_model_name(model))
         } else {
-            let mut label = self.play_method.clone();
+            let mut l = self.play_method.clone();
             if self.play_method.contains("ismcts") || self.play_method.contains("is_dd") {
-                label = format!("{}:{}ms", label, self.time_ms);
+                l = format!("{}:{}ms", l, self.time_ms);
             }
-            label
+            l
+        };
+        if self.elephant_memory {
+            label.push_str("+lefant");
         }
+        label
     }
 }
 
@@ -211,8 +227,17 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("play", "oracle_iters") => cfg.oracle_iters = val.parse().unwrap_or(2000),
                 ("play", "switch_at") => cfg.switch_at = val.parse().unwrap_or(5),
                 ("belief", "model") => cfg.belief_model = Some(val.to_string()),
-                ("belief", "use_hard_constraints") => cfg.belief_hard_constraints = val == "true",
+                // use_hard_constraints removed: hard constraints are always applied
+                // (they are facts, not beliefs). Field accepted for backward compat.
+                ("belief", "use_hard_constraints") => {}
                 ("belief", "bid_model") => cfg.bid_belief_model = Some(val.to_string()),
+                ("play", "early_termination") => cfg.early_termination = Some(val == "true"),
+                ("play", "elephant_memory") => cfg.elephant_memory = val == "true",
+                ("play", "elephant_smoothing") => cfg.elephant_smoothing = val.parse().unwrap_or(0.05),
+                ("play", "elephant_dominance_penalty") => cfg.elephant_dominance_penalty = val.parse().unwrap_or(0.5),
+                ("play", "elephant_use_dominance") => cfg.elephant_use_dominance = val == "true",
+                ("play", "elephant_decay") => cfg.elephant_decay = val.parse().unwrap_or(0.8),
+                ("play", "dominance_factor") => cfg.dominance_factor = val.parse().unwrap_or(1.0),
                 _ => {} // ignore unknown keys
             }
         }
@@ -345,6 +370,13 @@ struct Agent {
     time_ms: u32,
     determinizations: u32,
     oracle_iters: u32,
+    early_termination: Option<bool>,
+    elephant_memory: bool,
+    elephant_smoothing: f32,
+    elephant_dominance_penalty: f32,
+    elephant_use_dominance: bool,
+    elephant_decay: f32,
+    dominance_factor: f32,
 }
 
 /// All shared model weights for the tournament.
@@ -433,6 +465,13 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         time_ms: cfg.time_ms,
         determinizations: cfg.determinizations,
         oracle_iters: cfg.oracle_iters,
+        early_termination: cfg.early_termination,
+        elephant_memory: cfg.elephant_memory,
+        elephant_smoothing: cfg.elephant_smoothing,
+        elephant_dominance_penalty: cfg.elephant_dominance_penalty,
+        elephant_use_dominance: cfg.elephant_use_dominance,
+        elephant_decay: cfg.elephant_decay,
+        dominance_factor: cfg.dominance_factor,
     })
 }
 
@@ -462,10 +501,22 @@ fn play_match(
         time_limit_ms: Some(a.time_ms),
         ..Default::default()
     };
-    let make_dd_config = |a: &Agent| IsDdConfig {
-        determinizations: a.determinizations,
-        time_limit_ms: Some(a.time_ms),
-        ..Default::default()
+    let make_dd_config = |a: &Agent| {
+        let mut cfg = IsDdConfig {
+            determinizations: a.determinizations,
+            time_limit_ms: Some(a.time_ms),
+            use_elephant_memory: a.elephant_memory,
+            elephant_smoothing: a.elephant_smoothing,
+            elephant_dominance_penalty: a.elephant_dominance_penalty,
+            elephant_use_dominance: a.elephant_use_dominance,
+            elephant_decay: a.elephant_decay,
+            dominance_factor: a.dominance_factor,
+            ..Default::default()
+        };
+        if let Some(et) = a.early_termination {
+            cfg.early_termination = et;
+        }
+        cfg
     };
     let make_oracle_config = |a: &Agent| MctsConfig {
         iterations: a.oracle_iters,
@@ -588,12 +639,14 @@ fn play_match(
             ew_smart[1].init_deal(&state, 3, true);
         }
         if ns_is_smart_dd {
-            ns_smart_dd[0].init_deal(&state, 0, true);
-            ns_smart_dd[1].init_deal(&state, 2, true);
+            let dd_cfg = make_dd_config(ns_agent);
+            ns_smart_dd[0].init_deal_with_config(&state, 0, &dd_cfg);
+            ns_smart_dd[1].init_deal_with_config(&state, 2, &dd_cfg);
         }
         if ew_is_smart_dd {
-            ew_smart_dd[0].init_deal(&state, 1, true);
-            ew_smart_dd[1].init_deal(&state, 3, true);
+            let dd_cfg = make_dd_config(ew_agent);
+            ew_smart_dd[0].init_deal_with_config(&state, 1, &dd_cfg);
+            ew_smart_dd[1].init_deal_with_config(&state, 3, &dd_cfg);
         }
         if ns_is_bis_dd {
             ns_bis_dd[0].init_deal(0, state.hands[0]);

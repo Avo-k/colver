@@ -23,34 +23,69 @@ use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
 use crate::dmc_obs::EnvTracking;
+use crate::elephant::{blend_with_evidence, ElephantMemory};
 use crate::solver::{new_tt_buffer, solve_with_scores};
 use crate::state::{GameState, Phase};
 
 /// Configuration for IS-DD search.
+///
+/// **Hard constraints** (voids, trump ceiling, played cards) are facts, not beliefs:
+/// they are always applied unconditionally and not exposed as a flag.
+///
+/// **Soft beliefs** (heuristic soft inference, NN beliefs, elephant memory) are all
+/// **off by default** — they introduce probabilistic adjustments that may help or hurt
+/// depending on opponents and play model.
 pub struct IsDdConfig {
     /// Number of determinized worlds to sample (default 20).
     pub determinizations: u32,
-    /// Whether to use soft (probabilistic) inference in beliefs (default true).
+    /// Whether to use soft (probabilistic) heuristic inference from play (dominance,
+    /// "ne pisse pas", etc.) in addition to hard constraints. **Off by default.**
     pub use_soft_inference: bool,
     /// Optional time limit in milliseconds (overrides `determinizations` count).
     pub time_limit_ms: Option<u32>,
     /// Which bid function to use during bidding phase.
     pub bid_function: BidFunction,
-    /// If true and a BeliefNet is loaded, use NN beliefs instead of heuristic CardBeliefs.
+    /// If true and a BeliefNet is loaded, use NN soft beliefs (still combined with
+    /// hard constraints, which are always applied). **Off by default.**
     pub use_nn_beliefs: bool,
-    /// If true (default), apply heuristic hard constraints (voids, trump ceiling) on top of NN beliefs.
-    pub use_hard_constraints: bool,
+    /// If true, enable elephant memory (particle filter from past determinizations).
+    /// **Off by default.**
+    pub use_elephant_memory: bool,
+    /// Smoothing factor for elephant memory evidence blending (default 0.05).
+    /// Lower = stronger influence from particles; higher = more conservative.
+    pub elephant_smoothing: f32,
+    /// Penalty factor per dominant card not played (default 0.5).
+    /// Only used when elephant memory is enabled.
+    pub elephant_dominance_penalty: f32,
+    /// Whether to use soft dominance penalty in elephant memory (default true).
+    pub elephant_use_dominance: bool,
+    /// Decay factor for elephant memory particles (default 0.8).
+    /// 1.0 = no decay, 0.5 = aggressive decay of old particles.
+    pub elephant_decay: f32,
+    /// Play dominance inference factor for CardBeliefs.
+    /// When a player follows suit without playing the highest, reduce weight for
+    /// higher unknown cards by this factor. 1.0 = off, 0.3 = aggressive. Default 1.0.
+    pub dominance_factor: f32,
+    /// If true (default), skip search when only 1 legal action or position is fully resolved.
+    pub early_termination: bool,
 }
 
 impl Default for IsDdConfig {
     fn default() -> Self {
         IsDdConfig {
             determinizations: 20,
-            use_soft_inference: true,
+            // All soft beliefs OFF by default. Hard constraints are facts, always applied.
+            use_soft_inference: false,
             time_limit_ms: None,
             bid_function: BidFunction::ImprovedV2,
             use_nn_beliefs: false,
-            use_hard_constraints: true,
+            use_elephant_memory: false,
+            elephant_smoothing: 0.05,
+            elephant_dominance_penalty: 0.5,
+            elephant_use_dominance: true,
+            elephant_decay: 0.8,
+            dominance_factor: 1.0,
+            early_termination: true,
         }
     }
 }
@@ -74,6 +109,7 @@ pub struct IsDdSearch {
     beliefs: Option<CardBeliefs>,
     belief_net: Option<BeliefNet>,
     belief_tracking: Option<EnvTracking>,
+    elephant: Option<ElephantMemory>,
     tt_buf: Vec<u64>,
 }
 
@@ -83,6 +119,7 @@ impl IsDdSearch {
             beliefs: None,
             belief_net: None,
             belief_tracking: None,
+            elephant: None,
             tt_buf: new_tt_buffer(),
         }
     }
@@ -110,9 +147,37 @@ impl IsDdSearch {
             tracking.reset(state.dealer);
             self.belief_tracking = Some(tracking);
         }
+
+        // Reset elephant memory for new deal (re-initialized per config in search).
+        if let Some(ref mut elephant) = self.elephant {
+            elephant.clear();
+        }
     }
 
-    /// Record an action by any player, updating beliefs.
+    /// Initialize beliefs for a new deal, with elephant memory config.
+    pub fn init_deal_with_config(
+        &mut self,
+        state: &GameState,
+        observer: u8,
+        config: &IsDdConfig,
+    ) {
+        self.init_deal(state, observer, config.use_soft_inference);
+        // Set dominance factor on beliefs.
+        if let Some(ref mut beliefs) = self.beliefs {
+            beliefs.dominance_factor = config.dominance_factor;
+        }
+        if config.use_elephant_memory {
+            let mut elephant = ElephantMemory::new(observer);
+            elephant.dominance_penalty = config.elephant_dominance_penalty;
+            elephant.use_dominance = config.elephant_use_dominance;
+            elephant.decay = config.elephant_decay;
+            self.elephant = Some(elephant);
+        } else {
+            self.elephant = None;
+        }
+    }
+
+    /// Record an action by any player, updating beliefs and elephant memory.
     ///
     /// `state_before` is the state BEFORE the action was applied.
     pub fn record_action(&mut self, state_before: &GameState, player: u8, action: u8) {
@@ -122,12 +187,21 @@ impl IsDdSearch {
         if let Some(tracking) = &mut self.belief_tracking {
             tracking.track_action(state_before, action);
         }
+        // Update elephant memory: filter particles based on observed play.
+        if state_before.phase == Phase::Playing {
+            if let Some(ref mut elephant) = self.elephant {
+                elephant.observe_play(player, action, state_before);
+            }
+        }
     }
 
     /// Reset beliefs (e.g., between deals).
     pub fn reset(&mut self) {
         self.beliefs = None;
         self.belief_tracking = None;
+        if let Some(ref mut elephant) = self.elephant {
+            elephant.clear();
+        }
     }
 
     /// Compute belief weights for determinization.
@@ -139,7 +213,7 @@ impl IsDdSearch {
         config: &IsDdConfig,
         observer: u8,
     ) -> Option<[[f32; 32]; 4]> {
-        if config.use_nn_beliefs && self.belief_net.is_some() {
+        let base_weights = if config.use_nn_beliefs && self.belief_net.is_some() {
             let net = self.belief_net.as_mut().unwrap();
             let tracking = self.belief_tracking.as_ref().unwrap();
 
@@ -191,8 +265,8 @@ impl IsDdSearch {
             };
             let mut nn_weights = crate::belief_net::belief_to_weights(&logits, net.num_classes(), state, observer);
 
-            // Hybrid: apply hard constraints from CardBeliefs (voids, trump ceiling)
-            if config.use_hard_constraints {
+            // Hard constraints (voids, trump ceiling, played cards) are facts, not beliefs.
+            // Always apply them on top of NN soft predictions.
             if let Some(ref beliefs) = self.beliefs {
                 let raw = beliefs.raw_weights();
                 let observer_hand = state.hands[observer as usize];
@@ -223,12 +297,30 @@ impl IsDdSearch {
                     }
                 }
             }
-            }
 
             Some(nn_weights)
         } else {
             self.beliefs.as_ref().map(|b| b.normalized_weights())
+        };
+
+        // Blend with elephant memory evidence if available.
+        if config.use_elephant_memory {
+            if let Some(ref elephant) = self.elephant {
+                if let Some(evidence) = elephant.compute_evidence(state) {
+                    if let Some(base) = base_weights {
+                        return Some(blend_with_evidence(
+                            &base,
+                            &evidence,
+                            state,
+                            observer,
+                            config.elephant_smoothing,
+                        ));
+                    }
+                }
+            }
         }
+
+        base_weights
     }
 
     /// Get current belief weights for a given observer.
@@ -242,7 +334,6 @@ impl IsDdSearch {
     ) -> (Option<[[f32; 32]; 4]>, Option<[[f32; 32]; 4]>) {
         let nn_config = IsDdConfig {
             use_nn_beliefs: true,
-            use_hard_constraints: true,
             ..Default::default()
         };
         let nn_weights = if self.belief_net.is_some() {
@@ -252,6 +343,77 @@ impl IsDdSearch {
         };
         let heuristic_weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
         (nn_weights, heuristic_weights)
+    }
+
+    /// Get elephant memory stats: (surviving_particles, total_particles).
+    pub fn elephant_stats(&self) -> (usize, usize) {
+        match &self.elephant {
+            Some(e) => (e.surviving_count(), e.total_count()),
+            None => (0, 0),
+        }
+    }
+
+    /// Get elephant evidence weights (particle-derived card distributions).
+    /// Returns None if elephant memory is not active or has no surviving particles.
+    pub fn elephant_evidence(&self, state: &GameState) -> Option<[[f32; 32]; 4]> {
+        self.elephant.as_ref()?.compute_evidence(state)
+    }
+
+    /// Get base belief weights (heuristic CardBeliefs, without elephant blending).
+    pub fn base_belief_weights(&self) -> Option<[[f32; 32]; 4]> {
+        self.beliefs.as_ref().map(|b| b.normalized_weights())
+    }
+
+    /// Check if beliefs uniquely determine every unknown card's owner.
+    /// If so, return the fully resolved GameState (perfect information) for direct DD solve.
+    fn try_resolve_position(&self, state: &GameState, observer: u8) -> Option<GameState> {
+        let beliefs = self.beliefs.as_ref()?;
+        let raw = beliefs.raw_weights();
+
+        let mut played = state.played_cards;
+        for i in 0..4 {
+            let c = state.current_trick[i];
+            if c != crate::card::EMPTY {
+                played |= 1u32 << c;
+            }
+        }
+        let known = state.hands[observer as usize] | played;
+        let unknown = crate::card::ALL_CARDS ^ known;
+
+        if unknown == 0 {
+            return Some(*state); // All cards already known.
+        }
+
+        let mut hands = [0u32; 4];
+        hands[observer as usize] = state.hands[observer as usize];
+
+        for card in crate::card::CardIter(unknown) {
+            let mut owner: Option<u8> = None;
+            for p in 0..4u8 {
+                if p == observer {
+                    continue;
+                }
+                if raw[p as usize][card as usize] > 0.0 {
+                    if owner.is_some() {
+                        return None; // Multiple candidates — not resolved.
+                    }
+                    owner = Some(p);
+                }
+            }
+            let p = owner?;
+            hands[p as usize] |= 1u32 << card;
+        }
+
+        // Verify card counts match original state.
+        for p in 0..4u8 {
+            if card_count(hands[p as usize]) != card_count(state.hands[p as usize]) {
+                return None;
+            }
+        }
+
+        let mut resolved = *state;
+        resolved.hands = hands;
+        Some(resolved)
     }
 
     pub fn search(
@@ -278,9 +440,60 @@ impl IsDdSearch {
         let team = GameState::player_team(observer);
         let maximizing = team == 0; // NS maximizes, EW minimizes
 
+        if config.early_termination {
+            // Forced move: only 1 legal action — skip search entirely.
+            let legal = state.legal_actions();
+            if legal.count_ones() == 1 {
+                let card = legal.trailing_zeros() as u8;
+                return IsDdResult {
+                    best_action: card,
+                    card_scores: vec![(card, 81.0)],
+                    determinizations: 0,
+                };
+            }
+
+            // Resolved position: beliefs uniquely determine all card locations.
+            // Single DD solve gives the exact answer — no determinization needed.
+            if let Some(resolved) = self.try_resolve_position(state, observer) {
+                // Feed the resolved hands as a single particle for elephant memory.
+                if config.use_elephant_memory {
+                    if let Some(ref mut elephant) = self.elephant {
+                        elephant.add_particles(&[resolved.hands]);
+                    }
+                }
+
+                let scores = solve_with_scores(&resolved, Some(&mut self.tt_buf));
+                let mut card_scores = Vec::new();
+                let mut best_action = legal.trailing_zeros() as u8;
+                let mut best_avg: f32 =
+                    if maximizing { f32::NEG_INFINITY } else { f32::INFINITY };
+
+                for i in 0..scores.count {
+                    let (card, ns_pts) = scores.scores[i];
+                    let avg = ns_pts as f32;
+                    card_scores.push((card, avg));
+                    let better = if maximizing { avg > best_avg } else { avg < best_avg };
+                    if better {
+                        best_avg = avg;
+                        best_action = card;
+                    }
+                }
+
+                return IsDdResult {
+                    best_action,
+                    card_scores,
+                    determinizations: 1,
+                };
+            }
+        }
+
         // Score accumulators: sum of NS points per card, count per card
         let mut score_sum = [0i64; 32];
         let mut score_count = [0u32; 32];
+
+        // Collect determinized hands for elephant memory.
+        let store_particles = config.use_elephant_memory && self.elephant.is_some();
+        let mut det_hands: Vec<[u32; 4]> = Vec::new();
 
         // Scale time budget by cards remaining
         let cards_left = card_count(state.hands[observer as usize]);
@@ -318,6 +531,11 @@ impl IsDdSearch {
                 }
             };
 
+            // Store hand assignment for elephant memory.
+            if store_particles {
+                det_hands.push(det_state.hands);
+            }
+
             let scores = solve_with_scores(&det_state, Some(&mut self.tt_buf));
 
             for i in 0..scores.count {
@@ -328,6 +546,13 @@ impl IsDdSearch {
 
             successful_dets += 1;
             det_count += 1;
+        }
+
+        // Feed determinized hands into elephant memory.
+        if store_particles && !det_hands.is_empty() {
+            if let Some(ref mut elephant) = self.elephant {
+                elephant.add_particles(&det_hands);
+            }
         }
 
         // Build result: pick best card based on aggregated scores

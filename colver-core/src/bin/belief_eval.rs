@@ -363,7 +363,6 @@ fn play_match(
     let nn_config = IsDdConfig {
         time_limit_ms: Some(time_ms),
         use_nn_beliefs: true,
-        use_hard_constraints: false,
         ..Default::default()
     };
     let heur_config = IsDdConfig {
