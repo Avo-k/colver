@@ -42,7 +42,7 @@ if doudou_available:
 else:
     print("[server] No DouDou50 model found and download failed")
 
-# Bid NN model path (DD-trained bidder)
+# Bid NN model path
 _bid_model = _colver_pkg.bid_model_path()
 if _bid_model is None:
     try:
@@ -53,9 +53,9 @@ if _bid_model is None:
 
 BID_MODEL_PATH = str(_bid_model) if _bid_model else None
 if _bid_model:
-    print(f"[server] Bid à DD model available at {BID_MODEL_PATH}")
+    print(f"[server] Bid model available at {BID_MODEL_PATH}")
 else:
-    print("[server] No Bid à DD model found, using improved_v2 fallback")
+    print("[server] No bid model found, using improved_v2 fallback")
 
 # Belief net model path (NN-based card location prediction for IS-DD)
 _belief_model = _colver_pkg.belief_model_path()
