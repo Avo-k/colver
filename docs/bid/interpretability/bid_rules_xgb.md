@@ -1,519 +1,234 @@
-# Bid Rules — Distilled from NN V2
+# Bid Rules — Distilled from NN V5 (champion, 2026-04-19)
 
-Rules extracted by training interpretable models (Decision Trees, XGBoost) on 200,000 random deals per scenario, evaluated by the bid NN V2 (512-hidden, 3-layer dueling DQN trained on DD oracle rewards).
+Rules extracted by training interpretable models (Decision Trees depth 5-6, XGBoost depth 5 / 300 trees) on 200,000 random deals per scenario, evaluated by the **bid_v5_isdd** NN (512-hidden, 3-layer dueling DQN, 113-dim score-aware v2 obs, 25M training steps on IS-DD-only reward pool). Distillation performed at **neutral match score** (my_score = opp_score = 0).
 
-**Accuracy of the distilled rules vs the NN:** ~93% for opening, ~85-90% for responses.
+**Accuracy of the distilled rules vs the NN:** XGBoost per-deal: 92% opening, 94-97% passes, 80% partner/opp responses.
 
-## Quick Reference: trump_score
+For the historical v2 analysis (Bid a Dede, DD oracle reward, pre-rule-change), see [bid_rules_xgb_v2.md](bid_rules_xgb_v2.md).
 
-`trump_score = evaluate_for_trump(hand, suit)` is the single most predictive feature. It combines:
+## TL;DR — What changed between v2 and v5
 
-| Card (as trump) | Points | Card (side suit) | Points |
-|-----------------|--------|------------------|--------|
-| Valet           | 8      | As               | +3     |
-| 9               | 6      | Coupe (0 cartes) | +3     |
-| As              | 4      | Singleton        | +1     |
-| 10              | 3      |                  |        |
-| Roi             | 1      |                  |        |
-| Dame            | 1      |                  |        |
+Three concurrent shifts happened between v2 (end of March 2026) and v5 (April 2026):
 
-**+ bonus longueur atout:** max(0, nb_atouts - 2) × 2
+1. **Reward signal:** DD oracle Q-values → real DMC/IS-DD points (v5_max uses `max(DMC, ISDD)`, v5_isdd — production — uses IS-DD only).
+2. **Score context:** 5 precomputed features `(s_me/2000, s_opp/2000, win_prob, leader_dist, diff)` appended to the 108-dim base obs.
+3. **Scoring rules** (FFB update 2026-04-16): surcoinche ×3 (was ×4), contré/surcontré base 160 + contrat×mult (was 320/640 + contrat×mult), capot is a regular 250-contract (was flat 500/1000/2000).
 
-Exemples: J9 + 2 petits + A latéral = 8+6+2+3 = **19**. J seul + 3 As latéraux = 8+9 = **17**.
+The distilled rules show **three qualitative shifts**:
+
+- **Hand strength dominates single features.** In v2, `has_jack` alone drove 47.6% of the opening decision. In v5 it's `trump_score` (37.2%) with `has_jack` at 14.2% — the network uses the holistic evaluator as its primary signal instead of gating on one card.
+- **Much more selective opening on marginal hands.** J alone + 2 atouts went from 91% bid → **57% bid**. 9 alone + 2 atouts went from 10% → **1%**. v5 pass-through on weak trump is almost total.
+- **Stronger partnership in response.** Holding 3+ cards in partner's suit: v2 91%, **v5 99.3%**. Partner support is now almost automatic when long.
+
+Defense is largely unchanged: coinche rate 17% → 15%, same trump profile (~2 atouts, 3.5 cartes dans la couleur adverse). The main shift is within defense: pos3 coinche rate dropped (28% → 18%), pos4 rose (11% → 16%).
 
 ---
 
 ## 1. Ouverture (Position 1)
 
-**Taux global:** 80% des mains sont annoncées, 20% passent.
+**v5: 75.8% annonce, 24.2% passe** (v2: 80% / 20%).
 
-### Règle simple (92.8% de concordance avec le NN)
+### Importance des features (XGBoost per-deal)
 
-```
-1. As-tu le VALET d'atout ?
-   OUI → aller en 2
-   NON → aller en 3
+| # | Feature (v5) | v5 imp | v2 imp | Δ |
+|---|--------------|-------:|-------:|---|
+| 1 | **trump_score** | **37.2%** | — | — (pas top-5 en v2) |
+| 2 | has_jack | 14.2% | **47.6%** | −33 pp |
+| 3 | trump_count | 13.3% | 12.1% | +1 |
+| 4 | trump_points | 11.3% | — | — |
+| 5 | has_nine | 7.1% | 13.3% | −6 pp |
+| 6 | has_ace | 6.4% | 7.8% | −1 |
 
-2. Avec Valet:
-   - J + ≥ 2 atouts (sans As d'atout)  → ANNONCE
-   - J + As atout + ≥ 2 atouts + score > 15  → ANNONCE
-   - J seul (1 atout) + score > 13.5 + 2e couleur forte  → ANNONCE (rare)
-   - J seul (1 atout) sinon  → PASSE
+**Lecture :** le v5 ne gate plus sur "ai-je le Valet ?" en premier. Il lit une évaluation continue (`trump_score` = combine J/9/A, bonus longueur, coupes/as latéraux) puis affine avec `has_jack`. Cohérent avec son entraînement sur points réels : moins d'asymétrie 0/1 à apprendre.
 
-3. Sans Valet:
-   - 9 + ≥ 3 atouts (sans As d'atout)  → ANNONCE
-   - 9 + As atout + ≥ 3 atouts + coupe  → ANNONCE
-   - Ni J ni 9 + coupe + peu d'as totaux (≤1)  → ANNONCE (distribution)
-   - Sinon  → PASSE
-```
+### Table de référence par composition d'atout (pos1)
 
-### Table de référence par composition d'atout
+| Atout | 1 carte | 2 cartes | 3 cartes | 4 cartes | 5+ cartes |
+|-------|--------:|---------:|---------:|---------:|----------:|
+| **J + 9** | — | 96% (v2 99%) | 100% | 100% | 100% |
+| **J seul** | 2% (v2 **28%**) | **57%** (v2 **91%**) | 98% (v2 99%) | 100% | 100% |
+| **9 seul** | — | **1%** (v2 10%) | 65% (v2 73%) | 98% (v2 93%) | 100% |
+| **Ni J/9** | — | 0% (v2 1%) | 5% (v2 9%) | **64%** (v2 47%) | 100% (v2 94%) |
 
-| Atout      | 1 carte | 2 cartes | 3 cartes | 4 cartes | 5+ cartes |
-|------------|---------|----------|----------|----------|-----------|
-| **J + 9**  | —       | 99%      | 100%     | 100%     | 100%      |
-| **J seul** | 28%     | **91%**  | **99%**  | 100%     | 100%      |
-| **9 seul** | 1%      | 10%      | **73%**  | **93%**  | 100%      |
-| **Ni J/9** | —       | 1%       | 9%       | 47%      | 94%       |
+**Deux shifts opposés :**
+- **Plus prudent sur les mains courtes J/9-only** : le v5 sait qu'une main "J seul + 2 atouts" (57%) doit être filtrée par `trump_score` — sans as latéraux ni coupes c'est un piège.
+- **Plus agressif sur la longueur sans honneur** : ni J ni 9 + 4 atouts passe de 47% à 64%. La longueur pure suffit désormais.
 
-### Importance des features (XGBoost)
+### Seuils trump_score (pos1)
 
-1. **has_jack** — 47.6% (domine de loin)
-2. **has_nine** — 13.3%
-3. **trump_count** — 12.1%
-4. **has_ace** — 7.8% (attention: négatif avec J !)
-5. **side_voids** — 7.6%
+| trump_score | v5 bid rate |
+|-------------|-------------|
+| [0, 5)  | 0% |
+| [5, 10) | 15% |
+| [10, 14) | 49% |
+| [14, 17) | 73% |
+| [17, 20) | 92% |
+| [20, 25) | 99.4% |
+| [25+)    | 100% |
 
-### Le piège de l'As d'atout
-
-Surprise du NN: **l'As d'atout combiné au Valet est souvent un signal de passe**, pas d'annonce. Avec J+A d'atout et 2 cartes, le NN annonce moins (91%) que J sans A (91%). Avec 4+ atouts et J+A, c'est encore pire.
-
-Explication probable: l'As prend de la place sans apporter de contrôle (contrairement au 9 qui vaut 14 points en atout). Le NN préfère une main concentrée (J+9+petits) à une main étalée (J+A+petits).
+Le "coude" est autour de `trump_score = 12` (50% bid). En v2 le coude dépendait fortement de `has_jack` plus que du score composite.
 
 ---
 
 ## 2. Après passes (Positions 2-4)
 
-### Position 2 (après 1 passe)
+**v5: 80.6% annonce** (v2 combined: ~78%). Globalement similaire, mais redistribution interne.
 
-**Taux:** 66% annonce, 34% passe — plus sélectif qu'en ouverture.
+### Évolution par position
 
-Le NN est **plus strict** en position 2 car l'adversaire suivant peut encore enchérir. Les seuils sont plus hauts qu'en ouverture (score ≥ 14 au lieu de ≥ 10).
+| Position | v2 bid | v5 bid | Δ |
+|----------|-------:|-------:|---|
+| pos2 (1 passe) | 66% | **74.4%** | +8 pp (plus agressif) |
+| pos3 (2 passes) | **95%** | 86.7% | −8 pp (moins agressif) |
+| pos4 (3 passes) | 75% | 80.9% | +6 pp (plus agressif) |
 
-### Position 3 (après 2 passes — partenaire a passé)
+**Lecture :** le v5 a rééquilibré. v2 était quasi-obligatoire en pos3 ("protect"), le v5 sait qu'annoncer aux cartes faibles en pos3 coûte plus que ça ne rapporte — même position 3 mérite un minimum de jeu.
 
-**Taux:** 95% annonce — le NN ouvre quasi-systématiquement.
+### Tables de référence par position (v5)
 
-C'est la position "protective": si tu passes, la donne est void (4 passes = redistribution). Le NN annonce même avec des mains très faibles (score ≥ 5).
+| Atout | pos1 | pos2 | pos3 | pos4 |
+|-------|-----:|-----:|-----:|-----:|
+| **J + 9** (2 atouts) | 96% | 97% | 100% | 99% |
+| **J seul** (1 atout) | 2% | 2% | **20%** | 10% |
+| **J seul** (2) | 57% | 52% | **89%** | 70% |
+| **J seul** (3) | 98% | 99% | 100% | 100% |
+| **9 seul** (2) | 1% | 2% | **22%** | 15% |
+| **9 seul** (3) | 65% | 57% | 85% | 69% |
+| **9 seul** (4) | 98% | 99% | 100% | 100% |
+| **Ni J/9** (3) | 5% | 5% | **24%** | 20% |
+| **Ni J/9** (4) | 64% | 55% | 92% | 76% |
 
-Les niveaux montent: 90 est le plus fréquent (71k), devant 100 (43k) et 80 (40k).
+Position 3 reste la plus offensive sur les mains très faibles (le "sauvetage" de la donne), mais bien moins systématique qu'en v2.
 
-### Position 4 (après 3 passes — dernier à parler)
-
-**Taux:** 75.5% annonce — position de "sauvetage".
-
-Seuils intermédiaires. Les niveaux sont conservateurs: 80 dominant (65k).
-
-### Table combinée (positions 2-4 après passes)
-
-| Atout      | 2 cartes | 3 cartes | 4 cartes | 5+ cartes |
-|------------|----------|----------|----------|-----------|
-| **J + 9**  | 95%      | 100%     | 100%     | 100%      |
-| **J seul** | 75%      | **96%**  | 100%     | 100%      |
-| **9 seul** | 40%      | **58%**  | **86%**  | 100%      |
-| **Ni J/9** | 12%      | 31%      | 53%      | 91%       |
+Position 2 reste plus stricte que pos1 (seuils similaires en v5 vs pos1, cohérent avec v2 : "l'adversaire suivant peut encore enchérir").
 
 ---
 
 ## 3. Réponse au partenaire (Partner bid 80)
 
-**Taux:** 82% annonce (pos3: 92%, pos4: 72%).
+**v5: 87.3% annonce** (v2: 82%). Globalement plus actif, mais surtout beaucoup plus **coopératif**.
 
 ### Importance des features
 
-1. **is_partner_suit** — 41.8% (le NN surenchérit quasi-systématiquement dans la couleur du partenaire)
-2. **trump_score** — 19.8%
-3. **has_jack** — 12.5%
-4. **trump_count** — 6.7%
-5. **partner_support** — 3.7% (combien de cartes dans la couleur du partenaire)
+| # | Feature | v5 imp | v2 imp |
+|---|---------|-------:|-------:|
+| 1 | **is_partner_suit** | 36.5% | 41.8% |
+| 2 | trump_score | 18.8% | 19.8% |
+| 3 | trump_count | 12.3% | 6.7% |
+| 4 | has_jack | 7.6% | 12.5% |
+| 5 | partner_support | 3.9% | 3.7% |
+| — | total_aces | 5.4% | — |
 
-### Règles de réponse
-
-```
-Partenaire annonce 80♠:
-
-1. Dans SA couleur (♠):
-   - J'ai le J d'atout  → 90 (surenchère obligatoire si ≥ 2 atouts)
-   - J'ai le 9 + ≥ 2 cartes  → 90
-   - ≥ 3 cartes dans sa couleur + As latéral  → 90
-   - 0-1 cartes dans sa couleur + score < 7  → PASSE
-
-2. Dans UNE AUTRE couleur:
-   - J + ≥ 2 atouts + score > 12  → ANNONCE dans ma couleur
-   - Score > 16 dans ma couleur  → ANNONCE
-   - Sinon  → PASSE ou soutien dans sa couleur
-```
+Redistribution : `trump_count` double d'importance (6.7% → 12.3%) parce que le v5 reconnaît mieux quand supporter avec de la longueur, et `has_jack` perd du poids (12.5% → 7.6%) — la possession du Valet en réponse n'est plus la seule raison de monter.
 
 ### Support par nombre de cartes dans la couleur du partenaire
 
-| Cartes dans sa couleur | Taux d'annonce |
-|------------------------|---------------|
-| 0                      | 87%           |
-| 1                      | 71%           |
-| 2                      | 79%           |
-| 3                      | 91%           |
-| 4                      | 97%           |
-| 5                      | 99%           |
+| Cartes dans sa couleur | v2 bid | v5 bid | Δ |
+|------------------------|-------:|-------:|---|
+| 0 | 87% | 92% | +5 |
+| 1 | **71%** | **74%** | +3 |
+| 2 | 79% | 86% | +7 |
+| 3 | 91% | **99.3%** | **+8** |
+| 4 | 97% | 99.9% | +3 |
+| 5 | 99% | 99.2% | — |
 
-Observation intéressante: 0 cartes → 87% (le NN annonce dans une autre couleur !). Le creux à 1 carte est surprenant.
+**Shift majeur :** avec 3 cartes du partenaire, le v5 soutient quasi-systématiquement (99%). En v2 il y avait 9% de passes / contre-annonces dans cette config. Le v5 lit ça comme "on va gagner ce contrat ensemble" et monte.
+
+Le creux à 1 carte subsiste (moins que 0 ou 2) — c'est une main où ni le support ni le contre-annonce ne sont clairement bons.
 
 ---
 
 ## 4. Défense (Adversaire bid 80)
 
-**Taux:** 55% contre-annonce, 17% coinche, 28% passe.
+**v5: 58.5% contre-annonce, 14.9% coinche, 26.6% passe** (v2: 55% / 17% / 28%).
+
+Le volume d'action reste quasi-identique (73% actif vs 72% en v2). Mais la **distribution par position change** :
+
+| Position | v5 coinche | v2 coinche | Δ |
+|----------|----------:|----------:|---|
+| pos2_opp80 | ~11% | 11% | 0 |
+| pos3_opp80 | **~18%** | **28%** | **−10 pp** |
+| pos4_opp80 | ~16% | 11% | +5 pp |
+
+**pos3 défense était sur-coinche en v2.** Avec des points réels (IS-DD au lieu de DD oracle), le v5 a réalisé que le coinche en pos3 sur adversaire qui ouvre à 80 est souvent perdant — le partenaire n'a pas signalé et on joue avec peu d'information. Il préfère maintenant contre-annoncer dans sa couleur (niveaux 90-100 fréquents).
 
 ### Importance des features
 
-1. **opp_suit_cards** — 24.7% (combien de cartes J'AI dans la couleur de l'adversaire)
-2. **side_voids** — 16.0%
-3. **best_side_length** — 10.9%
-4. **is_opp_suit** — 8.8%
-5. **has_jack** — 7.3%
-6. **trump_score** — 5.1%
+| # | Feature | v5 imp | v2 imp |
+|---|---------|-------:|-------:|
+| 1 | **is_opp_suit** | **32.7%** | 8.8% |
+| 2 | trump_score | 31.6% | 5.1% |
+| 3 | has_jack | 11.2% | 7.3% |
+| 4 | trump_count | 7.2% | — |
+| 5 | has_ace | 4.4% | — |
+| — | opp_suit_cards | (top-10) | 24.7% |
+| — | side_voids | (top-10) | 16.0% |
+| — | best_side_length | 4.3% | 10.9% |
 
-### La clé: combien de cartes dans la couleur adverse
+**Shift majeur :** le v5 regarde d'abord **la couleur de l'adversaire** (est-ce la mienne ?) puis son propre `trump_score`. `opp_suit_cards` (combien de cartes j'ai dans sa couleur) perd du poids relatif : en v2 c'était LE signal du coinche, en v5 c'est intégré dans le mix.
 
-```
-Adversaire annonce 80♠, combien ai-je de ♠ ?
+### Profil du coinche (v5)
 
-- 0-1 cartes ♠  → annonce dans une autre couleur (souvent 90)
-- 2 cartes ♠    → annonce si score > 14 dans ma couleur OU coupe
-- 3 cartes ♠    → difficile, passe sauf score > 14 + coupe
-- 4+ cartes ♠   → PASSE (ses cartes sont des atouts contre moi)
-```
+| Mesure | v5 | v2 |
+|--------|---:|---:|
+| Taux global (opp80) | 14.9% | 17% |
+| Avg trump_score | 11.5 | 11.8 |
+| Avg trump_count | 2.0 | 2.0 |
+| % has J | 29.1% | 29% |
+| % has 9 | 26.3% | 25% |
+| Avg cards in opp suit | 3.5 | 3.3 |
 
-### Le coinche
-
-Le NN coinche dans 17% des cas quand l'adversaire annonce 80. Profil du coinche:
-- **Score atout moyen: 11.8** (pas besoin d'un gros jeu !)
-- **Nb atouts moyen: 2.0** — souvent avec peu d'atout
-- **29% ont le J, 25% ont le 9** dans la couleur adverse
-- **3.3 cartes en moyenne dans la couleur adverse** — le coinche se fait avec BEAUCOUP de cartes dans la couleur de l'adversaire (c'est logique: ça veut dire qu'il a peu d'atouts)
-
-**Règle de coinche simplifiée:**
-```
-Coinche si:
-  - ≥ 3 cartes dans la couleur adverse (tu tiens ses atouts)
-  - Ou J/9 de sa couleur + ≥ 2 cartes
-  - Position 3 coinche plus facilement (28%) que position 2 (11%) ou 4 (11%)
-```
+**Quasi-identique.** Le v5 coinche dans les mêmes situations que v2, juste légèrement moins souvent et à des positions redistribuées.
 
 ---
 
 ## 5. Niveaux d'annonce
 
-Quand le NN annonce, voici la distribution des niveaux en ouverture:
+Distribution sur scénario `opp80` (défense) avec contre-annonce (v5) :
 
-| Niveau | Fréquence | Conditions typiques |
-|--------|-----------|---------------------|
-| 80     | 48%       | J + 2 atouts, ou 9 + 3-4 atouts |
-| 90     | 22%       | J + 2-3 atouts + 1 As latéral |
-| 100    | 15%       | J + 3+ atouts + As/coupe, ou J9 + 3 atouts |
-| 110    | 11%       | J9 + 4 atouts, ou J + 4+ avec distribution |
-| 120    | 3.2%      | J9 + 4-5 atouts + coupes, score > 25 |
-| 130+   | 0.3%      | J9 + 5+ atouts + 2 coupes, score > 28 |
+| Position | Niveau dominant | 90% | 100 | 110 | 120+ |
+|----------|----------------:|----:|----:|----:|-----:|
+| pos2_opp80 | 90 | 70% | 16% | 13% | <1% |
+| pos3_opp80 | 90 | 50% | 26% | 22% | 2% |
+| pos4_opp80 | 90 | 65% | 28% | 10% | 1% |
 
-**Seuils approximatifs par trump_score:**
-
-| trump_score | Niveau typique |
-|-------------|---------------|
-| 10-14       | 80            |
-| 14-17       | 80 (voire 90 avec As latéral) |
-| 17-20       | 80-100        |
-| 20-25       | 100-110       |
-| 25-30       | 110-120       |
-| 30+         | 120-130+      |
+Le 90 reste le niveau-par-défaut en défense. Les contres à 110 sont plus fréquents en pos3 (22%) : quand le v5 n'a pas coinché mais a une main qui surpasse clairement, il monte plus haut.
 
 ---
 
-## 6. SHAP: Quelles cartes comptent vraiment ?
+## 6. Limites de cette analyse
 
-Analyse SHAP directe sur le réseau de neurones (contribution marginale Monte Carlo sur 20k mains).
-
-### Contribution marginale de chaque rang en tant qu'atout
-
-| Rang | Contribution | Points atout | Verdict |
-|------|-------------|-------------|---------|
-| **Valet** | **+0.28** | 20 | Roi absolu, loin devant tout |
-| **9** | **+0.15** | 14 | Essentiel, mais 2× moins que J |0?
-| 7 | +0.07 | 0 | Masse d'atout (positif !) |
-| 8 | +0.06 | 0 | Idem |
-| Dame | +0.07 | 3 | Comme un petit |
-| Roi | +0.06 | 4 | Comme un petit |
-| **10** | **+0.05** | 10 | **Pire qu'un 7 !** Vulnérable |
-| **As** | **-0.02** | 11 | **NEGATIF.** L'As d'atout nuit. |
-
-### L'As d'atout: le piège confirmé par 3 méthodes
-
-L'As d'atout a une contribution **négative** à l'annonce. Confirmé par :
-- XGBoost SHAP: `has_ace` high → -1.95 (fortement anti-bid)
-- Monte Carlo marginal: A♠ = -0.04, A♥ = -0.03, A♦ = -0.03, A♣ = -0.03
-- Dependence plot: has_ace=1 crée des SHAP entre -1 et -4
-
-**Pourquoi l'As d'atout est toxique:**
-1. L'As est **battu** par le J et le 9 (qui valent J=20, 9=14 pts)
-2. Il **occupe une place** sans apporter de contrôle au jeu
-3. Il **remplace** une carte latérale qui pourrait être une coupe ou un As latéral
-4. 11 points dans les mains de l'adversaire s'il a J ou 9
-
-**Règle pour le joueur humain:** Ne pas compter l'As d'atout comme un atout. Le traiter comme une carte neutre voire légèrement négative pour la décision d'annoncer. Un 7 d'atout de plus est plus utile qu'un As d'atout.
-
-### Contribution "overall" (bid advantage, toutes couleurs)
-
-```
-J:   +0.043  ███████████████████  (le seul vrai moteur)
-9:   +0.010  ████                 (4× moins que J)
-7,8: ~0.000                       (neutre)
-Q,K: ~0.000                       (neutre)
-10:  -0.014  -------              (poids mort)
-A:   -0.032  ---------------      (toxique)
-```
-
-### Leçon contre-intuitive: le 10 est pire qu'un 7
-
-Un 7 d'atout (+0.07) contribue **plus** à l'annonce qu'un 10 d'atout (+0.05). Le 10 vaut 10 points mais est vulnérable — capturable par J, 9, et As adverses. Le 7 ne vaut rien en points mais c'est un atout de plus qui fait la longueur.
-
-### Plots SHAP
-
-Tous dans `data/shap/`: `shap_card_heatmap.png`, `shap_card_contributions.png`, `shap_xgb_summary.png`, `shap_xgb_dep_has_ace.png`.
+- **Score neutre.** Toutes les évaluations sont faites avec `my_score = opp_score = 0`. Le v5 possède 5 features score qui sont neutralisées ici. En fin de match (par ex. 1800-1400), le comportement peut diverger sensiblement — ce cas n'est pas couvert. Pour explorer : `./target/release/distill_bid models/bid_v5_isdd/bid_nn_final.bin 50000 out.csv 1800 1400`.
+- **Pas de SHAP.** Le doc v2 ([bid_rules_xgb_v2.md](bid_rules_xgb_v2.md) §6-7) contient une analyse SHAP / Monte Carlo détaillée (As toxique, 10 poids mort, belote, combos) non re-faite ici. La plupart des conclusions qualitatives restent valables (l'As d'atout n'est toujours pas un gros facteur positif dans les importances v5), mais les magnitudes numériques datent de v2.
+- **Scénarios fixés.** Seuls 9 scénarios sont générés (pos1_open, pos2-4 after passes, partner80, opp80 × 4 suits). Pas de situations post-coinche, post-surcoinche, ou après deux bids adverses.
 
 ---
 
-## 7. Analyse par combinaisons de cartes
-
-Expériences contrôlées : on fixe les atouts et on moyenne sur des milliers de mains aléatoires.
-
-### Valet + quel 2e atout ?
-
-Avec exactement 2 atouts (J + X), le reste aléatoire :
-
-| Combo | Advantage | Verdict |
-|-------|-----------|---------|
-| **J+9** | **+0.085** | De loin le meilleur duo |
-| J+7 | +0.054 | Un petit > un gros ! |
-| J+Q | +0.052 | |
-| J+8 | +0.051 | |
-| J+K | +0.047 | |
-| J+10 | +0.024 | Moitié d'un petit |
-| **J+A** | **-0.030** | **Pire que J seul !** |
-
-Le J seul (+0.043) est meilleur que J+A (-0.030). C'est-à-dire que l'As d'atout fait activement du mal, même avec le Valet.
-
-### 3 atouts : classement des trios
-
-| Trio | Advantage |
-|------|-----------|
-| **J+9+7** | **+0.144** |
-| J+9+K | +0.142 |
-| J+9+8 | +0.141 |
-| J+7+8 | +0.135 |
-| J+K+Q | +0.133 |
-| J+9+10 | +0.125 |
-| J+10+K | +0.116 |
-| 9+7+8 | +0.096 |
-| 9+K+Q | +0.092 |
-| **J+9+A** | **+0.077** |
-| J+A+7 | +0.070 |
-| J+A+K | +0.069 |
-
-**J+9+7 > J+9+A** : le 7 vaut mieux que l'As comme 3e atout ! (delta = +0.07 en faveur du 7)
-
-### Ajout d'un 4e atout à J+9+7
-
-| Ajout | Total | Delta vs base |
-|-------|-------|---------------|
-| **+K** | +0.172 | **+0.039** |
-| +8 | +0.171 | +0.038 |
-| +Q | +0.170 | +0.037 |
-| +10 | +0.156 | +0.023 |
-| **+A** | **+0.104** | **-0.028** |
-
-Ajouter l'As fait **baisser** la valeur de la main de -0.028 ! Tout petit (K, 8, Q) apporte +0.04 de bonus de longueur, mais l'As détruit cet avantage.
-
-### Longueur d'atout
-
-Avec J+9 + N petits :
-
-| Total trump | Advantage | Delta par carte |
-|-------------|-----------|-----------------|
-| 2 (J+9) | +0.123 | — |
-| 3 | +0.154 | +0.031 |
-| 4 | +0.176 | +0.022 |
-| 5 | +0.199 | +0.022 |
-| 6 | +0.218 | +0.019 |
-
-Rendement décroissant : la 3e carte vaut +0.031, la 6e vaut +0.019. Mais chaque carte compte.
-
-Avec J seul + petits :
-
-| Total trump | Advantage |
-|-------------|-----------|
-| 1 (J seul) | +0.043 |
-| 2 | +0.096 |
-| 3 | +0.133 |
-| 4 | +0.172 |
-| 5 | +0.218 |
-
-Note : **J + 4 petits (5 atouts) = J9 + 4 petits (6 atouts)**. La longueur compense le manque du 9.
-
-### Coupes vs As latéraux
-
-Avec J+9+7 fixés, comparaison directe :
-
-| Configuration | Advantage |
-|---------------|-----------|
-| **0 as, 2 coupes** | **+0.222** |
-| **0 as, 1 coupe** | **+0.202** |
-| 1 as, 1 coupe | +0.122 |
-| 1 as, 0 coupe | +0.114 |
-| 2 as, 0 coupe | +0.075 |
-| 3 as, 0 coupe | +0.044 |
-
-**Une coupe vaut ~3 As latéraux.** Et les As latéraux sont à rendement décroissant (le 2e As vaut moins que le 1er, le 3e encore moins). Les coupes sont à rendement croissant !
-
-Les As latéraux **nuisent** au-delà d'un certain point : ils prennent des places dans les couleurs latérales, empêchant les coupes et la courte distribution.
-
-### 10 latéraux
-
-Les 10 sont légèrement négatifs aussi : 0 → +0.151, 1 → +0.139, 2 → +0.121, 3 → +0.094.
-
-### Archétypes de mains
-
-| Archétype | Advantage | Description |
-|-----------|-----------|-------------|
-| 6 trump J9 | +0.212 | La machine |
-| 5 trump J9 | +0.190 | Très fort |
-| J9 + 2 coupes | +0.176 | Distribution > longueur |
-| J9 + 2 petits | +0.171 | J9 garbage |
-| J9 + belote (KQ) | +0.167 | Belote bonus marginal |
-| J9 + 1 coupe | +0.163 | Standard |
-| 5 trump sans J/9 | +0.130 | La masse compense |
-| **Monster J9A10** | **+0.088** | **Pire que J9+2 petits !** |
-| 9 + 2 petits | +0.086 | Marginal |
-| J9 + 0 coupe + 2 as | +0.076 | Les as ne compensent pas |
-| J seul | +0.045 | Fragile |
-| 3 as latéraux, no J | -0.017 | **"Aux as" = passe** |
-
-**Le "monster" J9A10 (+0.088) est nettement pire que J9+2 petits (+0.171).** L'As et le 10 d'atout prennent des places de longueur sans apporter assez de contrôle.
-
-### Belote (K+Q d'atout)
-
-| Contexte | K+Q ensemble | K + petit | Q + petit | 2 petits | Synergie K×Q |
-|----------|-------------|-----------|-----------|----------|-------------|
-| Avec J+9 | +0.170 | +0.172 | +0.170 | +0.166 | **-0.006** |
-| Avec J seul | +0.127 | +0.116 | +0.119 | +0.109 | **+0.001** |
-| Avec 9 seul | +0.070 | +0.061 | +0.063 | — | — |
-
-**La belote n'aide pas pour la décision bid/pass** — le K et la Q valent chacun ~+0.007 (comme des petits). Mais la belote a un **effet majeur sur le niveau** :
-
-Avec J+9 et 4 atouts, la belote shift massivement vers les niveaux hauts :
-
-| Config | Avg level | % à 120 |
-|--------|-----------|---------|
-| J9+KQ | 114 | **37%** |
-| J9+87 | 112 | 22% |
-
-Le delta Q entre belote et non-belote **augmente avec le niveau** : +0.03 à 110, +0.04 à 120, +0.05 à 130, +0.08 à 140. Le NN a appris que la belote garantit 20 points bonus, ce qui sécurise un contrat plus haut.
-
-**Règle pour le joueur : la belote ne change pas la décision d'annoncer, mais elle autorise +10 à +20 points de plus sur le niveau.**
-
-### Combos latéraux
-
-| Combo latéral | Delta vs sans |
-|---------------|---------------|
-| **K+Q même couleur** | **+0.025** (positif !) |
-| As latéral | -0.054 (négatif) |
-| A+10 même couleur | -0.055 (pire) |
-
-**K+Q latéral est le seul combo de cartes hautes qui aide.** C'est une source de plis défensive. L'As seul et surtout A+10 ensemble sont des poids morts — trop de cartes dans une couleur qu'on voudrait courte pour couper.
-
-### Résumé pour le joueur humain
-
-1. **Longueur > Honneurs** (sauf J et 9 qui sont spéciaux)
-2. **Coupes > As latéraux** — une coupe vaut 3 As
-3. **L'As d'atout est toxique** — un 7 d'atout est meilleur
-4. **Le 10 d'atout est un poids mort** — mieux vaut un 8
-5. **J+9 est le duo magique** — le gap avec J+A ou J+10 est énorme
-6. **"Annoncer aux As" ne fonctionne pas** — 3 As latéraux sans J ni 9 = passe
-7. **La belote d'atout n'aide pas à annoncer** — K+Q = deux petits pour la décision
-8. **K+Q latéral aide** (+0.025) — seul combo de cartes hautes qui apporte quelque chose
-9. **A+10 latéral nuit** — trop de cartes dans une couleur = pas de coupe
-
----
-
-## 8. Le 9 sans Valet — deep dive par position
-
-### Taux d'annonce par position et longueur
-
-| Trump | Pos1 | Pos2 | Pos3 | Pos4 |
-|-------|------|------|------|------|
-| 1 (9 seul) | 70% | 75% | **65%** | 96% |
-| 2 | 71% | 82% | **64%** | 97% |
-| 3 | 79% | 95% | **75%** | 99% |
-| 4 | 98% | 100% | **97%** | 100% |
-| 5 | 100% | 100% | 100% | 100% |
-
-**Position 3 est la plus prudente pour le 9.** Contrairement au J qui annonce à 95% en pos3 ("protection"), le NN sait que le 9 seul n'est pas assez fort pour protéger. Il passe dans 25-36% des cas.
-
-**Position 4 annonce quasi-tout** — dernier à parler, mieux vaut tenter que laisser mourir la donne.
-
-**Position 2 est agressive** — plus que Pos1 ! Le NN profite de l'information que l'adversaire a passé.
-
-### Le gap J vs 9 varie énormément selon la position
-
-| Trump | Pos1 | Pos2 | Pos3 | Pos4 |
-|-------|------|------|------|------|
-| 2 | J+23pp | J+17pp | **J+29pp** | J+3pp |
-| 3 | J+20pp | J+5pp | **J+25pp** | J+1pp |
-| 4 | J+3pp | J+0pp | J+4pp | J+0pp |
-
-**Pos4 annule le gap** — avec 3+ atouts, le 9 annonce autant que le J.
-**Pos3 creuse le gap** — le J protège, le 9 non.
-**À 4+ atouts**, la longueur domine et le gap disparaît partout.
-
-Mais le **niveau** reste très différent : même quand le 9 annonce, il annonce plus bas.
-
-| Trump | J avg level (Pos3) | 9 avg level (Pos3) | Gap |
-|-------|---------------------|---------------------|-----|
-| 3 | 87 | 82 | -5 |
-| 4 | 94 | 82 | **-12** |
-| 5 | 107 | 83 | **-24** |
-
-Le 9 annonce toujours timidement (80 dominant). Le J ose monter.
-
-### 9 + quel compagnon ? (2 atouts)
-
-| Combo | Pos1 bid | Pos1 avg | Verdict |
-|-------|----------|----------|---------|
-| **9+A** | **85%** | **87** | Le meilleur ! (inverse du J) |
-| 9+10 | 75% | 85 | |
-| 9+K | 72% | 84 | |
-| 9+7 | 70% | 84 | |
-
-**L'As aide le 9** (contrairement au J). Le 9 a besoin d'un preneur de plis côté atout, l'As remplit ce rôle. Pour le J, l'As est redondant (le J est déjà le plus fort).
-
-### Les coupes transforment le 9
-
-Avec 9+7+8 (3 atouts), les coupes latérales changent tout :
-
-| Configuration | Pos1 bid | Pos3 bid |
-|---------------|----------|----------|
-| 0 ace, 0 void | 49% | 48% |
-| 1 ace, 0 void | 83% | 60% |
-| **0 ace, 1 void** | **93%** | **98%** |
-| 1 ace, 1 void | 100% | 100% |
-| 2 aces, 0 voids | 100% | 100% |
-| **0 ace, 2 voids** | **100%** (avg 93) | **100%** (avg 96) |
-
-**Une coupe fait passer de 49% à 93%.** C'est encore plus spectaculaire que pour le J.
-
-**Règle pour le joueur humain avec un 9 sans Valet :**
-1. **Pos1 (ouverture)** : 3+ atouts + coupe → annonce. 4+ atouts → annonce toujours. 2 atouts → passe sauf 9+A ou distribution.
-2. **Pos2** : plus agressif, 3 atouts suffisent.
-3. **Pos3** : être **prudent** — le 9 ne protège pas bien. 4+ atouts ou coupe nécessaire.
-4. **Pos4** : annoncer quasi-tout (97%+ avec 2+ atouts).
-
----
-
-## Méthode
-
-- **Données:** 200k mains aléatoires × 9 scénarios = 1.8M décisions du NN V2
-- **SHAP:** Monte Carlo marginal contributions (20k deals, perturbation-based)
-- **Modèles proxy:** Decision Tree (depth 5-6, ~93%) + XGBoost (~94%) + TreeExplainer SHAP
+## 7. Méthode
+
+- **Données:** 200k mains aléatoires × 9 scénarios = 7.2M lignes (4 suits × 1.8M décisions du v5)
+- **Modèle cible:** `models/bid_v5_isdd/bid_nn_final.bin` (113-dim score-aware v2 obs)
+- **Modèles proxy:** Decision Tree (depth 5-6, min_samples_leaf 200-300, class_weight balanced), XGBoost (n_estimators 200-300, max_depth 4-5, learning_rate 0.1-0.15)
 - **Fichiers source:**
-  - `colver-core/src/bin/distill_bid.rs` — génération CSV (Rust)
-  - `scripts/analysis/distill_bid.py` — entraînement des modèles proxy (Python)
-  - `scripts/analysis/shap_bid.py` — analyse SHAP (XGBoost + NN direct)
-  - `data/distill/bid_distill.csv` — données brutes (7.2M lignes)
-  - `data/distill/bid_distill_analysis.log` — log complet avec tous les arbres de décision
+  - `colver-core/src/bin/distill_bid.rs` — génération CSV (adapté v5: dispatch sur obs_dim 108/110/113)
+  - `scripts/analysis/distill_bid.py` — arbres et tables (log auto-nommé depuis le stem du CSV)
+  - `scripts/export/export_xgb_models.py` — JSON d'interprétabilité pour le web frontend
+  - `data/distill/bid_v5_distill.csv` — données brutes (1 GB)
+  - `data/distill/bid_v5_distill_analysis.log` — log complet avec arbres de décision et importances
+  - `python/colver/web/static/data/xgb_models.json` — modèles exportés pour SHAP path-based
+
+### Commandes de reproduction
+
+```bash
+# 1. Générer le CSV de distillation (~45 min, mono-thread)
+cargo build --release --bin distill_bid
+./target/release/distill_bid models/bid_v5_isdd/bid_nn_final.bin 200000 data/distill/bid_v5_distill.csv
+
+# 2. Analyser et extraire les tables / arbres
+uv run python scripts/analysis/distill_bid.py data/distill/bid_v5_distill.csv
+
+# 3. Exporter les modèles pour le frontend web
+uv run python scripts/export/export_xgb_models.py data/distill/bid_v5_distill.csv
+```
+
+Pour explorer un autre état de score, passer `my_score` et `opp_score` en 4e/5e args du binaire Rust (par ex. `... out.csv 1800 1400`).
