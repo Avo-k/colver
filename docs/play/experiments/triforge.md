@@ -88,6 +88,23 @@ In `play-only` mode:
 - Bid transitions are not recorded, bid training is skipped
 - Play opponents include 10% random for diversity
 
+### Resume gotcha (crash recovery for trained models)
+
+`--resume-play` / `--resume-bid` reload **weights only** — not the step counter, replay buffer, or epsilon schedule. A naive resume with default `--play-eps-start 0.25 --play-eps-decay 8000000` injects 25% random moves into a trained policy for millions of steps, degrading it before recovery.
+
+For fine-tune resume after a crash:
+
+```bash
+./target/release/train_joint --mode play-only \
+    --resume-bid models/bid_v3_max_20M/bid_nn_final.safetensors \
+    --resume-play models/play_v3_max/play_latest.safetensors \
+    --play-eps-start 0.05 --play-eps-end 0.01 --play-eps-decay 4000000 \
+    --steps 40000000 \
+    [other flags...]
+```
+
+This treats the resume as fine-tuning rather than fresh training. Measured cost on the `play_v3_max` run: ~1M steps to recover pre-crash win rate after a crash at 10M (vs projected ~5M with default epsilon). Only the weights survive the crash — replay buffer starts empty and pEps decay restarts from step 0.
+
 In `bid-only` mode:
 - `--resume-play` required (the frozen play model)
 - All play actions come from the frozen play NN (no random, no pool)

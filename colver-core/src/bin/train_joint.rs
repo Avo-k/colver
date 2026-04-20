@@ -239,7 +239,7 @@ fn nn_bid_fraction(step: usize, warmup: usize, handover: usize, heuristic_floor:
 
 /// Evaluate: (our_bid + our_play) vs (opp_bid + opp_play).
 /// Our play NN uses trump-relative (canonical) observations, optionally augmented with belief predictions.
-/// Checkpoint opponent uses legacy (415-dim) observations.
+/// Checkpoint opponent auto-detects obs layout: canonical (411, e.g. DouDou50 ResNet) or legacy (415, e.g. DouDou35).
 fn evaluate_play(
     play_trainer: &DuelingTrainer,
     play_hidden: usize,
@@ -438,7 +438,7 @@ fn play_match_eval_tr(
     q_total >= 2000.0
 }
 
-/// Play a match to 2000: our team uses canonical play + our bid, opponent uses legacy play + opp bid.
+/// Play a match to 2000: our team uses canonical play + our bid, opponent uses canonical or legacy play + opp bid.
 fn play_match_eval_tr_dual(
     q_net: &mut DmcNet,
     q_team: u8,
@@ -479,12 +479,20 @@ fn play_match_eval_tr_dual(
                 let (canonical_best, _) = q_net.best_action(&full_obs, canonical_mask as u32);
                 obs::card_to_physical(canonical_best, &order)
             } else {
-                // Opponent: legacy 415-dim observation
+                // Opponent: auto-detect canonical (411) vs legacy (415) from baseline obs_dim
                 let net = baseline_net.as_mut().unwrap();
-                let legacy_obs = make_observation(&state, &tracking);
-                let legal_mask = state.legal_actions() as u32;
-                let (best, _) = net.best_action(&legacy_obs, legal_mask);
-                best
+                if net.obs_dim() == OBS_DIM_TR {
+                    let order = obs::current_player_order(&state, &tracking);
+                    let canonical_mask = obs::cardset_to_canonical(state.legal_actions() as u32, &order);
+                    let canonical_obs = obs::make_observation_tr(&state, &tracking);
+                    let (canonical_best, _) = net.best_action(&canonical_obs, canonical_mask as u32);
+                    obs::card_to_physical(canonical_best, &order)
+                } else {
+                    let legacy_obs = make_observation(&state, &tracking);
+                    let legal_mask = state.legal_actions() as u32;
+                    let (best, _) = net.best_action(&legacy_obs, legal_mask);
+                    best
+                }
             };
 
             tracking.track_action(&state, action);
@@ -557,10 +565,15 @@ fn main() {
         println!("Resumed bid NN from {}", path);
     }
 
-    // Frozen play checkpoint for eval
+    // Frozen play checkpoint for eval. Canonical baselines (e.g. DouDou50) need residual ResNet forward.
     let mut eval_play_baseline: Option<DmcNet> = args.eval_play_checkpoint.as_ref().map(|path| {
-        let net = DmcNet::load(path).unwrap_or_else(|e| panic!("Failed to load {}: {}", path, e));
-        println!("Eval play baseline: {} (obs_dim={})", path, net.obs_dim());
+        let mut net = DmcNet::load(path).unwrap_or_else(|e| panic!("Failed to load {}: {}", path, e));
+        let canonical = net.obs_dim() == OBS_DIM_TR;
+        if canonical {
+            net.set_residual(true);
+        }
+        println!("Eval play baseline: {} (obs_dim={}, {})", path, net.obs_dim(),
+            if canonical { "canonical ResNet" } else { "legacy" });
         net
     });
 

@@ -9,7 +9,8 @@ DouZero-style Q-network for play. Trained via self-play with episodic returns (f
 | Name | Arch | Obs dim | Notes |
 |------|------|---------|-------|
 | **DouDou35** | 1024³ Dueling | 415 (legacy) | Original, ~1ms/move |
-| **DouDou50** (default) | 1024³ ResNet Dueling | 411 (canonical) | Skip connections layers 1-2, trained 50M steps |
+| **DouDou50** (default) | 1024³ ResNet Dueling | 411 (canonical) | Skip connections layers 1-2, trained 50M steps against bid_v2 auctions |
+| **play_v3_max** | 1024³ ResNet Dueling | 411 (canonical) | Same arch as DouDou50, 50M steps against bid_v3_max_20M auctions. Reaches 51% in-training eval vs DouDou50+bid_v2 (near-parity). The bid_v3_max advantage doesn't transfer to DMC play — see [bid/strategies/bid_v3_max.md](../bid/strategies/bid_v3_max.md) "Synergy" section. Not superior to DouDou50 in arena. Weights: `models/play_v3_max/play_final.bin` |
 
 Canonical obs (411-dim) puts trump in slot 0 and sorts non-trump suits by a stable ordering — eliminates need for suit augmentation. See [colver-core/src/dmc/dmc_obs.rs](../../colver-core/src/dmc/dmc_obs.rs).
 
