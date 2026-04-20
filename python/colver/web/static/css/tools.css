@@ -1860,57 +1860,105 @@
     margin-bottom: 0;
 }
 
-/* Scoring */
-.aide-scoring-list {
+/* Scoring — 2-col card grid: Contrat réussi / Chute, each with Preneurs + Défense */
+.aide-score-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.aide-score-sublabel {
+    font-size: clamp(0.75rem, 0.9vw, 0.85rem);
+    color: #888;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 6px 0 8px;
+}
+
+.aide-score-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 12px 14px;
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.aide-scoring-case {
+.aide-score-win {
+    border-color: rgba(130, 224, 170, 0.3);
+    background: rgba(130, 224, 170, 0.05);
+}
+
+.aide-score-lose {
+    border-color: rgba(232, 139, 139, 0.3);
+    background: rgba(232, 139, 139, 0.05);
+}
+
+.aide-score-head {
+    font-size: clamp(0.85rem, 1vw, 0.95rem);
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.aide-score-win .aide-score-head { color: #82e0aa; }
+.aide-score-lose .aide-score-head { color: #e88b8b; }
+
+.aide-score-row {
     display: flex;
-    align-items: center;
-    gap: 14px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 8px;
-    padding: 10px 14px;
+    align-items: baseline;
+    gap: 10px;
     flex-wrap: wrap;
 }
 
-.aide-case-label {
-    font-size: clamp(0.75rem, 0.9vw, 0.85rem);
+.aide-score-team {
+    font-size: clamp(0.7rem, 0.8vw, 0.78rem);
     font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 6px;
-    border: 1px solid transparent;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 8px;
+    border-radius: 5px;
     white-space: nowrap;
-    min-width: 150px;
+    min-width: 72px;
     text-align: center;
 }
 
-.aide-case-win {
-    color: #82e0aa;
+.aide-team-pren {
+    color: #a5d6a7;
     background: rgba(130, 224, 170, 0.1);
-    border-color: rgba(130, 224, 170, 0.25);
+    border: 1px solid rgba(130, 224, 170, 0.25);
 }
 
-.aide-case-lose {
-    color: #e88b8b;
+.aide-team-def {
+    color: #ef9a9a;
     background: rgba(232, 139, 139, 0.08);
-    border-color: rgba(232, 139, 139, 0.25);
+    border: 1px solid rgba(232, 139, 139, 0.25);
 }
 
-.aide-case-coinche {
-    color: #d4af37;
-    background: rgba(212, 175, 55, 0.08);
-    border-color: rgba(212, 175, 55, 0.3);
-}
-
-.aide-case-formula {
+.aide-score-val {
     font-size: clamp(0.8rem, 0.95vw, 0.92rem);
-    color: #ccc;
+    color: #ddd;
     flex: 1;
+    min-width: 0;
+}
+
+.aide-mult {
+    color: #d4af37;
+    font-weight: 700;
+    background: rgba(212, 175, 55, 0.08);
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    white-space: nowrap;
+}
+
+.aide-formula-hint strong {
+    color: #e0e0e0;
+    font-weight: 700;
 }
 
 /* Bids */
@@ -1978,8 +2026,9 @@
     .aide-formula { padding: 10px 10px; gap: 8px; }
     .aide-formula-label { min-width: 0; width: 100%; }
     .aide-total { margin-left: 0; }
-    .aide-scoring-case { padding: 8px 10px; gap: 8px; }
-    .aide-case-label { min-width: 0; width: 100%; }
+    .aide-score-grid { grid-template-columns: 1fr; gap: 8px; }
+    .aide-score-card { padding: 10px 12px; }
+    .aide-score-team { min-width: 64px; }
     .aide-bid { padding: 5px 8px; }
 
     /* Beliefs: narrower card columns */

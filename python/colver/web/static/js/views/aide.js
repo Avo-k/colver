@@ -70,7 +70,6 @@ const TEMPLATE = `
     </div>
 
     <div class="aide-sections">
-        <p class="aide-hint aide-columns-hint">Ordre de force d\u00e9croissant. Le Valet et le 9 sont promus en atout \u2014 les lignes sont align\u00e9es par rang pour montrer la coh\u00e9rence avec le non-atout.</p>
         <div class="aide-columns">
             <div class="aide-section aide-col">
                 <div class="aide-col-head">
@@ -122,29 +121,58 @@ const TEMPLATE = `
 
         <div class="aide-section aide-scoring-section">
             <h3>Calcul du score</h3>
-            <div class="aide-scoring-list">
-                <div class="aide-scoring-case">
-                    <span class="aide-case-label aide-case-win">Contrat r\u00e9ussi</span>
-                    <span class="aide-case-formula">points cartes + contrat + belote</span>
+
+            <div class="aide-score-grid">
+                <div class="aide-score-card aide-score-win">
+                    <div class="aide-score-head">Contrat r\u00e9ussi</div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-pren">Preneurs</span>
+                        <span class="aide-score-val">points cartes + contrat + belote</span>
+                    </div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-def">D\u00e9fense</span>
+                        <span class="aide-score-val">leurs points cartes + belote</span>
+                    </div>
                 </div>
-                <div class="aide-scoring-case">
-                    <span class="aide-case-label aide-case-lose">Chute</span>
-                    <span class="aide-case-formula">D\u00e9fense : 160 + contrat + belote \u2014 Preneurs : 0</span>
-                </div>
-                <div class="aide-scoring-case">
-                    <span class="aide-case-label aide-case-coinche">Coinch\u00e9 r\u00e9ussi</span>
-                    <span class="aide-case-formula">160 (ou 250 si capot r\u00e9alis\u00e9) + contrat \u00d7 2 + belote</span>
-                </div>
-                <div class="aide-scoring-case">
-                    <span class="aide-case-label aide-case-coinche">Surcoinch\u00e9 r\u00e9ussi</span>
-                    <span class="aide-case-formula">160 (ou 250 si capot r\u00e9alis\u00e9) + contrat \u00d7 3 + belote</span>
-                </div>
-                <div class="aide-scoring-case">
-                    <span class="aide-case-label aide-case-lose">Chute (co)/surcoinch\u00e9e</span>
-                    <span class="aide-case-formula">D\u00e9fense : 160 + contrat \u00d7 mult + belote \u2014 Preneurs : 0</span>
+                <div class="aide-score-card aide-score-lose">
+                    <div class="aide-score-head">Chute</div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-pren">Preneurs</span>
+                        <span class="aide-score-val">0</span>
+                    </div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-def">D\u00e9fense</span>
+                        <span class="aide-score-val">160 + contrat + belote</span>
+                    </div>
                 </div>
             </div>
-            <p class="aide-hint aide-formula-hint">Capot = contrat \u00e0 250. La belote reste toujours \u00e0 l'\u00e9quipe qui l'a annonc\u00e9e.</p>
+
+            <div class="aide-score-sublabel">Coinch\u00e9 (\u00d72) / Surcoinch\u00e9 (\u00d73)</div>
+            <div class="aide-score-grid">
+                <div class="aide-score-card aide-score-win">
+                    <div class="aide-score-head">Contrat r\u00e9ussi</div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-pren">Preneurs</span>
+                        <span class="aide-score-val">160<sup>\u2217</sup> + <span class="aide-mult">(contrat \u00d7 mult)</span> + belote</span>
+                    </div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-def">D\u00e9fense</span>
+                        <span class="aide-score-val">0</span>
+                    </div>
+                </div>
+                <div class="aide-score-card aide-score-lose">
+                    <div class="aide-score-head">Chute</div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-pren">Preneurs</span>
+                        <span class="aide-score-val">0</span>
+                    </div>
+                    <div class="aide-score-row">
+                        <span class="aide-score-team aide-team-def">D\u00e9fense</span>
+                        <span class="aide-score-val">160 + <span class="aide-mult">(contrat \u00d7 mult)</span> + belote</span>
+                    </div>
+                </div>
+            </div>
+            <p class="aide-hint aide-formula-hint"><sup>\u2217</sup> 250 si capot r\u00e9alis\u00e9. <strong>mult</strong> = \u00d72 si coinch\u00e9, \u00d73 si surcoinch\u00e9 \u2014 s'applique uniquement \u00e0 la valeur du contrat.</p>
         </div>
 
         <div class="aide-section aide-bids-section">
