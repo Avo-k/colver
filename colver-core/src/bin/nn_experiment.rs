@@ -272,7 +272,7 @@ fn strength_test(value_net: &mut ValueNet, num_matches: u32, time_limit_ms: u32)
                 ns_cumulative += score.scores[0] as i32;
                 ew_cumulative += score.scores[1] as i32;
             }
-            dealer = (dealer + 3) % 4;
+            dealer = (dealer + 1) % 4;
         }
 
         let nn_score = if nn_is_ns { ns_cumulative } else { ew_cumulative };

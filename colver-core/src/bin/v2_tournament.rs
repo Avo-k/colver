@@ -127,7 +127,7 @@ fn play_match_dmc(
             ns_cumulative += score.scores[0] as i32;
             ew_cumulative += score.scores[1] as i32;
         }
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     finish_match(ns_cumulative, ew_cumulative)
@@ -171,7 +171,7 @@ fn play_match_oracle(
             ns_cumulative += score.scores[0] as i32;
             ew_cumulative += score.scores[1] as i32;
         }
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     finish_match(ns_cumulative, ew_cumulative)

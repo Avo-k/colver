@@ -211,7 +211,7 @@ fn play_match(
             ns_cumulative += score.scores[0] as i32;
             ew_cumulative += score.scores[1] as i32;
         }
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     let winner = if ns_cumulative >= MATCH_TARGET && ew_cumulative >= MATCH_TARGET {

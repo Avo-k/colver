@@ -185,7 +185,7 @@ fn play_match_smart_vs_naive(
             }
         }
 
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     mr.ns_final = ns_cumulative;
@@ -251,7 +251,7 @@ fn play_match_naive_vs_naive(
             }
         }
 
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     mr.ns_final = ns_cumulative;
