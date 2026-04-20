@@ -5,26 +5,20 @@ import { cardSvgPath } from '../shared/cards.js';
 const HEART = 1;  // Red suit for trump examples
 const SPADE = 0;  // Black suit for plain examples
 
-const TRUMP_CARDS = [
-    { rank: 3, pts: 20, promoted: true  },  // Valet
-    { rank: 2, pts: 14, promoted: true  },  // 9
-    { rank: 7, pts: 11, promoted: false },  // As
-    { rank: 6, pts: 10, promoted: false },  // 10
-    { rank: 5, pts: 4,  promoted: false },  // Roi
-    { rank: 4, pts: 3,  promoted: false },  // Dame
-    { rank: 1, pts: 0,  promoted: false },  // 8
-    { rank: 0, pts: 0,  promoted: false },  // 7
-];
-
-const PLAIN_CARDS = [
-    { rank: 7, pts: 11 },  // As
-    { rank: 6, pts: 10 },  // 10
-    { rank: 5, pts: 4  },  // Roi
-    { rank: 4, pts: 3  },  // Dame
-    { rank: 3, pts: 2  },  // Valet
-    { rank: 2, pts: 0  },  // 9
-    { rank: 1, pts: 0  },  // 8
-    { rank: 0, pts: 0  },  // 7
+// 10 rank-aligned slots. Promoted trump cards (Valet, 9) occupy slots 0-1;
+// non-atout Valet/9 stay in their native rank slots (6-7). Placeholders fill
+// the empty cells so rows align across both columns.
+const ALIGNED_SLOTS = [
+    { trump: { rank: 3, pts: 20, promoted: true }, plain: null },                 // Valet (atout promu)
+    { trump: { rank: 2, pts: 14, promoted: true }, plain: null },                 // 9 (atout promu)
+    { trump: { rank: 7, pts: 11 },                 plain: { rank: 7, pts: 11 } }, // As
+    { trump: { rank: 6, pts: 10 },                 plain: { rank: 6, pts: 10 } }, // 10
+    { trump: { rank: 5, pts: 4  },                 plain: { rank: 5, pts: 4  } }, // Roi
+    { trump: { rank: 4, pts: 3  },                 plain: { rank: 4, pts: 3  } }, // Dame
+    { trump: null,                                 plain: { rank: 3, pts: 2  } }, // Valet (non-atout)
+    { trump: null,                                 plain: { rank: 2, pts: 0  } }, // 9 (non-atout)
+    { trump: { rank: 1, pts: 0  },                 plain: { rank: 1, pts: 0  } }, // 8
+    { trump: { rank: 0, pts: 0  },                 plain: { rank: 0, pts: 0  } }, // 7
 ];
 
 function ptsClass(pts) {
@@ -34,24 +28,37 @@ function ptsClass(pts) {
     return 'aide-pts-zero';
 }
 
-function buildCardRow(container, cards, suit) {
-    for (const card of cards) {
-        const cardIdx = suit * 8 + card.rank;
-        const item = document.createElement('div');
-        item.className = 'aide-card-item' + (card.promoted ? ' aide-promoted' : '');
+function buildColumn(container, slots, side, suit) {
+    for (const slot of slots) {
+        const card = slot[side];
+        const row = document.createElement('div');
+        row.className = 'aide-col-row';
 
-        const img = document.createElement('img');
-        img.src = cardSvgPath(cardIdx);
-        img.className = 'aide-card-img';
-        img.draggable = false;
-        item.appendChild(img);
+        if (!card) {
+            row.classList.add('aide-col-empty');
+            const ph = document.createElement('div');
+            ph.className = 'aide-col-placeholder';
+            row.appendChild(ph);
 
-        const badge = document.createElement('div');
-        badge.className = `aide-pts ${ptsClass(card.pts)}`;
-        badge.textContent = card.pts;
-        item.appendChild(badge);
+            const dash = document.createElement('div');
+            dash.className = 'aide-col-pts aide-pts-zero';
+            dash.textContent = '\u2013';
+            row.appendChild(dash);
+        } else {
+            if (card.promoted) row.classList.add('aide-promoted');
+            const cardIdx = suit * 8 + card.rank;
+            const img = document.createElement('img');
+            img.src = cardSvgPath(cardIdx);
+            img.className = 'aide-col-card-img';
+            img.draggable = false;
+            row.appendChild(img);
 
-        container.appendChild(item);
+            const badge = document.createElement('div');
+            badge.className = `aide-col-pts ${ptsClass(card.pts)}`;
+            badge.textContent = card.pts;
+            row.appendChild(badge);
+        }
+        container.appendChild(row);
     }
 }
 
@@ -63,56 +70,81 @@ const TEMPLATE = `
     </div>
 
     <div class="aide-sections">
-        <div class="aide-section">
-            <div class="aide-section-head">
-                <h3><span class="suit-red">\u2665</span> Atout</h3>
-                <span class="aide-section-total">62 pts / couleur</span>
+        <p class="aide-hint aide-columns-hint">Ordre de force d\u00e9croissant. Le Valet et le 9 sont promus en atout \u2014 les lignes sont align\u00e9es par rang pour montrer la coh\u00e9rence avec le non-atout.</p>
+        <div class="aide-columns">
+            <div class="aide-section aide-col">
+                <div class="aide-col-head">
+                    <h3><span class="suit-red">\u2665</span> Atout</h3>
+                    <span class="aide-col-total">62 pts</span>
+                </div>
+                <div class="aide-col-cards" id="aide-trump-col"></div>
             </div>
-            <p class="aide-hint">Du plus fort au plus faible \u2014 le Valet et le 9 deviennent les plus forts</p>
-            <div class="aide-card-row" id="aide-trump-row"></div>
-        </div>
 
-        <div class="aide-section">
-            <div class="aide-section-head">
-                <h3><span class="suit-black">\u2660</span> Non-Atout</h3>
-                <span class="aide-section-total">30 pts / couleur</span>
+            <div class="aide-section aide-col">
+                <div class="aide-col-head">
+                    <h3><span class="suit-black">\u2660</span> Non-Atout</h3>
+                    <span class="aide-col-total">30 pts</span>
+                </div>
+                <div class="aide-col-cards" id="aide-plain-col"></div>
             </div>
-            <p class="aide-hint">Du plus fort au plus faible</p>
-            <div class="aide-card-row" id="aide-plain-row"></div>
         </div>
 
         <div class="aide-section aide-totals-section">
             <h3>Points de la donne</h3>
-            <div class="aide-totals-grid">
-                <div class="aide-stat">
-                    <div class="aide-stat-val">152</div>
-                    <div class="aide-stat-label">Points carte</div>
-                    <div class="aide-stat-detail">62 + 3\u00d730</div>
+            <div class="aide-formulas">
+                <div class="aide-formula">
+                    <span class="aide-formula-label">Normal</span>
+                    <span class="aide-formula-eq">
+                        <span class="aide-term"><span class="aide-num">152</span><span class="aide-sub">cartes</span></span>
+                        <span class="aide-op">+</span>
+                        <span class="aide-term"><span class="aide-num">10</span><span class="aide-sub">dix de der</span></span>
+                        <span class="aide-op">+</span>
+                        <span class="aide-term aide-term-opt"><span class="aide-num">20</span><span class="aide-sub">belote</span></span>
+                        <span class="aide-op">=</span>
+                        <span class="aide-total">162<span class="aide-total-alt">ou 182</span></span>
+                    </span>
                 </div>
-                <div class="aide-stat">
-                    <div class="aide-stat-val aide-stat-plus">+10</div>
-                    <div class="aide-stat-label">Dix de der</div>
-                    <div class="aide-stat-detail">Dernier pli</div>
-                </div>
-                <div class="aide-stat aide-stat-highlight">
-                    <div class="aide-stat-val">162</div>
-                    <div class="aide-stat-label">Total normal</div>
-                </div>
-                <div class="aide-stat">
-                    <div class="aide-stat-val aide-stat-plus">+100</div>
-                    <div class="aide-stat-label">Capot</div>
-                    <div class="aide-stat-detail">8 plis gagn\u00e9s</div>
-                </div>
-                <div class="aide-stat aide-stat-highlight">
-                    <div class="aide-stat-val">252</div>
-                    <div class="aide-stat-label">Total capot</div>
-                </div>
-                <div class="aide-stat">
-                    <div class="aide-stat-val aide-stat-plus">+20</div>
-                    <div class="aide-stat-label">Belote</div>
-                    <div class="aide-stat-detail">Roi + Dame d'atout</div>
+                <div class="aide-formula aide-formula-capot">
+                    <span class="aide-formula-label">Capot</span>
+                    <span class="aide-formula-eq">
+                        <span class="aide-term"><span class="aide-num">152</span><span class="aide-sub">cartes</span></span>
+                        <span class="aide-op">+</span>
+                        <span class="aide-term"><span class="aide-num">100</span><span class="aide-sub">dix de der</span></span>
+                        <span class="aide-op">+</span>
+                        <span class="aide-term aide-term-opt"><span class="aide-num">20</span><span class="aide-sub">belote</span></span>
+                        <span class="aide-op">=</span>
+                        <span class="aide-total">252<span class="aide-total-alt">ou 272</span></span>
+                    </span>
                 </div>
             </div>
+            <p class="aide-hint aide-formula-hint">Belote = Roi + Dame d'atout annonc\u00e9s par la m\u00eame \u00e9quipe.</p>
+        </div>
+
+        <div class="aide-section aide-scoring-section">
+            <h3>Calcul du score</h3>
+            <div class="aide-scoring-list">
+                <div class="aide-scoring-case">
+                    <span class="aide-case-label aide-case-win">Contrat r\u00e9ussi</span>
+                    <span class="aide-case-formula">points cartes + contrat + belote</span>
+                </div>
+                <div class="aide-scoring-case">
+                    <span class="aide-case-label aide-case-lose">Chute</span>
+                    <span class="aide-case-formula">D\u00e9fense : 160 + contrat + belote \u2014 Preneurs : 0</span>
+                </div>
+                <div class="aide-scoring-case">
+                    <span class="aide-case-label aide-case-coinche">Coinch\u00e9 r\u00e9ussi</span>
+                    <span class="aide-case-formula">160 (ou 250 si capot r\u00e9alis\u00e9) + contrat \u00d7 2 + belote</span>
+                </div>
+                <div class="aide-scoring-case">
+                    <span class="aide-case-label aide-case-coinche">Surcoinch\u00e9 r\u00e9ussi</span>
+                    <span class="aide-case-formula">160 (ou 250 si capot r\u00e9alis\u00e9) + contrat \u00d7 3 + belote</span>
+                </div>
+                <div class="aide-scoring-case">
+                    <span class="aide-case-label aide-case-lose">Chute (co)/surcoinch\u00e9e</span>
+                    <span class="aide-case-formula">D\u00e9fense : 160 + contrat \u00d7 mult + belote \u2014 Preneurs : 0</span>
+                </div>
+            </div>
+            <p class="aide-hint aide-formula-hint">Capot = contrat \u00e0 250. La belote reste toujours \u00e0 l'\u00e9quipe qui l'a annonc\u00e9e.</p>
         </div>
 
         <div class="aide-section aide-bids-section">
@@ -131,7 +163,7 @@ const TEMPLATE = `
             </div>
             <div class="aide-bids-info">
                 <span class="aide-bid-tag">Coinche \u00d72</span>
-                <span class="aide-bid-tag">Surcoinche \u00d74</span>
+                <span class="aide-bid-tag">Surcoinche \u00d73</span>
                 <span class="aide-bid-sep">\u2014</span>
                 <span class="aide-bid-match">Partie en 2000 pts</span>
             </div>
@@ -142,8 +174,8 @@ const TEMPLATE = `
 
 export function mount(container) {
     container.innerHTML = TEMPLATE;
-    buildCardRow(document.getElementById('aide-trump-row'), TRUMP_CARDS, HEART);
-    buildCardRow(document.getElementById('aide-plain-row'), PLAIN_CARDS, SPADE);
+    buildColumn(document.getElementById('aide-trump-col'), ALIGNED_SLOTS, 'trump', HEART);
+    buildColumn(document.getElementById('aide-plain-col'), ALIGNED_SLOTS, 'plain', SPADE);
 }
 
 export function unmount() {}

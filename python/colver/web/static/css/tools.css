@@ -1653,38 +1653,97 @@
     margin-bottom: 14px;
 }
 
-.aide-card-row {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: clamp(3px, 0.6vw, 10px);
+.aide-columns-hint {
+    margin-bottom: 14px;
 }
 
-.aide-card-item {
+.aide-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: start;
+}
+
+.aide-col {
+    padding: 16px 14px;
+}
+
+.aide-col-head {
     display: flex;
-    flex-direction: column;
-    align-items: center;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
     gap: 6px;
 }
 
-.aide-card-img {
-    width: 100%;
-    height: auto;
-    border-radius: clamp(3px, 0.4vw, 6px);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+.aide-col-head h3 {
+    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    color: #e0e0e0;
+    font-weight: 700;
 }
 
-.aide-promoted .aide-card-img {
+.aide-col-total {
+    font-size: clamp(0.75rem, 0.9vw, 0.9rem);
+    color: #d4af37;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.aide-col-cards {
+    display: grid;
+    grid-template-rows: repeat(10, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.aide-col-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    height: 56px;
+    padding: 0 6px;
+    border-radius: 8px;
+}
+
+.aide-col-row.aide-promoted {
+    background: rgba(212, 175, 55, 0.06);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+}
+
+.aide-col-row.aide-col-empty {
+    opacity: 0.45;
+}
+
+.aide-col-card-img {
+    width: auto;
+    height: 50px;
+    border-radius: 5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    flex-shrink: 0;
+}
+
+.aide-promoted .aide-col-card-img {
     outline: 2px solid rgba(212, 175, 55, 0.5);
     outline-offset: 1px;
     box-shadow: 0 0 12px rgba(212, 175, 55, 0.3), 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
-.aide-pts {
-    font-size: clamp(0.85rem, 1.2vw, 1.15rem);
+.aide-col-placeholder {
+    width: 36px;
+    height: 50px;
+    border-radius: 5px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.015);
+    flex-shrink: 0;
+}
+
+.aide-col-pts {
+    font-size: clamp(1rem, 1.4vw, 1.3rem);
     font-weight: 800;
-    text-align: center;
     font-variant-numeric: tabular-nums;
     line-height: 1;
+    min-width: 2ch;
+    text-align: right;
 }
 
 .aide-pts-gold {
@@ -1697,54 +1756,161 @@
 .aide-pts-zero { color: #444; }
 
 /* Totals */
-.aide-totals-section h3 {
+.aide-totals-section h3,
+.aide-scoring-section h3 {
     font-size: clamp(1rem, 1.3vw, 1.2rem);
     color: #e0e0e0;
     font-weight: 700;
     margin-bottom: 14px;
 }
 
-.aide-totals-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+.aide-formulas {
+    display: flex;
+    flex-direction: column;
     gap: 10px;
 }
 
-.aide-stat {
+.aide-formula {
+    display: flex;
+    align-items: center;
+    gap: 14px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 10px;
-    padding: 14px 8px;
-    text-align: center;
+    padding: 12px 14px;
+    flex-wrap: wrap;
 }
 
-.aide-stat-val {
-    font-size: clamp(1.4rem, 2.2vw, 1.9rem);
+.aide-formula-capot {
+    border-color: rgba(212, 175, 55, 0.25);
+    background: rgba(212, 175, 55, 0.05);
+}
+
+.aide-formula-label {
+    font-size: clamp(0.8rem, 1vw, 0.95rem);
+    font-weight: 700;
+    color: #aaa;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 64px;
+}
+
+.aide-formula-capot .aide-formula-label { color: #d4af37; }
+
+.aide-formula-eq {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.aide-term {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.1;
+}
+
+.aide-term-opt .aide-num,
+.aide-term-opt .aide-sub { color: #888; }
+
+.aide-num {
+    font-size: clamp(1.2rem, 1.8vw, 1.5rem);
     font-weight: 800;
-    color: #ccc;
+    color: #e0e0e0;
     font-variant-numeric: tabular-nums;
 }
 
-.aide-stat-plus { color: #a5d6a7; }
-
-.aide-stat-highlight {
-    border-color: rgba(212, 175, 55, 0.3);
-    background: rgba(212, 175, 55, 0.06);
-}
-
-.aide-stat-highlight .aide-stat-val { color: #d4af37; }
-
-.aide-stat-label {
-    font-size: clamp(0.7rem, 0.85vw, 0.85rem);
-    color: #aaa;
-    font-weight: 600;
-    margin-top: 4px;
-}
-
-.aide-stat-detail {
-    font-size: clamp(0.65rem, 0.75vw, 0.75rem);
-    color: #555;
+.aide-sub {
+    font-size: clamp(0.6rem, 0.75vw, 0.72rem);
+    color: #888;
     margin-top: 2px;
+    font-weight: 600;
+}
+
+.aide-op {
+    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    color: #666;
+    font-weight: 700;
+    align-self: center;
+}
+
+.aide-total {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.1;
+    margin-left: auto;
+    font-size: clamp(1.4rem, 2vw, 1.7rem);
+    font-weight: 800;
+    color: #d4af37;
+    font-variant-numeric: tabular-nums;
+}
+
+.aide-total-alt {
+    font-size: clamp(0.6rem, 0.75vw, 0.72rem);
+    color: #888;
+    margin-top: 2px;
+    font-weight: 600;
+}
+
+.aide-formula-hint {
+    margin-top: 12px;
+    margin-bottom: 0;
+}
+
+/* Scoring */
+.aide-scoring-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.aide-scoring-case {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex-wrap: wrap;
+}
+
+.aide-case-label {
+    font-size: clamp(0.75rem, 0.9vw, 0.85rem);
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    min-width: 150px;
+    text-align: center;
+}
+
+.aide-case-win {
+    color: #82e0aa;
+    background: rgba(130, 224, 170, 0.1);
+    border-color: rgba(130, 224, 170, 0.25);
+}
+
+.aide-case-lose {
+    color: #e88b8b;
+    background: rgba(232, 139, 139, 0.08);
+    border-color: rgba(232, 139, 139, 0.25);
+}
+
+.aide-case-coinche {
+    color: #d4af37;
+    background: rgba(212, 175, 55, 0.08);
+    border-color: rgba(212, 175, 55, 0.3);
+}
+
+.aide-case-formula {
+    font-size: clamp(0.8rem, 0.95vw, 0.92rem);
+    color: #ccc;
+    flex: 1;
 }
 
 /* Bids */
@@ -1809,8 +1975,11 @@
     #aide-content { padding: 16px 10px; }
     .aide-section { padding: 14px 12px; border-radius: 10px; }
     .aide-card-item { gap: 4px; }
-    .aide-totals-grid { gap: 6px; }
-    .aide-stat { padding: 10px 6px; }
+    .aide-formula { padding: 10px 10px; gap: 8px; }
+    .aide-formula-label { min-width: 0; width: 100%; }
+    .aide-total { margin-left: 0; }
+    .aide-scoring-case { padding: 8px 10px; gap: 8px; }
+    .aide-case-label { min-width: 0; width: 100%; }
     .aide-bid { padding: 5px 8px; }
 
     /* Beliefs: narrower card columns */
@@ -1841,7 +2010,6 @@
     /* Docs: tighter padding */
     #docs-content { padding: 12px 16px; }
 }
-
 
 /* ============================================================
    ANNONCER — bidding strategy guide (derived from bot v5)
