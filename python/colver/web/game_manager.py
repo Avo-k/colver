@@ -499,7 +499,10 @@ class PlayProblemSession:
         self.dmc_model_path = dmc_model_path
 
     def generate(self) -> dict:
-        """Bid with bid_improved(), then play heuristic until South's turn. Retry if trivial (<2 choices)."""
+        """Bid with bid_improved(), then play heuristic until South's turn.
+        Retry if trivial: <2 legal cards, or all choices collapse to one
+        equivalence class (e.g. 7 and 8 of a plain suit with no outstanding
+        card between them — picking either cannot affect the outcome)."""
         for _ in range(50):
             env = colver.Env()
             env.reset()
@@ -533,7 +536,7 @@ class PlayProblemSession:
 
             if env.is_terminal() or int(env.current_player()) != 2:
                 continue
-            if len(env.legal_actions()) < 2:
+            if len(env.legal_actions_reduced()) < 2:
                 continue
 
             self.env = env

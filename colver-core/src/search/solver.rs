@@ -524,7 +524,7 @@ fn quick_tricks(state: &GameState) -> (i16, i16) {
 /// 1. They are adjacent in the relevant ordering (no unplayed card between them)
 /// 2. They have the same point value
 /// We keep only one representative (the highest) from each equivalence class.
-fn reduce_equivalent(legal: CardSet, state: &GameState) -> CardSet {
+pub fn reduce_equivalent(legal: CardSet, state: &GameState) -> CardSet {
     let trump = state.contract.trump;
     let played = state.played_cards;
     let player = state.current_player as usize;
