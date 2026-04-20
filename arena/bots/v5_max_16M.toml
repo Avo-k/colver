@@ -1,0 +1,11 @@
+# v5_max checkpoint @ 16M (best winrate in training eval: 57.8%/+32)
+[bid]
+strategy = "nn"
+model = "models/bid_v5_max/bid_nn_16000000.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

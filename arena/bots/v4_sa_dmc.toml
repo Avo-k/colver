@@ -1,0 +1,10 @@
+# Bid v4 score-aware (16M best checkpoint) + DouDou50
+[bid]
+strategy = "nn"
+model = "models/bid_v4_score_aware/bid_nn_16000000.bin"
+hidden = 512
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

@@ -10,7 +10,7 @@
 
 use colver_core::bid_eval::BidFunction;
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs::{self, BID_OBS_DIM};
+use colver_core::bid_obs::{self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE_V2};
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::{self, EnvTracking, OBS_DIM, OBS_DIM_TR};
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
@@ -53,6 +53,37 @@ fn bid_action_with_penalty(
     legal_mask: u64,
     penalty: f32,
 ) -> u8 {
+    bid_action_adjusted(bn, obs, legal_mask, penalty, 0, 0, false)
+}
+
+/// Score-aware wrapper: applies endgame-regime Q-value adjustments on top of the base bid penalty.
+///
+/// Regimes (pass-through outside endgame):
+///   - Leading (my ≥ 1700 ∧ margin ≥ +300): penalize bids ≥130 and capot.
+///   - Trailing desperate (opp ≥ 1700 ∧ margin ≤ -400): penalize PASS + small bids, boost bids ≥120.
+///   - Tight endgame (max ≥ 1600 ∧ |margin| ≤ 200): mild penalty on bids ≥130.
+///
+/// All deltas are in Q-value units (~±1 range ≈ ±500 game pts), calibrated around ±0.08 peak.
+fn bid_action_score_aware(
+    bn: &mut BidNet,
+    obs: &[f32],
+    legal_mask: u64,
+    penalty: f32,
+    my_score: i32,
+    opp_score: i32,
+) -> u8 {
+    bid_action_adjusted(bn, obs, legal_mask, penalty, my_score, opp_score, true)
+}
+
+fn bid_action_adjusted(
+    bn: &mut BidNet,
+    obs: &[f32],
+    legal_mask: u64,
+    penalty: f32,
+    my_score: i32,
+    opp_score: i32,
+    score_aware: bool,
+) -> u8 {
     let q = bn.evaluate(obs);
 
     // Penalty per action based on bid level
@@ -70,13 +101,55 @@ fn bid_action_with_penalty(
         penalty * level
     };
 
+    // Score-aware endgame delta: computed once per call, bypassed outside endgame.
+    let margin = my_score - opp_score;
+    let lead_end  = score_aware && my_score  >= 1700 && margin >=  300;
+    let trail_end = score_aware && opp_score >= 1700 && margin <= -400;
+    let tight_end = score_aware && my_score.max(opp_score) >= 1600 && margin.abs() <= 200;
+    let any_regime = lead_end || trail_end || tight_end;
+
+    let bid_value_of = |action: u8| -> Option<i32> {
+        if action == 0 || action >= 37 { return None; }
+        Some(80 + ((action as i32 - 1) / 4) * 10)
+    };
+    let score_delta = |action: u8| -> f32 {
+        if !any_regime { return 0.0; }
+        let is_capot = action >= 37 && action < 41;
+        if lead_end {
+            // Discourage big gambles when safely ahead.
+            if let Some(v) = bid_value_of(action) {
+                if v >= 130 { return -0.08 * ((v - 120) as f32 / 40.0); }
+            }
+            if is_capot { return -0.15; }
+            return 0.0;
+        }
+        if trail_end {
+            // Force risk when losing the match.
+            if action == 0 { return -0.10; } // PASS
+            if let Some(v) = bid_value_of(action) {
+                if v <= 100 { return -0.04; }
+                if v >= 120 { return 0.08 * ((v - 110) as f32 / 50.0); }
+            }
+            return 0.0;
+        }
+        if tight_end {
+            // Mild brake on overreach; defense-leaning.
+            if let Some(v) = bid_value_of(action) {
+                if v >= 130 { return -0.04 * ((v - 120) as f32 / 40.0); }
+            }
+            if is_capot { return -0.08; }
+            return 0.0;
+        }
+        0.0
+    };
+
     let mut best_action = 0u8;
     let mut best_q = f32::NEG_INFINITY;
     let mut mask = legal_mask;
     while mask != 0 {
         let bit = mask.trailing_zeros() as u8;
         if (bit as usize) < 43 {
-            let q_adj = q[bit as usize] - bid_penalty(bit);
+            let q_adj = q[bit as usize] - bid_penalty(bit) + score_delta(bit);
             if q_adj > best_q {
                 best_q = q_adj;
                 best_action = bit;
@@ -105,6 +178,7 @@ struct BotConfig {
     switch_at: u8,        // for dmc_then_dd: switch to DD after this many tricks (default 5)
     bid_hidden: usize,        // hidden size for bid NN (default 256)
     bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
+    score_aware: bool,        // if true, adjust NN Q-values based on match score (endgame heuristics)
     belief_model: Option<String>,
     bid_belief_model: Option<String>,
     early_termination: Option<bool>,
@@ -131,6 +205,7 @@ impl Default for BotConfig {
             switch_at: 5,
             bid_hidden: 256,
             bid_penalty: 0.0,
+            score_aware: false,
             belief_model: None,
             bid_belief_model: None,
             early_termination: None,
@@ -219,6 +294,7 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("bid", "model") => cfg.bid_model = Some(val.to_string()),
                 ("bid", "hidden") => cfg.bid_hidden = val.parse().unwrap_or(256),
                 ("bid", "penalty") => cfg.bid_penalty = val.parse().unwrap_or(0.0),
+                ("bid", "score_aware") => cfg.score_aware = val == "true",
                 ("play", "method") => cfg.play_method = val.to_string(),
                 ("play", "model") => cfg.play_model = Some(val.to_string()),
                 ("play", "residual") => cfg.play_residual = val == "true",
@@ -365,6 +441,7 @@ struct Agent {
     card_play: CardPlayMethod,
     bid_weights_idx: Option<usize>,  // index into shared bid_weights, None = use bid_function
     bid_penalty: f32,                // Q-value penalty scaling for high bids
+    score_aware: bool,               // enables match-score bid adjustments (endgame heuristics)
     belief_path: Option<String>,
     bid_belief_path: Option<String>,
     time_ms: u32,
@@ -460,6 +537,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         card_play,
         bid_weights_idx,
         bid_penalty: cfg.bid_penalty,
+        score_aware: cfg.score_aware,
         belief_path: cfg.belief_model.clone(),
         bid_belief_path: cfg.bid_belief_model.clone(),
         time_ms: cfg.time_ms,
@@ -672,13 +750,46 @@ fn play_match(
                     ew_bis_dd[idx].decide(&state)
                 } else if let Some(idx) = agent.bid_weights_idx {
                     if let Some(ref mut bn) = bid_nets[idx] {
-                        bid_obs::write_bid_observation(
-                            &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                        );
                         let legal_mask = state.legal_actions();
-                        if agent.bid_penalty > 0.0 {
+                        let bid_net_obs_dim = models.bid_weights[idx].obs_dim;
+                        if bid_net_obs_dim > BID_OBS_DIM {
+                            // Score-aware NN: embed match scores in observation (v1 = 110 dim, v2 = 113 dim)
+                            let (my_cum, opp_cum) = if is_ns {
+                                (ns_cumulative, ew_cumulative)
+                            } else {
+                                (ew_cumulative, ns_cumulative)
+                            };
+                            if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                                bid_obs::write_bid_observation_score_aware_v2(
+                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                                    my_cum, opp_cum,
+                                );
+                            } else {
+                                bid_obs::write_bid_observation_score_aware(
+                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                                    my_cum, opp_cum,
+                                );
+                            }
+                            bn.best_action_fast(&bid_obs_buf[..bid_net_obs_dim], legal_mask)
+                        } else if agent.score_aware {
+                            bid_obs::write_bid_observation(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                            );
+                            let (my_cum, opp_cum) = if is_ns {
+                                (ns_cumulative, ew_cumulative)
+                            } else {
+                                (ew_cumulative, ns_cumulative)
+                            };
+                            bid_action_score_aware(bn, &bid_obs_buf, legal_mask, agent.bid_penalty, my_cum, opp_cum)
+                        } else if agent.bid_penalty > 0.0 {
+                            bid_obs::write_bid_observation(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                            );
                             bid_action_with_penalty(bn, &bid_obs_buf, legal_mask, agent.bid_penalty)
                         } else {
+                            bid_obs::write_bid_observation(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                            );
                             bn.best_action_fast(&bid_obs_buf, legal_mask)
                         }
                     } else {
@@ -844,7 +955,7 @@ fn play_match(
             ns_cumulative += score.scores[0] as i32;
             ew_cumulative += score.scores[1] as i32;
         }
-        dealer = (dealer + 3) % 4;
+        dealer = (dealer + 1) % 4;
     }
 
     let winner = if ns_cumulative >= MATCH_TARGET && ew_cumulative >= MATCH_TARGET {

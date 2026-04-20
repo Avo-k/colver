@@ -31,12 +31,28 @@ H2H against `nn_v2_dmc50` (Bid a Dede + DouDou50). Both bots use DMC for play, s
 | Bot | Win% | Margin | Matches |
 |-----|------|--------|---------|
 | `nn_v2_dmc50` (reference) | 50.0% | 0 | (self) |
+| **`v5_isdd_25M`** 🏆 | **61.8%** | **+116** | 1000 |
+| `v5_isdd_22p5M` | 56.3% | +45 | 1000 |
+| `v5_max_16M` | 56.3% | +18 | 1000 |
+| `v5_max_20M` | 54.9% | +19 | 1000 |
 | `bid_v3_max_20M` | 49.9% | +11 | 2000 |
 | `exp_e_curriculum` (5M) | 54.5% | +97 | 200 |
 | `exp_d_blend25` (5M) | 53.0% | +41 | 200 |
 | `exp_c_blend50` (5M) | 49.2% | -26 | 200 |
 | `exp_b_blend75` (5M) | 48.5% | -50 | 200 |
 | `exp_a_dd` (5M) | 46.5% | -81 | 200 |
+
+*v5 rows: 2026-04-20 round-robin (5 bots, 500 matches/direction, 1000/H2H); win% and margin shown are the direct H2H vs `nn_v2_dmc50`. See [bid/strategies/bid_v5.md](bid/strategies/bid_v5.md).*
+
+**Round-robin standing** (same run, total win% across all opponents):
+
+| Rank | Bot | Win% | Margin |
+|------|-----|------|--------|
+| 1 | `v5_isdd_25M` 🏆 | 54.0% | +53 |
+| 2 | `v5_isdd_22p5M` | 52.4% | +36 |
+| 3 | `v5_max_16M` | 51.1% | −5 |
+| 4 | `v5_max_20M` | 49.9% | −35 |
+| 5 | `nn_v2_dmc50` | 42.7% | −50 |
 
 ### Eval set 2 — IS-DD play (slower, more realistic)
 
@@ -45,6 +61,7 @@ H2H against `nn_v2_isdd_no_belief` (Bid a Dede + IS-DD, no belief net). Both bot
 | Bot | Win% | Margin | Matches |
 |-----|------|--------|---------|
 | `nn_v2_isdd_no_belief` (reference) | 50.0% | 0 | (self) |
+| **`v5_isdd_25M_isdd`** 🏆 | **57.3%** (vs `v3_max_isdd`) | **+44** | 1000 |
 | `bid_v3_max_20M_isdd` | 50.8% | +37 | 2000 |
 | `exp_a_dd_isdd` (5M) | 50.5% | +1 | 200 |
 | `exp_b_blend75_isdd` | 48.8% | -66 | 200 |
@@ -63,11 +80,11 @@ H2H against `nn_v2_isdd_no_belief` (Bid a Dede + IS-DD, no belief net). Both bot
 
 | Category | Bot | TOML |
 |----------|-----|------|
-| **Best overall (any play)** | `nn_v2_isdd` | [arena/bots/nn_v2_isdd.toml](../arena/bots/nn_v2_isdd.toml) |
-| Best fast bot | `nn_v2_dmc50` | [arena/bots/nn_v2_dmc50.toml](../arena/bots/nn_v2_dmc50.toml) |
-| Best bid model (DMC eval) | `bid_v3_max_20M` (or `exp_e_curriculum` at 5M) | [arena/bots/bid_v3_max_20M.toml](../arena/bots/bid_v3_max_20M.toml) |
-| Best bid model (IS-DD eval) | `bid_v3_max_20M` | (same) |
-| Best NN-only bidder | `bid_v3_max_20M` | (only one without overfitting bias) |
+| **Best overall (any play)** | `nn_v2_isdd` (belief net #1) | [arena/bots/nn_v2_isdd.toml](../arena/bots/nn_v2_isdd.toml) |
+| **Best bid model (DMC play)** | `v5_isdd_25M` | [arena/bots/v5_isdd_25M.toml](../arena/bots/v5_isdd_25M.toml) |
+| **Best bid model (IS-DD play)** | `v5_isdd_25M_isdd` | [arena/bots/v5_isdd_25M_isdd.toml](../arena/bots/v5_isdd_25M_isdd.toml) |
+| Best fast bot | `v5_isdd_25M` | (DMC-based) |
+| Previous champion bidder | `bid_v3_max_20M` | [arena/bots/bid_v3_max_20M.toml](../arena/bots/bid_v3_max_20M.toml) |
 
 ## Reading the results
 

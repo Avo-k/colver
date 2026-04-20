@@ -1,0 +1,11 @@
+# bid_v4_score_aware checkpoint at 18000000 steps
+[bid]
+strategy = "nn"
+model = "models/bid_v4_score_aware/bid_nn_18000000.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

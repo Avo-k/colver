@@ -1,0 +1,11 @@
+# v5_isdd final @ 25M (57.2%/+38 in training eval)
+[bid]
+strategy = "nn"
+model = "models/bid_v5_isdd/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

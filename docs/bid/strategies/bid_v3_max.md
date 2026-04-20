@@ -63,6 +63,30 @@ This is the **only signal in the v3 study that doesn't lose against nn_v2 in eit
 
 The 200-match results are noisy (±2.5pp std). The 2000-match runs above are the reliable numbers.
 
+## Synergy: bid_v3_max multiplies IS-DD, not DMC
+
+A 4-way round-robin of `{bid_v2, bid_v3_max} × {DouDou50, IS-DD}` (400 matches per pair, no belief net to isolate bidder effect) revealed a sharp asymmetry.
+
+| Play method | bid swap (v2 → v3_max) | Δ win rate |
+|---|---|---|
+| DMC (DouDou50) | 48.4% → 46.9% | **−1.5%** (null/noise) |
+| IS-DD (no belief) | 49.4% → 55.3% | **+5.9%** |
+
+Full matrix (row win rate vs column):
+
+|  | v2+DMC | v2+ISDD | v3_max+DMC | v3_max+ISDD |
+|---|---|---|---|---|
+| v2+DMC | — | 52.75% | 49.9% | 42.5% |
+| v2+ISDD | 47.25% | — | 51.75% | 49.2% |
+| v3_max+DMC | 50.1% | 48.25% | — | 42.5% |
+| **v3_max+ISDD** | **57.5%** | 50.8% | **57.5%** | — |
+
+**Ranking:** `v3_max+ISDD (55.3%) > v2+ISDD (49.4%) > v2+DMC (48.4%) > v3_max+DMC (46.9%)`.
+
+**Why:** bid_v3_max picks contracts that are *realistically achievable* (~80% of ≥120 attempts succeed vs ~63% for bid_v2's DD-optimized choices). DMC play is too noisy to cash in the extra ~15% of realizable contracts — it needs near-optimal play to convert them. IS-DD, playing close to DD values under belief-sampled worlds, *does* cash them in, so the entire bid_v3_max advantage flows to IS-DD pairings.
+
+**Implication:** don't pair bid_v3_max with DMC play and expect gains. The winning pairing is `bid_v3_max + IS-DD`, and the next obvious upgrade is adding a belief net to it (currently `bid_v3_max_20M_isdd` has none, unlike the #1 leaderboard `nn_v2_isdd`).
+
 ## Caveats
 
 - The 200-match initial reports suggested a stronger advantage (+66 / +95) than the 2000-match confirmations show. Always run ≥1000 matches for tournament conclusions.
