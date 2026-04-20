@@ -1,9 +1,10 @@
 [project]
 name = "colver"
-version = "0.6.1"
+version = "0.6.2"
 description = "Fast Belote Contree game engine with AI agents"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 keywords = ["belote", "card-game", "reinforcement-learning", "mcts"]
 classifiers = [
