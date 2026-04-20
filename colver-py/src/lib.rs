@@ -344,6 +344,27 @@ impl Env {
         legal_actions_list(&self.state)
     }
 
+    /// Legal play actions with equivalent cards collapsed to one representative.
+    /// Two cards are equivalent when adjacent in their suit ordering with no
+    /// outstanding card between them and identical point value — playing either
+    /// is indistinguishable for the rest of the deal. Only valid in play phase.
+    fn legal_actions_reduced(&self) -> Vec<u8> {
+        if self.state.phase != Phase::Playing {
+            return legal_actions_list(&self.state);
+        }
+        let reduced = colver_core::solver::reduce_equivalent(
+            self.state.legal_actions() as u32,
+            &self.state,
+        );
+        let mut actions = Vec::new();
+        let mut remaining = reduced;
+        while remaining != 0 {
+            actions.push(remaining.trailing_zeros() as u8);
+            remaining &= remaining - 1;
+        }
+        actions
+    }
+
     /// Get legal actions as a binary mask.
     fn legal_action_mask<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
         let arr = legal_mask_vec(&self.state);
@@ -396,12 +417,17 @@ impl Env {
 
     /// Get "Bid à DD" action: NN bidder if model loaded, else improved_v2 fallback.
     /// Only valid during bidding phase.
+    ///
+    /// Auto-dispatches on the NN's obs_dim:
+    ///   108 → standard bid obs (v1/v2/v3/v4 models)
+    ///   110 → score-aware v1 (my_score/opp_score raw), uses 0/0 for match-neutral
+    ///   113 → score-aware v2 (my/opp/win_prob/leader_dist/diff), uses 0/0
     fn bid_a_dd(&mut self) -> u8 {
         if self.state.phase != Phase::Bidding {
             return 0;
         }
         if let Some(ref mut net) = self.bid_net {
-            let obs = colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history);
+            let obs = build_bid_obs(net, &self.state, &self.bid_history);
             let legal = self.state.legal_actions();
             let (action, _) = net.best_action(&obs, legal);
             action
@@ -1171,7 +1197,7 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_bid_model() first")
         })?;
 
-        let obs = colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history);
+        let obs = build_bid_obs(net, &self.state, &self.bid_history);
         let legal = self.state.legal_actions();
         let (best_action, q_values) = net.best_action(&obs, legal);
 
@@ -1181,7 +1207,8 @@ impl Env {
         Ok(dict)
     }
 
-    /// Get the 114-float bidding observation vector.
+    /// Get the bidding observation vector (108/110/113-dim depending on obs).
+    /// Without NN loaded, returns the base 108-dim obs for feature inspection.
     fn get_bid_observation(&self) -> Vec<f32> {
         colver_core::bid_obs::make_bid_observation(&self.state, &self.bid_history)
     }
@@ -1255,6 +1282,41 @@ impl Env {
 
     fn __repr__(&self) -> String {
         format!("{:?}", self.state)
+    }
+}
+
+/// Build a bid observation matching the NN's obs_dim.
+///
+/// - 108: base obs (v1/v2/v3/v4)
+/// - 110: score-aware v1 (my_score, opp_score raw) — uses 0/0
+/// - 113: score-aware v2 (v5 default) — uses 0/0
+///
+/// At inference time on a single deal (no multi-deal match context on the
+/// web), match scores default to 0/0 which matches the NN's neutral-match
+/// behaviour (what the distillation used).
+fn build_bid_obs(
+    net: &BidNet,
+    state: &colver_core::state::GameState,
+    history: &[(u8, u8)],
+) -> Vec<f32> {
+    use colver_core::bid_obs;
+    let obs_dim = net.obs_dim();
+    match obs_dim {
+        bid_obs::BID_OBS_DIM => bid_obs::make_bid_observation(state, history),
+        bid_obs::BID_OBS_DIM_SCORE_AWARE => {
+            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE];
+            bid_obs::write_bid_observation_score_aware(&mut buf, 0, state, history, 0, 0);
+            buf
+        }
+        bid_obs::BID_OBS_DIM_SCORE_AWARE_V2 => {
+            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V2];
+            bid_obs::write_bid_observation_score_aware_v2(&mut buf, 0, state, history, 0, 0);
+            buf
+        }
+        other => panic!(
+            "Unsupported bid NN obs_dim={} (expected 108/110/113)",
+            other
+        ),
     }
 }
 
