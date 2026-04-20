@@ -2031,6 +2031,22 @@
     .aide-score-team { min-width: 64px; }
     .aide-bid { padding: 5px 8px; }
 
+    /* Aide columns: stack suit label / total so both heads match height */
+    .aide-col-head {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        margin-bottom: 10px;
+    }
+    .aide-col-head h3 {
+        font-size: 0.95rem;
+        white-space: nowrap;
+    }
+    .aide-col-total {
+        font-size: 0.75rem;
+        white-space: nowrap;
+    }
+
     /* Beliefs: narrower card columns */
     .belief-card-col { width: 40px; }
     .belief-card-img { width: 34px; }
