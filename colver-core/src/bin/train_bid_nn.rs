@@ -23,11 +23,15 @@ use colver_core::bid_candle::BiddingTrainer;
 use colver_core::bid::bumblebid_candle::BumblebidTrainer;
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs::BID_OBS_DIM;
+use colver_core::bid_obs::{
+    self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+};
 use colver_core::suit_perm;
 use colver_core::bid_train_env::{BidReplayBuffer, DealPool, RewardMode, VecBidEnv};
+use colver_core::dmc_net::DmcNet;
+use colver_core::dmc_obs::{self, EnvTracking, OBS_DIM_TR};
 use colver_core::rollout;
-use colver_core::state::GameState;
+use colver_core::state::{GameState, Phase};
 
 const NUM_ACTIONS: usize = 43;
 
@@ -99,6 +103,37 @@ impl Trainer {
             Trainer::Transformer(t) => t.snapshot_weights().map_err(|e| e.into()),
         }
     }
+
+    fn set_ema_tau(&mut self, tau: f32) {
+        if let Trainer::Mlp(t) = self {
+            t.set_ema_tau(tau);
+        }
+    }
+
+    fn update_ema(&mut self) {
+        if let Trainer::Mlp(t) = self {
+            t.update_ema();
+        }
+    }
+
+    /// Returns EMA-shadow snapshot if EMA is enabled (MLP only), else current weights.
+    fn eval_snapshot(&self) -> std::result::Result<Vec<f32>, Box<dyn std::error::Error>> {
+        if let Trainer::Mlp(t) = self {
+            if let Some(ema) = t.ema_snapshot() {
+                return Ok(ema.to_vec());
+            }
+        }
+        self.snapshot_weights()
+    }
+}
+
+/// Write a flat f32 vector to disk as raw little-endian bytes (matches `BiddingTrainer::export_binary` format).
+fn save_bin_from_floats(path: &str, floats: &[f32]) -> std::io::Result<()> {
+    let mut bytes: Vec<u8> = Vec::with_capacity(floats.len() * 4);
+    for f in floats {
+        bytes.extend_from_slice(&f.to_le_bytes());
+    }
+    std::fs::write(path, bytes)
 }
 
 /// Opponent bidding strategy for non-self-play environments.
@@ -249,136 +284,172 @@ struct Args {
     /// Transformer number of heads. Only used with --transformer.
     #[arg(long, default_value_t = 4)]
     n_heads: usize,
+    /// Enable score-aware training: 110-dim obs with match scores, Δ-winprob reward.
+    #[arg(long)]
+    score_aware: bool,
+    /// Reward scale for score-aware mode (default 3.0).
+    #[arg(long, default_value_t = 3.0)]
+    sa_scale: f32,
+    /// Score distribution CSV for score-aware mode (ns,ew,winner).
+    /// If provided, 80% of match scores are sampled from this file, 20% uniform.
+    #[arg(long)]
+    score_dist: Option<String>,
+    /// Fraction of score samples drawn uniformly (rest from --score-dist). Default 0.2.
+    #[arg(long, default_value_t = 0.2)]
+    sa_uniform_ratio: f32,
+    /// Use v2 score features (5 derived features → 113-dim obs). Requires --score-aware.
+    #[arg(long)]
+    sa_features_v2: bool,
+    /// Clip Δ-winprob reward (post scale) to [-clip, +clip]. 0 disables.
+    #[arg(long, default_value_t = 0.0)]
+    reward_clip: f32,
+    /// Polyak EMA τ (per-step) for exported weights / eval. 0 disables.
+    #[arg(long, default_value_t = 0.0)]
+    ema_tau: f32,
+    /// Final LR for cosine decay over training. <= 0 keeps lr constant.
+    #[arg(long, default_value_t = 0.0)]
+    lr_end: f64,
+    /// Play model for eval matches (default: models/play_v2/play_final.bin).
+    #[arg(long, default_value = "models/play_v2/play_final.bin")]
+    eval_play_model: String,
+    /// Baseline bid model for eval matches (default: models/bid_v3_max_20M/bid_nn_final.bin).
+    #[arg(long, default_value = "models/bid_v3_max_20M/bid_nn_final.bin")]
+    eval_baseline_bid: String,
+    /// Baseline bid hidden size (default 512).
+    #[arg(long, default_value_t = 512)]
+    eval_baseline_hidden: usize,
 }
 
-/// Evaluate NN bidding vs improved_v2 bidding.
-/// Both use DD oracle for card play (same scoring).
-/// Returns (nn_wins, total_deals, avg_margin).
-fn evaluate(trainer: &BiddingTrainer, hidden: usize, layers: usize, num_matches: usize) -> (usize, usize, f64) {
-    let weights = match trainer.snapshot_weights() {
+/// Evaluate training model vs baseline in full 2000-point matches.
+///
+/// Training model: score-aware (110-dim) or standard (108-dim) bid NN + DouDou50 play.
+/// Baseline: nn_v3_max_20M bid NN + DouDou50 play (same play model for both).
+/// Each match alternates sides (training=NS for even, training=EW for odd).
+///
+/// Returns (training_wins, total_matches, avg_margin).
+fn evaluate_full_matches(
+    trainer: &Trainer,
+    hidden: usize,
+    layers: usize,
+    obs_dim: usize,
+    num_matches: usize,
+    play_model_path: &str,
+    baseline_bid_path: &str,
+    baseline_bid_hidden: usize,
+) -> (usize, usize, f64) {
+    let weights = match trainer.eval_snapshot() {
         Ok(w) => w,
         Err(e) => {
             eprintln!("Failed to snapshot weights: {}", e);
             return (0, 0, 0.0);
         }
     };
-    let mut bid_net = match BidNet::from_floats_with_layers(&weights, hidden, BID_OBS_DIM, true, layers) {
+    let mut train_bid = match BidNet::from_floats_with_layers(&weights, hidden, obs_dim, true, layers) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("Failed to load eval net: {}", e);
             return (0, 0, 0.0);
         }
     };
+    let mut base_bid = match BidNet::load_with_hidden(baseline_bid_path, baseline_bid_hidden) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to load baseline bid: {}", e);
+            return (0, 0, 0.0);
+        }
+    };
+    let mut dmc = match DmcNet::load(play_model_path) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("Failed to load play model: {}", e);
+            return (0, 0, 0.0);
+        }
+    };
+    dmc.set_residual(true);
 
+    let score_aware = obs_dim > BID_OBS_DIM;
     let mut rng = StdRng::seed_from_u64(12345);
-    let mut nn_wins = 0usize;
+    let mut train_wins = 0usize;
     let mut total_margin = 0i64;
-    let mut total_deals = 0usize;
+
+    let mut bid_obs_buf = vec![0.0f32; obs_dim];
+    let mut base_obs_buf = vec![0.0f32; BID_OBS_DIM];
+    let mut play_obs_buf = vec![0.0f32; OBS_DIM_TR];
 
     for match_idx in 0..num_matches {
-        // Alternate sides: NN plays NS for even matches, EW for odd
-        let nn_team: u8 = (match_idx % 2) as u8;
+        let train_team: u8 = (match_idx % 2) as u8;
+        let mut ns_cum: i32 = 0;
+        let mut ew_cum: i32 = 0;
+        let mut dealer: u8 = rng.gen_range(0..4);
 
-        let dealer = rng.gen_range(0..4u8);
-        let mut state = GameState::deal_random(dealer, &mut rng);
-        let mut bid_history: Vec<(u8, u8)> = Vec::new();
+        while ns_cum < 2000 && ew_cum < 2000 {
+            let mut state = GameState::deal_random(dealer, &mut rng);
+            let mut tracking = EnvTracking::new();
+            tracking.reset(dealer);
 
-        // DD-solve all 4 suits for this deal
-        let mut tt_buf = colver_core::solver::new_tt_buffer();
-        let mut dd_pts = [0u8; 4];
-        for suit in 0..4u8 {
-            let result = colver_core::solver::solve_for_trump_reuse_tt(
-                state.hands,
-                state.dealer,
-                suit,
-                &mut tt_buf,
-            );
-            dd_pts[suit as usize] = result[0];
+            // Bidding
+            while state.phase == Phase::Bidding {
+                let player = state.current_player();
+                let team = GameState::player_team(player);
+
+                let action = if team == train_team {
+                    if score_aware {
+                        let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
+                        if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                            bid_obs::write_bid_observation_score_aware_v2(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        } else {
+                            bid_obs::write_bid_observation_score_aware(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        }
+                    } else {
+                        bid_obs::write_bid_observation(&mut bid_obs_buf, 0, &state, &tracking.bid_history);
+                    }
+                    train_bid.best_action_fast(&bid_obs_buf, state.legal_actions())
+                } else {
+                    bid_obs::write_bid_observation(&mut base_obs_buf, 0, &state, &tracking.bid_history);
+                    base_bid.best_action_fast(&base_obs_buf, state.legal_actions())
+                };
+
+                tracking.track_action(&state, action);
+                state.step(action);
+            }
+
+            // Play (DMC canonical for both teams)
+            while !state.is_terminal() {
+                dmc_obs::write_observation_tr(&mut play_obs_buf, 0, &state, &tracking);
+                let order = dmc_obs::current_player_order(&state, &tracking);
+                let canonical_mask = dmc_obs::cardset_to_canonical(state.legal_actions() as u32, &order);
+                let (canonical_best, _) = dmc.best_action(&play_obs_buf, canonical_mask as u32);
+                let action = dmc_obs::card_to_physical(canonical_best, &order);
+                tracking.track_action(&state, action);
+                state.step(action);
+            }
+
+            let score = state.deal_score();
+            if score.scores[0] != 0 || score.scores[1] != 0 {
+                ns_cum += score.scores[0] as i32;
+                ew_cum += score.scores[1] as i32;
+            }
+            dealer = (dealer + 1) % 4;
         }
 
-        // Run bidding
-        while state.phase == colver_core::state::Phase::Bidding {
-            let player = state.current_player();
-            let team = GameState::player_team(player);
+        let winner = if ns_cum >= 2000 && ew_cum >= 2000 {
+            if ns_cum >= ew_cum { 0u8 } else { 1 }
+        } else if ns_cum >= 2000 { 0 } else { 1 };
 
-            let action = if team == nn_team {
-                // NN bid
-                let obs = colver_core::bid_obs::make_bid_observation(&state, &bid_history);
-                let legal = state.legal_actions();
-                let (best, _) = bid_net.best_action(&obs, legal);
-                best
-            } else {
-                // Baseline: improved_v2
-                colver_core::bid_eval::improved_v2_bid(&state)
-            };
-
-            bid_history.push((player, action));
-            state.step(action);
+        if winner == train_team {
+            train_wins += 1;
         }
-
-        // Score using DD
-        let (ns_score, ew_score) = compute_dd_scores(&state, &dd_pts);
-        let nn_score = if nn_team == 0 { ns_score } else { ew_score };
-        let opp_score = if nn_team == 0 { ew_score } else { ns_score };
-
-        if nn_score > opp_score {
-            nn_wins += 1;
-        }
-        total_margin += (nn_score - opp_score) as i64;
-        total_deals += 1;
+        let train_final = if train_team == 0 { ns_cum } else { ew_cum };
+        let base_final = if train_team == 0 { ew_cum } else { ns_cum };
+        total_margin += (train_final - base_final) as i64;
     }
 
-    let avg_margin = if total_deals > 0 {
-        total_margin as f64 / total_deals as f64
-    } else {
-        0.0
-    };
-
-    (nn_wins, total_deals, avg_margin)
-}
-
-/// Compute deal scores from DD results (same logic as BidTrainingEnv).
-fn compute_dd_scores(state: &GameState, dd_pts: &[u8; 4]) -> (i16, i16) {
-    if state.contract.value == 0 {
-        return (0, 0);
-    }
-
-    let trump = state.contract.trump;
-    let ns_dd_pts = dd_pts[trump as usize];
-    let ew_dd_pts = if ns_dd_pts == 252 || ns_dd_pts == 0 {
-        252 - ns_dd_pts
-    } else {
-        162 - ns_dd_pts
-    };
-
-    let taker = state.contract.team as usize;
-    let defense = 1 - taker;
-
-    let taker_pts = if taker == 0 { ns_dd_pts } else { ew_dd_pts };
-    let defense_pts = if defense == 0 { ns_dd_pts } else { ew_dd_pts };
-
-    let (taker_tricks, defense_tricks) = if defense_pts == 0 {
-        (8u8, 0u8)
-    } else if taker_pts == 0 {
-        (0u8, 8u8)
-    } else {
-        let total_pts = taker_pts as u16 + defense_pts as u16;
-        let taker_frac = taker_pts as f32 / total_pts as f32;
-        let t = (taker_frac * 8.0).round().max(1.0).min(7.0) as u8;
-        (t, 8 - t)
-    };
-
-    let mut terminal = GameState::new(0, [0; 4]);
-    terminal.phase = colver_core::state::Phase::Done;
-    terminal.contract = state.contract;
-    terminal.points[taker] = taker_pts;
-    terminal.points[defense] = defense_pts;
-    terminal.tricks_won[taker] = taker_tricks;
-    terminal.tricks_won[defense] = defense_tricks;
-    terminal.belote = [0; 2];
-
-    let score = colver_core::scoring::compute_deal_score(&terminal);
-    (score.scores[0], score.scores[1])
+    let avg_margin = total_margin as f64 / num_matches as f64;
+    (train_wins, num_matches, avg_margin)
 }
 
 fn main() {
@@ -431,12 +502,31 @@ fn main() {
                 .expect("Failed to create Bumblebid trainer"),
         )
     } else {
-        println!("Model: Dueling MLP H={} L={}", args.hidden, args.layers);
+        let obs_dim = if args.score_aware {
+            if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE }
+        } else {
+            BID_OBS_DIM
+        };
+        println!("Model: Dueling MLP H={} L={} obs_dim={}", args.hidden, args.layers, obs_dim);
         Trainer::Mlp(
-            BiddingTrainer::with_layers(args.layers, args.hidden, args.lr, 0.0, device)
+            BiddingTrainer::with_layers_and_obs(args.layers, args.hidden, obs_dim, args.lr, 0.0, device)
                 .expect("Failed to create trainer"),
         )
     };
+
+    if args.sa_features_v2 && !args.score_aware {
+        panic!("--sa-features-v2 requires --score-aware");
+    }
+    if args.ema_tau > 0.0 {
+        trainer.set_ema_tau(args.ema_tau);
+        println!("EMA tracking enabled (τ={})", args.ema_tau);
+    }
+    if args.reward_clip > 0.0 {
+        println!("Reward clip: ±{}", args.reward_clip);
+    }
+    if args.lr_end > 0.0 {
+        println!("LR cosine decay: {} → {}", args.lr, args.lr_end);
+    }
 
     if let Some(ref path) = args.resume {
         trainer
@@ -445,8 +535,13 @@ fn main() {
         println!("Resumed from {}", path);
     }
 
-    // Initialize replay buffer
-    let mut replay_buffer = BidReplayBuffer::new(args.buffer_size, args.per_alpha);
+    // Initialize replay buffer (obs dim matches model: 113 v2, 110 v1, 108 standard)
+    let replay_obs_dim = if args.score_aware {
+        if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE }
+    } else {
+        BID_OBS_DIM
+    };
+    let mut replay_buffer = BidReplayBuffer::with_obs_dim(args.buffer_size, args.per_alpha, replay_obs_dim);
 
     // Parse reward mode (and optional curriculum schedule)
     let mut curriculum: Option<(f32, f32)> = None; // (dd_start, dd_end)
@@ -513,9 +608,35 @@ fn main() {
 
     // Phase 2: Initialize envs from pool (instant)
     println!("\n--- Phase 2: Training ---");
+    if args.score_aware {
+        println!("Score-aware mode: obs_dim={}, Δ-winprob reward (scale={})", BID_OBS_DIM_SCORE_AWARE, args.sa_scale);
+    }
     let mut vec_env = VecBidEnv::new_with_pool_and_mode(args.num_envs, args.seed, &pool, reward_mode);
 
     let mut rng = StdRng::seed_from_u64(args.seed + 1);
+
+    // In score-aware mode, randomize match scores for each env
+    let score_pool: Vec<(i32, i32)> = if args.score_aware {
+        let pool_data = if let Some(ref path) = args.score_dist {
+            let pts = colver_core::bid_train_env::load_score_points(path)
+                .expect("Failed to load score distribution CSV");
+            println!("Score distribution: {} points from {}, uniform ratio={:.0}%",
+                pts.len(), path, args.sa_uniform_ratio * 100.0);
+            pts
+        } else {
+            println!("Score distribution: uniform [0, 2000)");
+            Vec::new()
+        };
+        let sa_dim = if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE };
+        vec_env.enable_score_aware_with_dim(sa_dim, &pool_data, args.sa_uniform_ratio);
+        if args.reward_clip > 0.0 {
+            vec_env.set_reward_clip(Some(args.reward_clip));
+        }
+        pool_data
+    } else {
+        Vec::new()
+    };
+    let obs_dim = vec_env.obs_dim;
 
     // Per-env opponent tracking
     let n = args.num_envs;
@@ -569,13 +690,21 @@ fn main() {
             }
         }
 
+        // LR cosine decay (per-step, lazy: only update when value changes appreciably)
+        if args.lr_end > 0.0 && step % 1000 == 0 {
+            let t = (step as f64 / args.steps as f64).min(1.0);
+            let cos_factor = 0.5 * (1.0 + (std::f64::consts::PI * t).cos());
+            let lr_now = args.lr_end + (args.lr - args.lr_end) * cos_factor;
+            trainer.set_lr(lr_now);
+        }
+
         // --- Collect actions for all envs ---
         // GPU batch forward pass for all envs (even opponent-controlled ones, for simplicity)
         let obs_flat = &vec_env.obs_buf;
         let mask_flat = &vec_env.mask_buf;
 
         let nn_actions = match trainer.act(
-            &candle_core::Tensor::from_slice(obs_flat, (n, BID_OBS_DIM), trainer.device())
+            &candle_core::Tensor::from_slice(obs_flat, (n, obs_dim), trainer.device())
                 .unwrap(),
             &candle_core::Tensor::from_slice(mask_flat, (n, NUM_ACTIONS), trainer.device())
                 .unwrap(),
@@ -604,39 +733,42 @@ fn main() {
 
         // --- Step all envs, flush completed episodes ---
         for i in 0..n {
-            if let Some(transitions) = vec_env.step_env_pooled(i, actions[i], &pool) {
-                let is_void = transitions.iter().all(|(_, _, _, r, _)| *r == 0.0);
-                if is_void {
-                    total_void_deals += 1;
-                }
+            let is_self_play = opp_modes[i] == OpponentMode::SelfPlay;
 
-                let is_self_play = opp_modes[i] == OpponentMode::SelfPlay;
+            if args.score_aware {
+                if let Some(transitions) = vec_env.step_env_pooled_score_aware(i, actions[i], &pool, args.sa_scale, &score_pool, args.sa_uniform_ratio) {
+                    let is_void = transitions.iter().all(|(_, _, _, r, _)| *r == 0.0);
+                    if is_void { total_void_deals += 1; }
 
-                for (obs, mask, action, reward, team) in &transitions {
-                    // In self-play: add all transitions
-                    // In diverse mode: only add NN team's transitions
-                    if is_self_play || *team == nn_teams[i] {
-                        replay_buffer.push(obs, mask, *action, *reward);
-                        total_transitions += 1;
+                    for (obs, mask, action, reward, team) in &transitions {
+                        if is_self_play || *team == nn_teams[i] {
+                            replay_buffer.push(obs.as_slice(), mask.as_slice(), *action, *reward);
+                            total_transitions += 1;
+                        }
                     }
-                }
 
-                if is_self_play {
-                    self_play_episodes += 1;
-                } else {
-                    diverse_episodes += 1;
+                    if is_self_play { self_play_episodes += 1; } else { diverse_episodes += 1; }
+                    total_episodes += 1;
+                    opp_modes[i] = pick_opponent_mode(step, args.steps, args.diversity_start, args.diversity_end, &mut rng);
+                    nn_teams[i] = rng.gen_range(0..2u8);
                 }
-                total_episodes += 1;
+            } else {
+                if let Some(transitions) = vec_env.step_env_pooled(i, actions[i], &pool) {
+                    let is_void = transitions.iter().all(|(_, _, _, r, _)| *r == 0.0);
+                    if is_void { total_void_deals += 1; }
 
-                // Pick new opponent mode and team for next episode
-                opp_modes[i] = pick_opponent_mode(
-                    step,
-                    args.steps,
-                    args.diversity_start,
-                    args.diversity_end,
-                    &mut rng,
-                );
-                nn_teams[i] = rng.gen_range(0..2u8);
+                    for (obs, mask, action, reward, team) in &transitions {
+                        if is_self_play || *team == nn_teams[i] {
+                            replay_buffer.push(obs, mask, *action, *reward);
+                            total_transitions += 1;
+                        }
+                    }
+
+                    if is_self_play { self_play_episodes += 1; } else { diverse_episodes += 1; }
+                    total_episodes += 1;
+                    opp_modes[i] = pick_opponent_mode(step, args.steps, args.diversity_start, args.diversity_end, &mut rng);
+                    nn_teams[i] = rng.gen_range(0..2u8);
+                }
             }
         }
 
@@ -645,10 +777,11 @@ fn main() {
             let mut sample = replay_buffer.sample(args.batch_size, beta, &mut rng);
 
             // 24× suit augmentation: random permutation per sample
-            suit_perm::augment_bid_batch(
+            suit_perm::augment_bid_batch_with_obs_dim(
                 &mut sample.obs_data,
                 &mut sample.mask_data,
                 &mut sample.actions,
+                obs_dim,
                 &mut rng,
             );
 
@@ -663,6 +796,7 @@ fn main() {
                     replay_buffer.update_priorities(&sample.indices, &td_errors);
                     total_loss += loss as f64;
                     loss_count += 1;
+                    trainer.update_ema();
                 }
                 Err(e) => {
                     eprintln!("Training step failed: {}", e);
@@ -706,19 +840,23 @@ fn main() {
         // --- Evaluate ---
         if (step + 1) % args.eval_freq == 0 {
             let eval_start = Instant::now();
-            let (wins, total, margin) = if let Trainer::Mlp(ref t) = trainer {
-                evaluate(t, args.hidden, args.layers, args.eval_matches)
-            } else {
-                // TODO: implement GPU-based eval for transformer
-                (0, 0, 0.0)
-            };
+            let (wins, total, margin) = evaluate_full_matches(
+                &trainer,
+                args.hidden,
+                args.layers,
+                obs_dim,
+                args.eval_matches,
+                &args.eval_play_model,
+                &args.eval_baseline_bid,
+                args.eval_baseline_hidden,
+            );
             let wr = if total > 0 {
                 wins as f64 / total as f64
             } else {
                 0.0
             };
             println!(
-                "  [EVAL] vs improved_v2: {:.1}% ({}/{}) margin={:+.0}  ({:.0}s)",
+                "  [EVAL] vs baseline (200 full matches): {:.1}% ({}/{}) margin={:+.0}  ({:.0}s)",
                 wr * 100.0,
                 wins,
                 total,
@@ -735,17 +873,25 @@ fn main() {
             if let Err(e) = trainer.save_checkpoint(&st_path) {
                 eprintln!("Failed to save safetensors: {}", e);
             }
-            if let Trainer::Mlp(ref t) = trainer {
-                if let Err(e) = t.export_binary(&bin_path) {
-                    eprintln!("Failed to export binary: {}", e);
+            if matches!(trainer, Trainer::Mlp(_)) {
+                // Use EMA snapshot for the .bin export when EMA is enabled (matches eval).
+                match trainer.eval_snapshot() {
+                    Ok(snap) => {
+                        if let Err(e) = save_bin_from_floats(&bin_path, &snap) {
+                            eprintln!("Failed to write {}: {}", bin_path, e);
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to take eval snapshot: {}", e),
                 }
             }
             // Also save as latest
             let latest_st = format!("{}/bid_nn_latest.safetensors", args.save_dir);
             trainer.save_checkpoint(&latest_st).ok();
-            if let Trainer::Mlp(ref t) = trainer {
+            if matches!(trainer, Trainer::Mlp(_)) {
                 let latest_bin = format!("{}/bid_nn_latest.bin", args.save_dir);
-                t.export_binary(&latest_bin).ok();
+                if let Ok(snap) = trainer.eval_snapshot() {
+                    save_bin_from_floats(&latest_bin, &snap).ok();
+                }
             }
             println!("  [SAVE] {}", st_path);
         }
@@ -754,11 +900,16 @@ fn main() {
     // Final eval and save
     println!("\n--- Final Evaluation ---");
     let eval_start = Instant::now();
-    let (wins, total, margin) = if let Trainer::Mlp(ref t) = trainer {
-        evaluate(t, args.hidden, args.layers, args.eval_matches)
-    } else {
-        (0, 0, 0.0)
-    };
+    let (wins, total, margin) = evaluate_full_matches(
+        &trainer,
+        args.hidden,
+        args.layers,
+        obs_dim,
+        args.eval_matches,
+        &args.eval_play_model,
+        &args.eval_baseline_bid,
+        args.eval_baseline_hidden,
+    );
     let wr = if total > 0 {
         wins as f64 / total as f64
     } else {
@@ -766,11 +917,11 @@ fn main() {
     };
     if total > 0 {
         println!(
-            "vs improved_v2: {:.1}% ({}/{}) margin={:+.0}",
+            "vs baseline (full matches): {:.1}% ({}/{}) margin={:+.0}",
             wr * 100.0, wins, total, margin
         );
     } else {
-        println!("(eval skipped for transformer — use arena for evaluation)");
+        println!("(eval returned no results)");
     }
     println!(
         "Self-play: {} episodes, Diverse: {} episodes ({:.0}%)",
@@ -796,8 +947,10 @@ fn main() {
     let final_st = format!("{}/bid_nn_final.safetensors", args.save_dir);
     let final_bin = format!("{}/bid_nn_final.bin", args.save_dir);
     trainer.save_checkpoint(&final_st).ok();
-    if let Trainer::Mlp(ref t) = trainer {
-        t.export_binary(&final_bin).ok();
+    if matches!(trainer, Trainer::Mlp(_)) {
+        if let Ok(snap) = trainer.eval_snapshot() {
+            save_bin_from_floats(&final_bin, &snap).ok();
+        }
     }
     println!("Saved final model to {}", final_st);
 }

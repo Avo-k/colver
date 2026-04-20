@@ -54,10 +54,15 @@ impl BiddingQNet {
 
     /// Create with configurable layer count.
     pub fn with_layers(layers: usize, hidden: usize, vb: VarBuilder) -> Result<Self> {
+        Self::with_layers_and_obs(layers, hidden, BID_OBS_DIM, vb)
+    }
+
+    /// Create with configurable layer count and input dimension.
+    pub fn with_layers_and_obs(layers: usize, hidden: usize, obs_dim: usize, vb: VarBuilder) -> Result<Self> {
         assert!(layers >= 1);
         let mut trunk_fc = Vec::with_capacity(layers);
         let mut trunk_ln = Vec::with_capacity(layers);
-        trunk_fc.push(linear(BID_OBS_DIM, hidden, vb.pp("trunk.0"))?);
+        trunk_fc.push(linear(obs_dim, hidden, vb.pp("trunk.0"))?);
         trunk_ln.push(ManualLayerNorm::new(hidden, 1e-5, vb.pp("trunk_ln.0"))?);
         for i in 1..layers {
             trunk_fc.push(linear(hidden, hidden, vb.pp(format!("trunk.{}", i)))?);
@@ -140,6 +145,10 @@ pub struct BiddingTrainer {
     device: Device,
     hidden: usize,
     layers: usize,
+    /// Polyak EMA decay (per-step τ). 0 disables EMA tracking.
+    ema_tau: f32,
+    /// EMA shadow of `snapshot_weights()`. Updated after each train_step when ema_tau > 0.
+    ema_weights: Option<Vec<f32>>,
 }
 
 impl BiddingTrainer {
@@ -150,9 +159,14 @@ impl BiddingTrainer {
 
     /// Create with configurable layer count.
     pub fn with_layers(layers: usize, hidden: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
+        Self::with_layers_and_obs(layers, hidden, BID_OBS_DIM, lr, weight_decay, device)
+    }
+
+    /// Create with configurable layer count and input dimension.
+    pub fn with_layers_and_obs(layers: usize, hidden: usize, obs_dim: usize, lr: f64, weight_decay: f64, device: Device) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = BiddingQNet::with_layers(layers, hidden, vb)?;
+        let net = BiddingQNet::with_layers_and_obs(layers, hidden, obs_dim, vb)?;
 
         let adamw_params = ParamsAdamW {
             lr,
@@ -170,11 +184,54 @@ impl BiddingTrainer {
             device,
             hidden,
             layers,
+            ema_tau: 0.0,
+            ema_weights: None,
         })
     }
 
     pub fn set_lr(&mut self, lr: f64) {
         self.optimizer.set_learning_rate(lr);
+    }
+
+    /// Configure Polyak EMA tracking. tau ∈ (0, 1] enables; 0 disables.
+    /// On enable, the shadow buffer is initialized from current weights.
+    pub fn set_ema_tau(&mut self, tau: f32) {
+        if tau > 0.0 {
+            self.ema_tau = tau;
+            if self.ema_weights.is_none() {
+                self.ema_weights = self.snapshot_weights().ok();
+            }
+        } else {
+            self.ema_tau = 0.0;
+            self.ema_weights = None;
+        }
+    }
+
+    /// Update the EMA shadow with the latest weights. Cheap (one snapshot + linear blend).
+    pub fn update_ema(&mut self) {
+        if self.ema_tau <= 0.0 {
+            return;
+        }
+        let current = match self.snapshot_weights() {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+        match self.ema_weights.as_mut() {
+            Some(ema) if ema.len() == current.len() => {
+                let tau = self.ema_tau;
+                for (e, c) in ema.iter_mut().zip(current.iter()) {
+                    *e = (1.0 - tau) * *e + tau * *c;
+                }
+            }
+            _ => {
+                self.ema_weights = Some(current);
+            }
+        }
+    }
+
+    /// Returns the EMA shadow if EMA is enabled and initialized.
+    pub fn ema_snapshot(&self) -> Option<&[f32]> {
+        self.ema_weights.as_deref()
     }
 
     pub fn device(&self) -> &Device {
@@ -191,9 +248,10 @@ impl BiddingTrainer {
         weights: &[f32],
     ) -> Result<(f32, Vec<f32>)> {
         let batch_size = actions.len();
+        let obs_dim = obs.len() / batch_size;
         let device = &self.device;
 
-        let obs_t = Tensor::from_slice(obs, (batch_size, BID_OBS_DIM), device)?;
+        let obs_t = Tensor::from_slice(obs, (batch_size, obs_dim), device)?;
         let returns_t = Tensor::from_slice(returns, batch_size, device)?;
         let weights_t = Tensor::from_slice(weights, batch_size, device)?;
 
@@ -235,7 +293,12 @@ impl BiddingTrainer {
     pub fn export_binary(&self, path: &str) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let data = self.varmap.data().lock().unwrap();
         let mut floats: Vec<f32> = Vec::new();
-        let mut in_dims = vec![BID_OBS_DIM];
+        // Infer input dim from first layer weight shape
+        let first_w = data.get("trunk.0.weight")
+            .ok_or("missing trunk.0.weight")?;
+        let first_w_len = first_w.elem_count();
+        let obs_dim = first_w_len / self.hidden;
+        let mut in_dims = vec![obs_dim];
         for _ in 1..self.layers { in_dims.push(self.hidden); }
 
         for i in 0..self.layers {

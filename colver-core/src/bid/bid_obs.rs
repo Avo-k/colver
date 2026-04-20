@@ -13,7 +13,21 @@ use crate::bidding;
 use crate::state::{GameState, Phase};
 
 pub const BID_OBS_DIM: usize = 108;
+pub const BID_OBS_DIM_SCORE_AWARE: usize = 110;
+/// v5: 5 derived score features instead of 2 raw scores.
+/// Layout: base 108 + my/2000 + opp/2000 + win_prob + leader_remaining/2000 + diff/2000
+pub const BID_OBS_DIM_SCORE_AWARE_V2: usize = 113;
 pub const BID_MASK_DIM: usize = 43;
+
+/// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
+/// Fitted from 10k full matches. Mirrors `bid_train_env::win_probability`.
+#[inline]
+pub fn win_probability(s_me: f32, s_opp: f32) -> f32 {
+    let r_sum = (2000.0 - s_me) + (2000.0 - s_opp);
+    let denom = r_sum.max(1.0).powf(0.8) + 340.0;
+    let x = 1.7 * (s_me - s_opp) / denom;
+    1.0 / (1.0 + (-x).exp())
+}
 
 /// Write the 114-float bidding observation into `buf[offset..offset+BID_OBS_DIM]`.
 pub fn write_bid_observation(
@@ -52,6 +66,55 @@ pub fn write_bid_observation(
     pos += 4;
 
     debug_assert_eq!(pos, BID_OBS_DIM);
+}
+
+/// Write the 110-float score-aware bidding observation.
+/// Same as write_bid_observation but appends 2 floats: my_score/2000, opp_score/2000.
+pub fn write_bid_observation_score_aware(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+) {
+    debug_assert!(buf.len() >= offset + BID_OBS_DIM_SCORE_AWARE);
+
+    // Write the base 108-dim observation
+    write_bid_observation(buf, offset, state, bid_history);
+
+    // Append match scores (2 floats)
+    buf[offset + BID_OBS_DIM] = (my_score as f32 / 2000.0).clamp(0.0, 1.0);
+    buf[offset + BID_OBS_DIM + 1] = (opp_score as f32 / 2000.0).clamp(0.0, 1.0);
+}
+
+/// v2 score-aware obs (113-dim). Appends 5 derived features instead of 2 raw scores:
+///   [108] my_score / 2000
+///   [109] opp_score / 2000
+///   [110] win_probability(my, opp) — calibrated sigmoid
+///   [111] (2000 − max(my, opp)) / 2000 — distance from end for the leader
+///   [112] (my − opp) / 2000 in [-1, 1]
+pub fn write_bid_observation_score_aware_v2(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+) {
+    debug_assert!(buf.len() >= offset + BID_OBS_DIM_SCORE_AWARE_V2);
+
+    write_bid_observation(buf, offset, state, bid_history);
+
+    let s_me = my_score as f32;
+    let s_opp = opp_score as f32;
+
+    buf[offset + BID_OBS_DIM] = (s_me / 2000.0).clamp(0.0, 1.0);
+    buf[offset + BID_OBS_DIM + 1] = (s_opp / 2000.0).clamp(0.0, 1.0);
+    buf[offset + BID_OBS_DIM + 2] = win_probability(s_me, s_opp);
+    let leader = s_me.max(s_opp);
+    buf[offset + BID_OBS_DIM + 3] = ((2000.0 - leader) / 2000.0).clamp(0.0, 1.0);
+    buf[offset + BID_OBS_DIM + 4] = ((s_me - s_opp) / 2000.0).clamp(-1.0, 1.0);
 }
 
 /// Write the 43-float legal bid mask into `buf[offset..offset+43]`.
@@ -133,7 +196,38 @@ mod tests {
     #[test]
     fn test_bid_obs_dim() {
         assert_eq!(BID_OBS_DIM, 108);
+        assert_eq!(BID_OBS_DIM_SCORE_AWARE, 110);
+        assert_eq!(BID_OBS_DIM_SCORE_AWARE_V2, 113);
         assert_eq!(BID_MASK_DIM, 43);
+    }
+
+    #[test]
+    fn test_v2_features_layout() {
+        let hands = [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000];
+        let state = GameState::new(0, hands);
+        let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V2];
+        write_bid_observation_score_aware_v2(&mut buf, 0, &state, &[], 1500, 800);
+
+        // base 108-dim should be identical to standard obs
+        let mut ref_buf = vec![0.0f32; BID_OBS_DIM];
+        write_bid_observation(&mut ref_buf, 0, &state, &[]);
+        for i in 0..BID_OBS_DIM {
+            assert_eq!(buf[i], ref_buf[i]);
+        }
+
+        assert!((buf[108] - 0.75).abs() < 1e-6);   // 1500/2000
+        assert!((buf[109] - 0.40).abs() < 1e-6);   // 800/2000
+        assert!(buf[110] > 0.5 && buf[110] < 1.0); // win_prob > 0.5 (we're ahead)
+        assert!((buf[111] - 0.25).abs() < 1e-6);   // (2000-1500)/2000
+        assert!((buf[112] - 0.35).abs() < 1e-6);   // (1500-800)/2000
+    }
+
+    #[test]
+    fn test_win_probability_symmetry() {
+        let p_ahead = win_probability(1500.0, 800.0);
+        let p_behind = win_probability(800.0, 1500.0);
+        assert!((p_ahead + p_behind - 1.0).abs() < 1e-5);
+        assert!(p_ahead > 0.5);
     }
 
     #[test]

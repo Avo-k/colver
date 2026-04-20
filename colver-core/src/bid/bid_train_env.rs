@@ -18,11 +18,50 @@ use std::time::Instant;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use crate::bid_obs::{self, BID_MASK_DIM, BID_OBS_DIM};
+use crate::bid_obs::{
+    self, BID_MASK_DIM, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+};
 use crate::rollout;
 use crate::scoring::compute_deal_score;
 use crate::solver;
 use crate::state::{GameState, Phase};
+
+/// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
+/// Fitted from 10k full matches. v3_max: δ=320, v4_sa: δ=360 → average 340.
+/// Scoring rules: surcontré ×3, contré base 160, capot = contrat 250.
+pub fn win_probability(s_me: f32, s_opp: f32) -> f32 {
+    let r_sum = (2000.0 - s_me) + (2000.0 - s_opp);
+    let denom = r_sum.max(1.0).powf(0.8) + 340.0;
+    let x = 1.7 * (s_me - s_opp) / denom;
+    1.0 / (1.0 + (-x).exp())
+}
+
+/// Compute score-aware reward as Δ win probability × scale.
+/// Handles match-ending deals (someone crosses 2000).
+pub fn score_aware_reward(
+    s_me: f32,
+    s_opp: f32,
+    my_deal_pts: i16,
+    opp_deal_pts: i16,
+    scale: f32,
+) -> f32 {
+    let p0 = win_probability(s_me, s_opp);
+
+    let new_me = s_me + my_deal_pts as f32;
+    let new_opp = s_opp + opp_deal_pts as f32;
+
+    let p1 = if new_me >= 2000.0 && new_opp >= 2000.0 {
+        if new_me >= new_opp { 1.0 } else { 0.0 }
+    } else if new_me >= 2000.0 {
+        1.0
+    } else if new_opp >= 2000.0 {
+        0.0
+    } else {
+        win_probability(new_me, new_opp)
+    };
+
+    (p1 - p0) * scale
+}
 
 /// How to compute reward points from a deal's pre-solved data.
 #[derive(Clone, Copy, Debug)]
@@ -529,6 +568,14 @@ struct BidTransition {
     team: u8, // team of the player who acted (0=NS, 1=EW)
 }
 
+/// Score-aware transition: uses variable-dim obs (110 v1, 113 v2) with match scores appended.
+struct ScoreAwareBidTransition {
+    obs: Vec<f32>,
+    mask: [f32; BID_MASK_DIM],
+    action: u8,
+    team: u8,
+}
+
 /// A single bidding training environment.
 pub struct BidTrainingEnv {
     pub state: GameState,
@@ -543,6 +590,15 @@ pub struct BidTrainingEnv {
     tt_buf: Vec<u64>,
     /// Buffered transitions for this episode.
     transitions: Vec<BidTransition>,
+    /// Score-aware mode: match scores (NS cumulative, EW cumulative).
+    /// When Some, uses score-aware obs and Δ-winprob reward.
+    pub score_aware: Option<(i32, i32)>,
+    /// Score-aware obs dim (BID_OBS_DIM_SCORE_AWARE = 110 for v1, _V2 = 113 for v2 features).
+    pub sa_obs_dim: usize,
+    /// Optional clip applied to Δ-winprob reward (post scale). None = no clip.
+    pub reward_clip: Option<f32>,
+    /// Score-aware transitions (variable-dim obs). Used instead of `transitions` when score_aware is Some.
+    sa_transitions: Vec<ScoreAwareBidTransition>,
 }
 
 impl BidTrainingEnv {
@@ -560,6 +616,10 @@ impl BidTrainingEnv {
             reward_mode: RewardMode::DdOnly,
             tt_buf,
             transitions: Vec::with_capacity(12),
+            score_aware: None,
+            sa_obs_dim: BID_OBS_DIM_SCORE_AWARE,
+            reward_clip: None,
+            sa_transitions: Vec::new(),
         }
     }
 
@@ -578,6 +638,10 @@ impl BidTrainingEnv {
             reward_mode,
             tt_buf: Vec::new(),
             transitions: Vec::with_capacity(12),
+            score_aware: None,
+            sa_obs_dim: BID_OBS_DIM_SCORE_AWARE,
+            reward_clip: None,
+            sa_transitions: Vec::new(),
         }
     }
 
@@ -587,6 +651,7 @@ impl BidTrainingEnv {
         self.state = GameState::deal_random(dealer, rng);
         self.bid_history.clear();
         self.transitions.clear();
+        self.sa_transitions.clear();
         self.dd_pts = solve_all_suits(&self.state, &mut self.tt_buf);
         self.real_pts = None;
     }
@@ -596,26 +661,71 @@ impl BidTrainingEnv {
         self.state = GameState::new(deal.dealer, deal.hands);
         self.bid_history.clear();
         self.transitions.clear();
+        self.sa_transitions.clear();
         self.dd_pts = deal.dd_pts;
         self.real_pts = deal.real_pts;
     }
 
+    /// Set random match scores for score-aware training.
+    /// If score_pool is provided, samples from real match data (80%) + uniform (20%).
+    pub fn randomize_match_scores(&mut self, rng: &mut impl Rng) {
+        let ns: i32 = rng.gen_range(0..2000);
+        let ew: i32 = rng.gen_range(0..2000);
+        self.score_aware = Some((ns, ew));
+    }
+
+    /// Set match scores by sampling from real match data with uniform fallback.
+    pub fn randomize_match_scores_from_pool(
+        &mut self,
+        score_pool: &[(i32, i32)],
+        uniform_ratio: f32,
+        rng: &mut impl Rng,
+    ) {
+        let (ns, ew) = if score_pool.is_empty() || rng.gen::<f32>() < uniform_ratio {
+            (rng.gen_range(0..2000), rng.gen_range(0..2000))
+        } else {
+            score_pool[rng.gen_range(0..score_pool.len())]
+        };
+        self.score_aware = Some((ns, ew));
+    }
+
     /// Record the current observation as a transition (before stepping).
     fn record_transition(&mut self, action: u8) {
-        let mut obs = [0.0f32; BID_OBS_DIM];
-        bid_obs::write_bid_observation(&mut obs, 0, &self.state, &self.bid_history);
-
-        let mut mask = [0.0f32; BID_MASK_DIM];
-        bid_obs::write_bid_mask(&mut mask, 0, &self.state);
-
         let team = GameState::player_team(self.state.current_player());
 
-        self.transitions.push(BidTransition {
-            obs,
-            mask,
-            action,
-            team,
-        });
+        if let Some((ns_cum, ew_cum)) = self.score_aware {
+            // Score-aware: variable-dim obs (110 v1, 113 v2)
+            let dim = self.sa_obs_dim;
+            let mut obs = vec![0.0f32; dim];
+            let (my_score, opp_score) = if team == 0 {
+                (ns_cum, ew_cum)
+            } else {
+                (ew_cum, ns_cum)
+            };
+            if dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                bid_obs::write_bid_observation_score_aware_v2(
+                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
+                );
+            } else {
+                bid_obs::write_bid_observation_score_aware(
+                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
+                );
+            }
+            let mut mask = [0.0f32; BID_MASK_DIM];
+            bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+            self.sa_transitions.push(ScoreAwareBidTransition {
+                obs, mask, action, team,
+            });
+        } else {
+            // Standard: 108-dim obs
+            let mut obs = [0.0f32; BID_OBS_DIM];
+            bid_obs::write_bid_observation(&mut obs, 0, &self.state, &self.bid_history);
+            let mut mask = [0.0f32; BID_MASK_DIM];
+            bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+            self.transitions.push(BidTransition {
+                obs, mask, action, team,
+            });
+        }
     }
 
     /// Step the bidding environment. Returns true if bidding is done.
@@ -635,7 +745,7 @@ impl BidTrainingEnv {
         self.state.phase != Phase::Bidding
     }
 
-    /// Compute rewards and return transitions.
+    /// Compute rewards and return transitions (108-dim obs).
     /// Call after bidding ends (step returned true).
     /// Returns Vec of (obs, mask, action, reward, team).
     pub fn flush_transitions(
@@ -657,6 +767,33 @@ impl BidTrainingEnv {
             .collect();
 
         result
+    }
+
+    /// Flush score-aware transitions (variable-dim obs, Δ-winprob reward).
+    /// Returns Vec of (obs, mask, action, reward, team). Obs dim = self.sa_obs_dim.
+    /// Applies self.reward_clip to the symmetric reward if Some.
+    pub fn flush_transitions_score_aware(
+        &mut self,
+        scale: f32,
+    ) -> Vec<(Vec<f32>, [f32; BID_MASK_DIM], u8, f32, u8)> {
+        let (ns_deal, ew_deal) = self.compute_scores();
+        let (ns_cum, ew_cum) = self.score_aware.unwrap_or((0, 0));
+
+        // NS team reward
+        let mut ns_reward = score_aware_reward(
+            ns_cum as f32, ew_cum as f32, ns_deal, ew_deal, scale,
+        );
+        if let Some(clip) = self.reward_clip {
+            ns_reward = ns_reward.clamp(-clip, clip);
+        }
+        let rewards = [ns_reward, -ns_reward];
+
+        self.sa_transitions
+            .drain(..)
+            .map(|t| {
+                (t.obs, t.mask, t.action, rewards[t.team as usize], t.team)
+            })
+            .collect()
     }
 
     /// Compute deal scores using reward mode (DD, real, or blend).
@@ -737,6 +874,21 @@ impl BidTrainingEnv {
     }
 }
 
+/// Load score points CSV (ns,ew,winner) → Vec<(i32, i32)> for sampling match scores.
+pub fn load_score_points(path: &str) -> std::io::Result<Vec<(i32, i32)>> {
+    let content = std::fs::read_to_string(path)?;
+    let mut points = Vec::new();
+    for line in content.lines().skip(1) {
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() >= 2 {
+            if let (Ok(ns), Ok(ew)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                points.push((ns, ew));
+            }
+        }
+    }
+    Ok(points)
+}
+
 /// DD-solve all 4 trump suits, returning [ns_pts; 4].
 fn solve_all_suits(state: &GameState, tt_buf: &mut [u64]) -> [u8; 4] {
     let mut pts = [0u8; 4];
@@ -755,26 +907,24 @@ fn solve_all_suits(state: &GameState, tt_buf: &mut [u64]) -> [u8; 4] {
 /// Vectorized bidding training environment.
 pub struct VecBidEnv {
     pub envs: Vec<BidTrainingEnv>,
-    /// Flat observation buffer: n_envs × BID_OBS_DIM.
+    /// Flat observation buffer: n_envs × obs_dim.
     pub obs_buf: Vec<f32>,
     /// Flat mask buffer: n_envs × BID_MASK_DIM.
     pub mask_buf: Vec<f32>,
     pub rng: StdRng,
+    /// Observation dimension (108 or 110 for score-aware).
+    pub obs_dim: usize,
 }
 
 impl VecBidEnv {
     pub fn new(n_envs: usize, seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let envs: Vec<_> = (0..n_envs).map(|_| BidTrainingEnv::new(&mut rng)).collect();
-        let obs_buf = vec![0.0f32; n_envs * BID_OBS_DIM];
+        let obs_dim = BID_OBS_DIM;
+        let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv {
-            envs,
-            obs_buf,
-            mask_buf,
-            rng,
-        };
+        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim };
         vec_env.refresh_observations();
         vec_env
     }
@@ -795,17 +945,51 @@ impl VecBidEnv {
         let envs: Vec<_> = (0..n_envs)
             .map(|_| BidTrainingEnv::from_deal_with_mode(pool.sample(&mut rng), reward_mode))
             .collect();
-        let obs_buf = vec![0.0f32; n_envs * BID_OBS_DIM];
+        let obs_dim = BID_OBS_DIM;
+        let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv {
-            envs,
-            obs_buf,
-            mask_buf,
-            rng,
-        };
+        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim };
         vec_env.refresh_observations();
         vec_env
+    }
+
+    /// Enable score-aware mode: resize obs_buf to 110-dim, randomize match scores.
+    pub fn enable_score_aware(&mut self) {
+        self.enable_score_aware_with_pool(&[], 1.0);
+    }
+
+    /// Enable score-aware with a real score distribution pool.
+    /// uniform_ratio: fraction of samples drawn uniformly (rest from pool).
+    pub fn enable_score_aware_with_pool(&mut self, score_pool: &[(i32, i32)], uniform_ratio: f32) {
+        self.enable_score_aware_with_dim(BID_OBS_DIM_SCORE_AWARE, score_pool, uniform_ratio);
+    }
+
+    /// Enable score-aware with explicit obs dim (110 v1 or 113 v2).
+    pub fn enable_score_aware_with_dim(
+        &mut self,
+        obs_dim: usize,
+        score_pool: &[(i32, i32)],
+        uniform_ratio: f32,
+    ) {
+        assert!(
+            obs_dim == BID_OBS_DIM_SCORE_AWARE || obs_dim == BID_OBS_DIM_SCORE_AWARE_V2,
+            "score-aware obs dim must be 110 or 113"
+        );
+        self.obs_dim = obs_dim;
+        self.obs_buf = vec![0.0f32; self.envs.len() * self.obs_dim];
+        for env in &mut self.envs {
+            env.sa_obs_dim = obs_dim;
+            env.randomize_match_scores_from_pool(score_pool, uniform_ratio, &mut self.rng);
+        }
+        self.refresh_observations();
+    }
+
+    /// Set reward clipping bound for all envs (None disables).
+    pub fn set_reward_clip(&mut self, clip: Option<f32>) {
+        for env in &mut self.envs {
+            env.reward_clip = clip;
+        }
     }
 
     #[inline]
@@ -816,20 +1000,13 @@ impl VecBidEnv {
     /// Refresh all obs/mask buffers from current env states.
     pub fn refresh_observations(&mut self) {
         for i in 0..self.envs.len() {
-            let env = &self.envs[i];
-            bid_obs::write_bid_observation(
-                &mut self.obs_buf,
-                i * BID_OBS_DIM,
-                &env.state,
-                &env.bid_history,
-            );
-            bid_obs::write_bid_mask(&mut self.mask_buf, i * BID_MASK_DIM, &env.state);
+            self.refresh_env_inner(i);
         }
     }
 
     #[inline]
     pub fn obs_slice(&self, i: usize) -> &[f32] {
-        &self.obs_buf[i * BID_OBS_DIM..(i + 1) * BID_OBS_DIM]
+        &self.obs_buf[i * self.obs_dim..(i + 1) * self.obs_dim]
     }
 
     #[inline]
@@ -898,6 +1075,36 @@ impl VecBidEnv {
         }
     }
 
+    /// Step env i with pool-based reset, score-aware mode (variable-dim obs, Δ-winprob reward).
+    /// Obs dim of returned transitions = the env's sa_obs_dim (110 or 113).
+    pub fn step_env_pooled_score_aware(
+        &mut self,
+        i: usize,
+        action: u8,
+        pool: &DealPool,
+        scale: f32,
+        score_pool: &[(i32, i32)],
+        uniform_ratio: f32,
+    ) -> Option<Vec<(Vec<f32>, [f32; BID_MASK_DIM], u8, f32, u8)>> {
+        let done = self.envs[i].step(action);
+        if done {
+            let transitions = self.envs[i].flush_transitions_score_aware(scale);
+            let deal = pool.sample(&mut self.rng);
+            // Preserve sa_obs_dim and reward_clip across reset.
+            let prev_dim = self.envs[i].sa_obs_dim;
+            let prev_clip = self.envs[i].reward_clip;
+            self.envs[i].reset_from_deal(deal);
+            self.envs[i].sa_obs_dim = prev_dim;
+            self.envs[i].reward_clip = prev_clip;
+            self.envs[i].randomize_match_scores_from_pool(score_pool, uniform_ratio, &mut self.rng);
+            self.refresh_env(i);
+            Some(transitions)
+        } else {
+            self.refresh_env(i);
+            None
+        }
+    }
+
     /// Update reward mode for all envs (used for curriculum scheduling).
     pub fn set_reward_mode(&mut self, mode: RewardMode) {
         for env in &mut self.envs {
@@ -908,24 +1115,47 @@ impl VecBidEnv {
     /// Refresh obs/mask buffers for a single env.
     #[inline]
     fn refresh_env(&mut self, i: usize) {
-        bid_obs::write_bid_observation(
-            &mut self.obs_buf,
-            i * BID_OBS_DIM,
-            &self.envs[i].state,
-            &self.envs[i].bid_history,
-        );
-        bid_obs::write_bid_mask(
-            &mut self.mask_buf,
-            i * BID_MASK_DIM,
-            &self.envs[i].state,
-        );
+        self.refresh_env_inner(i);
+    }
+
+    fn refresh_env_inner(&mut self, i: usize) {
+        let od = self.obs_dim;
+        if od == BID_OBS_DIM_SCORE_AWARE || od == BID_OBS_DIM_SCORE_AWARE_V2 {
+            let (my, opp) = if let Some((ns, ew)) = self.envs[i].score_aware {
+                let player = self.envs[i].state.current_player();
+                let team = GameState::player_team(player);
+                if team == 0 { (ns, ew) } else { (ew, ns) }
+            } else {
+                (0, 0)
+            };
+            if od == BID_OBS_DIM_SCORE_AWARE_V2 {
+                bid_obs::write_bid_observation_score_aware_v2(
+                    &mut self.obs_buf, i * od,
+                    &self.envs[i].state, &self.envs[i].bid_history,
+                    my, opp,
+                );
+            } else {
+                bid_obs::write_bid_observation_score_aware(
+                    &mut self.obs_buf, i * od,
+                    &self.envs[i].state, &self.envs[i].bid_history,
+                    my, opp,
+                );
+            }
+        } else {
+            bid_obs::write_bid_observation(
+                &mut self.obs_buf, i * od,
+                &self.envs[i].state, &self.envs[i].bid_history,
+            );
+        }
+        bid_obs::write_bid_mask(&mut self.mask_buf, i * BID_MASK_DIM, &self.envs[i].state);
     }
 }
 
-/// PER buffer sized for bidding (114-dim obs, 43-dim mask).
+/// PER buffer sized for bidding (configurable obs dim, 43-dim mask).
 pub struct BidReplayBuffer {
     capacity: usize,
     alpha: f64,
+    obs_dim: usize,
     tree: SumTree,
     obs: Vec<f32>,
     masks: Vec<f32>,
@@ -1023,12 +1253,17 @@ impl SumTree {
 
 impl BidReplayBuffer {
     pub fn new(capacity: usize, alpha: f64) -> Self {
+        Self::with_obs_dim(capacity, alpha, BID_OBS_DIM)
+    }
+
+    pub fn with_obs_dim(capacity: usize, alpha: f64, obs_dim: usize) -> Self {
         let cached_priority = 1.0f64.powf(alpha);
         BidReplayBuffer {
             capacity,
             alpha,
+            obs_dim,
             tree: SumTree::new(capacity),
-            obs: vec![0.0f32; capacity * BID_OBS_DIM],
+            obs: vec![0.0f32; capacity * obs_dim],
             masks: vec![0.0f32; capacity * BID_MASK_DIM],
             actions: vec![0u8; capacity],
             returns: vec![0.0f32; capacity],
@@ -1044,14 +1279,14 @@ impl BidReplayBuffer {
 
     /// Push a single transition with max priority.
     pub fn push(&mut self, obs: &[f32], mask: &[f32], action: u8, ret: f32) {
-        debug_assert_eq!(obs.len(), BID_OBS_DIM);
+        debug_assert_eq!(obs.len(), self.obs_dim);
         debug_assert_eq!(mask.len(), BID_MASK_DIM);
 
+        let od = self.obs_dim;
         let p = self.cached_priority;
         let idx = self.tree.add(p);
-        let obs_start = idx * BID_OBS_DIM;
+        self.obs[idx * od..idx * od + od].copy_from_slice(obs);
         let mask_start = idx * BID_MASK_DIM;
-        self.obs[obs_start..obs_start + BID_OBS_DIM].copy_from_slice(obs);
         self.masks[mask_start..mask_start + BID_MASK_DIM].copy_from_slice(mask);
         self.actions[idx] = action;
         self.returns[idx] = ret;
@@ -1098,16 +1333,15 @@ impl BidReplayBuffer {
         }
 
         // Gather data
-        let mut obs_data = vec![0.0f32; batch_size * BID_OBS_DIM];
+        let od = self.obs_dim;
+        let mut obs_data = vec![0.0f32; batch_size * od];
         let mut mask_data = vec![0.0f32; batch_size * BID_MASK_DIM];
         let mut act_data = Vec::with_capacity(batch_size);
         let mut ret_data = Vec::with_capacity(batch_size);
 
         for (j, &idx) in indices.iter().enumerate() {
-            let obs_src = idx * BID_OBS_DIM;
-            let obs_dst = j * BID_OBS_DIM;
-            obs_data[obs_dst..obs_dst + BID_OBS_DIM]
-                .copy_from_slice(&self.obs[obs_src..obs_src + BID_OBS_DIM]);
+            obs_data[j * od..j * od + od]
+                .copy_from_slice(&self.obs[idx * od..idx * od + od]);
             let mask_src = idx * BID_MASK_DIM;
             let mask_dst = j * BID_MASK_DIM;
             mask_data[mask_dst..mask_dst + BID_MASK_DIM]

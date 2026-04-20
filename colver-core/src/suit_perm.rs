@@ -450,15 +450,30 @@ pub fn augment_bid_batch(
     actions: &mut [u8],
     rng: &mut impl rand::Rng,
 ) {
+    augment_bid_batch_with_obs_dim(obs_data, mask_data, actions, crate::bid_obs::BID_OBS_DIM, rng);
+}
+
+/// Suit augmentation for bid batches with configurable obs_dim.
+/// Only the first BID_OBS_DIM (108) elements are permuted; any trailing
+/// features (e.g. match scores) are left unchanged.
+pub fn augment_bid_batch_with_obs_dim(
+    obs_data: &mut [f32],
+    mask_data: &mut [f32],
+    actions: &mut [u8],
+    obs_dim: usize,
+    rng: &mut impl rand::Rng,
+) {
     let batch = actions.len();
+    let base_dim = crate::bid_obs::BID_OBS_DIM; // 108: the suit-dependent part
     for i in 0..batch {
         let perm_idx = rng.gen_range(0..24usize);
         if perm_idx == 0 {
             continue;
         }
         let perm = &ALL_PERMS[perm_idx];
-        let obs_start = i * crate::bid_obs::BID_OBS_DIM;
-        permute_bid_obs(&mut obs_data[obs_start..obs_start + crate::bid_obs::BID_OBS_DIM], perm);
+        let obs_start = i * obs_dim;
+        // Permute only the first 108 dims (hand + bid history + position)
+        permute_bid_obs(&mut obs_data[obs_start..obs_start + base_dim], perm);
         let mask_start = i * 43;
         permute_bid_mask_f32(&mut mask_data[mask_start..mask_start + 43], perm);
         actions[i] = permute_bid_action(actions[i], perm);

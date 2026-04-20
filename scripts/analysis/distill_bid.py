@@ -308,7 +308,12 @@ def main():
 
     df = load_data(csv_path)
 
-    log_path = "data/distill/bid_distill_analysis.log"
+    # Derive log path from CSV stem: foo/bar.csv -> foo/bar_analysis.log
+    if len(sys.argv) > 2:
+        log_path = sys.argv[2]
+    else:
+        csv_p = Path(csv_path)
+        log_path = str(csv_p.with_name(csv_p.stem + "_analysis.log"))
 
     class TeeWriter:
         def __init__(self, *writers):

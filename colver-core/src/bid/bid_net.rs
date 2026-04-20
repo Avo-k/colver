@@ -70,7 +70,7 @@ impl BidNet {
         let total = floats.len();
         let standard_tail = h * NUM_ACTIONS + NUM_ACTIONS;
         let dueling_tail = h + 1 + h * NUM_ACTIONS + NUM_ACTIONS;
-        let known_dims = [114];
+        let known_dims = [108, 110, 113, 114];
 
         // Collect all valid (layers, dueling, obs_dim) candidates
         let mut candidates = Vec::new();

@@ -16,9 +16,14 @@
 ///   - pos4_opp80:      Position 4, opp (pos3) bid 80 over 2 passes
 ///
 /// Usage:
-///   cargo run -p colver-core --bin distill_bid --release -- [model_path] [n_deals] [output_path]
+///   cargo run -p colver-core --bin distill_bid --release -- [model_path] [n_deals] [output_path] [my_score] [opp_score]
 ///
-/// Defaults: models/bid_v2/bid_nn_final.bin, 200000 deals, data/distill/bid_distill.csv
+/// Defaults: models/bid_v2/bid_nn_final.bin, 200000 deals, data/distill/bid_distill.csv, 0, 0
+///
+/// Observation dim is auto-detected from the weight file:
+///   108 → legacy v1 bid obs (bid_v1/v2/v3/v4 with --reward real using 110 are not supported here)
+///   110 → score-aware v1 (my_score/opp_score raw)
+///   113 → score-aware v2 (v5 default: adds win_prob, leader_dist, diff)
 
 use colver_core::bid_eval::evaluate_for_trump;
 use colver_core::bid_net::BidNet;
@@ -352,17 +357,35 @@ fn main() {
         .get(3)
         .map(|s| s.as_str())
         .unwrap_or("data/distill/bid_distill.csv");
+    let my_score: i32 = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let opp_score: i32 = args.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
 
     eprintln!("Loading model: {}", model_path);
     let mut net = BidNet::load_with_hidden(model_path, 512)
         .unwrap_or_else(|e| panic!("Failed to load {}: {}", model_path, e));
+    let obs_dim = net.obs_dim();
     eprintln!(
         "Model loaded: obs={}, hidden={}, layers={}, dueling={}",
-        net.obs_dim(),
+        obs_dim,
         net.hidden(),
         net.layers(),
         net.is_dueling()
     );
+    match obs_dim {
+        bid_obs::BID_OBS_DIM => eprintln!("  → legacy 108-dim obs (no score features)"),
+        bid_obs::BID_OBS_DIM_SCORE_AWARE => eprintln!(
+            "  → score-aware v1 (110-dim) — my_score={}, opp_score={}",
+            my_score, opp_score
+        ),
+        bid_obs::BID_OBS_DIM_SCORE_AWARE_V2 => eprintln!(
+            "  → score-aware v2 (113-dim) — my_score={}, opp_score={}",
+            my_score, opp_score
+        ),
+        other => panic!(
+            "Unsupported obs_dim={}, expected 108/110/113",
+            other
+        ),
+    }
 
     if let Some(parent) = std::path::Path::new(output_path).parent() {
         std::fs::create_dir_all(parent).ok();
@@ -458,8 +481,25 @@ nn_action,nn_bids_this_suit"
                     state.current_player()
                 );
 
-                // Get NN decision
-                let obs = bid_obs::make_bid_observation(&state, &history);
+                // Get NN decision — build obs matching the model's input dim
+                let obs: Vec<f32> = match obs_dim {
+                    bid_obs::BID_OBS_DIM => bid_obs::make_bid_observation(&state, &history),
+                    bid_obs::BID_OBS_DIM_SCORE_AWARE => {
+                        let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE];
+                        bid_obs::write_bid_observation_score_aware(
+                            &mut buf, 0, &state, &history, my_score, opp_score,
+                        );
+                        buf
+                    }
+                    bid_obs::BID_OBS_DIM_SCORE_AWARE_V2 => {
+                        let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V2];
+                        bid_obs::write_bid_observation_score_aware_v2(
+                            &mut buf, 0, &state, &history, my_score, opp_score,
+                        );
+                        buf
+                    }
+                    other => unreachable!("obs_dim {} validated at startup", other),
+                };
                 let legal = state.legal_actions();
                 let (best_action, qvals) = net.best_action(&obs, legal);
 
