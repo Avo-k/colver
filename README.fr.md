@@ -8,14 +8,15 @@
 
 Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Moteur Rust avec bindings Python.
 
-**Demo en ligne : [avok.me/colver/](https://avok.me/colver/)** — tourne sur un Raspberry Pi.
+**Demo en ligne : [colver.net](https://colver.net)** — tourne sur un Raspberry Pi.
 
 ## Caracteristiques
 
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
 - **Etat de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
 - **Six agents IA** — reseau Q DMC, IS-DD avec reseau de croyances, oracle DD, Smart/Naive IS-MCTS, et heuristique
-- **Encheres par reseau de neurones** — "Bid a Dede" (v2), un Dueling DQN entraine sur des donnes resolues en DD avec augmentation de couleurs
+- **Encheres par reseau de neurones** — "Bid V5 IS-DD", un Dueling DQN score-aware (113→512³→43) entraine 25M etapes sur points reels IS-DD
+- **Interpretabilite ML** — distillation XGBoost + sondage de couche cachee revelent le systeme de scoring implicite du NN, traduit en regles utilisables par un humain (88-94% d'accord)
 - **Reseau de croyances** — prediction NN de la localisation des cartes pour la recherche IS-DD
 - **Interface web** — jouez contre l'IA, observez, analysez et resolvez des problemes (FastAPI + WebSocket)
 - **Bindings Python** via PyO3 — classe `Env` avec stubs de types complets, installable depuis PyPI
@@ -23,7 +24,7 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 
 ## Interface Web
 
-Jouez contre les agents IA directement dans le navigateur sur **[avok.me/colver/](https://avok.me/colver/)**, ou lancez-le en local :
+Jouez contre les agents IA directement dans le navigateur sur **[colver.net](https://colver.net)**, ou lancez-le en local :
 
 ```bash
 uv run python -m colver.web
@@ -41,9 +42,13 @@ uv run python -m colver.web
 
 **Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
 
-**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Bid a Dede* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale.
+**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Bid V5 IS-DD* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale, plus un panneau "Facteurs cles" distille par XGBoost et une simulation DouDou50 du taux reel de reussite du contrat.
 
 ![Onglet Annonces](images/screenshots/tab-annonces.png)
+
+**Annoncer** — Guide de strategie visuel derive du bot par ML : pondes par carte, regles de decision par position, regle du miroir en defense. 88-94% d'accord avec le NN, memorisable en quelques minutes.
+
+**Aide** — Aide-memoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, regles d'encheres.
 
 **Croyances** — Visualisez comment le reseau de croyances et le modele heuristique predisent la localisation des cartes au fil d'une partie. Generez une partie aleatoire, avancez pas a pas, et observez les barres de probabilite par carte avec marquage de la verite terrain et statistiques de precision. Changez de perspective (N/E/S/O) et comparez les predictions NN vs heuristiques cote a cote.
 
@@ -96,7 +101,7 @@ Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croy
 
 ### DouDou50 — Reseau Q DMC (`dmc_net.rs`)
 
-Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Modele de jeu par defaut, entraine sur 50M etapes avec Bid a Dede gele (phase play-only du triforge).
+Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un reseau Q choisit les cartes a jouer en une seule passe forward — **sans arbre de recherche**. Modele de jeu par defaut, entraine sur 50M etapes avec l'encherisseur NN gele (phase play-only du triforge).
 
 **Architecture** : ResNet Dueling DQN 411→1024→1024→1024→32 avec LayerNorm et skip connections (~2.6M parametres). Utilise un encodage canonique des couleurs (pas d'augmentation necessaire). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble.
 
@@ -106,11 +111,16 @@ L'ancien modele **DouDou35** (415→1024³→32, obs legacy, 35M etapes) reste s
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Bid a Dede — Encherisseur NN (`bid_net.rs`)
+### Bid V5 IS-DD — Encherisseur NN (`bid_net.rs`)
 
-Dueling DQN (108→512→512→512→43) entraine sur des donnes resolues en DD avec augmentation 24x des couleurs. Encherisseur par defaut pour tous les agents. Bat le meilleur encherisseur heuristique 70-76% sur tous les moteurs de jeu. `BidNet::load` detecte automatiquement la taille cachee (essaie 256, 512, 1024).
+Dueling DQN **113→512→512→512→43** avec observation score-aware v2 (5 features precalculees de score de match : my/opp normalisees, probabilite de victoire, distance au but du leader, diff signee). Entraine **25M etapes sur points reels IS-DD** (pas DD oracle) avec reward clipping, EMA des poids (τ=0.005) et cosine LR decay. Meilleure performance arena en DMC et IS-DD (+11% DMC, +14.6% IS-DD vs champion precedent). `BidNet::load` detecte automatiquement la taille cachee et obs_dim (108 / 110 / 113).
 
-L'ancien modele **Bid a Doudou** (v1, 114→256→256→43, entraine par self-play DouZero) reste supporte.
+Versions precedentes toujours supportees via auto-detection :
+- **Bid V3 Max** — 108-dim, entraine sur `max(DMC, IS-DD)` points reels (20M etapes)
+- **Bid a Dede** (v2) — 108-dim, reward DD oracle
+- **Bid a Doudou** (v1) — 114→256² dueling, self-play DouZero
+
+**Interpretabilite** : distillation XGBoost et sondage lineaire sur la couche cachee revelent que le scoring implicite du NN differe nettement de l'evaluation classique (ex. V atout = +11 effectif, 9 = +4, A atout = +1, A lateral = 0 net ; plus une anti-synergie V×9 = −2). Traduit en un arbre de decision a 5 features atteignant 88-94% d'accord avec le NN — voir [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) et [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
 
 ## Comparaison des agents
 

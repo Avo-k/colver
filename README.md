@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?color=blue" alt="PyPI"></a>
   <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/pyversions/colver" alt="Python"></a>
-  <a href="https://avok.me/colver/"><img src="https://img.shields.io/badge/demo-avok.me%2Fcolver-green" alt="Live Demo"></a>
+  <a href="https://colver.net/"><img src="https://img.shields.io/badge/demo-colver.net-green" alt="Live Demo"></a>
   <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/pypi/l/colver" alt="License"></a>
 </p>
 
@@ -15,14 +15,15 @@
 
 Fast Belote Contree game environment for reinforcement learning. Rust core with Python bindings.
 
-**Live demo: [avok.me/colver/](https://avok.me/colver/)** — running on a Raspberry Pi.
+**Live demo: [colver.net](https://colver.net)** — running on a Raspberry Pi.
 
 ## Features
 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
 - **56-byte `Copy` game state** for fast MCTS cloning
 - **Six AI agents** — DMC Q-network, IS-DD with belief network, DD oracle, Smart/Naive IS-MCTS, and heuristic
-- **NN bidding** — "Bid a Dede" (v2), a Dueling DQN trained on DD-solved deals with suit augmentation, used by all agents
+- **NN bidding** — "Bid V5 IS-DD", a score-aware Dueling DQN (113→512³→43) trained 25M steps on real IS-DD points, used by all agents
+- **ML interpretability** — XGBoost distillation + hidden-layer probe reveal the NN's implicit scoring system, translated into human-usable rules (88-94% agreement)
 - **Belief network** — NN-based card location prediction for IS-DD search
 - **Web interface** — play against AI, spectate, analyze, and solve problems (FastAPI + WebSocket)
 - **Python bindings** via PyO3 — `Env` class with full type stubs, installable from PyPI
@@ -30,7 +31,7 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 
 ## Web Interface
 
-Play against AI agents directly in your browser at **[avok.me/colver/](https://avok.me/colver/)**, or run it locally:
+Play against AI agents directly in your browser at **[colver.net](https://colver.net)**, or run it locally:
 
 ```bash
 uv run python -m colver.web
@@ -48,9 +49,13 @@ uv run python -m colver.web
 
 **Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
 
-**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Bid a Dede* (the NN bidder) would bid — with Q-values for every legal action.
+**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Bid V5 IS-DD* (the NN bidder) would bid — with Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision) and a DouDou50 simulation of how often the contract actually succeeds.
 
 ![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
+
+**Annoncer** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, mémorisable en quelques minutes.
+
+**Aide** — Aide-mémoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, règles d'enchères.
 
 **Croyances** — Visualize how the belief network and heuristic model predict card locations as a game progresses. Generate a random game, step through it, and see per-card probability bars with ground truth overlay and accuracy stats. Switch observer perspective (N/E/S/W) and compare NN vs heuristic predictions side by side.
 
@@ -103,7 +108,7 @@ Information Set Double-Dummy search. Maintains a probabilistic belief model over
 
 ### DouDou50 — DMC Q-Network (`dmc_net.rs`)
 
-[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Default play model, trained 50M steps with Bid a Dede frozen (triforge play-only phase).
+[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Default play model, trained 50M steps with the NN bidder frozen (triforge play-only phase).
 
 **Architecture**: ResNet Dueling DQN 411→1024→1024→1024→32 with LayerNorm and skip connections (~2.6M parameters). Uses canonical suit encoding (no augmentation needed). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
 
@@ -113,11 +118,16 @@ The previous model **DouDou35** (415→1024³→32, legacy obs, 35M steps) is st
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Bid a Dede — NN Bidder (`bid_net.rs`)
+### Bid V5 IS-DD — NN Bidder (`bid_net.rs`)
 
-Dueling DQN (108→512→512→512→43) trained on DD-solved deals with 24x suit augmentation. Default bidder for all agents. Beats the best heuristic bidder 70-76% across all play engines. `BidNet::load` auto-detects hidden size (tries 256, 512, 1024).
+Dueling DQN **113→512→512→512→43** with score-aware v2 observation (5 precomputed match-score features: my/opp normalized, win probability, leader distance, signed diff). Trained **25M steps on real IS-DD points** (not DD oracle) with reward clipping, Polyak EMA (τ=0.005), and cosine LR decay. Best arena performance across DMC and IS-DD play (+11% DMC, +14.6% IS-DD winrate vs previous champion). `BidNet::load` auto-detects hidden size and obs_dim (108 / 110 / 113).
 
-The previous model **Bid a Doudou** (v1, 114→256→256→43, trained with DouZero self-play) is still supported.
+Past versions still supported via auto-detect:
+- **Bid V3 Max** — 108-dim, trained on `max(DMC, IS-DD)` real points (20M steps)
+- **Bid à Dédé** (v2) — 108-dim, DD oracle reward
+- **Bid à Doudou** (v1) — 114→256² dueling, DouZero self-play
+
+**Interpretability**: XGBoost distillation and a hidden-layer linear probe revealed that the NN's implicit scoring differs sharply from the classical hand evaluation (e.g., J atout = +11 effective, 9 = +4, A atout = +1, side A = 0 net; plus an anti-synergy J×9 = −2). Translated into a mnemonic 5-feature decision tree reaching 88-94% NN agreement — see [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) and [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
 
 ## Agent Comparison
 
@@ -159,7 +169,7 @@ Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoin
 ```python
 import colver
 
-print(colver.__version__)  # "0.3.2"
+print(colver.__version__)  # "0.3.3"
 
 # Single environment
 env = colver.Env()
