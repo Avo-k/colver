@@ -76,35 +76,39 @@ pub fn compute_deal_score(state: &GameState) -> DealScore {
 
     let mut scores = [0i16; 2];
 
-    if is_capot_contract {
-        let capot_reussi = state.tricks_won[taker] == 8;
+    // Capot réalisé = 8 plis (whether or not capot was announced)
+    let capot_realise = state.tricks_won[taker] == 8;
 
-        if capot_reussi {
+    if is_capot_contract {
+        let reussi = capot_realise;
+
+        if reussi {
+            // Capot announced and made: taker_pts=252 (dix de der=100) + contract(250)
             match coinche {
                 0 => {
-                    // Capot réussi standard: each team keeps their own belote
-                    scores[taker] = round10(500 + belote[taker]);
+                    // Preneurs: 252 + 250 + belote = 502 → 500. Défenseurs: their belote only.
+                    scores[taker] = round10(taker_pts + contract_value + belote[taker]);
                     scores[defense] = round10(belote[defense]);
                 }
                 1 => {
-                    // Capot contré réussi: 1000 + belote(both)
-                    scores[taker] = round10(1000 + total_belote);
+                    // Contré réussi: 250 (capot réalisé base) + 250×2 + belote = 750
+                    scores[taker] = round10(250 + contract_value * 2 + total_belote);
                     scores[defense] = 0;
                 }
                 2 => {
-                    // Capot surcontré réussi: 2000 + belote(both)
-                    scores[taker] = round10(2000 + total_belote);
+                    // Surcontré réussi: 250 (capot réalisé base) + 250×3 + belote = 1000
+                    scores[taker] = round10(250 + contract_value * 3 + total_belote);
                     scores[defense] = 0;
                 }
                 _ => unreachable!(),
             }
         } else {
-            // Capot chute: defense gets flat capot value (same as réussi), per FFB rules section 10.2
+            // Capot announced but chute (< 8 tricks)
             scores[taker] = 0;
             match coinche {
-                0 => scores[defense] = round10(500 + total_belote),
-                1 => scores[defense] = round10(1000 + total_belote),
-                2 => scores[defense] = round10(2000 + total_belote),
+                0 => scores[defense] = round10(160 + contract_value + total_belote),
+                1 => scores[defense] = round10(160 + contract_value * 2 + total_belote),
+                2 => scores[defense] = round10(160 + contract_value * 3 + total_belote),
                 _ => unreachable!(),
             }
         }
@@ -113,43 +117,35 @@ pub fn compute_deal_score(state: &GameState) -> DealScore {
         let reussi = taker_total >= contract_value;
 
         if reussi {
+            // Base for contré/surcontré réussi: 160, or 250 if capot réalisé (even if not announced)
+            let contre_base = if capot_realise { 250 } else { 160 };
+
             match coinche {
                 0 => {
-                    // Standard réussi: preneurs get their_points + contract + their_belote
-                    // Defense gets their_points + their_belote
+                    // Standard réussi: preneurs = their_points + contract + their_belote
+                    // Défenseurs = their_points + their_belote
                     scores[taker] = round10(taker_pts + contract_value + belote[taker]);
                     scores[defense] = round10(defense_pts + belote[defense]);
                 }
                 1 => {
-                    // Contré réussi: preneurs get 320 + contract×2 + all belote, defense 0
-                    scores[taker] = round10(320 + contract_value * 2 + total_belote);
+                    // Contré réussi: base + contract×2 + belote
+                    scores[taker] = round10(contre_base as i16 + contract_value * 2 + total_belote);
                     scores[defense] = 0;
                 }
                 2 => {
-                    // Surcontré réussi: preneurs get 640 + contract×4 + all belote, defense 0
-                    scores[taker] = round10(640 + contract_value * 4 + total_belote);
+                    // Surcontré réussi: base + contract×3 + belote
+                    scores[taker] = round10(contre_base as i16 + contract_value * 3 + total_belote);
                     scores[defense] = 0;
                 }
                 _ => unreachable!(),
             }
         } else {
-            // Chute
+            // Chute: defense gets 160 + contract × multiplier + all belote
+            scores[taker] = 0;
             match coinche {
-                0 => {
-                    // Standard chute: preneurs 0, defense gets 160 + contract + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(160 + contract_value + total_belote);
-                }
-                1 => {
-                    // Contré chute: preneurs 0, defense gets 320 + contract×2 + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(320 + contract_value * 2 + total_belote);
-                }
-                2 => {
-                    // Surcontré chute: preneurs 0, defense gets 640 + contract×4 + all belote
-                    scores[taker] = 0;
-                    scores[defense] = round10(640 + contract_value * 4 + total_belote);
-                }
+                0 => scores[defense] = round10(160 + contract_value + total_belote),
+                1 => scores[defense] = round10(160 + contract_value * 2 + total_belote),
+                2 => scores[defense] = round10(160 + contract_value * 3 + total_belote),
                 _ => unreachable!(),
             }
         }
@@ -238,13 +234,12 @@ mod tests {
 
     #[test]
     fn test_contre_reussi() {
-        // Taker (EW=1) bid 80 Hearts contré, scored 100
+        // Taker (EW=1) bid 80 Hearts contré, scored 100 (not capot)
         let state = make_scored_state(1, 8, 1, 1, 100, 62, 5, 0, 0);
         let score = compute_deal_score(&state);
-        // Contré réussi: preneurs get round10(320 + 80*2 + 0) = round10(480) = 480
-        // Defense: 0
+        // Contré réussi: 160 + 80×2 + 0 = 320 → 320
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 480);
+        assert_eq!(score.scores[1], 320);
     }
 
     #[test]
@@ -252,18 +247,18 @@ mod tests {
         // Taker (NS=0) bid 100 Spades contré, scored 90
         let state = make_scored_state(0, 10, 0, 1, 90, 72, 4, 0, 0);
         let score = compute_deal_score(&state);
-        // Contré chute: preneurs 0, defense round10(320 + 100*2 + 0) = round10(520) = 520
+        // Contré chute: 160 + 100×2 + 0 = 360 → 360
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 520);
+        assert_eq!(score.scores[1], 360);
     }
 
     #[test]
     fn test_surcontre_reussi() {
-        // Taker (NS=0) bid 80 surcontré, scored 100
+        // Taker (NS=0) bid 80 surcontré, scored 100 (not capot)
         let state = make_scored_state(0, 8, 1, 2, 100, 62, 6, 0, 0);
         let score = compute_deal_score(&state);
-        // Surcontré réussi: round10(640 + 80*4 + 0) = round10(960) = 960
-        assert_eq!(score.scores[0], 960);
+        // Surcontré réussi: 160 + 80×3 + 0 = 400 → 400
+        assert_eq!(score.scores[0], 400);
         assert_eq!(score.scores[1], 0);
     }
 
@@ -272,7 +267,7 @@ mod tests {
         // Taker (NS=0) bid capot Hearts, won all 8 tricks, scored 252
         let state = make_scored_state(0, 25, 1, 0, 252, 0, 8, 0, 0);
         let score = compute_deal_score(&state);
-        // Capot réussi standard: round10(500 + 0) = 500
+        // Capot réussi: 252 + 250 = 502 → 500
         assert_eq!(score.scores[0], 500);
         assert_eq!(score.scores[1], 0);
     }
@@ -282,63 +277,66 @@ mod tests {
         // Taker bid capot, only won 7 tricks
         let state = make_scored_state(0, 25, 1, 0, 140, 22, 7, 0, 0);
         let score = compute_deal_score(&state);
-        // Capot chute standard: preneurs 0, defense gets flat 500
+        // Capot chute: 160 + 250 = 410 → 410
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 500);
+        assert_eq!(score.scores[1], 410);
     }
 
     #[test]
     fn test_capot_chute_contre() {
         let state = make_scored_state(0, 25, 1, 1, 140, 22, 7, 0, 0);
         let score = compute_deal_score(&state);
-        // Capot contré chute: defense gets flat 1000
+        // Capot contré chute: 160 + 250×2 = 660 → 660
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 1000);
+        assert_eq!(score.scores[1], 660);
     }
 
     #[test]
     fn test_capot_chute_surcontre() {
         let state = make_scored_state(0, 25, 1, 2, 140, 22, 7, 0, 0);
         let score = compute_deal_score(&state);
-        // Capot surcontré chute: defense gets flat 2000
+        // Capot surcontré chute: 160 + 250×3 = 910 → 910
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 2000);
+        assert_eq!(score.scores[1], 910);
     }
 
     #[test]
     fn test_capot_chute_with_belote() {
-        // Taker bid capot, chute, taker has belote
+        // Taker bid capot, chute, taker has belote → belote prenable
         let state = make_scored_state(0, 25, 1, 0, 140, 22, 7, 2, 0);
         let score = compute_deal_score(&state);
-        // Capot chute: defense gets round10(500 + 20) = 520
+        // Capot chute: 160 + 250 + 20 (belote) = 430 → 430
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 520);
+        assert_eq!(score.scores[1], 430);
     }
 
     #[test]
     fn test_capot_reussi_with_defense_belote() {
-        // Taker bid capot, won all 8 tricks, but defense has belote (Q+K of trump played)
+        // Taker bid capot, won all 8 tricks, defense has belote
         let state = make_scored_state(0, 25, 1, 0, 252, 0, 8, 0, 2);
         let score = compute_deal_score(&state);
-        // Capot réussi standard: taker gets 500, defense keeps their belote (20)
+        // Capot réussi: 252 + 250 + 0 (taker belote) = 502 → 500
+        // Defense keeps their belote: 20
         assert_eq!(score.scores[0], 500);
         assert_eq!(score.scores[1], 20);
     }
 
     #[test]
     fn test_capot_contre_reussi() {
+        // EW bid capot contré, won all 8 tricks
         let state = make_scored_state(1, 25, 0, 1, 252, 0, 8, 0, 0);
         let score = compute_deal_score(&state);
-        // 1000 + 0 belote = 1000
+        // Capot contré réussi: 250 + 250×2 = 750 → 750
         assert_eq!(score.scores[0], 0);
-        assert_eq!(score.scores[1], 1000);
+        assert_eq!(score.scores[1], 750);
     }
 
     #[test]
     fn test_capot_surcontre_reussi() {
         let state = make_scored_state(0, 25, 0, 2, 252, 0, 8, 0, 0);
         let score = compute_deal_score(&state);
-        assert_eq!(score.scores[0], 2000);
+        // Capot surcontré réussi: 250 + 250×3 = 1000 → 1000
+        assert_eq!(score.scores[0], 1000);
         assert_eq!(score.scores[1], 0);
     }
 
