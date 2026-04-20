@@ -354,7 +354,7 @@ function handleBidEvalResult(data) {
     const range = maxQ - minQ || 1;
 
     document.getElementById('annonces-results-header').innerHTML =
-        `Bid \u00e0 D\u00e9d\u00e9 : ${bidActionHtml(bestAction)}`;
+        `Bid V5 : ${bidActionHtml(bestAction)}`;
 
     let html = '<div class="visit-bars ann-qvalues-scroll">';
     for (const [action, q] of qValues) {
@@ -576,7 +576,7 @@ function handleDoudouDone(data) {
 
 function resetPanels(numSims) {
     document.getElementById('annonces-results-area').classList.remove('hidden');
-    document.getElementById('annonces-results-header').textContent = 'Bid \u00e0 D\u00e9d\u00e9';
+    document.getElementById('annonces-results-header').textContent = 'Bid V5';
     document.getElementById('annonces-results-body').innerHTML =
         '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';
     // Reset XGB panel

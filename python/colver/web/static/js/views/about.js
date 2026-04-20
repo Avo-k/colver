@@ -48,12 +48,13 @@ const TEMPLATE = `
     <h3>Ench\u00e8res</h3>
 
     <div class="docs-section">
-        <h4>Bid \u00e0 D\u00e9d\u00e9 <span class="docs-tag best">D\u00e9faut</span></h4>
+        <h4>Bid V5 IS-DD <span class="docs-tag best">D\u00e9faut</span></h4>
         <p>
             R\u00e9seau de neurones d'ench\u00e8res utilis\u00e9 par tous les agents.
-            Dueling DQN (108\u2192512\u00b3\u219243) entra\u00een\u00e9 sur un million de donnes r\u00e9solues par le solveur double-dummy :
-            pour chaque main, le r\u00e9seau apprend quelle annonce m\u00e8ne au meilleur r\u00e9sultat en jeu parfait.
-            Succ\u00e8de \u00e0 <em>Bid \u00e0 Doudou</em> (v1, entra\u00een\u00e9 avec DouZero).
+            Dueling DQN (113\u2192512\u00b3\u219243) avec observation score-aware v2 (5 features de score de match), entra\u00een\u00e9 25M de pas sur points r\u00e9els IS-DD :
+            pour chaque main et chaque \u00e9tat de match, le r\u00e9seau apprend quelle annonce maximise les points r\u00e9ellement cash\u00e9s.
+            Stabilisation : reward clipping, EMA des poids (&tau;=0.005), cosine LR decay.
+            Succ\u00e8de \u00e0 <em>Bid V3 Max</em> (DD oracle) et <em>Bid \u00e0 D\u00e9d\u00e9</em> (v2).
         </p>
     </div>
 
@@ -118,7 +119,7 @@ const TEMPLATE = `
         <p>
             Composez une main de 8 cartes en cliquant sur la palette, choisissez votre position dans le tour d'ench\u00e8res
             (combien de passes ont pr\u00e9c\u00e9d\u00e9 votre tour), puis cliquez \u00ab \u00c9valuer \u00bb pour voir ce que
-            <em>Bid \u00e0 D\u00e9d\u00e9</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
+            <em>Bid V5 IS-DD</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
         </p>
         <p>
             Le tableau <strong>Oracle</strong> g\u00e9n\u00e8re des mains adverses al\u00e9atoires et r\u00e9sout chaque donne en jeu parfait (double-dummy).
@@ -144,7 +145,7 @@ const TEMPLATE = `
         <h4>Probl\u00e8mes d'annonce</h4>
         <p>
             Probl\u00e8mes d'ench\u00e8res : voyez une main et l'historique des ench\u00e8res, puis trouvez la bonne annonce.
-            L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Bid \u00e0 D\u00e9d\u00e9</em>.
+            L'IA \u00e9value votre r\u00e9ponse en comparant avec la recommandation de <em>Bid V5 IS-DD</em>.
         </p>
     </div>
 

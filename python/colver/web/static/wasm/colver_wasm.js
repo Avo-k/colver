@@ -2,6 +2,9 @@
 
 /**
  * BidNet wrapper for WASM.  Constructed once from weight bytes, reused across calls.
+ *
+ * Auto-detects architecture: tries hidden sizes 256, 512, 1024 and matches the
+ * weight-file layout. Supports obs_dim 108 / 110 / 113 via build_bid_obs().
  */
 export class WasmBidNet {
     __destroy_into_raw() {

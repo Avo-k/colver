@@ -1,12 +1,19 @@
 use wasm_bindgen::prelude::*;
 
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs::{write_bid_observation, BID_OBS_DIM};
+use colver_core::bid_obs::{
+    self, write_bid_observation, write_bid_observation_score_aware,
+    write_bid_observation_score_aware_v2, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE,
+    BID_OBS_DIM_SCORE_AWARE_V2,
+};
 use colver_core::card::*;
 use colver_core::solver;
 use colver_core::state::GameState;
 
 /// BidNet wrapper for WASM.  Constructed once from weight bytes, reused across calls.
+///
+/// Auto-detects architecture: tries hidden sizes 256, 512, 1024 and matches the
+/// weight-file layout. Supports obs_dim 108 / 110 / 113 via build_bid_obs().
 #[wasm_bindgen]
 pub struct WasmBidNet {
     net: BidNet,
@@ -20,38 +27,43 @@ impl WasmBidNet {
         if weight_bytes.len() % 4 != 0 {
             return Err(JsValue::from_str("weight bytes not a multiple of 4"));
         }
+
+        // Write bytes to a temp in-memory "file" conceptually: BidNet::load_with_hidden
+        // reads from a path, so reimplement the hidden-size sweep by parsing floats once.
         let floats: Vec<f32> = weight_bytes
             .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
 
-        let hidden = 256;
-        let h = hidden;
-        let trunk_fixed = h * h + 3 * h + 3 * h;
-        let dueling_tail = h + 1 + h * 43 + 43;
-        let standard_tail = h * 43 + 43;
+        // Sweep hidden sizes and try to match architecture (standard + dueling × 2-4 layers).
+        for &hidden in &[256usize, 512, 1024] {
+            let total = floats.len();
+            let dueling_tail = hidden + 1 + hidden * 43 + 43;
+            let standard_tail = hidden * 43 + 43;
+            let known_obs_dims = [108usize, 110, 113, 114];
 
-        // Try dueling first (matches the shipped model)
-        let dueling_fixed = trunk_fixed + dueling_tail;
-        if floats.len() > dueling_fixed && (floats.len() - dueling_fixed) % h == 0 {
-            let obs_dim = (floats.len() - dueling_fixed) / h;
-            match BidNet::from_floats(&floats, hidden, obs_dim, true) {
-                Ok(net) => return Ok(WasmBidNet { net }),
-                Err(_) => {}
+            for layers in 2..=4 {
+                let trunk_fixed = (layers - 1) * (hidden * hidden + 3 * hidden) + 3 * hidden;
+                for &(tail, dueling) in &[(dueling_tail, true), (standard_tail, false)] {
+                    let fixed = trunk_fixed + tail;
+                    if total > fixed && (total - fixed) % hidden == 0 {
+                        let obs_dim = (total - fixed) / hidden;
+                        if !known_obs_dims.contains(&obs_dim) {
+                            continue;
+                        }
+                        if let Ok(net) = BidNet::from_floats_with_layers(
+                            &floats, hidden, obs_dim, dueling, layers,
+                        ) {
+                            return Ok(WasmBidNet { net });
+                        }
+                    }
+                }
             }
         }
 
-        // Try standard
-        let standard_fixed = trunk_fixed + standard_tail;
-        if floats.len() > standard_fixed && (floats.len() - standard_fixed) % h == 0 {
-            let obs_dim = (floats.len() - standard_fixed) / h;
-            match BidNet::from_floats(&floats, hidden, obs_dim, false) {
-                Ok(net) => return Ok(WasmBidNet { net }),
-                Err(_) => {}
-            }
-        }
-
-        Err(JsValue::from_str("cannot infer BidNet architecture from weight file"))
+        Err(JsValue::from_str(
+            "cannot infer BidNet architecture — weight file does not match any known shape (hidden 256/512/1024, layers 2-4, obs_dim 108/110/113/114)",
+        ))
     }
 
     /// Evaluate a hand with prior bid actions.
@@ -105,9 +117,33 @@ impl WasmBidNet {
             state.step(action);
         }
 
-        // Build observation and evaluate
-        let mut obs = vec![0.0f32; BID_OBS_DIM];
-        write_bid_observation(&mut obs, 0, &state, &bid_history);
+        // Build observation matching the loaded NN's obs_dim (108 / 110 / 113).
+        // Score-aware models receive a match-neutral 0/0 score (the context the
+        // web page runs in — single-deal analysis with no match history).
+        let obs_dim = self.net.obs_dim();
+        let mut obs = match obs_dim {
+            BID_OBS_DIM => {
+                let mut buf = vec![0.0f32; BID_OBS_DIM];
+                write_bid_observation(&mut buf, 0, &state, &bid_history);
+                buf
+            }
+            BID_OBS_DIM_SCORE_AWARE => {
+                let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE];
+                write_bid_observation_score_aware(&mut buf, 0, &state, &bid_history, 0, 0);
+                buf
+            }
+            BID_OBS_DIM_SCORE_AWARE_V2 => {
+                let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V2];
+                write_bid_observation_score_aware_v2(&mut buf, 0, &state, &bid_history, 0, 0);
+                buf
+            }
+            other => {
+                return Err(JsValue::from_str(&format!(
+                    "unsupported BidNet obs_dim={other} (expected 108/110/113)"
+                )));
+            }
+        };
+        let _ = &mut obs; // silence if unused
 
         let legal_mask = state.legal_actions();
         let (best_action, legal_q) = self.net.best_action(&obs, legal_mask);
