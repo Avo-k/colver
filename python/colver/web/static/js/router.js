@@ -10,6 +10,7 @@ const routes = {
     '/problemes/annonce': () => import('./views/prob-annonce.js'),
     '/problemes/jeu':     () => import('./views/prob-jeu.js'),
     '/aide':              () => import('./views/aide.js'),
+    '/annoncer':          () => import('./views/annoncer.js'),
     '/about':             () => import('./views/about.js'),
 };
 
