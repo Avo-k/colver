@@ -198,7 +198,6 @@ function handleProblemReady(data) {
     paLegalActions = data.legal_actions;
     paLocked = false;
     paHand = data.south_hand || [];
-    paXgbResults = null;
     paHintData = null;
     // Extract bid actions from history for XGB scenario detection
     paBidHistory = (data.bid_history || []).map(e => e.action);
@@ -276,7 +275,6 @@ async function runPaXgbAnalysis(qValues) {
     try {
         const results = await xgbExplain.analyzeAllSuits(paHand, paBidHistory, qValues);
         if (!results) return;
-        paXgbResults = results;
         const section = document.getElementById('pa-xgb-section');
         if (section) section.classList.remove('hidden');
         const boxesEl = document.getElementById('pa-xgb-boxes');
