@@ -78,19 +78,10 @@ class TrickTracker:
             self.trick_just_completed = True
 
 
-AI_TIME_MS = 100  # Fixed time budget for all search-based AIs
-
-DIFFICULTY_TIME_MS = {
-    "facile": 20,
-    "normal": 50,
-    "difficile": 100,
-    "expert": 300,
-}
-
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, difficulty="difficile", dede_time_ms=None):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dede_time_ms=None):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "dede"
         self.human_seat = human_seat
@@ -242,7 +233,7 @@ SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 class WatchSession(TrickTracker):
     """AI vs AI spectating with per-action thinking stats."""
 
-    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dealer=None, hands=None, env=None, difficulty="difficile"):
+    def __init__(self, agents, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dealer=None, hands=None, env=None, dede_time_ms=5000):
         """
         agents: dict {0: "smart", 1: "naive", 2: "doudou", 3: "random"}
         dmc_model_path: path to .bin weights file for DouDou50 (Rust inference)
@@ -251,10 +242,10 @@ class WatchSession(TrickTracker):
         dealer: optional dealer seat (for custom deals)
         hands: optional list of 4 hands (for custom deals)
         env: optional pre-built Env (e.g. from CFN), takes priority over dealer/hands
-        difficulty: IS-DD difficulty level ("facile", "normal", "difficile", "expert")
+        dede_time_ms: per-move IS-DD search budget in ms (default 5000)
         """
         self.agents = agents
-        self.dede_time_ms = DIFFICULTY_TIME_MS.get(difficulty, AI_TIME_MS)
+        self.dede_time_ms = int(dede_time_ms)
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()

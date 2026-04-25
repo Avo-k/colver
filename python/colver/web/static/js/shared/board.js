@@ -6,11 +6,22 @@ import {
     renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
-    detectTrickCompletion, animateTrickFlush
+    animateTrickFlush
 } from './cards.js';
 import { updateCfnBox } from './cfn-box.js';
 
 const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
+
+// A move-history entry "completes a trick" if it's a play-phase move that
+// caused current_trick to reset (engine clears it after the 4th card) and
+// recorded a last_trick. We display these entries with the 4 cards still on
+// the table as a distinct user-clickable step before the flush animation.
+function _entryCompletesTrick(data) {
+    if (!data || !data.move || data.move.phase !== 1) return false;
+    if (!data.state || !data.state.last_trick) return false;
+    const t = data.state.current_trick || [];
+    return t.filter(c => c >= 0 && c < 32).length === 0;
+}
 
 export class BoardRenderer {
     constructor(opts) {
@@ -104,6 +115,7 @@ export class BoardRenderer {
         this.waitingForStep = false;
         this.active = true;
         this.finished = false;
+        this._pendingFlushData = null;
         _prevTrick[this.trickPrefix] = [];
         if (_animatingTrick === this.trickPrefix) setAnimatingTrick(null);
     }
@@ -147,6 +159,36 @@ export class BoardRenderer {
 
     goToNextMove() {
         if (_animatingTrick === this.trickPrefix) return;
+
+        // 4-cards-on-table state: the previous render froze on a trick-completing
+        // entry. Animate the flush, then advance normally.
+        if (this._pendingFlushData) {
+            const flushData = this._pendingFlushData;
+            this._pendingFlushData = null;
+            const skipAnimation = this.autoPlayMode === 'end';
+
+            const continueAfterFlush = () => {
+                // Re-render flushData.state without the 4-card override (current_trick empty).
+                this.renderState(flushData.state);
+                _prevTrick[this.trickPrefix] = [];
+                if (flushData.finished) {
+                    this._renderFinishedStats(flushData.state);
+                }
+                this._advanceAfterRender();
+            };
+
+            if (skipAnimation) {
+                continueAfterFlush();
+            } else {
+                animateTrickFlush(this.trickPrefix, continueAfterFlush, flushData.state.last_trick_winner);
+            }
+            return;
+        }
+
+        this._advanceAfterRender();
+    }
+
+    _advanceAfterRender() {
         if (this.historyIndex < this.moveHistory.length - 1) {
             this.historyIndex++;
             this.renderHistoryEntry(this.historyIndex);
@@ -154,12 +196,16 @@ export class BoardRenderer {
         } else if (!this.finished && !this.isAtEnd()) {
             this.onRequestStep();
             this.waitingForStep = true;
+            this.updateTransportButtons();
         } else if (this.autoPlayMode) {
             this.stopAutoPlay();
+        } else {
+            this.updateTransportButtons();
         }
     }
 
     goToStart() {
+        this._pendingFlushData = null;
         this.historyIndex = -1;
         this.renderHistoryEntry(-1);
     }
@@ -171,6 +217,7 @@ export class BoardRenderer {
 
         if (index < 0) {
             _prevTrick[this.trickPrefix] = [];
+            this._pendingFlushData = null;
             if (this.initialState) {
                 this.renderState(this.initialState);
                 this.renderBidHistory([], this.initialState.phase);
@@ -180,23 +227,31 @@ export class BoardRenderer {
             }
         } else if (index < this.moveHistory.length) {
             const data = this.moveHistory[index];
-
-            const completedCards = detectTrickCompletion(this.trickPrefix, data.state.current_trick);
-
-            if (completedCards && isForward && !skipAnimation && _animatingTrick !== this.trickPrefix) {
-                animateTrickFlush(this.trickPrefix, () => {
-                    const lastTrickEl = this.el('last-trick');
-                    if (lastTrickEl && data.state.phase === 1 && data.state.last_trick) {
-                        renderLastTrick(lastTrickEl, data.state.last_trick, data.state.last_trick_winner, data.state.last_trick_points, 0);
-                    }
-                }, data.state.last_trick_winner);
-            }
+            const completesTrick = _entryCompletesTrick(data);
+            const showAs4Cards = completesTrick && !skipAnimation;
 
             if (isForward && !skipAnimation && data.move) {
                 SFX.playForAction(data.move.phase, data.move.action);
             }
 
-            this.renderState(data.state);
+            if (showAs4Cards) {
+                // Display the 4 cards on the table by overriding the current trick
+                // with the just-completed trick. The flush animation is deferred to
+                // the next forward-step click (handled in goToNextMove).
+                const stateOverride = { ...data.state, current_trick: data.state.last_trick };
+                this.renderState(stateOverride);
+                const lastTrickEl = this.el('last-trick');
+                if (lastTrickEl) {
+                    lastTrickEl.classList.add('hidden');
+                    lastTrickEl.innerHTML = '';
+                }
+                _prevTrick[this.trickPrefix] = data.state.last_trick ? [...data.state.last_trick] : [];
+                this._pendingFlushData = data;
+            } else {
+                this.renderState(data.state);
+                _prevTrick[this.trickPrefix] = data.state.current_trick ? [...data.state.current_trick] : [];
+                this._pendingFlushData = null;
+            }
 
             if (data.finished) {
                 this._renderFinishedStats(data.state);
@@ -411,7 +466,9 @@ export class BoardRenderer {
         const endBtn = this.el('end-btn');
 
         const canGoBack = this.historyIndex >= 0;
-        const canGoForward = !this.isAtEnd() || this.historyIndex < this.moveHistory.length - 1;
+        const canGoForward = !this.isAtEnd()
+            || this.historyIndex < this.moveHistory.length - 1
+            || !!this._pendingFlushData;
 
         if (prevBtn) prevBtn.disabled = !canGoBack;
         if (startBtn) startBtn.disabled = !canGoBack;

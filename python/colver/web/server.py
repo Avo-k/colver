@@ -361,9 +361,8 @@ async def websocket_endpoint(ws: WebSocket):
                 needs_dmc = any(t == "doudou" for t in ai_types.values())
                 dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
                 bid_path = BID_MODEL_PATH
-                difficulty = data.get("difficulty", "difficile")
                 dede_time_ms = int(play_move_delay * 1000)
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, difficulty=difficulty, dede_time_ms=dede_time_ms)
+                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, dede_time_ms=dede_time_ms)
 
                 # Save game to DB
                 agents_map = {str(s): t for s, t in ai_types.items()}
@@ -444,13 +443,13 @@ async def websocket_endpoint(ws: WebSocket):
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
                 # Convert string keys from JSON to int
                 agents = {int(k): v for k, v in agents.items()}
-                difficulty = data.get("difficulty", "difficile")
+                dede_time_ms = max(1000, min(15000, int(data.get("dede_time_ms", 5000))))
                 watch_session = WatchSession(
                     agents=agents,
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
                     belief_model_path=BELIEF_MODEL_PATH,
-                    difficulty=difficulty,
+                    dede_time_ms=dede_time_ms,
                 )
                 replay_session = None
 
@@ -480,6 +479,8 @@ async def websocket_endpoint(ws: WebSocket):
                 if watch_session is None:
                     await ws.send_json({"type": "error", "msg": "No watch session"})
                     continue
+                if "dede_time_ms" in data:
+                    watch_session.dede_time_ms = max(1000, min(15000, int(data["dede_time_ms"])))
                 if watch_session.env.is_terminal():
                     await ws.send_json({
                         "type": "watch_move",
@@ -591,7 +592,7 @@ async def websocket_endpoint(ws: WebSocket):
                     bid_model_path=BID_MODEL_PATH,
                     belief_model_path=BELIEF_MODEL_PATH,
                     env=cfn_env,
-                    difficulty=data.get("difficulty", "difficile"),
+                    dede_time_ms=max(1000, min(15000, int(data.get("dede_time_ms", 5000)))),
                 )
                 replay_session = None
                 watch_game_id = None
@@ -690,7 +691,7 @@ async def websocket_endpoint(ws: WebSocket):
                     belief_model_path=BELIEF_MODEL_PATH,
                     dealer=game_data["dealer"],
                     hands=game_data["hands"],
-                    difficulty=data.get("difficulty", "difficile"),
+                    dede_time_ms=max(1000, min(15000, int(data.get("dede_time_ms", 5000)))),
                 )
                 replay_session = None
                 watch_game_id = game_id

@@ -58,13 +58,9 @@ function template() {
             <option value="oracle_dd">Oracle (DD)</option>
         </select></label>
     </div>
-    <label id="watch-difficulty-label">Niveau\u00a0:
-        <select id="watch-difficulty">
-            <option value="facile">Facile</option>
-            <option value="normal">Normal</option>
-            <option value="difficile" selected>Difficile</option>
-            <option value="expert">Expert</option>
-        </select>
+    <label id="watch-think-time-label">R\u00e9flexion\u00a0:
+        <input type="range" id="watch-think-time" min="1" max="15" value="5" step="1" style="width:100px">
+        <span id="watch-think-time-val">5s</span>
     </label>
     <button id="watch-start">Lancer</button>
     <span class="config-separator">|</span>
@@ -664,12 +660,16 @@ function getSelectedAgents() {
     return agents;
 }
 
-function updateWatchDifficultyVisibility() {
+function getThinkTimeMs() {
+    const slider = document.getElementById('watch-think-time');
+    if (!slider) return 5000;
+    return parseInt(slider.value, 10) * 1000;
+}
+
+function updateWatchThinkTimeVisibility() {
     const hasDede = Array.from(document.querySelectorAll('#watch-config .agent-select')).some(sel => sel.value === 'dede');
-    const label = document.getElementById('watch-difficulty-label');
-    const sel = document.getElementById('watch-difficulty');
+    const label = document.getElementById('watch-think-time-label');
     if (label) label.classList.toggle('hidden', !hasDede);
-    if (!hasDede && sel) sel.value = 'difficile';
 }
 
 function loadFromCfn() {
@@ -678,8 +678,7 @@ function loadFromCfn() {
     if (!cfn) return;
     watchAutoStarted = true;
     const agents = getSelectedAgents();
-    const difficulty = document.getElementById('watch-difficulty').value;
-    send({ type: 'watch_cfn', cfn, agents, difficulty });
+    send({ type: 'watch_cfn', cfn, agents, dede_time_ms: getThinkTimeMs() });
 }
 
 // ── Mount / Unmount ───────────────────────────────────────────────────────────
@@ -695,7 +694,7 @@ export function mount(container) {
         renderMoveStats: watchRenderMoveStats,
         renderCardAnnotations: watchRenderCardAnnotations,
         onRequestStep: () => {
-            send({ type: 'watch_step' });
+            send({ type: 'watch_step', dede_time_ms: getThinkTimeMs() });
         },
     });
 
@@ -714,17 +713,23 @@ export function mount(container) {
         if (e.key === 'Enter') loadFromCfn();
     });
 
-    // Difficulty visibility
+    // Think-time slider visibility (only when at least one D\u00e9d\u00e9 seat) and live readout
     document.querySelectorAll('#watch-config .agent-select').forEach(sel => {
-        sel.addEventListener('change', updateWatchDifficultyVisibility);
+        sel.addEventListener('change', updateWatchThinkTimeVisibility);
     });
-    updateWatchDifficultyVisibility();
+    updateWatchThinkTimeVisibility();
+    const thinkTimeSlider = document.getElementById('watch-think-time');
+    const thinkTimeVal = document.getElementById('watch-think-time-val');
+    if (thinkTimeSlider && thinkTimeVal) {
+        thinkTimeSlider.addEventListener('input', () => {
+            thinkTimeVal.textContent = `${thinkTimeSlider.value}s`;
+        });
+    }
 
     // Start game button
     document.getElementById('watch-start').addEventListener('click', () => {
         const agents = getSelectedAgents();
-        const difficulty = document.getElementById('watch-difficulty').value;
-        send({ type: 'watch_start', agents, difficulty });
+        send({ type: 'watch_start', agents, dede_time_ms: getThinkTimeMs() });
         document.getElementById('watch-start').disabled = true;
         document.getElementById('watch-start').textContent = 'D\u00e9marrage...';
     });
@@ -859,7 +864,7 @@ export function mount(container) {
 
         // Auto-start watching the custom deal (no tab switch needed)
         const agents = getSelectedAgents();
-        send({ type: 'watch_custom', game_id: data.game_id, agents });
+        send({ type: 'watch_custom', game_id: data.game_id, agents, dede_time_ms: getThinkTimeMs() });
 
         // Collapse the deal builder accordion
         const accordion = document.getElementById('deal-builder-accordion');
