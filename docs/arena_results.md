@@ -28,10 +28,23 @@ These are the canonical evals to run on any new bid or play model.
 
 H2H against `nn_v2_dmc50` (Bid a Dede + DouDou50). Both bots use DMC for play, so this isolates the bid model.
 
+| Bot | Win% | Margin | Matches | Date |
+|-----|------|--------|---------|------|
+| `nn_v2_dmc50` (reference) | 50.0% | 0 | (self) | — |
+| **`v6_isdd_75M`** 🏆 | **64.1%** | (4-way RR) | 500 | 2026-04-26 |
+| `v5_isdd_25M` | 60.0% | (4-way RR) | 500 | 2026-04-26 |
+| `bid_v3_max_20M` | 48.1% | (4-way RR) | 500 | 2026-04-26 |
+
+(4-way RR full standings: v6 61.7% / +206 → v5 55.1% / +12 → nn_v2_dmc50 42.6% / -87 → bid_v3_max_20M 40.6% / -131. v6 vs v5 direct h2h: 54.6%.)
+
+⚠️ **Pre-2026-04-20 arena results are invalidated** by commit `bba96bd` (dealer rotation fix from counter-clockwise to clockwise). Re-evaluating shows v5 vs `nn_v2_dmc50` shifted from 61.8% → 58.0% (-3.8pp). All `v5_max_*`, `v5_isdd_22p5M`, `bid_v3_max_20M`, `exp_*` numbers in the historical table below are stale; treat as relative ordering only, not absolute strength.
+
+<details>
+<summary>Historical (pre-fix) numbers — kept for relative ranking only</summary>
+
 | Bot | Win% | Margin | Matches |
 |-----|------|--------|---------|
-| `nn_v2_dmc50` (reference) | 50.0% | 0 | (self) |
-| **`v5_isdd_25M`** 🏆 | **61.8%** | **+116** | 1000 |
+| `v5_isdd_25M` | 61.8% | +116 | 1000 |
 | `v5_isdd_22p5M` | 56.3% | +45 | 1000 |
 | `v5_max_16M` | 56.3% | +18 | 1000 |
 | `v5_max_20M` | 54.9% | +19 | 1000 |
@@ -44,11 +57,21 @@ H2H against `nn_v2_dmc50` (Bid a Dede + DouDou50). Both bots use DMC for play, s
 
 *v5 rows: 2026-04-20 round-robin (5 bots, 500 matches/direction, 1000/H2H); win% and margin shown are the direct H2H vs `nn_v2_dmc50`. See [bid/strategies/bid_v5.md](bid/strategies/bid_v5.md).*
 
-**Round-robin standing** (same run, total win% across all opponents):
+</details>
+
+**Round-robin standing** (2026-04-26, 3 bots, 1000 matches/direction):
 
 | Rank | Bot | Win% | Margin |
 |------|-----|------|--------|
-| 1 | `v5_isdd_25M` 🏆 | 54.0% | +53 |
+| 1 | `v6_isdd_75M` 🏆 | 58.7% | +140 |
+| 2 | `v5_isdd_25M` | 51.0% | −32 |
+| 3 | `nn_v2_dmc50` | 40.2% | −108 |
+
+**Round-robin (2026-04-20, 5 bots, 500 matches/direction)** — historical:
+
+| Rank | Bot | Win% | Margin |
+|------|-----|------|--------|
+| 1 | `v5_isdd_25M` | 54.0% | +53 |
 | 2 | `v5_isdd_22p5M` | 52.4% | +36 |
 | 3 | `v5_max_16M` | 51.1% | −5 |
 | 4 | `v5_max_20M` | 49.9% | −35 |
@@ -61,7 +84,8 @@ H2H against `nn_v2_isdd_no_belief` (Bid a Dede + IS-DD, no belief net). Both bot
 | Bot | Win% | Margin | Matches |
 |-----|------|--------|---------|
 | `nn_v2_isdd_no_belief` (reference) | 50.0% | 0 | (self) |
-| **`v5_isdd_25M_isdd`** 🏆 | **57.3%** (vs `v3_max_isdd`) | **+44** | 1000 |
+| **`v6_isdd_75M_isdd`** 🏆 | **57.3%** (vs `v5_isdd_25M_isdd`) | **+181** | 500 |
+| `v5_isdd_25M_isdd` | 57.3% (vs `v3_max_isdd`) | +44 | 1000 |
 | `bid_v3_max_20M_isdd` | 50.8% | +37 | 2000 |
 | `exp_a_dd_isdd` (5M) | 50.5% | +1 | 200 |
 | `exp_b_blend75_isdd` | 48.8% | -66 | 200 |
@@ -80,11 +104,12 @@ H2H against `nn_v2_isdd_no_belief` (Bid a Dede + IS-DD, no belief net). Both bot
 
 | Category | Bot | TOML |
 |----------|-----|------|
-| **Best overall (any play)** | `nn_v2_isdd` (belief net #1) | [arena/bots/nn_v2_isdd.toml](../arena/bots/nn_v2_isdd.toml) |
-| **Best bid model (DMC play)** | `v5_isdd_25M` | [arena/bots/v5_isdd_25M.toml](../arena/bots/v5_isdd_25M.toml) |
-| **Best bid model (IS-DD play)** | `v5_isdd_25M_isdd` | [arena/bots/v5_isdd_25M_isdd.toml](../arena/bots/v5_isdd_25M_isdd.toml) |
-| Best fast bot | `v5_isdd_25M` | (DMC-based) |
-| Previous champion bidder | `bid_v3_max_20M` | [arena/bots/bid_v3_max_20M.toml](../arena/bots/bid_v3_max_20M.toml) |
+| **Best overall (any play)** 🏆 | `v6_isdd_75M_isdd` *or* `v6_isdd_75M_belief` (tied: 49.6% / -8 h2h, 1000 matches; both beat `nn_v2_isdd` by ~13pp). Belief net contributes 0pp on top of v6 — see [Notes](#notes). | [arena/bots/v6_isdd_75M_isdd.toml](../arena/bots/v6_isdd_75M_isdd.toml) |
+| **Best bid model (DMC play)** | `v6_isdd_75M` | [arena/bots/v6_isdd_75M.toml](../arena/bots/v6_isdd_75M.toml) |
+| **Best bid model (IS-DD play)** | `v6_isdd_75M_isdd` | [arena/bots/v6_isdd_75M_isdd.toml](../arena/bots/v6_isdd_75M_isdd.toml) |
+| Best fast bot | `v6_isdd_75M` | (DMC-based) |
+| Previous best overall | `nn_v2_isdd` | [arena/bots/nn_v2_isdd.toml](../arena/bots/nn_v2_isdd.toml) |
+| Previous champion bidder | `v5_isdd_25M` | [arena/bots/v5_isdd_25M.toml](../arena/bots/v5_isdd_25M.toml) |
 
 ## Reading the results
 
@@ -99,3 +124,14 @@ H2H against `nn_v2_isdd_no_belief` (Bid a Dede + IS-DD, no belief net). Both bot
 - Results are reproducible with `--seed 42` (default).
 - The CSV log keeps full provenance (bid_a/play_a/bid_b/play_b labels) so you can re-query historical matchups.
 - Old bots may be stale — re-run if play model files change.
+
+### Belief net contributes 0pp on top of v6 ISDD bid (2026-04-26)
+
+`v6_isdd_75M_belief` vs `v6_isdd_75M_isdd` (same bid, same IS-DD play, only belief differs): **49.6% / -8** in 1000 matches — statistically tied. Compare to belief's historical impact on v2 (~+13pp on `nn_v2_isdd` over `nn_v2_isdd_no_belief`).
+
+Hypotheses for why belief stopped helping:
+1. v6's score-aware v3 obs (117-dim, +belote bits, cumulative scores) encodes information the belief net was previously contributing implicitly through bid-conditioned card-location priors.
+2. `belief_v3.bin` was trained on bid_v2 auctions; distribution shift when the bidder changes.
+3. v6 picks more realizable contracts, so play-time uncertainty matters less to outcome.
+
+Practical: ship `v6_isdd_75M_isdd` for production (simpler, no belief net dependency, identical strength). Belief net retraining on v6 auctions is the obvious next experiment if we want belief to start contributing again.

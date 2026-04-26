@@ -422,6 +422,7 @@ impl Env {
     ///   108 → standard bid obs (v1/v2/v3/v4 models)
     ///   110 → score-aware v1 (my_score/opp_score raw), uses 0/0 for match-neutral
     ///   113 → score-aware v2 (my/opp/win_prob/leader_dist/diff), uses 0/0
+    ///   117 → score-aware v3 (v6 default, +4 belote bits), uses 0/0
     fn bid_a_dd(&mut self) -> u8 {
         if self.state.phase != Phase::Bidding {
             return 0;
@@ -1289,7 +1290,8 @@ impl Env {
 ///
 /// - 108: base obs (v1/v2/v3/v4)
 /// - 110: score-aware v1 (my_score, opp_score raw) — uses 0/0
-/// - 113: score-aware v2 (v5 default) — uses 0/0
+/// - 113: score-aware v2 (v5) — uses 0/0
+/// - 117: score-aware v3 (v6 default, +4 belote bits) — uses 0/0
 ///
 /// At inference time on a single deal (no multi-deal match context on the
 /// web), match scores default to 0/0 which matches the NN's neutral-match
@@ -1313,8 +1315,13 @@ fn build_bid_obs(
             bid_obs::write_bid_observation_score_aware_v2(&mut buf, 0, state, history, 0, 0);
             buf
         }
+        bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 => {
+            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V3];
+            bid_obs::write_bid_observation_score_aware_v3(&mut buf, 0, state, history, 0, 0);
+            buf
+        }
         other => panic!(
-            "Unsupported bid NN obs_dim={} (expected 108/110/113)",
+            "Unsupported bid NN obs_dim={} (expected 108/110/113/117)",
             other
         ),
     }

@@ -12,7 +12,7 @@ let _currentOracleHandler = null;
 // ../wasm/ resolves to static/wasm/
 const WASM_GLUE_URL = new URL('../wasm/colver_wasm.js', import.meta.url).href;
 const WASM_BIN_URL = new URL('../wasm/colver_wasm_bg.wasm', import.meta.url).href;
-const BID_MODEL_URL = new URL('../wasm/bid_v5_isdd.bin', import.meta.url).href;
+const BID_MODEL_URL = new URL('../wasm/bid_v6_isdd.bin', import.meta.url).href;
 const WORKER_URL = new URL('./workers/oracle-worker.js', import.meta.url).href;
 
 /**

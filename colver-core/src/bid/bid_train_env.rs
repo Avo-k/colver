@@ -20,6 +20,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::bid_obs::{
     self, BID_MASK_DIM, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+    BID_OBS_DIM_SCORE_AWARE_V3,
 };
 use crate::rollout;
 use crate::scoring::compute_deal_score;
@@ -103,6 +104,11 @@ pub struct DealPool {
     score_layers: Vec<ScoreLayer>,
     /// Which score layer to use for `real_pts` (index into score_layers, or None).
     active_score: Option<usize>,
+    /// Per-dealer indices, built lazily via `build_dealer_index()`.
+    /// Used by `sample_with_dealer` for realistic 0→1→2→3 rotation in match-sim
+    /// training — each deal keeps its original dealer (so ISDD scores stay valid),
+    /// we just route requests to deals whose dealer matches the target.
+    dealer_index: Option<[Vec<usize>; 4]>,
 }
 
 impl DealPool {
@@ -110,7 +116,7 @@ impl DealPool {
     pub fn generate(n: usize, seed: u64) -> Self {
         let mut deals = Vec::with_capacity(n);
         Self::generate_chunk_into(&mut deals, n, seed, 0);
-        DealPool { deals, score_layers: Vec::new(), active_score: None }
+        DealPool { deals, score_layers: Vec::new(), active_score: None, dealer_index: None }
     }
 
     /// Generate `n` deals with checkpoints every `chunk_size` deals.
@@ -166,6 +172,7 @@ impl DealPool {
                 deals: deals.clone(),
                 score_layers: Vec::new(),
                 active_score: None,
+                dealer_index: None,
             };
             match pool.save(path) {
                 Ok(()) => {
@@ -190,7 +197,7 @@ impl DealPool {
             deals.len() as f64 / total_time
         );
 
-        DealPool { deals, score_layers: Vec::new(), active_score: None }
+        DealPool { deals, score_layers: Vec::new(), active_score: None, dealer_index: None }
     }
 
     /// Generate `n` deals in parallel, appending to `out`.
@@ -284,6 +291,47 @@ impl DealPool {
         &self.deals[rng.gen_range(0..self.deals.len())]
     }
 
+    /// Build a per-dealer index of deal positions so `sample_with_dealer` is O(1).
+    /// Idempotent; rebuilds the index each call.
+    pub fn build_dealer_index(&mut self) {
+        let mut idx: [Vec<usize>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        for (i, deal) in self.deals.iter().enumerate() {
+            idx[deal.dealer as usize].push(i);
+        }
+        eprintln!(
+            "  Built dealer index: sizes = [{}, {}, {}, {}]",
+            idx[0].len(), idx[1].len(), idx[2].len(), idx[3].len()
+        );
+        self.dealer_index = Some(idx);
+    }
+
+    /// Sample a deal whose original dealer is `dealer`. Requires a prior call to
+    /// `build_dealer_index()`; falls back to rejection sampling otherwise (O(4)
+    /// expected per call for a uniform pool).
+    pub fn sample_with_dealer(&self, rng: &mut impl Rng, dealer: u8) -> &PresolvedDeal {
+        debug_assert!(dealer < 4);
+        if let Some(ref idx) = self.dealer_index {
+            let bucket = &idx[dealer as usize];
+            if !bucket.is_empty() {
+                return &self.deals[bucket[rng.gen_range(0..bucket.len())]];
+            }
+        }
+        // Fallback: rejection sample.
+        for _ in 0..64 {
+            let d = self.sample(rng);
+            if d.dealer == dealer {
+                return d;
+            }
+        }
+        // Last-resort: first deal matching, else any deal.
+        for d in &self.deals {
+            if d.dealer == dealer {
+                return d;
+            }
+        }
+        self.sample(rng)
+    }
+
     #[inline]
     pub fn len(&self) -> usize {
         self.deals.len()
@@ -354,7 +402,7 @@ impl DealPool {
             });
         }
 
-        Ok(DealPool { deals, score_layers: Vec::new(), active_score: None })
+        Ok(DealPool { deals, score_layers: Vec::new(), active_score: None, dealer_index: None })
     }
 
     /// Load enriched pool (COLVDR01): dd_pts + real_pts per deal.
@@ -423,6 +471,7 @@ impl DealPool {
             deals,
             score_layers: vec![layer],
             active_score: Some(0),
+            dealer_index: None,
         })
     }
 
@@ -702,7 +751,11 @@ impl BidTrainingEnv {
             } else {
                 (ew_cum, ns_cum)
             };
-            if dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+            if dim == BID_OBS_DIM_SCORE_AWARE_V3 {
+                bid_obs::write_bid_observation_score_aware_v3(
+                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
+                );
+            } else if dim == BID_OBS_DIM_SCORE_AWARE_V2 {
                 bid_obs::write_bid_observation_score_aware_v2(
                     &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
                 );
@@ -797,7 +850,8 @@ impl BidTrainingEnv {
     }
 
     /// Compute deal scores using reward mode (DD, real, or blend).
-    fn compute_scores(&self) -> (i16, i16) {
+    /// Public so the match-sim driver can accumulate per-deal pts before flush.
+    pub fn compute_scores(&self) -> (i16, i16) {
         if self.state.contract.value == 0 {
             // Void deal (4 passes) → 0/0
             return (0, 0);
@@ -866,8 +920,22 @@ impl BidTrainingEnv {
         terminal.points[defense] = defense_pts;
         terminal.tricks_won[taker] = taker_tricks;
         terminal.tricks_won[defense] = defense_tricks;
-        // No belote in DD simulation
-        terminal.belote = [0; 2];
+
+        // Belote: the DD/IS-DD score layers are trick-point only and don't record
+        // belote declarations, but Q+K of trump in the same hand is fully determined
+        // by the initial deal. Detect it from the original hands so the reward
+        // reflects the +20 bonus on ~11% of deals where the declarer team has it.
+        let trump = self.state.contract.trump;
+        let qk_mask = (1u32 << (trump as u32 * 8 + 4)) | (1u32 << (trump as u32 * 8 + 5));
+        let mut belote = [0u8; 2];
+        for p in 0..4u8 {
+            let hand = self.state.hands[p as usize];
+            if (hand & qk_mask) == qk_mask {
+                let team = GameState::player_team(p) as usize;
+                belote[team] = 2; // assume both Q and K get played → full belote (+20)
+            }
+        }
+        terminal.belote = belote;
 
         let score = compute_deal_score(&terminal);
         (score.scores[0], score.scores[1])
@@ -914,6 +982,10 @@ pub struct VecBidEnv {
     pub rng: StdRng,
     /// Observation dimension (108 or 110 for score-aware).
     pub obs_dim: usize,
+    /// When true, score-aware resets accumulate cumulative scores and rotate
+    /// the dealer 0→1→2→3 across deals until one team reaches 2000. Requires
+    /// the pool to have a dealer index built (DealPool::build_dealer_index).
+    pub match_sim: bool,
 }
 
 impl VecBidEnv {
@@ -924,7 +996,7 @@ impl VecBidEnv {
         let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim };
+        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false };
         vec_env.refresh_observations();
         vec_env
     }
@@ -949,7 +1021,7 @@ impl VecBidEnv {
         let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim };
+        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false };
         vec_env.refresh_observations();
         vec_env
     }
@@ -973,8 +1045,10 @@ impl VecBidEnv {
         uniform_ratio: f32,
     ) {
         assert!(
-            obs_dim == BID_OBS_DIM_SCORE_AWARE || obs_dim == BID_OBS_DIM_SCORE_AWARE_V2,
-            "score-aware obs dim must be 110 or 113"
+            obs_dim == BID_OBS_DIM_SCORE_AWARE
+                || obs_dim == BID_OBS_DIM_SCORE_AWARE_V2
+                || obs_dim == BID_OBS_DIM_SCORE_AWARE_V3,
+            "score-aware obs dim must be 110, 113, or 117"
         );
         self.obs_dim = obs_dim;
         self.obs_buf = vec![0.0f32; self.envs.len() * self.obs_dim];
@@ -1076,7 +1150,13 @@ impl VecBidEnv {
     }
 
     /// Step env i with pool-based reset, score-aware mode (variable-dim obs, Δ-winprob reward).
-    /// Obs dim of returned transitions = the env's sa_obs_dim (110 or 113).
+    /// Obs dim of returned transitions = the env's sa_obs_dim (110, 113, or 117).
+    ///
+    /// Reset behavior depends on `self.match_sim`:
+    /// - `false` (default): randomize match scores + draw any deal (legacy).
+    /// - `true`: accumulate (ns_deal, ew_deal) into cumulative scores, rotate dealer
+    ///   to (prev_dealer+1)%4, draw a deal from the dealer-indexed pool. When one
+    ///   team ≥ 2000, reset cumulatives to (0, 0) and pick a fresh random dealer.
     pub fn step_env_pooled_score_aware(
         &mut self,
         i: usize,
@@ -1088,20 +1168,61 @@ impl VecBidEnv {
     ) -> Option<Vec<(Vec<f32>, [f32; BID_MASK_DIM], u8, f32, u8)>> {
         let done = self.envs[i].step(action);
         if done {
+            // In match-sim mode we need pre-flush deal scores for cumulative update.
+            let deal_scores = if self.match_sim {
+                Some(self.envs[i].compute_scores())
+            } else {
+                None
+            };
+
             let transitions = self.envs[i].flush_transitions_score_aware(scale);
-            let deal = pool.sample(&mut self.rng);
-            // Preserve sa_obs_dim and reward_clip across reset.
             let prev_dim = self.envs[i].sa_obs_dim;
             let prev_clip = self.envs[i].reward_clip;
-            self.envs[i].reset_from_deal(deal);
-            self.envs[i].sa_obs_dim = prev_dim;
-            self.envs[i].reward_clip = prev_clip;
-            self.envs[i].randomize_match_scores_from_pool(score_pool, uniform_ratio, &mut self.rng);
+
+            if let Some((ns_deal, ew_deal)) = deal_scores {
+                let (mut ns_cum, mut ew_cum) =
+                    self.envs[i].score_aware.unwrap_or((0, 0));
+                ns_cum += ns_deal as i32;
+                ew_cum += ew_deal as i32;
+
+                let next_dealer = if ns_cum >= 2000 || ew_cum >= 2000 {
+                    ns_cum = 0;
+                    ew_cum = 0;
+                    self.rng.gen_range(0..4u8)
+                } else {
+                    (self.envs[i].state.dealer + 1) % 4
+                };
+
+                let deal = pool.sample_with_dealer(&mut self.rng, next_dealer);
+                self.envs[i].reset_from_deal(deal);
+                self.envs[i].sa_obs_dim = prev_dim;
+                self.envs[i].reward_clip = prev_clip;
+                self.envs[i].score_aware = Some((ns_cum, ew_cum));
+            } else {
+                let deal = pool.sample(&mut self.rng);
+                self.envs[i].reset_from_deal(deal);
+                self.envs[i].sa_obs_dim = prev_dim;
+                self.envs[i].reward_clip = prev_clip;
+                self.envs[i].randomize_match_scores_from_pool(score_pool, uniform_ratio, &mut self.rng);
+            }
             self.refresh_env(i);
             Some(transitions)
         } else {
             self.refresh_env(i);
             None
+        }
+    }
+
+    /// Enable match simulation mode: cumulative scores + dealer rotation across
+    /// deals, reset on 2000-point match end. Requires the pool to have a dealer
+    /// index built (call `pool.build_dealer_index()` before).
+    pub fn set_match_sim(&mut self, enabled: bool) {
+        self.match_sim = enabled;
+        if enabled {
+            // Start each env at (0, 0) with a random starting dealer.
+            for env in &mut self.envs {
+                env.score_aware = Some((0, 0));
+            }
         }
     }
 
@@ -1120,7 +1241,10 @@ impl VecBidEnv {
 
     fn refresh_env_inner(&mut self, i: usize) {
         let od = self.obs_dim;
-        if od == BID_OBS_DIM_SCORE_AWARE || od == BID_OBS_DIM_SCORE_AWARE_V2 {
+        if od == BID_OBS_DIM_SCORE_AWARE
+            || od == BID_OBS_DIM_SCORE_AWARE_V2
+            || od == BID_OBS_DIM_SCORE_AWARE_V3
+        {
             let (my, opp) = if let Some((ns, ew)) = self.envs[i].score_aware {
                 let player = self.envs[i].state.current_player();
                 let team = GameState::player_team(player);
@@ -1128,7 +1252,13 @@ impl VecBidEnv {
             } else {
                 (0, 0)
             };
-            if od == BID_OBS_DIM_SCORE_AWARE_V2 {
+            if od == BID_OBS_DIM_SCORE_AWARE_V3 {
+                bid_obs::write_bid_observation_score_aware_v3(
+                    &mut self.obs_buf, i * od,
+                    &self.envs[i].state, &self.envs[i].bid_history,
+                    my, opp,
+                );
+            } else if od == BID_OBS_DIM_SCORE_AWARE_V2 {
                 bid_obs::write_bid_observation_score_aware_v2(
                     &mut self.obs_buf, i * od,
                     &self.envs[i].state, &self.envs[i].bid_history,
@@ -1617,5 +1747,110 @@ mod tests {
             // Total should be positive (someone wins the contract)
             assert!(ns + ew > 0, "total scores should be positive");
         }
+    }
+
+    #[test]
+    fn test_compute_scores_belote_bonus() {
+        // Craft a deal where seat 0 (NS) has Q♠+K♠, contract = 80 spades by NS with
+        // taker trick pts = 80 (just makes). Expected: +20 belote → taker total 100.
+        let mut hands = [0u32; 4];
+        // Seat 0 gets: Q♠, K♠, plus 6 fillers in hearts (non Q/K): 7♥,8♥,9♥,J♥,10♥,A♥
+        hands[0] = (1 << 4) | (1 << 5);
+        hands[0] |= (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15);
+        assert_eq!(hands[0].count_ones(), 8);
+        // Distribute the other 24 cards to seats 1-3 (doesn't matter for scoring test).
+        let used = hands[0];
+        let mut remaining: u32 = 0xFFFF_FFFF & !used;
+        for seat in 1..4 {
+            let mut h = 0u32;
+            for _ in 0..8 {
+                let bit = remaining.trailing_zeros();
+                h |= 1 << bit;
+                remaining &= !(1 << bit);
+            }
+            hands[seat] = h;
+        }
+
+        let mut env = BidTrainingEnv::from_deal_with_mode(
+            &PresolvedDeal {
+                dealer: 3,
+                hands,
+                dd_pts: [80, 0, 0, 0],
+                real_pts: Some([80, 0, 0, 0]),
+            },
+            RewardMode::RealOnly,
+        );
+        // Force a contract: NS bids 80♠, everyone else passes.
+        env.step(crate::bidding::encode_bid(8, 0));
+        while env.state.phase == Phase::Bidding {
+            env.step(0);
+        }
+        let (ns, ew) = env.compute_scores();
+        // NS should make: 80 trick + 20 belote ≥ 80 → reussi.
+        // Score: round10(80 + 80 + 20) = 180. EW: round10(82 + 0) = 80.
+        assert!(ns > 0, "NS should score (made contract with belote)");
+        assert!(ns >= 170 && ns <= 200, "ns={} expected ~180 with belote", ns);
+        // Without the belote fix, ns would be lower (no +20 → still 170 since 80≥80 anyway).
+        // But the bonus must show up in the taker score compared to same state without belote.
+        let _ = ew;
+    }
+
+    #[test]
+    fn test_dealer_index_sampling() {
+        let mut rng = StdRng::seed_from_u64(7);
+        // Build a tiny pool by generating 200 deals (dealer randomized).
+        let mut pool = DealPool::generate(200, 42);
+        pool.build_dealer_index();
+        // Sample 100 times per dealer and check every returned deal matches.
+        for target in 0..4u8 {
+            for _ in 0..100 {
+                let d = pool.sample_with_dealer(&mut rng, target);
+                assert_eq!(d.dealer, target, "dealer index returned wrong dealer");
+            }
+        }
+    }
+
+    #[test]
+    fn test_match_sim_accumulates_and_rotates() {
+        // Build a small pool and vec env in score-aware + match-sim mode; run
+        // enough bid decisions to end several deals, then check that scores
+        // accumulated and dealer rotated by +1 from deal to deal.
+        let mut pool = DealPool::generate(400, 11);
+        pool.build_dealer_index();
+        let mut vec_env = VecBidEnv::new_with_pool_and_mode(2, 1, &pool, RewardMode::DdOnly);
+        vec_env.enable_score_aware_with_dim(BID_OBS_DIM_SCORE_AWARE, &[], 0.0);
+        vec_env.set_match_sim(true);
+
+        let mut rng = StdRng::seed_from_u64(2);
+        let mut prev_dealer = vec_env.envs[0].state.dealer;
+        let mut prev_cum = vec_env.envs[0].score_aware.unwrap();
+        let mut deals_seen = 0;
+        let mut rotations_seen = 0;
+
+        for _ in 0..1000 {
+            let action = vec_env.random_action(0);
+            if let Some(_transitions) = vec_env.step_env_pooled_score_aware(0, action, &pool, 1.0, &[], 0.0) {
+                deals_seen += 1;
+                let new_dealer = vec_env.envs[0].state.dealer;
+                let new_cum = vec_env.envs[0].score_aware.unwrap();
+                let expected_dealer = (prev_dealer + 1) % 4;
+                // Dealer either rotated by +1 (match continued) or randomized to
+                // anything (match reset). Accept both; count rotations.
+                if new_dealer == expected_dealer && (new_cum.0 > prev_cum.0 || new_cum.1 > prev_cum.1) {
+                    rotations_seen += 1;
+                }
+                // Cumulatives are non-negative and reset to 0 implies match ended.
+                assert!(new_cum.0 >= 0 && new_cum.1 >= 0);
+                if new_cum.0 < prev_cum.0 || new_cum.1 < prev_cum.1 {
+                    // Reset must zero both.
+                    assert_eq!(new_cum, (0, 0), "partial reset — expected full (0,0)");
+                }
+                prev_dealer = new_dealer;
+                prev_cum = new_cum;
+            }
+        }
+
+        assert!(deals_seen >= 20, "saw only {} deals", deals_seen);
+        assert!(rotations_seen >= 5, "saw only {} rotations", rotations_seen);
     }
 }

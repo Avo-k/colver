@@ -17,6 +17,9 @@ pub const BID_OBS_DIM_SCORE_AWARE: usize = 110;
 /// v5: 5 derived score features instead of 2 raw scores.
 /// Layout: base 108 + my/2000 + opp/2000 + win_prob + leader_remaining/2000 + diff/2000
 pub const BID_OBS_DIM_SCORE_AWARE_V2: usize = 113;
+/// v6: v2 features + 4 self-belote bits (one per suit).
+/// Layout: 113 + [self_has_QK_of_suit_0..3].
+pub const BID_OBS_DIM_SCORE_AWARE_V3: usize = 117;
 pub const BID_MASK_DIM: usize = 43;
 
 /// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
@@ -117,6 +120,33 @@ pub fn write_bid_observation_score_aware_v2(
     buf[offset + BID_OBS_DIM + 4] = ((s_me - s_opp) / 2000.0).clamp(-1.0, 1.0);
 }
 
+/// v3 score-aware obs (117-dim). v2 layout + 4 self-belote bits (one per suit).
+/// Bit i = 1.0 iff the current player holds both Q and K of suit i in hand.
+/// Belote in trump gives the declarer team +20, so exposing it at bid time lets
+/// the model shift its aggression curve by ~one bid step on those 11% of deals.
+pub fn write_bid_observation_score_aware_v3(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+) {
+    debug_assert!(buf.len() >= offset + BID_OBS_DIM_SCORE_AWARE_V3);
+
+    write_bid_observation_score_aware_v2(buf, offset, state, bid_history, my_score, opp_score);
+
+    let me = state.current_player() as usize;
+    let hand = state.hands[me];
+    for suit in 0..4u32 {
+        // Q of suit = rank 4 (bit suit*8 + 4), K = rank 5.
+        let qk_mask = (1u32 << (suit * 8 + 4)) | (1u32 << (suit * 8 + 5));
+        let has_belote = (hand & qk_mask) == qk_mask;
+        buf[offset + BID_OBS_DIM_SCORE_AWARE_V2 + suit as usize] =
+            if has_belote { 1.0 } else { 0.0 };
+    }
+}
+
 /// Write the 43-float legal bid mask into `buf[offset..offset+43]`.
 pub fn write_bid_mask(buf: &mut [f32], offset: usize, state: &GameState) {
     debug_assert!(buf.len() >= offset + BID_MASK_DIM);
@@ -198,7 +228,32 @@ mod tests {
         assert_eq!(BID_OBS_DIM, 108);
         assert_eq!(BID_OBS_DIM_SCORE_AWARE, 110);
         assert_eq!(BID_OBS_DIM_SCORE_AWARE_V2, 113);
+        assert_eq!(BID_OBS_DIM_SCORE_AWARE_V3, 117);
         assert_eq!(BID_MASK_DIM, 43);
+    }
+
+    #[test]
+    fn test_v3_belote_features() {
+        // Current player (first bidder after dealer=0 → seat 1) holds Q♥+K♥
+        // plus 6 club fillers that deliberately avoid Q♣ and K♣ (ranks 4/5).
+        let mut seat1_hand: u32 = 0;
+        seat1_hand |= 1 << (1 * 8 + 4); // Q♥
+        seat1_hand |= 1 << (1 * 8 + 5); // K♥
+        // 6 club fillers: 7♣(24) 8♣(25) 9♣(26) J♣(27) 10♣(30) A♣(31). No Q♣ or K♣.
+        seat1_hand |= (1 << 24) | (1 << 25) | (1 << 26) | (1 << 27) | (1 << 30) | (1 << 31);
+        assert_eq!(seat1_hand.count_ones(), 8);
+        let hands = [0u32, seat1_hand, 0u32, 0u32];
+        let state = GameState::new(0, hands);
+        assert_eq!(state.current_player(), 1);
+
+        let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V3];
+        write_bid_observation_score_aware_v3(&mut buf, 0, &state, &[], 0, 0);
+
+        // Belote bits: only Hearts (suit 1) should be 1.0.
+        assert_eq!(buf[BID_OBS_DIM_SCORE_AWARE_V2], 0.0);       // spades
+        assert_eq!(buf[BID_OBS_DIM_SCORE_AWARE_V2 + 1], 1.0);   // hearts ← belote
+        assert_eq!(buf[BID_OBS_DIM_SCORE_AWARE_V2 + 2], 0.0);   // diamonds
+        assert_eq!(buf[BID_OBS_DIM_SCORE_AWARE_V2 + 3], 0.0);   // clubs
     }
 
     #[test]

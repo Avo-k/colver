@@ -1,0 +1,9 @@
+# v6 ISDD final + oracle play (perfect play with DD solver) — for hypothesis testing
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "oracle"

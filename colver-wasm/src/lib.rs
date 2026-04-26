@@ -3,8 +3,9 @@ use wasm_bindgen::prelude::*;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::{
     self, write_bid_observation, write_bid_observation_score_aware,
-    write_bid_observation_score_aware_v2, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE,
-    BID_OBS_DIM_SCORE_AWARE_V2,
+    write_bid_observation_score_aware_v2, write_bid_observation_score_aware_v3,
+    BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+    BID_OBS_DIM_SCORE_AWARE_V3,
 };
 use colver_core::card::*;
 use colver_core::solver;
@@ -13,7 +14,7 @@ use colver_core::state::GameState;
 /// BidNet wrapper for WASM.  Constructed once from weight bytes, reused across calls.
 ///
 /// Auto-detects architecture: tries hidden sizes 256, 512, 1024 and matches the
-/// weight-file layout. Supports obs_dim 108 / 110 / 113 via build_bid_obs().
+/// weight-file layout. Supports obs_dim 108 / 110 / 113 / 117 via build_bid_obs().
 #[wasm_bindgen]
 pub struct WasmBidNet {
     net: BidNet,
@@ -40,7 +41,7 @@ impl WasmBidNet {
             let total = floats.len();
             let dueling_tail = hidden + 1 + hidden * 43 + 43;
             let standard_tail = hidden * 43 + 43;
-            let known_obs_dims = [108usize, 110, 113, 114];
+            let known_obs_dims = [108usize, 110, 113, 114, 117];
 
             for layers in 2..=4 {
                 let trunk_fixed = (layers - 1) * (hidden * hidden + 3 * hidden) + 3 * hidden;
@@ -62,7 +63,7 @@ impl WasmBidNet {
         }
 
         Err(JsValue::from_str(
-            "cannot infer BidNet architecture — weight file does not match any known shape (hidden 256/512/1024, layers 2-4, obs_dim 108/110/113/114)",
+            "cannot infer BidNet architecture — weight file does not match any known shape (hidden 256/512/1024, layers 2-4, obs_dim 108/110/113/114/117)",
         ))
     }
 
@@ -137,9 +138,14 @@ impl WasmBidNet {
                 write_bid_observation_score_aware_v2(&mut buf, 0, &state, &bid_history, 0, 0);
                 buf
             }
+            BID_OBS_DIM_SCORE_AWARE_V3 => {
+                let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V3];
+                write_bid_observation_score_aware_v3(&mut buf, 0, &state, &bid_history, 0, 0);
+                buf
+            }
             other => {
                 return Err(JsValue::from_str(&format!(
-                    "unsupported BidNet obs_dim={other} (expected 108/110/113)"
+                    "unsupported BidNet obs_dim={other} (expected 108/110/113/117)"
                 )));
             }
         };

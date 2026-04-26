@@ -1,0 +1,11 @@
+# v6 ISDD checkpoint @ 70M total (25M post-resume, training eval: 54.7%/+115)
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_25000000.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

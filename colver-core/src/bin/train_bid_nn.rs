@@ -25,6 +25,7 @@ use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::{
     self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+    BID_OBS_DIM_SCORE_AWARE_V3,
 };
 use colver_core::suit_perm;
 use colver_core::bid_train_env::{BidReplayBuffer, DealPool, RewardMode, VecBidEnv};
@@ -267,7 +268,7 @@ struct Args {
     #[arg(long, default_value_t = 1_000_000)]
     pool_size: usize,
     /// Path to save/load deal pool (auto-generates if missing).
-    #[arg(long, default_value = "data/pools/dd_2.5M.bin")]
+    #[arg(long, default_value = "data/deals/archive/dd_2.5M.bin")]
     pool_file: String,
     /// Reward mode: "dd", "real", "blend:0.7" (alpha=DD weight), or "curriculum:0.95:0.3" (DD weight start:end).
     #[arg(long, default_value = "dd")]
@@ -300,6 +301,15 @@ struct Args {
     /// Use v2 score features (5 derived features → 113-dim obs). Requires --score-aware.
     #[arg(long)]
     sa_features_v2: bool,
+    /// Use v3 score features (v2 + 4 self-belote bits → 117-dim obs). Requires --score-aware.
+    /// Implies --sa-features-v2 semantics for the first 5 extras; overrides if both set.
+    #[arg(long)]
+    sa_features_v3: bool,
+    /// Enable match simulation: cumulative scores + dealer rotation across deals
+    /// until one team reaches 2000. Replaces the random score injection at reset.
+    /// Requires --score-aware. Builds a dealer index on the pool at startup.
+    #[arg(long)]
+    match_sim: bool,
     /// Clip Δ-winprob reward (post scale) to [-clip, +clip]. 0 disables.
     #[arg(long, default_value_t = 0.0)]
     reward_clip: f32,
@@ -368,12 +378,14 @@ fn evaluate_full_matches(
     dmc.set_residual(true);
 
     let score_aware = obs_dim > BID_OBS_DIM;
+    let base_obs_dim = base_bid.obs_dim();
+    let base_score_aware = base_obs_dim > BID_OBS_DIM;
     let mut rng = StdRng::seed_from_u64(12345);
     let mut train_wins = 0usize;
     let mut total_margin = 0i64;
 
     let mut bid_obs_buf = vec![0.0f32; obs_dim];
-    let mut base_obs_buf = vec![0.0f32; BID_OBS_DIM];
+    let mut base_obs_buf = vec![0.0f32; base_obs_dim];
     let mut play_obs_buf = vec![0.0f32; OBS_DIM_TR];
 
     for match_idx in 0..num_matches {
@@ -395,7 +407,11 @@ fn evaluate_full_matches(
                 let action = if team == train_team {
                     if score_aware {
                         let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
-                        if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                        if obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
+                            bid_obs::write_bid_observation_score_aware_v3(
+                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        } else if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
                             bid_obs::write_bid_observation_score_aware_v2(
                                 &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
                             );
@@ -409,7 +425,24 @@ fn evaluate_full_matches(
                     }
                     train_bid.best_action_fast(&bid_obs_buf, state.legal_actions())
                 } else {
-                    bid_obs::write_bid_observation(&mut base_obs_buf, 0, &state, &tracking.bid_history);
+                    if base_score_aware {
+                        let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
+                        if base_obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
+                            bid_obs::write_bid_observation_score_aware_v3(
+                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        } else if base_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                            bid_obs::write_bid_observation_score_aware_v2(
+                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        } else {
+                            bid_obs::write_bid_observation_score_aware(
+                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
+                            );
+                        }
+                    } else {
+                        bid_obs::write_bid_observation(&mut base_obs_buf, 0, &state, &tracking.bid_history);
+                    }
                     base_bid.best_action_fast(&base_obs_buf, state.legal_actions())
                 };
 
@@ -503,7 +536,13 @@ fn main() {
         )
     } else {
         let obs_dim = if args.score_aware {
-            if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE }
+            if args.sa_features_v3 {
+                BID_OBS_DIM_SCORE_AWARE_V3
+            } else if args.sa_features_v2 {
+                BID_OBS_DIM_SCORE_AWARE_V2
+            } else {
+                BID_OBS_DIM_SCORE_AWARE
+            }
         } else {
             BID_OBS_DIM
         };
@@ -516,6 +555,9 @@ fn main() {
 
     if args.sa_features_v2 && !args.score_aware {
         panic!("--sa-features-v2 requires --score-aware");
+    }
+    if args.sa_features_v3 && !args.score_aware {
+        panic!("--sa-features-v3 requires --score-aware");
     }
     if args.ema_tau > 0.0 {
         trainer.set_ema_tau(args.ema_tau);
@@ -535,9 +577,15 @@ fn main() {
         println!("Resumed from {}", path);
     }
 
-    // Initialize replay buffer (obs dim matches model: 113 v2, 110 v1, 108 standard)
+    // Initialize replay buffer (obs dim matches model: 117 v3, 113 v2, 110 v1, 108 standard)
     let replay_obs_dim = if args.score_aware {
-        if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE }
+        if args.sa_features_v3 {
+            BID_OBS_DIM_SCORE_AWARE_V3
+        } else if args.sa_features_v2 {
+            BID_OBS_DIM_SCORE_AWARE_V2
+        } else {
+            BID_OBS_DIM_SCORE_AWARE
+        }
     } else {
         BID_OBS_DIM
     };
@@ -606,6 +654,13 @@ fn main() {
         pool.score_layer_names(),
     );
 
+    if args.match_sim {
+        if !args.score_aware {
+            panic!("--match-sim requires --score-aware");
+        }
+        pool.build_dealer_index();
+    }
+
     // Phase 2: Initialize envs from pool (instant)
     println!("\n--- Phase 2: Training ---");
     if args.score_aware {
@@ -627,10 +682,20 @@ fn main() {
             println!("Score distribution: uniform [0, 2000)");
             Vec::new()
         };
-        let sa_dim = if args.sa_features_v2 { BID_OBS_DIM_SCORE_AWARE_V2 } else { BID_OBS_DIM_SCORE_AWARE };
+        let sa_dim = if args.sa_features_v3 {
+            BID_OBS_DIM_SCORE_AWARE_V3
+        } else if args.sa_features_v2 {
+            BID_OBS_DIM_SCORE_AWARE_V2
+        } else {
+            BID_OBS_DIM_SCORE_AWARE
+        };
         vec_env.enable_score_aware_with_dim(sa_dim, &pool_data, args.sa_uniform_ratio);
         if args.reward_clip > 0.0 {
             vec_env.set_reward_clip(Some(args.reward_clip));
+        }
+        if args.match_sim {
+            vec_env.set_match_sim(true);
+            println!("Match simulation enabled: cumulative scores + dealer rotation, reset @ 2000.");
         }
         pool_data
     } else {

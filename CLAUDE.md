@@ -11,8 +11,8 @@ cargo run -p colver-core --bin bench --release # Performance benchmark (~1.3M ro
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000  # Joint bid+play training
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --mode play-only --resume-bid models/bid_v2/bid_nn_final.safetensors --bid-hidden 512 --bid-layers 3 --num-envs 256 --steps 50000000 --eval-freq 1000000 --save-freq 2000000  # Triforge: play-only phase with bid_v2
 ./scripts/training/triforge.sh --cycles 3  # Full triforge: alternating bid/play training
-cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/pools/dd_2.5M.bin  # Standalone bid NN training
-RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/pools/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
+cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/deals/base_5M.bin --score-file data/deals/scores_isdd_5M.sc  # Standalone bid NN training (base pool + optional score layers)
+RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/deals/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
 cargo run -p colver-core --bin gen_bid_belief_data --release --features parallel -- --bid-model models/bid_v2/bid_nn_final.bin --bid-hidden 512 --deals 500000 --output data/belief/bid_belief_500k.bin  # Bid belief training data (COLVBB01, ~14M samples, ~65s)
 uv sync                                        # Build and install Python bindings
 uv run python -m colver.web                    # Run web frontend → http://localhost:8000
@@ -91,7 +91,7 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 - **Pool generator** (`gen_pool` binary): Standalone DD pool generation, no CUDA dep. Uses `RUSTFLAGS="-C target-cpu=native"` + workspace `[profile.release] lto="fat", codegen-units=1` for 2.4× speedup. Checkpoints every 100k deals (resumable).
 - **IS-DD** (`search/is_dd.rs`): Information Set DD — samples determinized worlds from beliefs, solves each with DD, aggregates. **Hard constraints** (voids, trump ceiling, played cards) are facts and are always applied, with no flag. **Soft beliefs** (heuristic `use_soft_inference`, NN beliefs `use_nn_beliefs`, `use_elephant_memory`) are all **off by default** — they're optional probabilistic adjustments. `early_termination` is also on by default (skip search when forced or when beliefs uniquely resolve all hands). `enrich_pool_isdd` binary generates play scores with IS-DD for training data. See [docs/play/is_dd.md](docs/play/is_dd.md).
 - **DMC Agent "DouDou35"** (`dmc/dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
-- **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2, default): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`). **Bumblebid** (experimental): transformer encoder, d=64 L=2 H=4 (105K params), supervised on DD oracle Q-values with 24× suit augmentation. See [docs/bid/architectures/bumblebid.md](docs/bid/architectures/bumblebid.md). **Bid v3 Max** (`models/bid_v3_max_20M/bid_nn_final.bin`, 20M steps): same arch as v2, trained on `max(DMC, ISDD)` real points instead of DD — only model that doesn't lose to nn_v2 in either DMC or IS-DD eval. Note: `models/bid_v3_max/` is an earlier 3M-step run, not the production model. Arena finding: bid_v3_max is a synergy multiplier for IS-DD (+5.9% in nn_v2_isdd_no_belief → bid_v3_max_20M_isdd), but gives no edge to DMC play (−1.5% in nn_v2_dmc50 → bid_v3_max_20M) — the realizable contracts it picks need near-optimal play to cash in. See [docs/bid/strategies/bid_v3_max.md](docs/bid/strategies/bid_v3_max.md).
+- **NN Bidder** (`bid/bid_net.rs`): Dueling DQN, auto-detects hidden size (tries 256, 512, 1024). **Bid a Doudou** (v1): 114→256²→43, trained with DouZero self-play (`bid_nn_final.bin`). **Bid a Dede** (v2): 108→512³→43, trained with DD solver + 24x suit augmentation (`bid_v2/bid_nn_final.bin`). **Bumblebid** (experimental): transformer encoder, d=64 L=2 H=4 (105K params), supervised on DD oracle Q-values with 24× suit augmentation. See [docs/bid/architectures/bumblebid.md](docs/bid/architectures/bumblebid.md). **Bid v3 Max** (`models/bid_v3_max_20M/bid_nn_final.bin`, 20M steps): trained on `max(DMC, ISDD)` real points; synergy multiplier for IS-DD only. **Bid v5 ISDD** (`models/bid_v5_isdd/bid_nn_final.bin`, 25M steps): score-aware v2 obs (113-dim embeds cumulative scores), Δ-winprob reward, 1M ISDD pool — first model to dominate v2 in both DMC and IS-DD play. **Bid v6 ISDD** (`models/bid_v6_isdd_resume/bid_nn_final.bin`, 75M steps = 45M + 30M resume, **default**): score-aware v3 obs (117-dim, +4 belote bits), belote-aware reward (Q+K trump same hand = +20), match simulation (cumulative scores + dealer rotation 0→1→2→3 + reset @ 2000), 5M ISDD pool. Arena vs v5: 55.8% (DMC play) / 57.3% +181 (IS-DD play). New champion bid in both eval sets.
 - **Belief Network** (`belief/belief_net.rs`): Card location prediction, V1/V2/V3/bid obs, multiple architecture variants. `CardBeliefs` (heuristic, deprecated) uses bidirectional soft inference from bids and play with **0% false exclusion rate** on hard constraints (voids, trump ceiling). Correctly handles "ne pisse pas" (discard when can't overtrump opponent's cut → trump ceiling, not void). `BeliefState` (for BisDd) uses soft weights — hard bid constraints were removed (rejected reality 72% of the time against NN bidders). **Bid Belief NN v4** (`bid_belief_v4.bin`): 108→256²→96, trained on bid_v2 auctions (14.2M samples, 24× suit augmentation), replaces heuristic bid soft weights in BeliefState via `apply_nn_bid_beliefs()`. Play log(p) = -0.9565 (vs -1.0209 heuristic, -1.099 uniform). Old `belief_v3.bin` is **not usable** with NN bots. See [docs/belief/bis_dd.md](docs/belief/bis_dd.md).
 - **Belief Evaluation** (`bin/eval_beliefs.rs`): Measures belief quality against ground truth per bid step and per trick. Plays deals with NN bots, tracks log-probability, placement accuracy, false exclusion rate, entropy, constraint tightness, and ground truth reachability. Supports `--nn` for play belief NN and `--bid-belief` for bid belief NN. Run: `cargo run --bin eval_beliefs --features "parallel,nn" --release -- --deals 500 [--bid-belief models/bid_belief_v4.bin]`
 - **Bidding strategies** (`bid/bid_eval/`): `BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`, `BidParams` (parametric). Each strategy in its own file under `bid_eval/`.
@@ -174,7 +174,7 @@ use_hard_constraints = true
 
 **Options:** `--matches N` (per direction, default 100), `--threads N` (default auto), `--seed N` (default 42). Each H2H runs both directions (duplicate matching) for variance reduction.
 
-**Reference bots:** `nn_v2_isdd` (Bid a Dede+SmartIsDd+Belief, **#1 leaderboard**), `nn_v2_isdd_no_belief` (Bid a Dede+SmartIsDd, #2), `nn_v2_dmc50` (Bid a Dede+DouDou50, fast baseline), `nn_v2_dmc35` (Bid a Dede+DouDou35), `nn_dmc35` (Bid a Doudou+DouDou35), `nn_isdd` (Bid a Doudou+SmartIsDd+Belief).
+**Reference bots:** `v6_isdd_75M_isdd` (Bid v6+SmartIsDd, **#1 leaderboard** — 63.5% / +187 vs `nn_v2_isdd`; belief net adds 0pp on top of v6 so `v6_isdd_75M_belief` is tied), `v6_isdd_75M` (Bid v6+DouDou50, fast champion), `v5_isdd_25M` (previous bid champion), `nn_v2_isdd` (Bid v2+SmartIsDd+Belief, previous #1), `nn_v2_dmc50` (Bid v2+DouDou50, fast baseline), `nn_v2_dmc35` (Bid v2+DouDou35).
 
 **Apples-to-apples comparisons:** v3 IS-DD bots (`bid_v3_*_isdd`) have no belief net — compare against `nn_v2_isdd_no_belief`, not `nn_v2_isdd`, to isolate the bidder effect from the belief-net effect.
 
@@ -190,11 +190,15 @@ use_hard_constraints = true
 
 ## Data Directory Layout
 
+Canonical layout: a single base pool (COLVDD01) plus per-method score layers (COLVSC01) loaded independently by `train_bid_nn` via `--score-file` (repeatable). Score files carry `offset` + `count`, so partial-coverage layers compose: load a 1M layer starting at offset 0, then a 1M layer at offset 1M, and the trainer sees 2M.
+
 ```
 data/
-  pools/              DD deal pools
-    dd_2.5M.bin         2.5M pre-solved deals (COLVDD01, 51MB)
-    dd_pool_enriched_1M.bin  1M deals with DD + DouDou50 real pts (COLVDR01, 24MB)
+  deals/              Base pools + score layers (modern layout)
+    base_5M.bin           5M pre-solved DD deals (COLVDD01, 105MB)
+    scores_dmc_5M.sc      DMC real-pts scores on all 5M (COLVSC01, 20MB)
+    scores_isdd_5M.sc     IS-DD scores on all 5M, 20ms × 20 dets (COLVSC01, 20MB)
+    archive/              Legacy COLVDR01 enriched pools + old experiments + historical logs
   belief/             Belief net training data
     belief_train_500k.bin  (COLVBL01, 20GB, play-phase samples)
     bid_belief_500k.bin    (COLVBB01, 6.3GB, 14.2M bid-phase samples from bid_v2)

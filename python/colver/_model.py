@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 _DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.4.0/dmc_50.bin"
-_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.6.0/bid_v5_isdd.bin"
+_DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.7.0/bid_v6_isdd.bin"
 _DEFAULT_BELIEF_URL = "https://github.com/Avo-k/colver/releases/download/v0.3.3/belief_v3.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
@@ -33,7 +33,7 @@ def model_path(name: str = "dmc_50.bin") -> Path | None:
     return None
 
 
-def bid_model_path(name: str = "bid_v5_isdd.bin") -> Path | None:
+def bid_model_path(name: str = "bid_v6_isdd.bin") -> Path | None:
     """Find a bid model weights file.
 
     Checks ``COLVER_BID_MODEL_PATH`` env-var first, then ``~/.cache/colver/models/``,
@@ -97,7 +97,7 @@ def download_model(
 
 def download_bid_model(
     url: str | None = None,
-    name: str = "bid_v5_isdd.bin",
+    name: str = "bid_v6_isdd.bin",
     force: bool = False,
 ) -> Path:
     """Download bid model weights to ``~/.cache/colver/models/``.

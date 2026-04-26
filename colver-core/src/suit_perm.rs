@@ -454,8 +454,9 @@ pub fn augment_bid_batch(
 }
 
 /// Suit augmentation for bid batches with configurable obs_dim.
-/// Only the first BID_OBS_DIM (108) elements are permuted; any trailing
-/// features (e.g. match scores) are left unchanged.
+/// Permutes the first BID_OBS_DIM (108) elements (hand + bid history + position).
+/// Score-aware extras at [108..113] are suit-invariant; the v3 belote bits at
+/// [113..117] ARE suit-dependent and are permuted accordingly.
 pub fn augment_bid_batch_with_obs_dim(
     obs_data: &mut [f32],
     mask_data: &mut [f32],
@@ -465,6 +466,7 @@ pub fn augment_bid_batch_with_obs_dim(
 ) {
     let batch = actions.len();
     let base_dim = crate::bid_obs::BID_OBS_DIM; // 108: the suit-dependent part
+    let v3_belote_off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V2; // 113
     for i in 0..batch {
         let perm_idx = rng.gen_range(0..24usize);
         if perm_idx == 0 {
@@ -472,8 +474,14 @@ pub fn augment_bid_batch_with_obs_dim(
         }
         let perm = &ALL_PERMS[perm_idx];
         let obs_start = i * obs_dim;
-        // Permute only the first 108 dims (hand + bid history + position)
         permute_bid_obs(&mut obs_data[obs_start..obs_start + base_dim], perm);
+        if obs_dim == crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 {
+            // 4 belote bits, one per suit → permute like a suit one-hot.
+            permute_suit_onehot(
+                &mut obs_data[obs_start + v3_belote_off..obs_start + v3_belote_off + 4],
+                perm,
+            );
+        }
         let mask_start = i * 43;
         permute_bid_mask_f32(&mut mask_data[mask_start..mask_start + 43], perm);
         actions[i] = permute_bid_action(actions[i], perm);

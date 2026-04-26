@@ -10,7 +10,7 @@
 
 use colver_core::bid_eval::BidFunction;
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs::{self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE_V2};
+use colver_core::bid_obs::{self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE_V2, BID_OBS_DIM_SCORE_AWARE_V3};
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::{self, EnvTracking, OBS_DIM, OBS_DIM_TR};
 use colver_core::is_dd::{IsDdConfig, IsDdSearch};
@@ -759,7 +759,12 @@ fn play_match(
                             } else {
                                 (ew_cumulative, ns_cumulative)
                             };
-                            if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                            if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
+                                bid_obs::write_bid_observation_score_aware_v3(
+                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
+                                    my_cum, opp_cum,
+                                );
+                            } else if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
                                 bid_obs::write_bid_observation_score_aware_v2(
                                     &mut bid_obs_buf, 0, &state, &tracking.bid_history,
                                     my_cum, opp_cum,
