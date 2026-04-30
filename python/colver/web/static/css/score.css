@@ -176,7 +176,20 @@
 .score-max-label {
     font-size: 0.75rem;
     color: #777;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
 }
+.score-max-pts { color: #777; }
+.score-winprob {
+    color: #aaa;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: help;
+}
+.score-team-block.lead .score-winprob { color: #d4af37; }
 
 .score-add-row {
     display: flex;
@@ -516,6 +529,124 @@
 .score-form .toggle-row .toggle-hint {
     font-size: 0.78rem;
     color: #888;
+}
+
+/* ===== Win-prob explainer panel ===== */
+.score-winprob-panel {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    overflow: hidden;
+}
+.score-winprob-panel summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 0.92rem;
+    user-select: none;
+}
+.score-winprob-panel summary::-webkit-details-marker { display: none; }
+.winprob-summary-label {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #999;
+    font-weight: 600;
+}
+.winprob-summary-vals {
+    display: flex;
+    gap: 8px;
+    color: #ddd;
+    font-variant-numeric: tabular-nums;
+}
+.winprob-summary-vals .sep { color: #555; }
+.winprob-toggle-hint {
+    margin-left: auto;
+    color: #888;
+    font-size: 0.78rem;
+}
+.score-winprob-panel[open] .winprob-toggle-hint::after {
+    content: ' (ouvert)';
+}
+
+.winprob-body {
+    padding: 0 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    margin-top: -2px;
+}
+
+.winprob-formula {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px 12px;
+    border-radius: 6px;
+    border-left: 3px solid #d4af37;
+    margin-top: 12px;
+}
+.winprob-formula .formula-line {
+    font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+    font-size: 1.05rem;
+    color: #e8e8e8;
+}
+.winprob-formula .formula-where {
+    font-size: 0.78rem;
+    color: #999;
+    font-style: italic;
+}
+
+.winprob-numerics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 6px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 10px 12px;
+    border-radius: 6px;
+}
+.winprob-numerics > div {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.86rem;
+    font-variant-numeric: tabular-nums;
+}
+.winprob-numerics .lbl {
+    color: #888;
+    font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
+}
+.winprob-numerics .val {
+    color: #e0e0e0;
+    font-weight: 600;
+}
+
+.winprob-credits {
+    font-size: 0.78rem;
+    color: #888;
+    line-height: 1.4;
+}
+.winprob-credits code {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.78rem;
+    color: #c8b569;
+}
+
+.winprob-rescale {
+    background: rgba(255, 152, 0, 0.08);
+    border: 1px solid rgba(255, 152, 0, 0.25);
+    color: #ffb84d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 0.82rem;
+    line-height: 1.45;
 }
 
 /* ===== History (previous games) ===== */

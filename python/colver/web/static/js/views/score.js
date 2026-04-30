@@ -70,6 +70,25 @@ function computeRoundScore(r) {
     return { scores, reussi };
 }
 
+// ===== Win probability (calibrated on 10k matches en 2000 pts) =====
+// σ(1.7 × Δ / (R^0.8 + 340)) where R = (2000 - s_me) + (2000 - s_opp), Δ = s_me - s_opp.
+// Cf. colver-core/src/bid/bid_train_env.rs::win_probability.
+// Pour un score max ≠ 2000, on rescale linéairement vers une partie virtuelle en 2000 pts —
+// approximation, pas exacte (la calibration ignore que les matchs courts/longs varient).
+
+function winProbability(sMe, sOpp, maxScore) {
+    const k = 2000 / maxScore;
+    const me = sMe * k;
+    const opp = sOpp * k;
+    if (me >= 2000 && opp >= 2000) return me >= opp ? 1 : 0;
+    if (me >= 2000) return 1;
+    if (opp >= 2000) return 0;
+    const rSum = (2000 - me) + (2000 - opp);
+    const denom = Math.pow(Math.max(1, rSum), 0.8) + 340;
+    const x = 1.7 * (me - opp) / denom;
+    return 1 / (1 + Math.exp(-x));
+}
+
 // ===== Storage =====
 
 function loadCurrent() {
@@ -276,6 +295,10 @@ function renderGame() {
     const totals = totalsOf(app.game);
     const finished = isFinished(app.game);
     const winner = finished ? winnerOf(app.game) : -1;
+    const winProbs = [
+        winProbability(totals[0], totals[1], app.game.maxScore),
+        winProbability(totals[1], totals[0], app.game.maxScore),
+    ];
 
     app.container.innerHTML = `
         <div id="score-page">
@@ -284,6 +307,7 @@ function renderGame() {
                     ${[0, 1].map(t => {
                         const pct = Math.min(100, (totals[t] / app.game.maxScore) * 100);
                         const lead = totals[t] > totals[1 - t];
+                        const pPct = (winProbs[t] * 100).toFixed(winProbs[t] > 0.99 || winProbs[t] < 0.01 ? 2 : 1);
                         return `
                             <div class="score-team-block ${lead ? 'lead' : ''}">
                                 <div class="score-team-name" data-team="${t}" contenteditable="true" spellcheck="false">${escapeHtml(app.game.teams[t])}</div>
@@ -291,7 +315,10 @@ function renderGame() {
                                 <div class="score-progress">
                                     <div class="score-progress-bar ${pct >= 100 ? 'over' : ''}" style="width: ${pct}%"></div>
                                 </div>
-                                <div class="score-max-label">/ ${app.game.maxScore}</div>
+                                <div class="score-max-label">
+                                    <span class="score-max-pts">/ ${app.game.maxScore}</span>
+                                    <span class="score-winprob" title="Probabilité de gagner la partie">P = ${pPct}%</span>
+                                </div>
                             </div>
                         `;
                     }).join('')}
@@ -314,6 +341,8 @@ function renderGame() {
 
                 ${renderRounds()}
 
+                ${renderWinprobPanel(totals, winProbs)}
+
                 <div class="score-actions">
                     <button class="secondary-btn" id="rename-teams">Renommer les équipes</button>
                     <button class="secondary-btn danger-btn" id="reset-game">Abandonner la partie</button>
@@ -325,6 +354,52 @@ function renderGame() {
     `;
 
     bindGame();
+}
+
+function renderWinprobPanel(totals, winProbs) {
+    const max = app.game.maxScore;
+    const k = 2000 / max;
+    const me = totals[0] * k;
+    const opp = totals[1] * k;
+    const rSum = Math.max(0, (2000 - me) + (2000 - opp));
+    const denom = Math.pow(Math.max(1, rSum), 0.8) + 340;
+    const delta = me - opp;
+    const x = 1.7 * delta / denom;
+    const scaledNote = max !== 2000
+        ? `<div class="winprob-rescale">Score max ${max} ≠ 2000 → scores rééchelonnés ×${k.toFixed(2)} avant calcul. Approximation : la calibration sur partie en 2000 reste raisonnable mais pas exacte pour d'autres formats.</div>`
+        : '';
+
+    return `
+        <details class="score-winprob-panel">
+            <summary>
+                <span class="winprob-summary-label">Probabilités de gagner</span>
+                <span class="winprob-summary-vals">
+                    <span>${escapeHtml(app.game.teams[0])} ${(winProbs[0] * 100).toFixed(1)}%</span>
+                    <span class="sep">·</span>
+                    <span>${escapeHtml(app.game.teams[1])} ${(winProbs[1] * 100).toFixed(1)}%</span>
+                </span>
+                <span class="winprob-toggle-hint">détails ▾</span>
+            </summary>
+            <div class="winprob-body">
+                <div class="winprob-formula">
+                    <span class="formula-line">P = σ(1.7 × Δ / (R<sup>0.8</sup> + 340))</span>
+                    <span class="formula-where">avec Δ = s<sub>moi</sub> − s<sub>adv</sub>, R = (2000 − s<sub>moi</sub>) + (2000 − s<sub>adv</sub>), σ = sigmoïde</span>
+                </div>
+                <div class="winprob-numerics">
+                    <div><span class="lbl">Δ</span><span class="val">${delta >= 0 ? '+' : ''}${delta.toFixed(0)}</span></div>
+                    <div><span class="lbl">R</span><span class="val">${rSum.toFixed(0)}</span></div>
+                    <div><span class="lbl">R<sup>0.8</sup>+340</span><span class="val">${denom.toFixed(0)}</span></div>
+                    <div><span class="lbl">x</span><span class="val">${x.toFixed(3)}</span></div>
+                    <div><span class="lbl">σ(x)</span><span class="val">${winProbs[0].toFixed(3)}</span></div>
+                </div>
+                <div class="winprob-credits">
+                    Calibrée par régression logistique sur 10 000 matchs en 2 000 pts (DouDou50 + Bid v6).
+                    Cf. <code>colver-core/src/bid/bid_train_env.rs::win_probability</code>.
+                </div>
+                ${scaledNote}
+            </div>
+        </details>
+    `;
 }
 
 function renderRounds() {
