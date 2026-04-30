@@ -1,0 +1,610 @@
+/* ===== SCORE PAGE — score keeper for real-life games ===== */
+
+#score-page {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 16px 14px 60px;
+    color: #e0e0e0;
+}
+
+#score-page h2 {
+    font-size: clamp(1.4rem, 2.3vw, 1.9rem);
+    margin-bottom: 4px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+#score-page .score-subtitle {
+    color: #aaa;
+    font-size: 0.9rem;
+    margin-bottom: 22px;
+}
+
+/* ===== Setup card ===== */
+.score-setup {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.score-setup .setup-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.score-setup .setup-label {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #888;
+    font-weight: 600;
+}
+
+.score-setup .team-inputs {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 10px;
+    align-items: center;
+}
+
+.score-setup .team-inputs input {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: #e8e8e8;
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-size: 1.05rem;
+    text-align: center;
+}
+
+.score-setup .vs-sep {
+    color: #888;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.score-setup .max-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.score-setup .max-btn,
+.btn-pill {
+    background: #2a2a2a;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 9px 16px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: all 0.15s;
+}
+
+.score-setup .max-btn:hover,
+.btn-pill:hover { background: #3a3a3a; border-color: #666; }
+.score-setup .max-btn.active,
+.btn-pill.active {
+    background: #d4af37;
+    color: #1a1a1a;
+    border-color: #d4af37;
+    font-weight: 600;
+}
+
+.score-setup .start-btn {
+    background: #d4af37;
+    color: #1a1a1a;
+    border: none;
+    border-radius: 6px;
+    padding: 14px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* ===== Active game ===== */
+.score-game {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.score-header {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 16px 18px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: blur(6px);
+}
+
+.score-team-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.score-team-name {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #e8e8e8;
+    background: transparent;
+    border: 1px dashed transparent;
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-left: -6px;
+    cursor: text;
+    transition: border-color 0.15s;
+}
+.score-team-name:hover { border-color: #555; }
+.score-team-name:focus { outline: none; border: 1px dashed #d4af37; }
+
+.score-team-block.lead .score-team-name { color: #d4af37; }
+
+.score-team-total {
+    font-size: clamp(2rem, 5vw, 3rem);
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.score-progress {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.score-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4caf50, #d4af37);
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+.score-progress-bar.over { background: linear-gradient(90deg, #d4af37, #ff9800); }
+
+.score-max-label {
+    font-size: 0.75rem;
+    color: #777;
+}
+
+.score-add-row {
+    display: flex;
+    gap: 10px;
+}
+
+.score-add-btn {
+    flex: 1;
+    background: #d4af37;
+    color: #1a1a1a;
+    border: none;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.score-add-btn:hover { background: #e5c349; }
+
+.score-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+.score-actions .secondary-btn {
+    background: #3a3a3a;
+    color: #ccc;
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+.score-actions .secondary-btn:hover { background: #4a4a4a; }
+.score-actions .danger-btn {
+    background: transparent;
+    color: #ef5350;
+    border: 1px solid #5a3a3a;
+}
+.score-actions .danger-btn:hover { background: rgba(239, 83, 80, 0.1); }
+
+/* ===== Round table ===== */
+.score-rounds {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.score-rounds table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+}
+
+.score-rounds th {
+    background: rgba(0, 0, 0, 0.4);
+    color: #aaa;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.score-rounds th.col-num { width: 36px; text-align: center; }
+.score-rounds th.col-score { text-align: right; }
+
+.score-rounds td {
+    padding: 11px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-variant-numeric: tabular-nums;
+}
+.score-rounds tr:last-child td { border-bottom: none; }
+.score-rounds tr.round-row { cursor: pointer; transition: background 0.1s; }
+.score-rounds tr.round-row:hover { background: rgba(212, 175, 55, 0.06); }
+
+.score-rounds .col-num { text-align: center; color: #777; font-weight: 600; }
+.score-rounds .col-contract { font-weight: 500; }
+.score-rounds .col-contract .suit-icon { margin: 0 2px; }
+.score-rounds .col-contract .mult-tag {
+    font-size: 0.72rem;
+    color: #ff9800;
+    margin-left: 6px;
+    font-weight: 600;
+}
+.score-rounds .col-contract .belote-tag {
+    font-size: 0.72rem;
+    color: #d4af37;
+    margin-left: 6px;
+}
+.score-rounds .col-contract .chute-tag {
+    font-size: 0.72rem;
+    color: #ef5350;
+    margin-left: 6px;
+    font-weight: 600;
+}
+
+.score-rounds .col-score { text-align: right; font-variant-numeric: tabular-nums; }
+.score-rounds .col-score .pts { font-weight: 600; }
+.score-rounds .col-score .cum { color: #888; font-size: 0.82rem; margin-left: 6px; }
+
+.score-rounds .row-actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: 8px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.score-rounds tr.round-row:hover .row-actions { opacity: 1; }
+.score-rounds .row-actions button {
+    background: transparent;
+    border: 1px solid #555;
+    color: #aaa;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+.score-rounds .row-actions .delete:hover { background: rgba(239, 83, 80, 0.15); border-color: #ef5350; color: #ef5350; }
+
+.score-rounds-empty {
+    padding: 32px 20px;
+    text-align: center;
+    color: #777;
+    font-style: italic;
+}
+
+/* ===== Game over banner ===== */
+.score-finished {
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(76, 175, 80, 0.15));
+    border: 1px solid #d4af37;
+    border-radius: 10px;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.score-finished .winner-text {
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+.score-finished .winner-text .winner-name { color: #d4af37; }
+
+/* ===== Round form modal ===== */
+.score-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 16px;
+    backdrop-filter: blur(4px);
+}
+
+.score-modal-content {
+    background: #1f2419;
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    border-radius: 14px;
+    padding: 22px 24px;
+    width: 100%;
+    max-width: 540px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.score-modal h3 {
+    font-size: 1.1rem;
+    margin-bottom: 18px;
+    color: #d4af37;
+    font-weight: 600;
+}
+
+.score-form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.score-form .field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.score-form .field-label {
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: #999;
+    font-weight: 600;
+}
+
+.score-form .btn-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.score-form .btn-row .btn-pill {
+    flex: 1 1 auto;
+    min-width: 56px;
+    padding: 10px 12px;
+    font-size: 0.92rem;
+}
+
+.score-form .btn-row .btn-pill.suit {
+    font-size: 1.4rem;
+    padding: 8px 14px;
+    line-height: 1;
+}
+.score-form .btn-row .btn-pill.suit-red { color: #f44336; }
+.score-form .btn-row .btn-pill.suit-red.active { color: #1a1a1a; background: #f44336; border-color: #f44336; }
+
+.score-form .btn-row.team-row .btn-pill {
+    padding: 12px 14px;
+    font-size: 1rem;
+    flex: 1;
+}
+
+.score-form .pts-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.score-form .pts-input-row input {
+    flex: 1;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    color: #e8e8e8;
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-size: 1.3rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+.score-form .pts-input-row .pts-step {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ddd;
+    border-radius: 6px;
+    width: 44px;
+    cursor: pointer;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.score-form .pts-input-row .pts-step:hover { background: #3a3a3a; }
+
+.score-form .pts-quick-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+.score-form .pts-quick-row .btn-pill {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 6px 4px;
+    font-size: 0.78rem;
+}
+
+.score-form .preview {
+    background: rgba(0, 0, 0, 0.3);
+    border-left: 3px solid #d4af37;
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-size: 0.95rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.score-form .preview-status {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+}
+.score-form .preview-status.reussi { color: #4caf50; }
+.score-form .preview-status.chute { color: #ef5350; }
+.score-form .preview-scores {
+    display: flex;
+    gap: 14px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.score-form .form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+.score-form .form-actions button {
+    padding: 11px 22px;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.score-form .form-actions .cancel-btn {
+    background: transparent;
+    color: #aaa;
+    border: 1px solid #555;
+}
+.score-form .form-actions .cancel-btn:hover { background: #2a2a2a; }
+.score-form .form-actions .submit-btn {
+    background: #d4af37;
+    color: #1a1a1a;
+    border: none;
+}
+
+.score-form .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+.score-form .toggle-row input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #d4af37;
+}
+.score-form .toggle-row .toggle-label {
+    font-size: 0.92rem;
+    flex: 1;
+}
+.score-form .toggle-row .toggle-hint {
+    font-size: 0.78rem;
+    color: #888;
+}
+
+/* ===== History (previous games) ===== */
+.score-history {
+    margin-top: 28px;
+}
+
+.score-history h3 {
+    font-size: 0.95rem;
+    color: #aaa;
+    margin-bottom: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.score-history-empty {
+    color: #666;
+    font-style: italic;
+    font-size: 0.9rem;
+    padding: 12px 0;
+}
+
+.score-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.score-history-item {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 14px;
+    font-size: 0.9rem;
+}
+
+.score-history-item .h-teams {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.score-history-item .h-team {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.score-history-item .h-team.winner { color: #d4af37; font-weight: 600; }
+.score-history-item .h-vs { color: #555; }
+.score-history-item .h-scores {
+    color: #aaa;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+}
+.score-history-item .h-date {
+    color: #666;
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+.score-history-item .h-delete {
+    background: transparent;
+    border: 1px solid transparent;
+    color: #777;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+.score-history-item .h-delete:hover { color: #ef5350; border-color: #5a3a3a; }
+
+/* ===== Mobile ===== */
+@media (max-width: 600px) {
+    #score-page { padding: 12px 10px 60px; }
+    .score-setup .team-inputs { grid-template-columns: 1fr; }
+    .score-setup .team-inputs .vs-sep { display: none; }
+    .score-header { grid-template-columns: 1fr 1fr; padding: 12px; gap: 8px 12px; }
+    .score-team-total { font-size: 1.7rem; }
+    .score-rounds table { font-size: 0.82rem; }
+    .score-rounds th, .score-rounds td { padding: 8px 7px; }
+    .score-rounds th.col-num, .score-rounds td.col-num { display: none; }
+    .score-rounds .row-actions { opacity: 1; }
+    .score-modal-content { padding: 18px 16px; }
+    .score-form .pts-input-row input { font-size: 1.15rem; }
+    .score-form .btn-row .btn-pill { padding: 9px 8px; font-size: 0.86rem; }
+    .score-history-item { grid-template-columns: 1fr; gap: 4px; }
+    .score-history-item .h-date { font-size: 0.72rem; }
+}

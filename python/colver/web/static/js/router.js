@@ -11,6 +11,7 @@ const routes = {
     '/problemes/jeu':     () => import('./views/prob-jeu.js'),
     '/aide':              () => import('./views/aide.js'),
     '/annoncer':          () => import('./views/annoncer.js'),
+    '/score':             () => import('./views/score.js'),
     '/about':             () => import('./views/about.js'),
 };
 

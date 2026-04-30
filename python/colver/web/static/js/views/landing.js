@@ -65,6 +65,13 @@ const TEMPLATE = `
             <p class="mode-desc">Ordre des cartes, points atout et non-atout \u2014 r\u00e9f\u00e9rence rapide pour vos parties.</p>
             <span class="mode-tag">R\u00e9f\u00e9rence</span>
         </div>
+
+        <div class="mode-card" data-route="/score">
+            <div class="mode-icon">\uD83D\udcdd</div>
+            <h3 class="mode-title">Marquer</h3>
+            <p class="mode-desc">Compteur de points pour vos parties r\u00e9elles. Calcul automatique aux r\u00e8gles FFB.</p>
+            <span class="mode-tag">Outils</span>
+        </div>
     </div>
 
     <div class="landing-footer">
