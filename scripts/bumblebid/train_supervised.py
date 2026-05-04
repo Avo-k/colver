@@ -9,8 +9,8 @@ to decode bid history signals from competent partners/opponents.
 
 Usage:
     PYTHONUNBUFFERED=1 PYTHONPATH=scripts python -m bumblebid.train_supervised \
-        --pool-file data/pools/bumblebid_5M_enriched.bin \
-        --dd-pool data/pools/dd_5M_enriched.bin
+        --pool-file data/deals/archive/bumblebid_5M_enriched.bin \
+        --dd-pool data/deals/archive/dd_5M_enriched.bin
 """
 import argparse
 import time
@@ -610,8 +610,8 @@ def _save_model(model, path):
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description="Bumblebid DQN training")
-    p.add_argument("--pool-file", default="data/pools/bumblebid_5M_enriched.bin")
-    p.add_argument("--dd-pool", default="data/pools/dd_5M_enriched.bin")
+    p.add_argument("--pool-file", default="data/deals/archive/bumblebid_5M_enriched.bin")
+    p.add_argument("--dd-pool", default="data/deals/archive/dd_5M_enriched.bin")
     p.add_argument("--d-model", type=int, default=64)
     p.add_argument("--n-layers", type=int, default=2)
     p.add_argument("--n-heads", type=int, default=4)

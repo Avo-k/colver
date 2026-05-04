@@ -3,8 +3,8 @@
 # Uses d=64 L=2 H=4 (proven best architecture)
 set -euo pipefail
 
-POOL="data/pools/bumblebid_5M_enriched.bin"
-DD_POOL="data/pools/dd_5M_enriched.bin"
+POOL="data/deals/archive/bumblebid_5M_enriched.bin"
+DD_POOL="data/deals/archive/dd_5M_enriched.bin"
 OPPONENT="models/bid_v2/bid_nn_final.bin"
 BASE_DIR="models/bumblebid/reward_sweep"
 STEPS=1000000

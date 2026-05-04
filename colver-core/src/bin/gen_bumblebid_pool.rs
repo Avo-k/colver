@@ -15,7 +15,7 @@
 ///
 /// Usage:
 ///   cargo run -p colver-core --bin gen_bumblebid_pool --release -- \
-///     --input data/pools/dd_2.5M.bin --output data/pools/bumblebid_2.5M.bin
+///     --input data/deals/archive/dd_2.5M.bin --output data/deals/archive/bumblebid_2.5M.bin
 
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::time::Instant;
@@ -27,8 +27,8 @@ const P_RANK0: u8 = 6;
 const S_NULL: u8 = 4;
 
 fn main() {
-    let mut input = String::from("data/pools/dd_2.5M.bin");
-    let mut output = String::from("data/pools/bumblebid_2.5M.bin");
+    let mut input = String::from("data/deals/archive/dd_2.5M.bin");
+    let mut output = String::from("data/deals/archive/bumblebid_2.5M.bin");
 
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -44,8 +44,8 @@ fn main() {
             }
             "--help" | "-h" => {
                 eprintln!("gen_bumblebid_pool: pre-tokenize DD pool for Bumblebid training");
-                eprintln!("  --input/-i   Input COLVDD01 pool (default: data/pools/dd_2.5M.bin)");
-                eprintln!("  --output/-o  Output file (default: data/pools/bumblebid_2.5M.bin)");
+                eprintln!("  --input/-i   Input COLVDD01 pool (default: data/deals/archive/dd_2.5M.bin)");
+                eprintln!("  --output/-o  Output file (default: data/deals/archive/bumblebid_2.5M.bin)");
                 std::process::exit(0);
             }
             other => {

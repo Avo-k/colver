@@ -3,8 +3,8 @@
 # Run from repo root: bash scripts/bumblebid/sweep.sh
 set -euo pipefail
 
-POOL="data/pools/bumblebid_2.5M.bin"
-DD_POOL="data/pools/dd_2.5M.bin"
+POOL="data/deals/archive/bumblebid_2.5M.bin"
+DD_POOL="data/deals/archive/dd_2.5M.bin"
 OPPONENT="models/bid_v2/bid_nn_final.bin"
 BASE_DIR="models/bumblebid/sweep"
 STEPS=500000

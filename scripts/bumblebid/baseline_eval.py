@@ -12,8 +12,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Load pool
-    dealers_bb, hp, hs, dd = load_bumblebid_pool("data/pools/bumblebid_2.5M.bin")
-    dealers_dd, hands, dd_pts = load_dd_pool("data/pools/dd_2.5M.bin")
+    dealers_bb, hp, hs, dd = load_bumblebid_pool("data/deals/archive/bumblebid_2.5M.bin")
+    dealers_dd, hands, dd_pts = load_dd_pool("data/deals/archive/dd_2.5M.bin")
 
     # Load bid_v2
     model = BidNetV2.load_from_bin("models/bid_v2/bid_nn_final.bin").to(device)

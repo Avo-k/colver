@@ -12,7 +12,7 @@
 ///   cargo run --bin replay_dmc_vs_isdd --release --features parallel -- [options]
 ///
 /// Options:
-///   --pool PATH        Input pool (default: data/pools/dd_2.5M.bin)
+///   --pool PATH        Input pool (default: data/deals/archive/dd_2.5M.bin)
 ///   --deals N          Number of deals (default: 1000)
 ///   --output DIR       Output directory (default: data/replays/dmc_vs_isdd)
 ///   --model PATH       DMC model (default: models/play_v2/play_final.bin)
@@ -37,7 +37,7 @@ use colver_core::state::{GameState, Phase};
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut pool_path = String::from("data/pools/dd_2.5M.bin");
+    let mut pool_path = String::from("data/deals/archive/dd_2.5M.bin");
     let mut num_deals: usize = 1000;
     let mut output_dir = String::from("data/replays/dmc_vs_isdd");
     let mut model_path = String::from("models/play_v2/play_final.bin");

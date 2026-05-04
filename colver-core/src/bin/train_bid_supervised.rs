@@ -61,7 +61,7 @@ struct Args {
     resume: Option<String>,
     #[arg(long, default_value_t = 42)]
     seed: u64,
-    #[arg(long, default_value = "data/pools/dd_pool_enriched_1M.bin")]
+    #[arg(long, default_value = "data/deals/archive/dd_pool_enriched_1M.bin")]
     pool_file: String,
     /// Reward source: "dd" or "real" or "blend:0.7"
     #[arg(long, default_value = "dd")]

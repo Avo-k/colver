@@ -133,7 +133,7 @@ cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
     --hidden 512 --layers 3 \
     --num-envs 64 --batch-size 512 \
     --steps 20000000 \
-    --pool-file data/pools/dd_1.5M_max_dmc_isdd.bin \
+    --pool-file data/deals/archive/dd_1.5M_max_dmc_isdd.bin \
     --reward real \
     --score-aware \
     --score-dist data/winprob_points.csv \

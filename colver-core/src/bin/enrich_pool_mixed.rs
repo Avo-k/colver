@@ -5,7 +5,7 @@
 ///   cargo run --bin enrich_pool_mixed --release --features parallel -- [options]
 ///
 /// Options:
-///   --pool PATH        Input pool (default: data/pools/dd_2.5M.bin)
+///   --pool PATH        Input pool (default: data/deals/archive/dd_2.5M.bin)
 ///   --output PATH      Output enriched pool
 ///   --deals N          Number of deals (default: 1000)
 ///   --time-ms N        IS-DD time per move (default: 50)
@@ -29,8 +29,8 @@ use colver_core::state::{GameState, Phase};
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut pool_path = String::from("data/pools/dd_2.5M.bin");
-    let mut output_path = String::from("data/pools/dd_100k_mixed.bin");
+    let mut pool_path = String::from("data/deals/archive/dd_2.5M.bin");
+    let mut output_path = String::from("data/deals/archive/dd_100k_mixed.bin");
     let mut num_deals: usize = 1000;
     let mut time_ms: u32 = 50;
     let mut dets: u32 = 20;

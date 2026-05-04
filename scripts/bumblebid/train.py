@@ -6,7 +6,7 @@ Pool tokens + replay buffer on GPU. Env logic vectorized with numpy.
 Usage:
     cargo run -p colver-core --bin gen_bumblebid_pool --release
     PYTHONUNBUFFERED=1 PYTHONPATH=scripts uv run python -m bumblebid.train \
-        --pool-file data/pools/bumblebid_2.5M.bin
+        --pool-file data/deals/archive/bumblebid_2.5M.bin
 """
 
 import argparse
@@ -772,7 +772,7 @@ def _arena_bb_action(env, model, device):
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description="Train Bumblebid (self-play)")
-    p.add_argument("--pool-file", default="data/pools/bumblebid_2.5M.bin")
+    p.add_argument("--pool-file", default="data/deals/archive/bumblebid_2.5M.bin")
     p.add_argument("--d-model", type=int, default=256)
     p.add_argument("--n-layers", type=int, default=4)
     p.add_argument("--n-heads", type=int, default=8)
@@ -800,7 +800,7 @@ def main():
                    help="Steps over which opponent ratio decays to 0")
     p.add_argument("--nn-team-only", action="store_true",
                    help="Only store NN team (NS) transitions in replay buffer")
-    p.add_argument("--dd-pool", type=str, default="data/pools/dd_2.5M.bin",
+    p.add_argument("--dd-pool", type=str, default="data/deals/archive/dd_2.5M.bin",
                    help="Original DD pool (needed for opponent obs)")
     p.add_argument("--reward-mix", type=float, default=1.0,
                    help="Reward mix: 1.0=100%% DD, 0.0=100%% real, 0.5=50/50")

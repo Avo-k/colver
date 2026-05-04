@@ -9,8 +9,8 @@
 //!   cargo run --bin enrich_pool --release --features dmc_train -- [options]
 //!
 //! Options:
-//!   --pool PATH        Input pool file (default: data/pools/dd_2.5M.bin)
-//!   --output PATH      Output enriched pool (default: data/pools/dd_pool_enriched.bin)
+//!   --pool PATH        Input pool file (default: data/deals/archive/dd_2.5M.bin)
+//!   --output PATH      Output enriched pool (default: data/deals/archive/dd_pool_enriched.bin)
 //!   --deals N          Number of deals to enrich (default: 100000)
 //!   --batch N          GPU batch size (default: 4096)
 //!   --model PATH       DMC model (default: models/play_v2/play_final.bin)
@@ -33,8 +33,8 @@ const MASK_DIM: usize = 32;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let mut pool_path = String::from("data/pools/dd_2.5M.bin");
-    let mut output_path = String::from("data/pools/dd_pool_enriched.bin");
+    let mut pool_path = String::from("data/deals/archive/dd_2.5M.bin");
+    let mut output_path = String::from("data/deals/archive/dd_pool_enriched.bin");
     let mut num_deals: usize = 100_000;
     let mut batch_size: usize = 4096;
     let mut model_path = String::from("models/play_v2/play_final.bin");

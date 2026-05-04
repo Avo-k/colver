@@ -7,7 +7,7 @@ use std::io::Read;
 fn main() {
     let path = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "data/pools/dd_pool_enriched_1M.bin".to_string());
+        .unwrap_or_else(|| "data/deals/archive/dd_pool_enriched_1M.bin".to_string());
 
     // Load enriched pool
     let mut f = std::io::BufReader::new(std::fs::File::open(&path).unwrap());

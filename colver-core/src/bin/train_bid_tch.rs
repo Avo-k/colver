@@ -84,7 +84,7 @@ struct Args {
     #[arg(long, default_value_t = 1.0)] per_beta_end: f64,
     #[arg(long, default_value_t = 0.40)] diversity_start: f32,
     #[arg(long, default_value_t = 0.15)] diversity_end: f32,
-    #[arg(long, default_value = "data/pools/dd_5M_enriched.bin")] pool_file: String,
+    #[arg(long, default_value = "data/deals/archive/dd_5M_enriched.bin")] pool_file: String,
     #[arg(long, default_value = "dd")] reward: String,
 }
 

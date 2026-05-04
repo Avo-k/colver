@@ -20,9 +20,9 @@ LOG_ENRICH=logs/v5_weekend_enrich.log
 LOG_MAX=logs/v5_weekend_max.log
 LOG_ISDD=logs/v5_weekend_isdd.log
 
-MAX_POOL=data/pools/dd_1.5M_max_dmc_isdd.bin
-ISDD_POOL=data/pools/dd_1M_isdd.bin
-BASE_POOL=data/pools/dd_1.5M_base.bin
+MAX_POOL=data/deals/archive/dd_1.5M_max_dmc_isdd.bin
+ISDD_POOL=data/deals/archive/dd_1M_isdd.bin
+BASE_POOL=data/deals/archive/dd_1.5M_base.bin
 
 COMMON_TRAIN=(
   --num-envs 256

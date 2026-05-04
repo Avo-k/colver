@@ -3,12 +3,12 @@
 ///
 /// Usage:
 ///   cargo run -p colver-core --bin gen_pool --release -- \
-///     --output data/pools/dd_pool.bin --count 1000000 --seed 42
+///     --output data/deals/dd_pool.bin --count 1000000 --seed 42
 
 use std::time::Instant;
 
 fn main() {
-    let mut output = String::from("data/pools/dd_pool.bin");
+    let mut output = String::from("data/deals/dd_pool.bin");
     let mut count: usize = 1_000_000;
     let mut seed: u64 = 42;
     let mut chunk_size: usize = 100_000;
@@ -36,7 +36,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 eprintln!("gen_pool: generate DD-solved deal pool for bid training");
-                eprintln!("  --output/-o  Output file (default: data/pools/dd_pool.bin)");
+                eprintln!("  --output/-o  Output file (default: data/deals/dd_pool.bin)");
                 eprintln!("  --count/-n   Number of deals (default: 1000000)");
                 eprintln!("  --seed/-s    RNG seed (default: 42)");
                 eprintln!("  --chunk      Checkpoint every N deals (default: 100000)");

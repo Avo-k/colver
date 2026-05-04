@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")/../.."
 
-POOL=data/pools/dd_1.5M_max_dmc_isdd.bin
+POOL=data/deals/archive/dd_1.5M_max_dmc_isdd.bin
 COMMON=(
   --num-envs 256
   --hidden 512
