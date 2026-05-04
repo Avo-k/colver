@@ -271,7 +271,6 @@
 
 .score-rounds .col-num { text-align: center; color: #777; font-weight: 600; }
 .score-rounds .col-contract { font-weight: 500; }
-.score-rounds .col-contract .suit-icon { margin: 0 2px; }
 .score-rounds .col-contract .mult-tag {
     font-size: 0.72rem;
     color: #ff9800;
@@ -445,18 +444,6 @@
     font-weight: 600;
 }
 .score-form .pts-input-row .pts-step:hover { background: #3a3a3a; }
-
-.score-form .pts-quick-row {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-}
-.score-form .pts-quick-row .btn-pill {
-    flex: 1 1 0;
-    min-width: 0;
-    padding: 6px 4px;
-    font-size: 0.78rem;
-}
 
 .score-form .preview {
     background: rgba(0, 0, 0, 0.3);

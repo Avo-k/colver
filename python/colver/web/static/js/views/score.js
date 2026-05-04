@@ -4,20 +4,12 @@
 const STORAGE_CURRENT = 'colver:score:current';
 const STORAGE_HISTORY = 'colver:score:history';
 
-const SUITS = ['♠', '♥', '♦', '♣']; // S H D C
-const SUIT_NAMES = ['Pique', 'Cœur', 'Carreau', 'Trèfle'];
-const SUIT_RED = [false, true, true, false];
-
 const BID_VALUES = [80, 90, 100, 110, 120, 130, 140, 150, 160];
 
 // ===== Scoring (FFB rules, 2026-04-16 update — surcoinche ×3, base 160+contrat×mult) =====
 
-function round10(x) {
-    return Math.floor((x + 5) / 10) * 10;
-}
-
 /**
- * Compute round score from form inputs.
+ * Compute round score from form inputs. Exact values, no rounding.
  * @returns {{scores: [number, number], reussi: boolean}}
  */
 function computeRoundScore(r) {
@@ -33,16 +25,16 @@ function computeRoundScore(r) {
         const reussi = !!r.capotRealise;
         if (reussi) {
             if (r.coinche === 0) {
-                scores[taker] = round10(252 + contractValue + beloteBonus[taker]);
-                scores[defense] = round10(beloteBonus[defense]);
+                scores[taker] = 252 + contractValue + beloteBonus[taker];
+                scores[defense] = beloteBonus[defense];
             } else if (r.coinche === 1) {
-                scores[taker] = round10(250 + contractValue * 2 + totalBelote);
+                scores[taker] = 250 + contractValue * 2 + totalBelote;
             } else {
-                scores[taker] = round10(250 + contractValue * 3 + totalBelote);
+                scores[taker] = 250 + contractValue * 3 + totalBelote;
             }
         } else {
             const mult = r.coinche === 0 ? 1 : r.coinche === 1 ? 2 : 3;
-            scores[defense] = round10(160 + contractValue * mult + totalBelote);
+            scores[defense] = 160 + contractValue * mult + totalBelote;
         }
         return { scores, reussi };
     }
@@ -56,16 +48,16 @@ function computeRoundScore(r) {
     if (reussi) {
         const contreBase = r.capotRealise ? 250 : 160;
         if (r.coinche === 0) {
-            scores[taker] = round10(takerPts + contractValue + beloteBonus[taker]);
-            scores[defense] = round10(defensePtsActual + beloteBonus[defense]);
+            scores[taker] = takerPts + contractValue + beloteBonus[taker];
+            scores[defense] = defensePtsActual + beloteBonus[defense];
         } else if (r.coinche === 1) {
-            scores[taker] = round10(contreBase + contractValue * 2 + totalBelote);
+            scores[taker] = contreBase + contractValue * 2 + totalBelote;
         } else {
-            scores[taker] = round10(contreBase + contractValue * 3 + totalBelote);
+            scores[taker] = contreBase + contractValue * 3 + totalBelote;
         }
     } else {
         const mult = r.coinche === 0 ? 1 : r.coinche === 1 ? 2 : 3;
-        scores[defense] = round10(160 + contractValue * mult + totalBelote);
+        scores[defense] = 160 + contractValue * mult + totalBelote;
     }
     return { scores, reussi };
 }
@@ -162,11 +154,6 @@ function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
-}
-
-function suitMarkup(suit) {
-    if (suit == null || suit < 0) return '';
-    return `<span class="suit-icon ${SUIT_RED[suit] ? 'suit-red' : ''}">${SUITS[suit]}</span>`;
 }
 
 function formatDate(ts) {
@@ -432,7 +419,7 @@ function renderRounds() {
                 <td class="col-num">${i + 1}</td>
                 <td class="col-contract">
                     <strong>${escapeHtml(app.game.teams[r.taker])}</strong>
-                    &middot; ${valLabel}${suitMarkup(r.trump)}
+                    &middot; ${valLabel}
                     ${multTag} ${chuteTag} ${beloteTag}
                 </td>
                 <td>${r.isCapot ? '—' : `<span style="color:#aaa">${ptsLabel} pts</span>`}</td>
@@ -551,9 +538,8 @@ function defaultDraft() {
         taker: 0,
         value: 8, // 8 → 80 pts (×10)
         isCapot: false,
-        trump: 1, // hearts
         coinche: 0,
-        takerPts: 82,
+        takerPts: 80,
         belote: -1,
         capotRealise: false,
     };
@@ -623,10 +609,6 @@ function renderFormBody() {
         <button type="button" class="btn-pill ${d.isCapot ? 'active' : ''}" data-bid-capot="1">Capot</button>
     `;
 
-    const trumpButtons = SUITS.map((s, i) => `
-        <button type="button" class="btn-pill suit ${SUIT_RED[i] ? 'suit-red' : ''} ${d.trump === i ? 'active' : ''}" data-trump="${i}" title="${SUIT_NAMES[i]}">${s}</button>
-    `).join('');
-
     const coincheButtons = [
         ['0', 'Aucune'],
         ['1', 'Coinché ×2'],
@@ -660,14 +642,11 @@ function renderFormBody() {
         <div class="field">
             <span class="field-label">Points faits par les preneurs (sur 162)</span>
             <div class="pts-input-row">
-                <button type="button" class="pts-step" data-pts-step="-10">−</button>
+                <button type="button" class="pts-step" data-pts-step="-10">−10</button>
+                <button type="button" class="pts-step" data-pts-step="-1">−1</button>
                 <input type="number" id="pts-input" min="0" max="162" inputmode="numeric" value="${d.takerPts}">
-                <button type="button" class="pts-step" data-pts-step="10">+</button>
-            </div>
-            <div class="pts-quick-row">
-                ${[60, 80, 90, 100, 110, 120, 130, 140, 150, 162].map(v => `
-                    <button type="button" class="btn-pill ${d.takerPts === v ? 'active' : ''}" data-pts-quick="${v}">${v}</button>
-                `).join('')}
+                <button type="button" class="pts-step" data-pts-step="1">+1</button>
+                <button type="button" class="pts-step" data-pts-step="10">+10</button>
             </div>
         </div>
 
@@ -693,11 +672,6 @@ function renderFormBody() {
         <div class="field">
             <span class="field-label">Contrat</span>
             <div class="btn-row" id="bid-row">${valueButtons}</div>
-        </div>
-
-        <div class="field">
-            <span class="field-label">Atout</span>
-            <div class="btn-row" id="trump-row">${trumpButtons}</div>
         </div>
 
         <div class="field">
@@ -739,14 +713,15 @@ function bindForm() {
 
     $('#bid-row').addEventListener('click', e => {
         const v = e.target.closest('[data-bid-val]');
-        if (v) { d.value = parseInt(v.dataset.bidVal, 10); d.isCapot = false; renderFormBody(); return; }
+        if (v) {
+            d.value = parseInt(v.dataset.bidVal, 10);
+            d.isCapot = false;
+            d.takerPts = d.value * 10;
+            renderFormBody();
+            return;
+        }
         const c = e.target.closest('[data-bid-capot]');
         if (c) { d.isCapot = true; d.capotRealise = true; renderFormBody(); }
-    });
-
-    $('#trump-row').addEventListener('click', e => {
-        const b = e.target.closest('[data-trump]');
-        if (b) { d.trump = parseInt(b.dataset.trump, 10); renderFormBody(); }
     });
 
     $('#coinche-row').addEventListener('click', e => {
@@ -779,12 +754,6 @@ function bindForm() {
             b.addEventListener('click', () => {
                 const step = parseInt(b.dataset.ptsStep, 10);
                 d.takerPts = Math.max(0, Math.min(162, d.takerPts + step));
-                renderFormBody();
-            });
-        });
-        document.querySelectorAll('[data-pts-quick]').forEach(b => {
-            b.addEventListener('click', () => {
-                d.takerPts = parseInt(b.dataset.ptsQuick, 10);
                 renderFormBody();
             });
         });
