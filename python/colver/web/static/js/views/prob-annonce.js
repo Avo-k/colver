@@ -62,7 +62,7 @@ const TEMPLATE = `
         <div class="section-title">Correction</div>
         <div id="pa-player-badge" class="prob-badge"></div>
         <div class="prob-section">
-            <div class="prob-label">Bid V5 (NN)</div>
+            <div class="prob-label">Bid V6 (NN)</div>
             <div id="pa-nn-best" class="prob-best"></div>
             <div id="pa-nn-bars"></div>
         </div>

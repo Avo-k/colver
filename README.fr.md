@@ -15,7 +15,7 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
 - **Etat de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
 - **Six agents IA** — reseau Q DMC, IS-DD avec reseau de croyances, oracle DD, Smart/Naive IS-MCTS, et heuristique
-- **Encheres par reseau de neurones** — "Bid V5 IS-DD", un Dueling DQN score-aware (113→512³→43) entraine 25M etapes sur points reels IS-DD
+- **Encheres par reseau de neurones** — "Bid V6 IS-DD", un Dueling DQN score-aware et belote-aware (117→512³→43) entraine 75M etapes sur points reels IS-DD avec simulation de match complete
 - **Interpretabilite ML** — distillation XGBoost + sondage de couche cachee revelent le systeme de scoring implicite du NN, traduit en regles utilisables par un humain (88-94% d'accord)
 - **Reseau de croyances** — prediction NN de la localisation des cartes pour la recherche IS-DD
 - **Interface web** — jouez contre l'IA, observez, analysez et resolvez des problemes (FastAPI + WebSocket)
@@ -42,13 +42,9 @@ uv run python -m colver.web
 
 **Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
 
-**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que *Bid V5 IS-DD* (l'encherisseur NN) annoncerait — avec les Q-values pour chaque action legale, plus un panneau "Facteurs cles" distille par XGBoost et une simulation DouDou50 du taux reel de reussite du contrat.
+**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que l'encherisseur NN annoncerait — avec les Q-values pour chaque action legale, plus un panneau "Facteurs cles" distille par XGBoost, une table oracle DD, et une simulation DouDou50 du taux reel de reussite du contrat. Tourne cote serveur ou entierement dans le navigateur via WASM ("Calcul local").
 
 ![Onglet Annonces](images/screenshots/tab-annonces.png)
-
-**Annoncer** — Guide de strategie visuel derive du bot par ML : pondes par carte, regles de decision par position, regle du miroir en defense. 88-94% d'accord avec le NN, memorisable en quelques minutes.
-
-**Aide** — Aide-memoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, regles d'encheres.
 
 **Croyances** — Visualisez comment le reseau de croyances et le modele heuristique predisent la localisation des cartes au fil d'une partie. Generez une partie aleatoire, avancez pas a pas, et observez les barres de probabilite par carte avec marquage de la verite terrain et statistiques de precision. Changez de perspective (N/E/S/O) et comparez les predictions NN vs heuristiques cote a cote.
 
@@ -57,6 +53,16 @@ uv run python -m colver.web
 **Problemes d'annonce** — Problemes d'encheres. Voyez une main et l'historique des encheres, puis trouvez la bonne annonce. L'IA evalue votre reponse.
 
 **Problemes de jeu** — Problemes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
+
+**Annoncer** — Guide de strategie visuel derive du bot par ML : ponderation par carte, regles de decision par position, regle du miroir en defense. 88-94% d'accord avec le NN, memorisable en quelques minutes.
+
+![Onglet Annoncer](images/screenshots/tab-annoncer.png)
+
+**Marquer** — Compteur de points pour vos vraies parties. Choisissez un score cible (1000-3000), ajoutez des manches avec un formulaire qui calcule automatiquement les scores exacts aux regles FFB (contrat, multiplicateur coinche/surcoinche, points faits, belote), et suivez la probabilite de victoire mise a jour apres chaque manche. Les parties terminees sont archivees localement.
+
+![Onglet Marquer](images/screenshots/tab-score.png)
+
+**Aide** — Aide-memoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, regles d'encheres.
 
 ## Compilation et execution
 
@@ -111,11 +117,12 @@ L'ancien modele **DouDou35** (415→1024³→32, obs legacy, 35M etapes) reste s
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Bid V5 IS-DD — Encherisseur NN (`bid_net.rs`)
+### Bid V6 IS-DD — Encherisseur NN (`bid_net.rs`)
 
-Dueling DQN **113→512→512→512→43** avec observation score-aware v2 (5 features precalculees de score de match : my/opp normalisees, probabilite de victoire, distance au but du leader, diff signee). Entraine **25M etapes sur points reels IS-DD** (pas DD oracle) avec reward clipping, EMA des poids (τ=0.005) et cosine LR decay. Meilleure performance arena en DMC et IS-DD (+11% DMC, +14.6% IS-DD vs champion precedent). `BidNet::load` detecte automatiquement la taille cachee et obs_dim (108 / 110 / 113).
+Dueling DQN **117→512→512→512→43** avec observation score-aware v3 (features de score de match + 4 bits de belote). Entraine **75M etapes sur points reels IS-DD** (pas DD oracle) avec reward belote-aware et **simulation de match** complete (scores cumules, rotation du donneur, reset a 2000). Bat le champion precedent Bid V5 dans les deux jeux d'evaluation (55.8% en jeu DMC, 57.3% / +181 pts en jeu IS-DD). `BidNet::load` detecte automatiquement la taille cachee et obs_dim (108 / 110 / 113 / 117).
 
 Versions precedentes toujours supportees via auto-detection :
+- **Bid V5 IS-DD** — obs score-aware 113-dim, 25M etapes sur points reels IS-DD
 - **Bid V3 Max** — 108-dim, entraine sur `max(DMC, IS-DD)` points reels (20M etapes)
 - **Bid a Dede** (v2) — 108-dim, reward DD oracle
 - **Bid a Doudou** (v1) — 114→256² dueling, self-play DouZero

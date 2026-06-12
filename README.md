@@ -22,7 +22,7 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
 - **56-byte `Copy` game state** for fast MCTS cloning
 - **Six AI agents** — DMC Q-network, IS-DD with belief network, DD oracle, Smart/Naive IS-MCTS, and heuristic
-- **NN bidding** — "Bid V5 IS-DD", a score-aware Dueling DQN (113→512³→43) trained 25M steps on real IS-DD points, used by all agents
+- **NN bidding** — "Bid V6 IS-DD", a score- and belote-aware Dueling DQN (117→512³→43) trained 75M steps on real IS-DD points with full match simulation, used by all agents
 - **ML interpretability** — XGBoost distillation + hidden-layer probe reveal the NN's implicit scoring system, translated into human-usable rules (88-94% agreement)
 - **Belief network** — NN-based card location prediction for IS-DD search
 - **Web interface** — play against AI, spectate, analyze, and solve problems (FastAPI + WebSocket)
@@ -49,13 +49,9 @@ uv run python -m colver.web
 
 **Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
 
-**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what *Bid V5 IS-DD* (the NN bidder) would bid — with Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision) and a DouDou50 simulation of how often the contract actually succeeds.
+**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what the NN bidder would bid — with Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision), a DD oracle table, and a DouDou50 simulation of how often the contract actually succeeds. Runs server-side or fully in the browser via WASM ("Calcul local").
 
 ![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
-
-**Annoncer** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, mémorisable en quelques minutes.
-
-**Aide** — Aide-mémoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, règles d'enchères.
 
 **Croyances** — Visualize how the belief network and heuristic model predict card locations as a game progresses. Generate a random game, step through it, and see per-card probability bars with ground truth overlay and accuracy stats. Switch observer perspective (N/E/S/W) and compare NN vs heuristic predictions side by side.
 
@@ -64,6 +60,16 @@ uv run python -m colver.web
 **Problemes d'annonce** — Bidding practice problems. See a hand and bidding history, then find the right bid. The AI evaluates your answer against the NN bidder's recommendation.
 
 **Problemes de jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
+
+**Annoncer** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, memorizable in minutes.
+
+![Annoncer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annoncer.png)
+
+**Marquer** — Score keeper for real-life games. Pick a target score (1000-3000), add rounds with a form that computes exact FFB scores automatically (contract, coinche/surcoinche multiplier, points made, belote), and watch the live win-probability estimate update after every round. Finished games are archived locally.
+
+![Marquer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-score.png)
+
+**Aide** — Visual cheat sheet: card strength order and values (trump / non-trump), deal points, bidding rules.
 
 ## Build & Run
 
@@ -118,11 +124,12 @@ The previous model **DouDou35** (415→1024³→32, legacy obs, 35M steps) is st
 
 **Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
 
-### Bid V5 IS-DD — NN Bidder (`bid_net.rs`)
+### Bid V6 IS-DD — NN Bidder (`bid_net.rs`)
 
-Dueling DQN **113→512→512→512→43** with score-aware v2 observation (5 precomputed match-score features: my/opp normalized, win probability, leader distance, signed diff). Trained **25M steps on real IS-DD points** (not DD oracle) with reward clipping, Polyak EMA (τ=0.005), and cosine LR decay. Best arena performance across DMC and IS-DD play (+11% DMC, +14.6% IS-DD winrate vs previous champion). `BidNet::load` auto-detects hidden size and obs_dim (108 / 110 / 113).
+Dueling DQN **117→512→512→512→43** with score-aware v3 observation (match-score features + 4 belote bits). Trained **75M steps on real IS-DD points** (not DD oracle) with belote-aware reward and full **match simulation** (cumulative scores, dealer rotation, reset at 2000). Beats the previous champion Bid V5 in both eval sets (55.8% with DMC play, 57.3% / +181 pts with IS-DD play). `BidNet::load` auto-detects hidden size and obs_dim (108 / 110 / 113 / 117).
 
 Past versions still supported via auto-detect:
+- **Bid V5 IS-DD** — 113-dim score-aware obs, 25M steps on real IS-DD points
 - **Bid V3 Max** — 108-dim, trained on `max(DMC, IS-DD)` real points (20M steps)
 - **Bid à Dédé** (v2) — 108-dim, DD oracle reward
 - **Bid à Doudou** (v1) — 114→256² dueling, DouZero self-play
