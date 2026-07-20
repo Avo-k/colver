@@ -78,6 +78,14 @@ MIGRATIONS = [
     );
     CREATE INDEX idx_game_players_user ON game_players(user_id);
     """,
+    # v4 — cached post-game oracle analysis
+    """
+    CREATE TABLE analysis (
+        game_id     TEXT PRIMARY KEY REFERENCES games(id),
+        created_at  TEXT NOT NULL,
+        data        TEXT NOT NULL
+    );
+    """,
 ]
 
 
@@ -312,6 +320,22 @@ async def user_game_stats(user_id):
     )
     row = rows[0]
     return {"games": row[0] or 0, "wins": row[1] or 0}
+
+
+async def get_analysis(game_id):
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT data FROM analysis WHERE game_id = ?", (game_id,))
+    return json.loads(rows[0][0]) if rows else None
+
+
+async def save_analysis(game_id, data_json):
+    db = await get_db()
+    await db.execute(
+        "INSERT OR REPLACE INTO analysis (game_id, created_at, data) VALUES (?, ?, ?)",
+        (game_id, _now(), data_json),
+    )
+    await db.commit()
 
 
 async def create_bug_report(game_id, action_idx, message, user_agent=None):

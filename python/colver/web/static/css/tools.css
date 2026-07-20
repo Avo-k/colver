@@ -2926,3 +2926,57 @@
     z-index: 200;
     transition: opacity 0.2s;
 }
+
+/* ===== ORACLE ANALYSIS (replay view) ===== */
+
+#replay-analysis {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+
+.analysis-body { font-size: 0.75rem; }
+
+.an-loading { color: #777; font-style: italic; padding: 4px 0; }
+
+.an-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.an-table th {
+    color: #888;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    text-align: right;
+    padding: 2px 4px;
+    font-weight: 600;
+}
+.an-table td {
+    text-align: right;
+    padding: 2px 4px;
+    color: #ccc;
+    font-family: monospace;
+}
+.an-table td:first-child, .an-table th:first-child { text-align: left; font-family: inherit; }
+.an-table td.team-ns { color: #a5d6a7; }
+.an-table td.team-ew { color: #ef9a9a; }
+
+.an-move {
+    padding: 4px 6px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.25);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.an-tag { font-weight: 800; font-size: 0.9rem; }
+.an-best .an-tag, .an-best { color: #81c784; }
+.an-good .an-tag, .an-good { color: #aed581; }
+.an-inacc { color: #ffd54f; }
+.an-error { color: #ffb74d; }
+.an-blund { color: #ef5350; }
+.an-forced { color: #888; font-style: italic; }
+.an-cost { font-family: monospace; font-weight: 700; }
+.an-alt { color: #bbb; margin-left: auto; }
+.an-alt .an-red, .an-red { color: #ef9a9a; }

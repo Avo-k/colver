@@ -1,7 +1,7 @@
 // Replay view — browse and replay saved games
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, actionName, bidActionHtml } from '../shared/cards.js';
+import { SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, actionName, bidActionHtml } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
@@ -73,6 +73,11 @@ const TEMPLATE = `
             <div id="replay-stats-body"></div>
         </div>
 
+        <div id="replay-analysis">
+            <div class="section-title">Analyse Oracle</div>
+            <div id="replay-analysis-body" class="analysis-body"></div>
+        </div>
+
         <div id="replay-bid-history">
             <div class="section-title">Encheres</div>
             <div id="replay-bid-entries"></div>
@@ -89,6 +94,22 @@ const TEMPLATE = `
 let replayBoard = null;
 let replayTotalActions = 0;
 let _pendingLoadId = null;
+let _analysisByIdx = null;   // action_idx -> move analysis
+let _analysisSummary = null;
+
+const CATEGORY_UI = {
+    parfait:     { tag: '✓',  cls: 'an-best',   label: 'Meilleur coup' },
+    bon:         { tag: '✓',  cls: 'an-good',   label: 'Bon coup' },
+    imprecision: { tag: '?!', cls: 'an-inacc',  label: 'Imprécision' },
+    erreur:      { tag: '?',  cls: 'an-error',  label: 'Erreur' },
+    faute:       { tag: '??', cls: 'an-blund',  label: 'Faute' },
+};
+
+function cardLabel(c) {
+    const suit = cardSuit(c);
+    const red = suit === 1 || suit === 2;
+    return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
+}
 
 function replayRenderMoveStats(move, state) {
     const header = replayBoard.el('stats-header');
@@ -107,6 +128,72 @@ function replayRenderMoveStats(move, state) {
         `<span class="stats-player ${teamClass}">${seatName}</span>` +
         `<span class="stats-action">${move.phase === 0 ? bidActionHtml(move.action) : move.name}</span>`;
     body.innerHTML = '';
+
+    // Oracle annotation for this move (history entry i == action index i)
+    const an = _analysisByIdx && _analysisByIdx[replayBoard.historyIndex];
+    if (an && move.phase === 1) {
+        if (an.forced) {
+            body.innerHTML = `<div class="an-move an-forced">Carte forcée</div>`;
+        } else {
+            const ui = CATEGORY_UI[an.category] || CATEGORY_UI.bon;
+            let html = `<div class="an-move ${ui.cls}">` +
+                `<span class="an-tag">${ui.tag}</span> ${ui.label}`;
+            if (an.cost > 0) {
+                html += ` <span class="an-cost">−${an.cost} pts</span>` +
+                    `<span class="an-alt">Oracle : ${cardLabel(an.best)}</span>`;
+            }
+            html += '</div>';
+            body.innerHTML = html;
+        }
+    }
+}
+
+function renderAnalysisSummary() {
+    const el = document.getElementById('replay-analysis-body');
+    if (!el) return;
+    if (!_analysisSummary) {
+        el.innerHTML = '<div class="an-loading">Analyse en cours…</div>';
+        return;
+    }
+    let html = '<table class="an-table"><tr><th></th><th title="Coût total en points">Coût</th>' +
+        '<th title="Coût moyen par décision">Moy.</th><th>?!</th><th>?</th><th>??</th></tr>';
+    for (const p of _analysisSummary.players) {
+        if (p.moves === 0) continue;
+        const team = p.player % 2 === 0 ? 'team-ns' : 'team-ew';
+        const c = p.counts;
+        html += `<tr><td class="${team}">${SEAT_NAMES_FR[p.player]}</td>` +
+            `<td>${p.total_cost}</td><td>${p.avg_cost}</td>` +
+            `<td class="an-inacc">${c.imprecision || 0}</td>` +
+            `<td class="an-error">${c.erreur || 0}</td>` +
+            `<td class="an-blund">${c.faute || 0}</td></tr>`;
+    }
+    html += '</table>';
+    el.innerHTML = html;
+}
+
+async function loadAnalysis(gameId) {
+    _analysisByIdx = null;
+    _analysisSummary = null;
+    renderAnalysisSummary();
+    try {
+        const base = document.querySelector('base')?.getAttribute('href') || '/';
+        const resp = await fetch(`${base}api/games/${gameId}/analysis`);
+        if (!resp.ok) {
+            const el = document.getElementById('replay-analysis-body');
+            if (el) el.innerHTML = '<div class="an-loading">Analyse indisponible</div>';
+            return;
+        }
+        const data = await resp.json();
+        _analysisByIdx = {};
+        for (const m of data.moves) _analysisByIdx[m.idx] = m;
+        _analysisSummary = data.summary;
+        renderAnalysisSummary();
+        // Refresh the current move annotation now that data is here
+        if (replayBoard) replayBoard.renderHistoryEntry(replayBoard.historyIndex);
+    } catch {
+        const el = document.getElementById('replay-analysis-body');
+        if (el) el.innerHTML = '<div class="an-loading">Analyse indisponible</div>';
+    }
 }
 
 function handleReplayLoaded(data) {
@@ -121,6 +208,8 @@ function handleReplayLoaded(data) {
     replayBoard.renderHistoryEntry(-1);
     const header = replayBoard.el('stats-header');
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-agent">${data.game_id}</span>`;
+
+    loadAnalysis(data.game_id);
 }
 
 function handleReplayMove(data) {

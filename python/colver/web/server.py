@@ -137,6 +137,15 @@ async def api_get_game(game_id: str):
     return JSONResponse(game)
 
 
+@app.get("/api/games/{game_id}/analysis")
+async def api_game_analysis(game_id: str):
+    import colver.web.analysis as analysis
+    result, err = await analysis.get_or_compute(game_id)
+    if err:
+        return JSONResponse({"error": err}, status_code=404)
+    return JSONResponse(result)
+
+
 @app.post("/api/games/{game_id}/report")
 async def api_bug_report(game_id: str, request: Request):
     body = await request.json()

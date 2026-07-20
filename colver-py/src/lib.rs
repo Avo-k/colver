@@ -1072,6 +1072,26 @@ impl Env {
         Ok(colver_core::solver::solve_best_card(&self.state))
     }
 
+    /// DD scores for every legal root move of the current player.
+    /// Returns dict: {scores: [[card, ns_points], ...], best_card: u8}.
+    /// Only valid during play phase on a non-terminal state.
+    fn solve_scores<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        if self.state.phase != Phase::Playing || self.state.is_terminal() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "solve_scores only valid during play phase",
+            ));
+        }
+        let result = colver_core::solver::solve_with_scores(&self.state, None);
+        let scores: Vec<Vec<i32>> = result.scores[..result.count]
+            .iter()
+            .map(|&(card, ns)| vec![card as i32, ns as i32])
+            .collect();
+        let dict = PyDict::new_bound(py);
+        dict.set_item("scores", scores)?;
+        dict.set_item("best_card", result.best_card)?;
+        Ok(dict)
+    }
+
     /// Solve all 4 trump suits with the DD solver.
     /// Returns dict: {suits: [[ns_pts, ew_pts], ...4], elapsed_ms: f64}
     fn solve_all_suits<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
