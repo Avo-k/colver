@@ -13,6 +13,7 @@ const routes = {
     '/annoncer':          () => import('./views/annoncer.js'),
     '/score':             () => import('./views/score.js'),
     '/about':             () => import('./views/about.js'),
+    '/compte':            () => import('./views/compte.js'),
 };
 
 // Legacy hash redirects (old bookmarks still work)
@@ -107,9 +108,10 @@ function updateNavHighlight(path) {
         group.classList.toggle('active', hasActive);
     });
 
-    // About link
-    const aboutLink = document.querySelector('.nav-link[data-route="/about"]');
-    if (aboutLink) aboutLink.classList.toggle('active', path === '/about');
+    // Top-level nav links (Aide, Annoncer, Marquer, À propos, Compte…)
+    document.querySelectorAll('.nav-link[data-route]').forEach(link => {
+        link.classList.toggle('active', link.dataset.route === path);
+    });
 }
 
 export function init() {

@@ -40,5 +40,17 @@ if (soundBtn) {
     });
 }
 
+// Show username in the nav when logged in
+(async () => {
+    const accountLink = document.getElementById('nav-account');
+    if (!accountLink) return;
+    try {
+        const base = document.querySelector('base')?.getAttribute('href') || '/';
+        const resp = await fetch(`${base}api/me`);
+        const me = resp.ok ? await resp.json() : { user: null };
+        if (me.user) accountLink.textContent = me.user.username;
+    } catch { /* stay on the default "Compte" label */ }
+})();
+
 // Start router
 initRouter();

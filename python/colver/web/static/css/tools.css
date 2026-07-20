@@ -2635,3 +2635,164 @@
     .annonce-correction { flex-wrap: wrap; }
     .annonce-correction-hint { margin-left: 0; width: 100%; }
 }
+
+/* ===== COMPTE (login / register / profile) ===== */
+
+.compte-page {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    overflow-y: auto;
+    max-height: 100%;
+}
+
+.compte-card {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    border-radius: 10px;
+    padding: 1.5rem;
+}
+
+.compte-title {
+    color: #d4af37;
+    font-size: 1.3rem;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+
+.compte-subtitle {
+    color: #d4af37;
+    font-size: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.compte-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 1.25rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 6px;
+    padding: 3px;
+}
+
+.compte-tab {
+    flex: 1;
+    padding: 8px 0;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: #999;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.compte-tab.active {
+    background: rgba(212, 175, 55, 0.2);
+    color: #d4af37;
+}
+
+.compte-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.compte-label {
+    color: #aaa;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 6px;
+}
+
+.compte-input {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: #e0e0e0;
+    font-size: 0.95rem;
+}
+.compte-input:focus {
+    outline: none;
+    border-color: #d4af37;
+}
+
+.compte-error {
+    color: #ef9a9a;
+    font-size: 0.8rem;
+    padding: 4px 0;
+}
+
+.compte-submit, .compte-logout {
+    margin-top: 12px;
+    padding: 10px;
+    border: none;
+    border-radius: 6px;
+    background: #d4af37;
+    color: #1a1a1a;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.compte-submit:hover, .compte-logout:hover { opacity: 0.85; }
+.compte-submit:disabled { opacity: 0.5; cursor: wait; }
+
+.compte-logout {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ccc;
+    width: 100%;
+}
+
+.compte-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 1rem;
+}
+
+.compte-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 6px;
+    padding: 10px 4px;
+}
+
+.compte-stat-val {
+    color: #e0e0e0;
+    font-weight: 700;
+    font-size: 0.95rem;
+}
+
+.compte-stat-label {
+    color: #888;
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.compte-games {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.compte-games .history-row { font-size: 0.85rem; padding: 6px 8px; }
+.compte-games .history-empty a { color: #d4af37; }
+
+.nav-account {
+    color: #d4af37;
+}
+
+@media (max-width: 600px) {
+    .compte-stats { grid-template-columns: repeat(2, 1fr); }
+}

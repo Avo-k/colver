@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
 import colver.web.database as db
+from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
 ROOT_PATH = os.environ.get("ROOT_PATH", "/")
@@ -91,6 +92,8 @@ async def index():
 
 app.mount("/cards", StaticFiles(directory=CARDS_DIR), name="cards")
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+app.include_router(auth_router)
 
 
 # ===== REST API =====
@@ -318,6 +321,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
+    ws_user = await user_from_cookies(ws.cookies)
     play_session = None
     watch_session = None
     replay_session = None
@@ -373,6 +377,7 @@ async def websocket_endpoint(ws: WebSocket):
                     hands=play_session.env.get_hands(),
                     agents=agents_map,
                     human_seat=human_seat,
+                    user_id=ws_user["id"] if ws_user else None,
                 )
 
                 init_msg = {
