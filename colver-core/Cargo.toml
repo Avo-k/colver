@@ -110,3 +110,28 @@ required-features = ["rand"]
 name = "bis_dd_diag"
 path = "src/bin/bis_dd_diag.rs"
 required-features = ["rand"]
+
+[[bin]]
+name = "bid_pool"
+path = "src/bin/bid_pool.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "distill_play"
+path = "src/bin/distill_play.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "enrich_pool_isdd"
+path = "src/bin/enrich_pool_isdd.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "enrich_pool_mixed"
+path = "src/bin/enrich_pool_mixed.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "replay_dmc_vs_isdd"
+path = "src/bin/replay_dmc_vs_isdd.rs"
+required-features = ["parallel"]
