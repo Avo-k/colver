@@ -3026,3 +3026,106 @@
 }
 .history-elo-delta.delta-up { color: #81c784; }
 .history-elo-delta.delta-down { color: #ef9a9a; }
+
+/* ===== REPLAY — navigable moves list ===== */
+
+#replay-moves {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+}
+
+#replay-moves-list {
+    overflow-y: auto;
+    font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+}
+
+.mv-bids {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding-bottom: 5px;
+    margin-bottom: 3px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mv-bid {
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    cursor: pointer;
+    font-size: 0.7rem;
+    color: #bbb;
+    white-space: nowrap;
+}
+.mv-bid:hover { background: rgba(212, 175, 55, 0.18); }
+.mv-bid.team-ns { border-left: 2px solid #a5d6a7; }
+.mv-bid.team-ew { border-left: 2px solid #ef9a9a; }
+
+.mv-trick {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mv-num {
+    color: #666;
+    font-family: monospace;
+    font-size: 0.65rem;
+    width: 1.2em;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+.mv-card {
+    font-family: monospace;
+    font-weight: 600;
+    color: #ddd;
+    padding: 1px 5px;
+    border-radius: 4px;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    min-width: 2.4em;
+    text-align: center;
+}
+.mv-card:hover { background: rgba(212, 175, 55, 0.18); }
+
+/* Analysis coloring (border keeps the card text readable) */
+.mv-parfait     { border-bottom-color: #4caf50; }
+.mv-bon         { border-bottom-color: #8bc34a; }
+.mv-imprecision { border-bottom-color: #ffd54f; background: rgba(255, 213, 79, 0.10); }
+.mv-erreur      { border-bottom-color: #ffb74d; background: rgba(255, 183, 77, 0.14); }
+.mv-faute       { border-bottom-color: #ef5350; background: rgba(239, 83, 80, 0.18); }
+.mv-forced      { opacity: 0.45; }
+
+.mv-current {
+    outline: 1px solid #d4af37;
+    background: rgba(212, 175, 55, 0.22) !important;
+}
+
+.mv-winner {
+    margin-left: auto;
+    font-size: 0.65rem;
+    font-family: monospace;
+    color: #888;
+    white-space: nowrap;
+}
+.mv-winner.team-ns { color: #a5d6a7; }
+.mv-winner.team-ew { color: #ef9a9a; }
+
+/* History rows renamed to contract + score + date */
+.history-contract {
+    font-weight: 700;
+    color: #d4af37;
+    font-size: 0.8rem;
+    min-width: 3.6em;
+}
+.history-nocontract { color: #777; font-weight: 400; font-style: italic; }

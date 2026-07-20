@@ -585,13 +585,36 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 replay_session = ReplaySession(game_data)
                 watch_session = None
+                initial_state = replay_session.get_state()
+                # Precompute the whole game so the client can navigate (and
+                # click-jump to any move) without further round-trips.
+                moves = []
+                while True:
+                    move, state, tricks, finished = replay_session.step()
+                    if move is None:
+                        break
+                    entry = {
+                        "move": move,
+                        "state": state,
+                        "completed_tricks": [dict(t) for t in tricks],
+                        "bid_history": list(replay_session.bid_history),
+                        "finished": finished,
+                        "action_idx": replay_session.action_idx,
+                    }
+                    if replay_session._belote_event:
+                        entry["belote_event"] = replay_session._belote_event
+                        entry["belote_player"] = replay_session._belote_player
+                    moves.append(entry)
+                    if finished:
+                        break
                 await ws.send_json({
                     "type": "replay_loaded",
-                    "state": replay_session.get_state(),
+                    "state": initial_state,
                     "game_id": game_id,
                     "mode": game_data["mode"],
                     "agents": game_data["agents"],
                     "total_actions": len(game_data["actions"]),
+                    "moves": moves,
                     "bid_history": [],
                     "completed_tricks": [],
                 })

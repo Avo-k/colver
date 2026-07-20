@@ -1,15 +1,22 @@
-// Replay view — browse and replay saved games
+// Replay view — browse and replay saved games with oracle analysis.
+// The whole game is preloaded at replay_load, so navigation (buttons,
+// arrows, clicking any move in the "Coups" list) is instant and local.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, actionName, bidActionHtml } from '../shared/cards.js';
+import {
+    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit,
+    bidActionHtml, _animatingTrick
+} from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
 
+const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
+
 const TEMPLATE = `
 <div id="replay-main">
     <div id="replay-history">
-        <div class="section-title">Historique</div>
+        <div class="section-title" id="replay-history-title">Historique</div>
         <div id="replay-search">
             <input type="text" id="replay-search-input" placeholder="ID..." maxlength="4">
             <button id="replay-search-btn">Charger</button>
@@ -58,13 +65,13 @@ const TEMPLATE = `
     <div id="replay-right">
         <div id="replay-transport">
             <div class="transport-row">
-                <button id="replay-prev-btn" title="Coup precedent">|\u25C0</button>
-                <button id="replay-step-btn" title="Prochain coup">\u25B6|</button>
+                <button id="replay-prev-btn" title="Coup precedent">|◀</button>
+                <button id="replay-step-btn" title="Prochain coup">▶|</button>
             </div>
             <div class="transport-row">
-                <button id="replay-start-btn" title="Retour au debut">|\u25C0\u25C0</button>
-                <button id="replay-auto-btn" title="Auto-play">\u25B6</button>
-                <button id="replay-end-btn" title="Fin de partie">\u25B6\u25B6|</button>
+                <button id="replay-start-btn" title="Retour au debut">|◀◀</button>
+                <button id="replay-auto-btn" title="Auto-play">▶</button>
+                <button id="replay-end-btn" title="Fin de partie">▶▶|</button>
             </div>
         </div>
 
@@ -73,19 +80,14 @@ const TEMPLATE = `
             <div id="replay-stats-body"></div>
         </div>
 
+        <div id="replay-moves">
+            <div class="section-title">Coups</div>
+            <div id="replay-moves-list"></div>
+        </div>
+
         <div id="replay-analysis">
             <div class="section-title">Analyse Oracle</div>
             <div id="replay-analysis-body" class="analysis-body"></div>
-        </div>
-
-        <div id="replay-bid-history">
-            <div class="section-title">Encheres</div>
-            <div id="replay-bid-entries"></div>
-        </div>
-
-        <div id="replay-tricks-history">
-            <div class="section-title">Plis</div>
-            <div id="replay-tricks-list"></div>
         </div>
     </div>
 </div>
@@ -110,6 +112,8 @@ function cardLabel(c) {
     const red = suit === 1 || suit === 2;
     return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
 }
+
+// ===== Move stats (current move annotation) =====
 
 function replayRenderMoveStats(move, state) {
     const header = replayBoard.el('stats-header');
@@ -147,6 +151,106 @@ function replayRenderMoveStats(move, state) {
         }
     }
 }
+
+// ===== Navigable moves list =====
+
+function jumpTo(i) {
+    if (!replayBoard || !replayBoard.active) return;
+    if (_animatingTrick === 'replay-trick') return;
+    replayBoard.stopAutoPlay();
+    replayBoard._pendingFlushData = null;
+    replayBoard.historyIndex = i;
+    replayBoard.renderHistoryEntry(i);
+}
+
+function updateMovesHighlight() {
+    const list = document.getElementById('replay-moves-list');
+    if (!list || !replayBoard) return;
+    const idx = replayBoard.historyIndex;
+    setActionIdx(idx + 1);
+    let current = null;
+    list.querySelectorAll('[data-idx]').forEach(el => {
+        const isCurrent = parseInt(el.dataset.idx) === idx;
+        el.classList.toggle('mv-current', isCurrent);
+        if (isCurrent) current = el;
+    });
+    if (current) current.scrollIntoView({ block: 'nearest' });
+}
+
+function buildMovesList() {
+    const list = document.getElementById('replay-moves-list');
+    if (!list || !replayBoard) return;
+    list.innerHTML = '';
+
+    const bids = document.createElement('div');
+    bids.className = 'mv-bids';
+    let trickRow = null;
+    let cardsInRow = 0;
+    let trickNum = 0;
+
+    replayBoard.moveHistory.forEach((data, i) => {
+        const m = data.move;
+        if (!m) return;
+        if (m.phase === 0) {
+            const chip = document.createElement('span');
+            chip.className = 'mv-bid ' + (m.player % 2 === 0 ? 'team-ns' : 'team-ew');
+            chip.dataset.idx = i;
+            chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidActionHtml(m.action)}`;
+            chip.title = SEAT_NAMES_FR[m.player];
+            chip.addEventListener('click', () => jumpTo(i));
+            bids.appendChild(chip);
+        } else {
+            if (cardsInRow === 0) {
+                trickNum++;
+                trickRow = document.createElement('div');
+                trickRow.className = 'mv-trick';
+                const num = document.createElement('span');
+                num.className = 'mv-num';
+                num.textContent = trickNum;
+                trickRow.appendChild(num);
+                list.appendChild(trickRow);
+            }
+            const an = _analysisByIdx && _analysisByIdx[i];
+            const cardEl = document.createElement('span');
+            let cls = 'mv-card';
+            let tip = SEAT_NAMES_FR[m.player];
+            if (an) {
+                if (an.forced) {
+                    cls += ' mv-forced';
+                    tip += ' — carte forcée';
+                } else {
+                    cls += ' mv-' + an.category;
+                    const ui = CATEGORY_UI[an.category];
+                    tip += ` — ${ui ? ui.label : an.category}`;
+                    if (an.cost > 0) tip += ` (−${an.cost} pts)`;
+                }
+            }
+            cardEl.className = cls;
+            cardEl.dataset.idx = i;
+            cardEl.innerHTML = cardLabel(m.action);
+            cardEl.title = tip;
+            cardEl.addEventListener('click', () => jumpTo(i));
+            trickRow.appendChild(cardEl);
+            cardsInRow++;
+
+            if (cardsInRow === 4) {
+                cardsInRow = 0;
+                const w = data.state.last_trick_winner;
+                if (w !== null && w !== undefined) {
+                    const win = document.createElement('span');
+                    win.className = 'mv-winner ' + (w % 2 === 0 ? 'team-ns' : 'team-ew');
+                    win.textContent = `${SEAT_INITIALS[w]} +${data.state.last_trick_points}`;
+                    trickRow.appendChild(win);
+                }
+            }
+        }
+    });
+
+    if (bids.children.length) list.prepend(bids);
+    updateMovesHighlight();
+}
+
+// ===== Oracle analysis =====
 
 function renderAnalysisSummary() {
     const el = document.getElementById('replay-analysis-body');
@@ -188,13 +292,18 @@ async function loadAnalysis(gameId) {
         for (const m of data.moves) _analysisByIdx[m.idx] = m;
         _analysisSummary = data.summary;
         renderAnalysisSummary();
-        // Refresh the current move annotation now that data is here
-        if (replayBoard) replayBoard.renderHistoryEntry(replayBoard.historyIndex);
+        // Recolor the moves list and refresh the current annotation
+        if (replayBoard) {
+            buildMovesList();
+            replayBoard.renderHistoryEntry(replayBoard.historyIndex);
+        }
     } catch {
         const el = document.getElementById('replay-analysis-body');
         if (el) el.innerHTML = '<div class="an-loading">Analyse indisponible</div>';
     }
 }
+
+// ===== Load / history =====
 
 function handleReplayLoaded(data) {
     replayTotalActions = data.total_actions || 0;
@@ -202,39 +311,21 @@ function handleReplayLoaded(data) {
     setReplayGameId(data.game_id);
 
     replayBoard.reset(data.state);
+    if (data.moves) {
+        for (const m of data.moves) replayBoard.moveHistory.push(m);
+        replayBoard.finished = true;
+    }
+    replayBoard.historyIndex = -1;
+    replayBoard._prevHistoryIndex = -1;
 
     document.getElementById('replay-main').classList.remove('hidden');
-
     replayBoard.renderHistoryEntry(-1);
+
     const header = replayBoard.el('stats-header');
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-agent">${data.game_id}</span>`;
 
+    buildMovesList();
     loadAnalysis(data.game_id);
-}
-
-function handleReplayMove(data) {
-    replayBoard.waitingForStep = false;
-    setActionIdx(data.action_idx || 0);
-
-    if (data.finished && !data.move) {
-        replayBoard.finished = true;
-        replayBoard.stopAutoPlay();
-        replayBoard.updateTransportButtons();
-        return;
-    }
-
-    replayBoard.pushMove(data);
-    replayBoard.renderHistoryEntry(replayBoard.historyIndex);
-    replayBoard.handleBeloteEvent(data);
-
-    if (data.finished) {
-        replayBoard.finished = true;
-        replayBoard.stopAutoPlay();
-        replayBoard.updateTransportButtons();
-        return;
-    }
-
-    if (replayBoard.autoPlayMode) replayBoard.continueAutoPlay(data);
 }
 
 function setReplayGameId(id) {
@@ -257,7 +348,15 @@ function loadReplay(gameId) {
 async function loadGameHistory(autoLoadFirst = false) {
     try {
         const base = document.querySelector('base')?.getAttribute('href') || '/';
-        const resp = await fetch(`${base}api/games?limit=50`);
+        let mine = false;
+        try {
+            const meResp = await fetch(`${base}api/me`);
+            mine = meResp.ok && !!(await meResp.json()).user;
+        } catch { /* anonymous */ }
+        const title = document.getElementById('replay-history-title');
+        if (title) title.textContent = mine ? 'Mes parties' : 'Historique';
+        const url = mine ? `${base}api/me/games?limit=50` : `${base}api/games?limit=50`;
+        const resp = await fetch(url);
         if (!resp.ok) return;
         const games = await resp.json();
         renderGameHistory(games);
@@ -267,6 +366,16 @@ async function loadGameHistory(autoLoadFirst = false) {
     } catch (e) {
         console.error('Failed to load history:', e);
     }
+}
+
+function contractLabel(g) {
+    const c = g.contract;
+    if (!c || !c.value) return '<span class="history-nocontract">passée</span>';
+    const suit = c.trump;
+    const red = suit === 1 || suit === 2;
+    const mult = c.coinche === 2 ? ' ×3' : c.coinche === 1 ? ' ×2' : '';
+    const val = c.value === 250 ? 'Capot' : c.value;
+    return `${val}<span class="${red ? 'an-red' : ''}">${SUITS[suit]}</span>${mult}`;
 }
 
 function renderGameHistory(games) {
@@ -281,23 +390,28 @@ function renderGameHistory(games) {
         row.className = 'history-row';
         row.addEventListener('click', () => loadReplay(g.id));
 
-        const id = document.createElement('span');
-        id.className = 'history-id';
-        id.textContent = g.id;
+        const contract = document.createElement('span');
+        contract.className = 'history-contract';
+        contract.innerHTML = contractLabel(g);
 
+        // Score from the viewer's team perspective when known
+        const seat = g.user_seat ?? g.human_seat;
+        const mine = seat !== null && seat !== undefined;
+        const isNS = mine ? seat % 2 === 0 : true;
+        const a = isNS ? g.points_ns : g.points_ew;
+        const b = isNS ? g.points_ew : g.points_ns;
         const info = document.createElement('span');
         info.className = 'history-info';
-        const nsWon = g.points_ns > g.points_ew;
-        info.textContent = `${g.points_ns}-${g.points_ew}`;
-        info.classList.add(nsWon ? 'ns-won' : 'ew-won');
+        info.textContent = `${a}-${b}`;
+        info.classList.add(a > b ? 'ns-won' : 'ew-won');
 
         const date = document.createElement('span');
         date.className = 'history-date';
         const d = new Date(g.created_at);
-        date.textContent = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
-        date.title = d.toLocaleString();
+        date.textContent = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
 
-        row.appendChild(id);
+        row.title = `${g.id} — ${d.toLocaleString()}`;
+        row.appendChild(contract);
         row.appendChild(info);
         row.appendChild(date);
         list.appendChild(row);
@@ -322,10 +436,8 @@ export function mount(container) {
         prefix: 'replay',
         isReplay: true,
         renderMoveStats: replayRenderMoveStats,
-        renderCardAnnotations: () => {},
-        onRequestStep: () => {
-            send({ type: 'replay_step' });
-        },
+        renderCardAnnotations: () => updateMovesHighlight(),
+        onRequestStep: () => {},
     });
 
     replayBoard.bindTransport();
@@ -352,7 +464,6 @@ export function mount(container) {
 
     // Register WS handlers
     onMessage('replay_loaded', handleReplayLoaded);
-    onMessage('replay_move', handleReplayMove);
 
     // Load history; if pending load from another view, use that
     if (_pendingLoadId) {
@@ -366,7 +477,6 @@ export function mount(container) {
 
 export function unmount() {
     offMessage('replay_loaded', handleReplayLoaded);
-    offMessage('replay_move', handleReplayMove);
 
     if (replayBoard) {
         replayBoard.stopAutoPlay();
@@ -374,4 +484,6 @@ export function unmount() {
         replayBoard.active = false;
         replayBoard = null;
     }
+    _analysisByIdx = null;
+    _analysisSummary = null;
 }
