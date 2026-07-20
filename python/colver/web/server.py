@@ -96,6 +96,30 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 app.include_router(auth_router)
 
+# Cache policy. Without explicit Cache-Control, browsers use heuristic
+# caching (and Cloudflare caches js/css by extension), so after a deploy
+# clients keep stale ES modules and imports break. HTML/JS/CSS are marked
+# no-cache: always revalidated via ETag/Last-Modified — a 304 unless the
+# file changed. Heavy, stable assets (cards, wasm, models, images) get a
+# long shared cache with background revalidation.
+_LONG_CACHE_EXT = (".svg", ".png", ".ico", ".wasm", ".bin", ".json",
+                   ".woff", ".woff2", ".mp3", ".webp", ".jpg")
+
+
+@app.middleware("http")
+async def cache_control(request: Request, call_next):
+    response = await call_next(request)
+    if request.method != "GET" or "cache-control" in response.headers:
+        return response
+    path = request.url.path
+    if "/cards/" in path or path.endswith(_LONG_CACHE_EXT):
+        response.headers["Cache-Control"] = (
+            "public, max-age=3600, stale-while-revalidate=86400")
+    else:
+        # HTML shell, JS modules, CSS, API responses
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 # ===== REST API =====
 
