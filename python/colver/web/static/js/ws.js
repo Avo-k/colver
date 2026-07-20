@@ -2,13 +2,17 @@
 
 let ws = null;
 const messageHandlers = new Map(); // type -> Set<handler>
+const openHandlers = new Set();
 
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const base = document.querySelector('base')?.getAttribute('href') || '/';
     ws = new WebSocket(`${proto}://${location.host}${base}ws`);
 
-    ws.onopen = () => console.log('Connecte');
+    ws.onopen = () => {
+        console.log('Connecte');
+        for (const handler of openHandlers) handler();
+    };
     ws.onclose = () => {
         console.log('Deconnecte, reconnexion...');
         setTimeout(connect, 1000);
@@ -43,6 +47,14 @@ export function offMessage(type, handler) {
         handlers.delete(handler);
         if (handlers.size === 0) messageHandlers.delete(type);
     }
+}
+
+export function onOpen(handler) {
+    openHandlers.add(handler);
+}
+
+export function offOpen(handler) {
+    openHandlers.delete(handler);
 }
 
 export { connect };

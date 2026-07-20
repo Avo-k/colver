@@ -144,7 +144,7 @@ function renderGames(list, games) {
         id.textContent = g.id;
 
         // Result from the user's team perspective (even seat = NS)
-        const userIsNS = (g.human_seat ?? 2) % 2 === 0;
+        const userIsNS = (g.user_seat ?? g.human_seat ?? 2) % 2 === 0;
         const userPts = userIsNS ? g.points_ns : g.points_ew;
         const oppPts = userIsNS ? g.points_ew : g.points_ns;
         const info = document.createElement('span');

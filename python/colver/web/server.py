@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
 import colver.web.database as db
+import colver.web.rooms as rooms
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -347,6 +348,14 @@ async def websocket_endpoint(ws: WebSocket):
         while True:
             data = await ws.receive_json()
             msg_type = data.get("type")
+
+            if msg_type and msg_type.startswith("room_"):
+                await rooms.handle_message(ws_user, ws, data, {
+                    "dmc": DMC_MODEL_PATH if doudou_available else None,
+                    "bid": BID_MODEL_PATH,
+                    "belief": BELIEF_MODEL_PATH,
+                })
+                continue
 
             if msg_type == "start_game":
                 human_seat = data.get("human_seat", 2)
@@ -811,6 +820,8 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         if sim_task and not sim_task.done():
             sim_task.cancel()
+    finally:
+        await rooms.handle_disconnect(ws)
 
 
 def _enrich_terminal_msg(msg, play_session):

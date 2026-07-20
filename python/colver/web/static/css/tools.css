@@ -2796,3 +2796,133 @@
 @media (max-width: 600px) {
     .compte-stats { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ===== SALON (multiplayer rooms) ===== */
+
+#salon-root {
+    height: 100%;
+    overflow-y: auto;
+}
+
+.salon-panel {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.salon-desc {
+    color: #aaa;
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.salon-join-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.salon-join-row .compte-input {
+    flex: 1;
+    text-transform: lowercase;
+    letter-spacing: 4px;
+    font-family: monospace;
+    text-align: center;
+}
+.salon-join-row .compte-submit { margin-top: 0; }
+
+.salon-code {
+    font-family: monospace;
+    letter-spacing: 5px;
+    color: #e0e0e0;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px dashed rgba(212, 175, 55, 0.5);
+    border-radius: 6px;
+    padding: 2px 10px;
+}
+
+.salon-seats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.salon-seat {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+.salon-seat:hover { border-color: #d4af37; }
+.salon-seat.taken { cursor: default; }
+.salon-seat.you { border-color: #d4af37; background: rgba(212, 175, 55, 0.1); cursor: pointer; }
+.salon-seat.team-a .salon-seat-title { color: #a5d6a7; }
+.salon-seat.team-b .salon-seat-title { color: #ef9a9a; }
+
+.salon-seat-title {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.salon-seat-name {
+    color: #e0e0e0;
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin: 4px 0 2px;
+}
+.salon-seat-free { color: #888; font-weight: 400; }
+
+.salon-seat-sub {
+    color: #777;
+    font-size: 0.65rem;
+    min-height: 0.8em;
+}
+
+.salon-host-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    padding: 10px;
+    color: #aaa;
+    font-size: 0.85rem;
+}
+.salon-host-controls .compte-submit { margin-top: 0; }
+.salon-host-controls select {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid #444;
+    border-radius: 5px;
+    color: #e0e0e0;
+    padding: 4px 6px;
+}
+
+.salon-lobby-status {
+    color: #999;
+    font-size: 0.8rem;
+    text-align: center;
+    min-height: 1.2em;
+}
+
+.salon-toast {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 20, 0.95);
+    border: 1px solid rgba(212, 175, 55, 0.5);
+    color: #e0e0e0;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 0.85rem;
+    z-index: 200;
+    transition: opacity 0.2s;
+}

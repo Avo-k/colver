@@ -3,6 +3,7 @@
 const routes = {
     '/':                  () => import('./views/landing.js'),
     '/jouer/humain':      () => import('./views/play.js'),
+    '/jouer/salon':       () => import('./views/salon.js'),
     '/jouer/ia':          () => import('./views/watch.js'),
     '/analyse/rejouer':   () => import('./views/replay.js'),
     '/analyse/annonces':  () => import('./views/annonces.js'),

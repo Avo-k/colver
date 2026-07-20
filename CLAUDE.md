@@ -131,7 +131,11 @@ DD solver values are a **training signal** (direction to optimize toward), never
 
 ## Web Frontend (`python/colver/web/`)
 
-FastAPI + WebSocket + vanilla JS. Three modes: Play, Watch, Analysis. Models auto-downloaded at startup (DMC 10MB, bid NN 421KB, belief net 2MB).
+FastAPI + WebSocket + vanilla JS. Modes: Play (solo), Salon (multiplayer rooms), Watch, Analysis. Models auto-downloaded at startup (DMC 10MB, bid NN 421KB, belief net 2MB).
+
+**Accounts** (`auth.py`): bcrypt passwords, DB-backed session cookies (`colver_session`, sha256-hashed, 30d). Games are linked to accounts (solo: `games.user_id`; multi: `game_players` per seat). SQLite schema migrations via `PRAGMA user_version` in `database.py` — append to `MIGRATIONS`, never edit past entries.
+
+**Salon multiplayer** (`rooms.py`): in-memory rooms with 4-char join codes, bots fill empty seats, one driver task per room (humans awaited on a queue, bot moves in executor). All broadcast state is filtered to the viewer's hand and **rotated so the viewer is always display-seat 2 (South)** — the shared frontend table (`static/js/shared/table.js`, `GameTable` class, used by both solo play.js and salon.js) never handles physical seats. DB stores physical seats. Mid-game states must never include `cfn` or other seats' `legal_actions` (information leaks). Reconnection: seats are account-bound; any `room_*` message rebinds the member's socket.
 
 **Annonces page** (`views/annonces.js`): BidNet Q-values + Oracle DD table + DouDou simulation table. Oracle shows raw success % per suit×threshold. DouDou table uses Wilson score lower bound (z=1.645) for color thresholds (green/gold/red) and scales font size by observation count (0.65rem at 1 obs → 0.85rem at 20+) so small-sample cells appear visually less prominent than well-sampled ones.
 

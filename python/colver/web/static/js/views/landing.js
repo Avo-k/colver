@@ -24,6 +24,13 @@ const TEMPLATE = `
             <span class="mode-tag">Humain vs IA</span>
         </div>
 
+        <div class="mode-card" data-route="/jouer/salon">
+            <div class="mode-icon">\uD83C\uDF7B</div>
+            <h3 class="mode-title">Salon</h3>
+            <p class="mode-desc">Cr\u00E9ez un salon et invitez vos amis \u2014 les si\u00E8ges vides sont tenus par l'IA.</p>
+            <span class="mode-tag">Multijoueur</span>
+        </div>
+
         <div class="mode-card" data-route="/jouer/ia">
             <div class="mode-icon">\uD83D\uDC41\uFE0F</div>
             <h3 class="mode-title">Regarder</h3>

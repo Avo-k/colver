@@ -68,6 +68,16 @@ MIGRATIONS = [
     ALTER TABLE games ADD COLUMN user_id INTEGER REFERENCES users(id);
     CREATE INDEX idx_games_user ON games(user_id, created_at);
     """,
+    # v3 — multiplayer: per-seat participants of a game
+    """
+    CREATE TABLE game_players (
+        game_id  TEXT NOT NULL REFERENCES games(id),
+        seat     INTEGER NOT NULL,
+        user_id  INTEGER NOT NULL REFERENCES users(id),
+        PRIMARY KEY (game_id, seat)
+    );
+    CREATE INDEX idx_game_players_user ON game_players(user_id);
+    """,
 ]
 
 
@@ -227,16 +237,32 @@ async def get_game(game_id):
     return _row_to_dict(rows[0])
 
 
+async def add_game_player(game_id, seat, user_id):
+    db = await get_db()
+    await db.execute(
+        "INSERT OR REPLACE INTO game_players (game_id, seat, user_id) VALUES (?, ?, ?)",
+        (game_id, seat, user_id),
+    )
+    await db.commit()
+
+
 async def list_games(limit=50, offset=0, user_id=None):
     db = await get_db()
-    where = "WHERE mode = 'play' AND is_complete = 1"
+    where = "WHERE mode IN ('play', 'multi') AND is_complete = 1"
+    seat_col = "human_seat AS user_seat"
     params = []
     if user_id is not None:
-        where += " AND user_id = ?"
+        # Solo games carry user_id directly; multiplayer games via game_players.
+        # user_seat = the requesting user's seat (their team's perspective).
+        seat_col = ("COALESCE(human_seat, (SELECT seat FROM game_players gp"
+                    " WHERE gp.game_id = games.id AND gp.user_id = ?)) AS user_seat")
         params.append(user_id)
+        where += (" AND (user_id = ? OR id IN"
+                  " (SELECT game_id FROM game_players WHERE user_id = ?))")
+        params += [user_id, user_id]
     rows = await db.execute_fetchall(
         "SELECT id, mode, created_at, dealer, agents, human_seat, is_complete, "
-        f"points_ns, points_ew, contract FROM games {where} "
+        f"points_ns, points_ew, contract, {seat_col} FROM games {where} "
         "ORDER BY created_at DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
     )
@@ -253,6 +279,7 @@ async def list_games(limit=50, offset=0, user_id=None):
             "points_ns": row[7],
             "points_ew": row[8],
             "contract": json.loads(row[9]) if row[9] else None,
+            "user_seat": row[10],
         }
         result.append(d)
     return result
@@ -266,16 +293,22 @@ async def user_game_stats(user_id):
     db = await get_db()
     rows = await db.execute_fetchall(
         """
-        SELECT
-            COUNT(*) AS games,
-            SUM(CASE WHEN (human_seat % 2 = 0 AND points_ns > points_ew)
-                       OR (human_seat % 2 = 1 AND points_ew > points_ns)
-                THEN 1 ELSE 0 END) AS wins
-        FROM games
-        WHERE mode = 'play' AND is_complete = 1 AND user_id = ?
-              AND human_seat IS NOT NULL
+        SELECT COUNT(*) AS games, SUM(win) AS wins FROM (
+            SELECT CASE WHEN (human_seat % 2 = 0 AND points_ns > points_ew)
+                          OR (human_seat % 2 = 1 AND points_ew > points_ns)
+                   THEN 1 ELSE 0 END AS win
+            FROM games
+            WHERE mode = 'play' AND is_complete = 1 AND user_id = ?
+                  AND human_seat IS NOT NULL
+            UNION ALL
+            SELECT CASE WHEN (gp.seat % 2 = 0 AND g.points_ns > g.points_ew)
+                          OR (gp.seat % 2 = 1 AND g.points_ew > g.points_ns)
+                   THEN 1 ELSE 0 END
+            FROM games g JOIN game_players gp ON gp.game_id = g.id
+            WHERE g.mode = 'multi' AND g.is_complete = 1 AND gp.user_id = ?
+        )
         """,
-        (user_id,),
+        (user_id, user_id),
     )
     row = rows[0]
     return {"games": row[0] or 0, "wins": row[1] or 0}
