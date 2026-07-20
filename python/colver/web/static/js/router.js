@@ -15,6 +15,7 @@ const routes = {
     '/score':             () => import('./views/score.js'),
     '/about':             () => import('./views/about.js'),
     '/compte':            () => import('./views/compte.js'),
+    '/classement':        () => import('./views/classement.js'),
 };
 
 // Legacy hash redirects (old bookmarks still work)

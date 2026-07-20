@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 import colver.web.database as db
+import colver.web.elo as elo
 
 router = APIRouter(prefix="/api")
 
@@ -130,6 +131,7 @@ async def me(request: Request):
     if user is None:
         return JSONResponse({"user": None})
     stats = await db.user_game_stats(user["id"])
+    stats["elo"] = await elo.get_rating("user", user["id"])
     return JSONResponse({"user": _public_user(user), "stats": stats})
 
 

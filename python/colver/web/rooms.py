@@ -303,6 +303,8 @@ class Room:
                     await db.complete_game(
                         self.game_id, points[0], points[1],
                         session.env.get_contract())
+                    import colver.web.elo as elo
+                    await elo.rate_game(self.game_id)
                     self.status = "finished"
                 await self._after_action(p, action)
 

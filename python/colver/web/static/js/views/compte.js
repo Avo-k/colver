@@ -104,7 +104,9 @@ async function mountProfile(container, me) {
     const stats = me.stats || { games: 0, wins: 0 };
     const since = new Date(me.user.created_at);
     const pct = stats.games > 0 ? Math.round(100 * stats.wins / stats.games) : null;
+    const elo = stats.elo && stats.elo.games > 0 ? Math.round(stats.elo.elo) : '—';
     document.getElementById('profile-stats').innerHTML = `
+        <div class="compte-stat"><span class="compte-stat-val compte-elo">${elo}</span><span class="compte-stat-label">Elo</span></div>
         <div class="compte-stat"><span class="compte-stat-val">${stats.games}</span><span class="compte-stat-label">parties</span></div>
         <div class="compte-stat"><span class="compte-stat-val">${stats.wins}</span><span class="compte-stat-label">victoires</span></div>
         <div class="compte-stat"><span class="compte-stat-val">${pct === null ? '—' : pct + '%'}</span><span class="compte-stat-label">réussite</span></div>
@@ -160,6 +162,14 @@ function renderGames(list, games) {
 
         row.appendChild(id);
         row.appendChild(info);
+        if (g.elo_delta !== null && g.elo_delta !== undefined) {
+            const delta = document.createElement('span');
+            const v = Math.round(g.elo_delta);
+            delta.className = 'history-elo-delta ' + (v >= 0 ? 'delta-up' : 'delta-down');
+            delta.textContent = (v >= 0 ? '+' : '') + v;
+            delta.title = 'Variation Elo';
+            row.appendChild(delta);
+        }
         row.appendChild(date);
         list.appendChild(row);
     }

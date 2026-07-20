@@ -86,6 +86,26 @@ MIGRATIONS = [
         data        TEXT NOT NULL
     );
     """,
+    # v5 — Elo ratings for users AND bot types
+    """
+    CREATE TABLE elo_ratings (
+        kind        TEXT NOT NULL,
+        ref         TEXT NOT NULL,
+        elo         REAL NOT NULL,
+        games       INTEGER NOT NULL DEFAULT 0,
+        updated_at  TEXT NOT NULL,
+        PRIMARY KEY (kind, ref)
+    );
+
+    CREATE TABLE elo_history (
+        game_id    TEXT NOT NULL REFERENCES games(id),
+        kind       TEXT NOT NULL,
+        ref        TEXT NOT NULL,
+        delta      REAL NOT NULL,
+        elo_after  REAL NOT NULL,
+        PRIMARY KEY (game_id, kind, ref)
+    );
+    """,
 ]
 
 
@@ -257,14 +277,16 @@ async def add_game_player(game_id, seat, user_id):
 async def list_games(limit=50, offset=0, user_id=None):
     db = await get_db()
     where = "WHERE mode IN ('play', 'multi') AND is_complete = 1"
-    seat_col = "human_seat AS user_seat"
+    seat_col = "human_seat AS user_seat, NULL AS elo_delta"
     params = []
     if user_id is not None:
         # Solo games carry user_id directly; multiplayer games via game_players.
         # user_seat = the requesting user's seat (their team's perspective).
         seat_col = ("COALESCE(human_seat, (SELECT seat FROM game_players gp"
-                    " WHERE gp.game_id = games.id AND gp.user_id = ?)) AS user_seat")
-        params.append(user_id)
+                    " WHERE gp.game_id = games.id AND gp.user_id = ?)) AS user_seat, "
+                    "(SELECT delta FROM elo_history eh WHERE eh.game_id = games.id"
+                    " AND eh.kind = 'user' AND eh.ref = CAST(? AS TEXT)) AS elo_delta")
+        params += [user_id, user_id]
         where += (" AND (user_id = ? OR id IN"
                   " (SELECT game_id FROM game_players WHERE user_id = ?))")
         params += [user_id, user_id]
@@ -288,6 +310,7 @@ async def list_games(limit=50, offset=0, user_id=None):
             "points_ew": row[8],
             "contract": json.loads(row[9]) if row[9] else None,
             "user_seat": row[10],
+            "elo_delta": row[11],
         }
         result.append(d)
     return result

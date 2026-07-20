@@ -2980,3 +2980,49 @@
 .an-cost { font-family: monospace; font-weight: 700; }
 .an-alt { color: #bbb; margin-left: auto; }
 .an-alt .an-red, .an-red { color: #ef9a9a; }
+
+/* ===== CLASSEMENT (Elo leaderboard) ===== */
+
+.classement-page { max-width: 560px; }
+
+.classement-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+.classement-table th {
+    color: #888;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    text-align: left;
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.25);
+}
+.classement-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: #ccc;
+}
+.classement-table .cl-right { text-align: right; }
+.cl-rank { color: #777; font-family: monospace; width: 2em; }
+.cl-elo { font-family: monospace; font-weight: 700; color: #e0e0e0; }
+.cl-games { font-family: monospace; color: #888; }
+.cl-bot .cl-name { color: #9fa8da; }
+.cl-human .cl-name { color: #e0e0e0; font-weight: 600; }
+.cl-me { background: rgba(212, 175, 55, 0.08); }
+.cl-me .cl-name, .cl-me .cl-elo { color: #d4af37; }
+.cl-you { color: #997c22; font-size: 0.7rem; font-weight: 400; }
+.classement-table tr:first-child + tr .cl-rank { color: #d4af37; font-weight: 800; }
+
+.compte-elo { color: #d4af37; }
+
+.history-elo-delta {
+    font-family: monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    min-width: 2.6em;
+    text-align: right;
+}
+.history-elo-delta.delta-up { color: #81c784; }
+.history-elo-delta.delta-down { color: #ef9a9a; }

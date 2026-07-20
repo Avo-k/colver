@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
 import colver.web.database as db
+import colver.web.elo as elo
 import colver.web.rooms as rooms
 from colver.web.auth import router as auth_router, user_from_cookies
 
@@ -135,6 +136,16 @@ async def api_get_game(game_id: str):
     if not game:
         return JSONResponse({"error": "Game not found"}, status_code=404)
     return JSONResponse(game)
+
+
+@app.on_event("startup")
+async def _elo_backfill():
+    asyncio.create_task(elo.backfill())
+
+
+@app.get("/api/leaderboard")
+async def api_leaderboard():
+    return JSONResponse(await elo.leaderboard())
 
 
 @app.get("/api/games/{game_id}/analysis")
@@ -871,6 +882,7 @@ async def _complete_game(game_id, session):
     points = list(session.env.get_points())
     contract = session.env.get_contract()
     await db.complete_game(game_id, points[0], points[1], contract)
+    await elo.rate_game(game_id)
 
 
 async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
