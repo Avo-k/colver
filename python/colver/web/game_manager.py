@@ -1,5 +1,6 @@
 """Game session management for Colver web UI."""
 
+import random
 import time
 import colver
 
@@ -422,26 +423,42 @@ class BidProblemSession:
         self.dmc_model_path = dmc_model_path
 
     def generate(self) -> dict:
-        """Run auction with bid_improved() until South (seat 2) must bid. Retries on void deals."""
+        """Play a full auction (bid NN when available, heuristic fallback),
+        then sample one of South's decision points uniformly and replay the
+        same deal up to it. Retries only if South never got a turn (auction
+        ended by surcoinche within the first 3 actions)."""
         for _ in range(20):
             env = colver.Env()
             env.reset()
             if self.bid_model_path:
                 env.load_bid_model(self.bid_model_path)
+            use_nn = env.has_bid_model()
             hands = [list(h) for h in env.get_hands()]
-            bid_history = []
-            void = False
-            while env.phase() == 0 and int(env.current_player()) != 2:
+            dealer = int(env.get_dealer())
+            actions = []
+            south_turns = []  # indices into actions where South is to act
+            while env.phase() == 0:
                 player = int(env.current_player())
-                action = int(env.bid_improved())
+                if player == 2:
+                    south_turns.append(len(actions))
+                if use_nn:
+                    action = int(env.action_bid_nn()["best_action"])
+                else:
+                    action = int(env.bid_improved())
+                actions.append((player, action))
+                env.step(action)
+            if not south_turns:
+                continue
+
+            # Replay the same deal up to the sampled decision point
+            cut = random.choice(south_turns)
+            env.redeal_with_hands(dealer, hands)
+            bid_history = []
+            for player, action in actions[:cut]:
                 bid_history.append({"player": player, "action": action,
                                      "name": colver.Env.action_name(action, 0)})
                 env.step(action)
-                if env.phase() != 0:
-                    void = True
-                    break
-            if void or env.phase() != 0:
-                continue
+
             self.env = env
             self.hands = hands
             self.bid_history = bid_history
