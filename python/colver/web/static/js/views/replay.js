@@ -6,7 +6,7 @@ import { send, onMessage, offMessage } from '../ws.js';
 import { navigateTo } from '../router.js';
 import {
     SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit,
-    bidActionHtml, actionName, _animatingTrick
+    bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
@@ -117,15 +117,6 @@ function cardLabel(c) {
     return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
 }
 
-function oracleContractHtml(best) {
-    if (!best) return '—';
-    const red = best.suit === 1 || best.suit === 2;
-    const suit = `<span class="${red ? 'an-red' : ''}">${SUITS[best.suit]}</span>`;
-    if (best.value === 0) return `aucun (max ${best.pts}${suit})`;
-    const val = best.value === 250 ? 'Capot' : best.value;
-    return `${val}${suit} <span class="an-oracle-pts">(${best.pts} pts)</span>`;
-}
-
 // Navigate to the annonces analysis page pre-filled with the acting player's
 // hand and the auction history up to (not including) this bid.
 function openBidAnalysis(idx) {
@@ -173,15 +164,11 @@ function replayRenderMoveStats(move, state) {
             const agree = bid.model_best === move.action;
             html += `<div class="an-move ${agree ? 'an-best' : 'an-inacc'}">` +
                 `<span class="an-tag">${agree ? '✓' : '≠'}</span>` +
-                `Modèle : ${bidActionHtml(bid.model_best)}` +
+                `Bid V6 : ${bidActionHtml(bid.model_best)}` +
                 `<span class="an-bid-q">Q ${bid.q_best.toFixed(2)}` +
                 (!agree && bid.q_played !== null && bid.q_played !== undefined
                     ? ` · joué ${bid.q_played.toFixed(2)}` : '') +
                 `</span></div>`;
-        }
-        if (_oracleBids && _oracleBids.best) {
-            const best = _oracleBids.best[move.player % 2];
-            html += `<div class="an-move an-bid-oracle">Oracle : ${oracleContractHtml(best)}</div>`;
         }
         html += `<button class="an-bid-analyse-btn" id="replay-bid-analyse-btn">Analyser cette annonce →</button>`;
         body.innerHTML = html;
@@ -257,7 +244,7 @@ function buildMovesList() {
             const bid = _bidsByIdx && _bidsByIdx[i];
             if (bid && bid.model_best !== m.action) {
                 chip.classList.add('mv-bid-diff');
-                chip.title += ` — modèle : ${actionName(bid.model_best, 0)}`;
+                chip.title += ` — Bid V6 : ${actionName(bid.model_best, 0)}`;
             }
             chip.addEventListener('click', () => jumpTo(i));
             bids.appendChild(chip);
@@ -322,10 +309,17 @@ function renderAnalysisSummary() {
         return;
     }
     let html = '';
-    if (_oracleBids && _oracleBids.best) {
-        html += `<div class="an-oracle-contracts" title="Meilleur contrat réalisable en jeu parfait (double-dummy)">` +
-            `Contrats DD — <span class="team-ns">NS</span> : ${oracleContractHtml(_oracleBids.best[0])}` +
-            ` · <span class="team-ew">EO</span> : ${oracleContractHtml(_oracleBids.best[1])}</div>`;
+    if (_oracleBids && _oracleBids.suits) {
+        // Deal-level DD scores per trump suit — static info, no bid "decision"
+        html += '<table class="an-dd-table" title="Points réalisables en jeu parfait (double-dummy) pour chaque atout">' +
+            '<tr><th></th><th class="team-ns">NS</th><th class="team-ew">EO</th></tr>';
+        for (const suit of SUIT_DISPLAY_ORDER) {
+            const [ns, ew] = _oracleBids.suits[suit];
+            const red = suit === 1 || suit === 2;
+            html += `<tr><td class="${red ? 'an-red' : ''}">${SUITS[suit]}</td>` +
+                `<td>${ns}</td><td>${ew}</td></tr>`;
+        }
+        html += '</table>';
     }
     html += '<table class="an-table"><tr><th></th><th title="Coût total en points">Coût</th>' +
         '<th title="Coût moyen par décision">Moy.</th><th>?!</th><th>?</th><th>??</th></tr>';

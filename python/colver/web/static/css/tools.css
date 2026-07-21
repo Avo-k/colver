@@ -2981,17 +2981,31 @@
 .an-alt { color: #bbb; margin-left: auto; }
 .an-alt .an-red, .an-red { color: #ef9a9a; }
 
-/* Bid move annotations (model + oracle annonce) */
+/* Bid move annotations (model annonce) */
 .an-bid-q { color: #999; font-family: monospace; font-size: 0.75rem; margin-left: auto; }
-.an-bid-oracle { color: #b39ddb; margin-top: 4px; }
-.an-oracle-pts { color: #888; font-size: 0.75rem; }
-.an-oracle-contracts {
-    color: #bbb;
-    font-size: 0.78rem;
-    padding: 2px 0 6px;
+
+/* Deal-level DD scores per trump suit (static, shown for the whole game) */
+.an-dd-table {
+    border-collapse: collapse;
+    margin: 0 auto 8px;
 }
-.an-oracle-contracts .team-ns { color: #a5d6a7; }
-.an-oracle-contracts .team-ew { color: #ef9a9a; }
+.an-dd-table th {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 1px 10px;
+    text-align: right;
+}
+.an-dd-table th.team-ns { color: #a5d6a7; }
+.an-dd-table th.team-ew { color: #ef9a9a; }
+.an-dd-table td {
+    text-align: right;
+    padding: 1px 10px;
+    color: #ccc;
+    font-family: monospace;
+    font-size: 0.8rem;
+}
+.an-dd-table td:first-child { font-family: inherit; }
 .an-bid-analyse-btn {
     margin-top: 6px;
     padding: 4px 10px;
