@@ -81,14 +81,14 @@ const TEMPLATE = `
             <div id="replay-stats-body"></div>
         </div>
 
-        <div id="replay-moves">
-            <div class="section-title">Coups</div>
-            <div id="replay-moves-list"></div>
-        </div>
-
         <div id="replay-analysis">
             <div class="section-title">Analyse Oracle</div>
             <div id="replay-analysis-body" class="analysis-body"></div>
+        </div>
+
+        <div id="replay-moves">
+            <div class="section-title">Coups</div>
+            <div id="replay-moves-list"></div>
         </div>
     </div>
 </div>
