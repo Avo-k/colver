@@ -174,13 +174,40 @@ async def api_bug_report(game_id: str, request: Request):
 
 # ===== Annonces simulation tasks (cancellable) =====
 
+# Dedicated pool for oracle DD solves — solve_all_suits releases the GIL, so
+# these actually run in parallel (one solve ≈ 300ms; 8 workers ≈ 8× wall-clock).
+import concurrent.futures as _cf
+import threading as _threading
+
+_DD_EXECUTOR = _cf.ThreadPoolExecutor(
+    max_workers=min(16, os.cpu_count() or 4), thread_name_prefix="dd-solve")
+
+# Per-thread Env cache for Dédé sims: model loading (~10MB from disk) happens
+# once per worker thread instead of once per simulated world.
+_doudou_tls = _threading.local()
+
+
+def _get_doudou_env(bid_model_path, dmc_model_path, dealer, hands):
+    key = (bid_model_path, dmc_model_path)
+    env = getattr(_doudou_tls, "env", None)
+    if env is not None and getattr(_doudou_tls, "key", None) == key:
+        env.redeal_with_hands(dealer, hands)
+        return env
+    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
+    env.load_bid_model(bid_model_path)
+    env.load_dmc_model(dmc_model_path)
+    _doudou_tls.env = env
+    _doudou_tls.key = key
+    return env
+
+
 async def _run_annonces_sim(ws: WebSocket, data: dict):
     """Oracle DD + Dédé simulation, runs as a background task."""
     import time as _time
     import random as _random
 
     hand = data.get("hand", [])
-    num_sims = max(1, min(1000, int(data.get("num_sims", 200))))
+    num_sims = max(1, min(1000, int(data.get("num_sims", 50))))
     prior_actions_raw = data.get("prior_actions", None)
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
 
@@ -207,27 +234,42 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 h[p] = sorted(r[j * 8:(j + 1) * 8])
             all_hands.append(h)
 
-        # Phase 1: Oracle (DD solves) — fast
+        # Phase 1: Oracle (DD solves) — parallel sliding window on _DD_EXECUTOR
+        # (solve_all_suits releases the GIL, so the solves genuinely overlap).
         success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
         sampled_deals = []
         oracle_start = _time.monotonic()
 
-        for i in range(num_sims):
-            result = await loop.run_in_executor(
-                None, _run_dd_sim_with_hands, all_hands[i], dealer)
+        window = min(_DD_EXECUTOR._max_workers, num_sims)
+        completed = 0
+        next_i = 0
+        pending = set()
+        try:
+            while completed < num_sims:
+                while next_i < num_sims and len(pending) < window:
+                    pending.add(loop.run_in_executor(
+                        _DD_EXECUTOR, _run_dd_sim_with_hands, all_hands[next_i], dealer))
+                    next_i += 1
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED)
+                for fut in done:
+                    result = fut.result()
+                    for suit_idx, (ns, ew) in enumerate(result["suits"]):
+                        for t_idx, thr in enumerate(THRESHOLDS):
+                            if ns >= thr:
+                                success_counts[suit_idx][t_idx] += 1
+                    sampled_deals.append(result["hands"])
+                    completed += 1
 
-            for suit_idx, (ns, ew) in enumerate(result["suits"]):
-                for t_idx, thr in enumerate(THRESHOLDS):
-                    if ns >= thr:
-                        success_counts[suit_idx][t_idx] += 1
-            sampled_deals.append(result["hands"])
-
-            await ws.send_json({
-                "type": "annonces_sim_update",
-                "completed": i + 1, "total": num_sims,
-                "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
-                "success_counts": success_counts,
-            })
+                await ws.send_json({
+                    "type": "annonces_sim_update",
+                    "completed": completed, "total": num_sims,
+                    "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
+                    "success_counts": success_counts,
+                })
+        finally:
+            for fut in pending:
+                fut.cancel()
 
         await ws.send_json({
             "type": "annonces_sim_done",
@@ -293,7 +335,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
     import time as _time
 
     hand = data.get("hand", [])
-    num_sims = max(1, min(1000, int(data.get("num_sims", 200))))
+    num_sims = max(1, min(1000, int(data.get("num_sims", 50))))
     prior_actions_raw = data.get("prior_actions", None)
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
 
@@ -1007,9 +1049,7 @@ def _run_dd_sim_with_hands(hands, dealer=0):
 def _run_doudou_sim_with_hands(hands, bid_model_path, dmc_model_path,
                                 dealer=0, prior_actions=None):
     """Run Dédé (NN bid + DMC play) on pre-generated hands."""
-    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
-    env.load_bid_model(bid_model_path)
-    env.load_dmc_model(dmc_model_path)
+    env = _get_doudou_env(bid_model_path, dmc_model_path, dealer, hands)
 
     if prior_actions:
         for action in prior_actions:
@@ -1139,9 +1179,7 @@ def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
         hands[p] = sorted(remaining[i * 8:(i + 1) * 8])
 
     doudou = None
-    env = _colver_pkg.Env.deal_with_hands(dealer, hands)
-    env.load_bid_model(bid_model_path)
-    env.load_dmc_model(dmc_model_path)
+    env = _get_doudou_env(bid_model_path, dmc_model_path, dealer, hands)
 
     # Replay user's bid history
     if prior_actions:

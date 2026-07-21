@@ -720,6 +720,35 @@ impl Env {
         })
     }
 
+    /// Re-deal this env with specific hands, keeping loaded models (DMC/bid/belief).
+    /// Much cheaper than deal_with_hands + load_*_model when simulating many worlds.
+    fn redeal_with_hands(&mut self, dealer: u8, hands: Vec<Vec<u8>>) -> PyResult<()> {
+        if hands.len() != 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Need exactly 4 hands",
+            ));
+        }
+        let mut hand_sets = [0u32; 4];
+        for (i, hand) in hands.iter().enumerate() {
+            for &c in hand {
+                if c >= 32 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid card index: {}",
+                        c
+                    )));
+                }
+                hand_sets[i] |= card::card_to_bit(c);
+            }
+        }
+        self.state = GameState::new(dealer, hand_sets);
+        self.smart_initialized = false;
+        self.dede_initialized = false;
+        self.played_by = [0; 4];
+        self.play_order.clear();
+        self.bid_history.clear();
+        Ok(())
+    }
+
     /// Set contract manually (for analysis mode). trump: 0-3, value: e.g. 80/90/.../160/250, team: 0-1, coinche: 0-2.
     fn set_contract(&mut self, trump: u8, value: u16, team: u8, coinche: u8) {
         self.state.contract = Contract {
@@ -1098,12 +1127,17 @@ impl Env {
         let start = Instant::now();
         let hands = self.state.hands;
         let dealer = self.state.dealer;
-        let mut tt_buf = colver_core::solver::new_tt_buffer();
-        let mut suits = Vec::with_capacity(4);
-        for suit in 0..4u8 {
-            let [ns, ew] = colver_core::solver::solve_for_trump_reuse_tt(hands, dealer, suit, &mut tt_buf);
-            suits.push(vec![ns, ew]);
-        }
+        // Release the GIL during the solve (~300ms) so callers can run several
+        // solves in parallel from a Python thread pool.
+        let suits = py.allow_threads(move || {
+            let mut tt_buf = colver_core::solver::new_tt_buffer();
+            let mut suits = Vec::with_capacity(4);
+            for suit in 0..4u8 {
+                let [ns, ew] = colver_core::solver::solve_for_trump_reuse_tt(hands, dealer, suit, &mut tt_buf);
+                suits.push(vec![ns, ew]);
+            }
+            suits
+        });
         let elapsed = start.elapsed().as_secs_f64() * 1000.0;
         let dict = PyDict::new_bound(py);
         dict.set_item("suits", suits)?;
