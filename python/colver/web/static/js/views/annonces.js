@@ -393,13 +393,87 @@ function updateProgressBar(id, completed, total, elapsedMs) {
     }
 }
 
+// Success % → strip cell color. Lightness rises monotonically with pct so the
+// strip stays readable for colorblind users; hue sweeps red → green.
+function oraclePctColor(pct) {
+    if (pct === 0) return 'transparent';
+    return `hsl(${8 + 1.32 * pct}, 58%, ${24 + 0.32 * pct}%)`;
+}
+
+// Highest threshold index with pct >= level, or -1.
+function oracleCrossing(pcts, level) {
+    let idx = -1;
+    for (let t = 0; t < pcts.length; t++) {
+        if (pcts[t] >= level) idx = t;
+    }
+    return idx;
+}
+
+const ORACLE_MARKER_LEVELS = [80, 50, 20];
+
+function oraclePcts(successCounts, suit, completed) {
+    return THRESHOLDS.map((_, t) =>
+        completed > 0 ? Math.round(successCounts[suit][t] / completed * 100) : 0);
+}
+
+function renderOracleStrips(successCounts, completed) {
+    let html = '<div id="oracle-strips"><div class="oracle-strip-header"><span></span>';
+    for (const label of THRESHOLD_LABELS) {
+        html += `<span>${label}</span>`;
+    }
+    html += '</div>';
+    for (const suit of SUIT_DISPLAY_ORDER) {
+        const pcts = oraclePcts(successCounts, suit, completed);
+        html += `<div class="oracle-strip-row"><span class="oracle-strip-suit">${suitHtml(suit)}</span>`;
+        for (let t = 0; t < pcts.length; t++) {
+            html += `<span class="oracle-strip-cell" style="background:${oraclePctColor(pcts[t])}"` +
+                    ` title="${THRESHOLD_LABELS[t]}${SUIT_SYMBOLS[suit]} : ${pcts[t]} %"></span>`;
+        }
+        html += '</div><div class="oracle-strip-markers"><span></span>';
+        const markers = THRESHOLDS.map(() => []);
+        for (const level of ORACLE_MARKER_LEVELS) {
+            const idx = oracleCrossing(pcts, level);
+            if (idx >= 0) markers[idx].push(level);
+        }
+        for (const m of markers) {
+            html += `<span>${m.length ? '▴' + m.join('·') : ''}</span>`;
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+function renderOracleQuantiles(successCounts, completed) {
+    let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
+        '<th>Sûr <span class="oracle-quant-sub">≥80%</span></th>' +
+        '<th>Équilibré <span class="oracle-quant-sub">≥50%</span></th>' +
+        '<th>Tendu <span class="oracle-quant-sub">≥20%</span></th></tr></thead><tbody>';
+    for (const suit of SUIT_DISPLAY_ORDER) {
+        const pcts = oraclePcts(successCounts, suit, completed);
+        html += `<tr><td>${suitHtml(suit)}</td>`;
+        for (const level of ORACLE_MARKER_LEVELS) {
+            const idx = oracleCrossing(pcts, level);
+            html += `<td>${idx >= 0 ? THRESHOLD_LABELS[idx] : '—'}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
 function renderOracleTable(successCounts, completed, total, elapsedMs) {
     updateProgressBar('oracle-progress', completed, total, elapsedMs);
 
     const body = document.getElementById('annonces-sim-body');
 
-    // Build header row
-    let html = '<table id="oracle-table"><thead><tr><th></th>';
+    let html = '<div class="oracle-variant-label">Bandeau</div>';
+    html += renderOracleStrips(successCounts, completed);
+    html += '<div class="oracle-variant-label">Paliers</div>';
+    html += renderOracleQuantiles(successCounts, completed);
+    html += '<div class="oracle-variant-label">Tableau complet</div>';
+
+    html += '<table id="oracle-table"><thead><tr><th></th>';
     for (const label of THRESHOLD_LABELS) {
         html += `<th>${label}</th>`;
     }
@@ -407,10 +481,10 @@ function renderOracleTable(successCounts, completed, total, elapsedMs) {
 
     // 4 suit rows
     for (const suit of SUIT_DISPLAY_ORDER) {
+        const pcts = oraclePcts(successCounts, suit, completed);
         html += `<tr><td>${suitHtml(suit)}</td>`;
         for (let t = 0; t < THRESHOLDS.length; t++) {
-            const count = successCounts[suit][t];
-            const pct = completed > 0 ? Math.round(count / completed * 100) : 0;
+            const pct = pcts[t];
             let cls;
             if (pct === 0) cls = 'oracle-zero';
             else if (pct >= 60) cls = 'oracle-high';
