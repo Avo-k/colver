@@ -60,6 +60,10 @@ const TEMPLATE = `
                 </div>
             </div>
         </div>
+        <div id="annonces-verdict" class="hidden">
+            <span class="verdict-label">Dans cette situation, Bid V6 joue</span>
+            <span id="annonces-verdict-action"></span>
+        </div>
         <div id="annonces-results-area" class="hidden">
             <div class="annonces-result-panel" id="annonces-nn-panel">
                 <div id="annonces-results-header" class="section-title"></div>
@@ -264,6 +268,8 @@ function renderAnnoncesHistory() {
 
 // ── XGBoost interpretability ──
 
+let xgbExpanded = false;
+
 function renderXgbWaterfall(result) {
     const container = document.getElementById('xgb-waterfall');
     const probEl = document.getElementById('xgb-probability');
@@ -282,8 +288,8 @@ function renderXgbWaterfall(result) {
 
     const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(v)));
 
-    let html = '<div class="xgb-waterfall-chart">';
-    for (const [feat, val] of entries) {
+    let html = `<div class="xgb-waterfall-chart${xgbExpanded ? '' : ' ann-collapsed'}" id="xgb-chart">`;
+    entries.forEach(([feat, val], i) => {
         const label = xgbExplain.featureLabel(feat);
         const featVal = result.features[feat];
         const pct = Math.abs(val) / maxAbs * 100;
@@ -292,16 +298,27 @@ function renderXgbWaterfall(result) {
         const sign = isPos ? '+' : '';
         const valDisplay = featVal !== undefined ? ` = ${featVal}` : '';
 
-        html += `<div class="xgb-row">
+        html += `<div class="xgb-row${i >= 5 ? ' ann-extra' : ''}">
             <span class="xgb-feat-name" title="${feat}${valDisplay}">${label}<span class="xgb-feat-val">${valDisplay}</span></span>
             <div class="xgb-bar-wrap">
                 <div class="xgb-bar ${cls}" style="width:${pct.toFixed(0)}%"></div>
             </div>
             <span class="xgb-contrib">${sign}${val.toFixed(3)}</span>
         </div>`;
-    }
+    });
     html += '</div>';
+    if (entries.length > 5) {
+        html += `<button class="ann-see-more" id="xgb-more">${xgbExpanded ? 'Voir moins' : `Voir plus (${entries.length - 5})`}</button>`;
+    }
     container.innerHTML = html;
+    const xgbMoreBtn = document.getElementById('xgb-more');
+    if (xgbMoreBtn) {
+        xgbMoreBtn.addEventListener('click', () => {
+            xgbExpanded = !xgbExpanded;
+            document.getElementById('xgb-chart').classList.toggle('ann-collapsed', !xgbExpanded);
+            xgbMoreBtn.textContent = xgbExpanded ? 'Voir moins' : `Voir plus (${entries.length - 5})`;
+        });
+    }
 
     // Show probability
     const pct = (result.probability * 100).toFixed(0);
@@ -328,6 +345,7 @@ async function runXgbAnalysis(hand, qValues) {
         const results = await xgbExplain.analyzeAllSuits(hand, annoncesHistory, qValues);
         if (!results) return;
         xgbResults = results;
+        xgbExpanded = false;
 
         const panel = document.getElementById('annonces-xgb-panel');
         panel.classList.remove('hidden');
@@ -344,6 +362,7 @@ function handleBidEvalResult(data) {
         document.getElementById('annonces-results-body').innerHTML =
             `<div class="annonces-error">${data.error}</div>`;
         document.getElementById('annonces-results-header').textContent = 'Erreur';
+        document.getElementById('annonces-verdict').classList.add('hidden');
         return;
     }
 
@@ -353,22 +372,36 @@ function handleBidEvalResult(data) {
     const maxQ = Math.max(...qValues.map(([, q]) => q));
     const range = maxQ - minQ || 1;
 
+    document.getElementById('annonces-verdict').classList.remove('hidden');
+    document.getElementById('annonces-verdict-action').innerHTML = bidActionHtml(bestAction);
+
     document.getElementById('annonces-results-header').innerHTML =
         `Bid V6 : ${bidActionHtml(bestAction)}`;
 
-    let html = '<div class="visit-bars ann-qvalues-scroll">';
-    for (const [action, q] of qValues) {
+    let html = '<div class="visit-bars ann-qvalues-scroll ann-collapsed" id="ann-qvalues">';
+    qValues.forEach(([action, q], i) => {
         const pct = ((q - minQ) / range * 100).toFixed(0);
         const isBest = action === bestAction;
         const name = bidActionHtml(action);
-        html += `<div class="visit-row${isBest ? ' best' : ''}">
+        html += `<div class="visit-row${isBest ? ' best' : ''}${i >= 5 ? ' ann-extra' : ''}">
             <span class="visit-name">${name}</span>
             <div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>
             <span class="visit-count">${q.toFixed(3)}</span>
         </div>`;
-    }
+    });
     html += '</div>';
+    if (qValues.length > 5) {
+        html += `<button class="ann-see-more" id="ann-qvalues-more">Voir plus (${qValues.length - 5})</button>`;
+    }
     document.getElementById('annonces-results-body').innerHTML = html;
+    const moreBtn = document.getElementById('ann-qvalues-more');
+    if (moreBtn) {
+        moreBtn.addEventListener('click', () => {
+            const list = document.getElementById('ann-qvalues');
+            const collapsed = list.classList.toggle('ann-collapsed');
+            moreBtn.textContent = collapsed ? `Voir plus (${qValues.length - 5})` : 'Voir moins';
+        });
+    }
 
     // Trigger XGB interpretability analysis
     const hand = Array.from(annoncesHand);
@@ -590,15 +623,25 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
         `${v} passe, NS ${nsPct}% (${nsA}/${nsC}), EW ${ewPct}% (${ewA}/${ewC})`;
 
     const body = document.getElementById('annonces-doudou-body');
+
+    // Prune leading/trailing columns with no observation in any suit
+    let firstCol = 0, lastCol = DOUDOU_COLS.length - 1;
+    const colUsed = DOUDOU_COLS.map((_, col) =>
+        SUIT_DISPLAY_ORDER.some(suit => doudouCells[suit][col][0] > 0));
+    if (colUsed.some(Boolean)) {
+        firstCol = colUsed.indexOf(true);
+        lastCol = colUsed.lastIndexOf(true);
+    }
+
     let html = '<table id="doudou-table"><thead><tr><th></th>';
-    for (const label of DOUDOU_COLS) {
-        html += `<th>${label}</th>`;
+    for (let col = firstCol; col <= lastCol; col++) {
+        html += `<th>${DOUDOU_COLS[col]}</th>`;
     }
     html += '</tr></thead><tbody>';
 
     for (const suit of SUIT_DISPLAY_ORDER) {
         html += `<tr><td>${suitHtml(suit)}</td>`;
-        for (let col = 0; col < 10; col++) {
+        for (let col = firstCol; col <= lastCol; col++) {
             const [count, achieved] = doudouCells[suit][col];
             if (count === 0) {
                 html += '<td class="doudou-empty">\u00b7</td>';
@@ -650,6 +693,7 @@ function handleDoudouDone(data) {
 
 function resetPanels(numSims) {
     document.getElementById('annonces-results-area').classList.remove('hidden');
+    document.getElementById('annonces-verdict').classList.add('hidden');
     document.getElementById('annonces-results-header').textContent = 'Bid V6';
     document.getElementById('annonces-results-body').innerHTML =
         '<div class="dd-loader"><div class="dd-loader-text">Calcul\u2026</div></div>';

@@ -84,6 +84,40 @@
     gap: 10px;
 }
 
+/* Verdict banner — "Dans cette situation, Bid V6 joue" */
+#annonces-verdict {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    border-radius: 10px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+}
+#annonces-verdict .verdict-label {
+    color: #bbb;
+    font-size: 0.95rem;
+}
+#annonces-verdict-action {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #d4af37;
+}
+
+/* Collapsible lists (Bid V6 q-values, facteurs clés) */
+.ann-collapsed .ann-extra { display: none !important; }
+.ann-see-more {
+    background: none;
+    border: none;
+    color: #8ab4f8;
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 4px 0;
+    display: block;
+}
+.ann-see-more:hover { text-decoration: underline; }
+
 #annonces-hand-display {
     justify-content: center;
     flex-wrap: wrap;
