@@ -2981,6 +2981,30 @@
 .an-alt { color: #bbb; margin-left: auto; }
 .an-alt .an-red, .an-red { color: #ef9a9a; }
 
+/* Bid move annotations (model + oracle annonce) */
+.an-bid-q { color: #999; font-family: monospace; font-size: 0.75rem; margin-left: auto; }
+.an-bid-oracle { color: #b39ddb; margin-top: 4px; }
+.an-oracle-pts { color: #888; font-size: 0.75rem; }
+.an-oracle-contracts {
+    color: #bbb;
+    font-size: 0.78rem;
+    padding: 2px 0 6px;
+}
+.an-oracle-contracts .team-ns { color: #a5d6a7; }
+.an-oracle-contracts .team-ew { color: #ef9a9a; }
+.an-bid-analyse-btn {
+    margin-top: 6px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    background: rgba(212, 175, 55, 0.12);
+    color: #d4af37;
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    border-radius: 5px;
+    cursor: pointer;
+}
+.an-bid-analyse-btn:hover { background: rgba(212, 175, 55, 0.25); }
+.mv-bid-diff { box-shadow: inset 0 -2px 0 rgba(255, 213, 79, 0.6); }
+
 /* ===== CLASSEMENT (Elo leaderboard) ===== */
 
 .classement-page { max-width: 560px; }

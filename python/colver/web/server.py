@@ -151,7 +151,7 @@ async def api_leaderboard():
 @app.get("/api/games/{game_id}/analysis")
 async def api_game_analysis(game_id: str):
     import colver.web.analysis as analysis
-    result, err = await analysis.get_or_compute(game_id)
+    result, err = await analysis.get_or_compute(game_id, bid_model_path=BID_MODEL_PATH)
     if err:
         return JSONResponse({"error": err}, status_code=404)
     return JSONResponse(result)

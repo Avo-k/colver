@@ -3,9 +3,10 @@
 // arrows, clicking any move in the "Coups" list) is instant and local.
 
 import { send, onMessage, offMessage } from '../ws.js';
+import { navigateTo } from '../router.js';
 import {
     SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit,
-    bidActionHtml, _animatingTrick
+    bidActionHtml, actionName, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox } from '../shared/cfn-box.js';
@@ -98,6 +99,9 @@ let replayTotalActions = 0;
 let _pendingLoadId = null;
 let _analysisByIdx = null;   // action_idx -> move analysis
 let _analysisSummary = null;
+let _bidsByIdx = null;       // action_idx -> bid analysis (model annonce)
+let _oracleBids = null;      // deal-level DD contracts {suits, best}
+let _initialHands = null;    // all 4 hands at deal start (replay = full info)
 
 const CATEGORY_UI = {
     parfait:     { tag: '✓',  cls: 'an-best',   label: 'Meilleur coup' },
@@ -111,6 +115,33 @@ function cardLabel(c) {
     const suit = cardSuit(c);
     const red = suit === 1 || suit === 2;
     return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
+}
+
+function oracleContractHtml(best) {
+    if (!best) return '—';
+    const red = best.suit === 1 || best.suit === 2;
+    const suit = `<span class="${red ? 'an-red' : ''}">${SUITS[best.suit]}</span>`;
+    if (best.value === 0) return `aucun (max ${best.pts}${suit})`;
+    const val = best.value === 250 ? 'Capot' : best.value;
+    return `${val}${suit} <span class="an-oracle-pts">(${best.pts} pts)</span>`;
+}
+
+// Navigate to the annonces analysis page pre-filled with the acting player's
+// hand and the auction history up to (not including) this bid.
+function openBidAnalysis(idx) {
+    if (!replayBoard || !_initialHands) return;
+    const data = replayBoard.moveHistory[idx];
+    if (!data || !data.move || data.move.phase !== 0) return;
+    const hand = _initialHands[data.move.player];
+    if (!hand || hand.length !== 8) return;
+    const history = [];
+    for (let i = 0; i < idx; i++) {
+        const m = replayBoard.moveHistory[i].move;
+        if (m && m.phase === 0) history.push(m.action);
+    }
+    let url = `/analyse/annonces?hand=${hand.join(',')}`;
+    if (history.length) url += `&history=${history.join(',')}`;
+    navigateTo(url);
 }
 
 // ===== Move stats (current move annotation) =====
@@ -132,6 +163,32 @@ function replayRenderMoveStats(move, state) {
         `<span class="stats-player ${teamClass}">${seatName}</span>` +
         `<span class="stats-action">${move.phase === 0 ? bidActionHtml(move.action) : move.name}</span>`;
     body.innerHTML = '';
+
+    // Bid move: model annonce + oracle annonce + link to the annonces page
+    if (move.phase === 0) {
+        const idx = replayBoard.historyIndex;
+        let html = '';
+        const bid = _bidsByIdx && _bidsByIdx[idx];
+        if (bid) {
+            const agree = bid.model_best === move.action;
+            html += `<div class="an-move ${agree ? 'an-best' : 'an-inacc'}">` +
+                `<span class="an-tag">${agree ? '✓' : '≠'}</span>` +
+                `Modèle : ${bidActionHtml(bid.model_best)}` +
+                `<span class="an-bid-q">Q ${bid.q_best.toFixed(2)}` +
+                (!agree && bid.q_played !== null && bid.q_played !== undefined
+                    ? ` · joué ${bid.q_played.toFixed(2)}` : '') +
+                `</span></div>`;
+        }
+        if (_oracleBids && _oracleBids.best) {
+            const best = _oracleBids.best[move.player % 2];
+            html += `<div class="an-move an-bid-oracle">Oracle : ${oracleContractHtml(best)}</div>`;
+        }
+        html += `<button class="an-bid-analyse-btn" id="replay-bid-analyse-btn">Analyser cette annonce →</button>`;
+        body.innerHTML = html;
+        const btn = document.getElementById('replay-bid-analyse-btn');
+        if (btn) btn.addEventListener('click', () => openBidAnalysis(idx));
+        return;
+    }
 
     // Oracle annotation for this move (history entry i == action index i)
     const an = _analysisByIdx && _analysisByIdx[replayBoard.historyIndex];
@@ -197,6 +254,11 @@ function buildMovesList() {
             chip.dataset.idx = i;
             chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidActionHtml(m.action)}`;
             chip.title = SEAT_NAMES_FR[m.player];
+            const bid = _bidsByIdx && _bidsByIdx[i];
+            if (bid && bid.model_best !== m.action) {
+                chip.classList.add('mv-bid-diff');
+                chip.title += ` — modèle : ${actionName(bid.model_best, 0)}`;
+            }
             chip.addEventListener('click', () => jumpTo(i));
             bids.appendChild(chip);
         } else {
@@ -259,7 +321,13 @@ function renderAnalysisSummary() {
         el.innerHTML = '<div class="an-loading">Analyse en cours…</div>';
         return;
     }
-    let html = '<table class="an-table"><tr><th></th><th title="Coût total en points">Coût</th>' +
+    let html = '';
+    if (_oracleBids && _oracleBids.best) {
+        html += `<div class="an-oracle-contracts" title="Meilleur contrat réalisable en jeu parfait (double-dummy)">` +
+            `Contrats DD — <span class="team-ns">NS</span> : ${oracleContractHtml(_oracleBids.best[0])}` +
+            ` · <span class="team-ew">EO</span> : ${oracleContractHtml(_oracleBids.best[1])}</div>`;
+    }
+    html += '<table class="an-table"><tr><th></th><th title="Coût total en points">Coût</th>' +
         '<th title="Coût moyen par décision">Moy.</th><th>?!</th><th>?</th><th>??</th></tr>';
     for (const p of _analysisSummary.players) {
         if (p.moves === 0) continue;
@@ -278,6 +346,8 @@ function renderAnalysisSummary() {
 async function loadAnalysis(gameId) {
     _analysisByIdx = null;
     _analysisSummary = null;
+    _bidsByIdx = null;
+    _oracleBids = null;
     renderAnalysisSummary();
     try {
         const base = document.querySelector('base')?.getAttribute('href') || '/';
@@ -290,6 +360,9 @@ async function loadAnalysis(gameId) {
         const data = await resp.json();
         _analysisByIdx = {};
         for (const m of data.moves) _analysisByIdx[m.idx] = m;
+        _bidsByIdx = {};
+        for (const b of data.bids || []) _bidsByIdx[b.idx] = b;
+        _oracleBids = data.oracle_bids || null;
         _analysisSummary = data.summary;
         renderAnalysisSummary();
         // Recolor the moves list and refresh the current annotation
@@ -309,6 +382,8 @@ function handleReplayLoaded(data) {
     replayTotalActions = data.total_actions || 0;
     setActionIdx(0);
     setReplayGameId(data.game_id);
+    // Replay states expose all 4 hands; deal-start hands feed the annonces link
+    _initialHands = (data.state && data.state.hands) || null;
 
     replayBoard.reset(data.state);
     if (data.moves) {
@@ -486,4 +561,7 @@ export function unmount() {
     }
     _analysisByIdx = null;
     _analysisSummary = null;
+    _bidsByIdx = null;
+    _oracleBids = null;
+    _initialHands = null;
 }
