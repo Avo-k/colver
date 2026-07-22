@@ -18,9 +18,10 @@ use rand::{Rng, SeedableRng};
 
 use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
-use colver_core::bid_obs;
+use colver_core::bid_obs::{self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+                           BID_OBS_DIM_SCORE_AWARE_V3};
 use colver_core::dmc_net::DmcNet;
-use colver_core::dmc_obs::{self, EnvTracking};
+use colver_core::dmc_obs::{self, EnvTracking, OBS_DIM_TR};
 use colver_core::game_replay::GameReplay;
 use colver_core::state::{GameState, Phase};
 
@@ -164,12 +165,16 @@ fn generate_chunk(
     num_threads: usize,
 ) -> Vec<GameReplay> {
     let mut dmc_net = DmcNet::load(dmc_model_path).unwrap();
+    if dmc_net.obs_dim() == OBS_DIM_TR {
+        // Canonical-obs models (DouDou50 lineage) are ResNets.
+        dmc_net.set_residual(true);
+    }
     let mut bid_net = BidNet::load(bid_model_path).ok();
 
     let mut rng = StdRng::seed_from_u64(seed);
     let mut replays = Vec::with_capacity(num_games as usize);
 
-    let mut dmc_obs_buf = vec![0.0f32; dmc_obs::OBS_DIM];
+    let mut dmc_obs_buf = vec![0.0f32; dmc_obs::OBS_DIM.max(OBS_DIM_TR)];
 
     let report_interval = if num_threads == 1 { 10_000u64 } else { 50_000 };
     let start = Instant::now();
@@ -184,7 +189,7 @@ fn generate_chunk(
 
         while !state.is_terminal() {
             let action = if state.phase == Phase::Bidding {
-                bid_action(&state, &tracking.bid_history, &mut bid_net)
+                bid_action(&state, &tracking, &mut bid_net)
             } else {
                 dmc_action(&state, &tracking, &mut dmc_net, &mut dmc_obs_buf)
             };
@@ -213,11 +218,32 @@ fn generate_chunk(
     replays
 }
 
-fn bid_action(state: &GameState, bid_history: &[(u8, u8)], bid_net: &mut Option<BidNet>) -> u8 {
+fn bid_action(state: &GameState, tracking: &EnvTracking, bid_net: &mut Option<BidNet>) -> u8 {
     if let Some(ref mut net) = bid_net {
-        let obs = bid_obs::make_bid_observation(state, bid_history);
         let legal = state.legal_actions();
-        net.best_action_fast(&obs, legal)
+        let obs_dim = net.obs_dim();
+        if obs_dim > BID_OBS_DIM {
+            // Score-aware model (bid v4/v5/v6): standalone deals → 0-0 scores.
+            let mut buf = [0.0f32; BID_OBS_DIM_SCORE_AWARE_V3];
+            if obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
+                bid_obs::write_bid_observation_score_aware_v3(
+                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                );
+            } else if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
+                bid_obs::write_bid_observation_score_aware_v2(
+                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                );
+            } else {
+                debug_assert_eq!(obs_dim, BID_OBS_DIM_SCORE_AWARE);
+                bid_obs::write_bid_observation_score_aware(
+                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                );
+            }
+            net.best_action_fast(&buf[..obs_dim], legal)
+        } else {
+            let obs = bid_obs::make_bid_observation(state, &tracking.bid_history);
+            net.best_action_fast(&obs, legal)
+        }
     } else {
         bid_eval::improved_v2_bid(state)
     }
@@ -229,8 +255,17 @@ fn dmc_action(
     dmc_net: &mut DmcNet,
     obs_buf: &mut [f32],
 ) -> u8 {
-    dmc_obs::write_observation(obs_buf, 0, state, tracking);
-    let legal_mask = state.legal_actions() as u32;
-    let (best, _) = dmc_net.best_action(obs_buf, legal_mask);
-    best
+    if dmc_net.obs_dim() == OBS_DIM_TR {
+        // Canonical obs (DouDou50): canonical mask in, physical card out.
+        dmc_obs::write_observation_tr(obs_buf, 0, state, tracking);
+        let order = dmc_obs::current_player_order(state, tracking);
+        let canonical_mask = dmc_obs::cardset_to_canonical(state.legal_actions() as u32, &order);
+        let (canonical_best, _) = dmc_net.best_action(obs_buf, canonical_mask);
+        dmc_obs::card_to_physical(canonical_best, &order)
+    } else {
+        dmc_obs::write_observation(obs_buf, 0, state, tracking);
+        let legal_mask = state.legal_actions() as u32;
+        let (best, _) = dmc_net.best_action(obs_buf, legal_mask);
+        best
+    }
 }

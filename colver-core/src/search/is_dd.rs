@@ -17,13 +17,14 @@ use std::time::{Duration, Instant};
 use rand::Rng;
 
 use crate::belief_net::BeliefNet;
-use crate::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2};
+use crate::belief_obs::{self, BELIEF_OBS_DIM, BELIEF_OBS_DIM_V2, BELIEF_OBS_DIM_V3};
 use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
 use crate::dmc_obs::EnvTracking;
 use crate::elephant::{blend_with_evidence, ElephantMemory};
+use crate::playgen::infer::{PlaygenModel, PlaygenSampler};
 use crate::solver::{new_tt_buffer, solve_with_scores};
 use crate::state::{GameState, Phase};
 
@@ -68,6 +69,12 @@ pub struct IsDdConfig {
     pub dominance_factor: f32,
     /// If true (default), skip search when only 1 legal action or position is fully resolved.
     pub early_termination: bool,
+    /// Fraction of determinized worlds sampled from the playgen transformer
+    /// (requires a loaded playgen model). 0.0 = all worlds from
+    /// constraint-uniform sampling (default), 1.0 = all from playgen.
+    pub playgen_frac: f32,
+    /// Softmax temperature for playgen world sampling (default 1.0 = posterior).
+    pub playgen_temp: f32,
 }
 
 impl Default for IsDdConfig {
@@ -86,8 +93,68 @@ impl Default for IsDdConfig {
             elephant_decay: 0.8,
             dominance_factor: 1.0,
             early_termination: true,
+            playgen_frac: 0.0,
+            playgen_temp: 1.0,
         }
     }
+}
+
+/// Derive V3 temporal features (trick lead suits, trick winners, suit-fail
+/// counts relative to observer) from public play tracking. Mirrors the
+/// training-time extraction in `game_replay.rs`.
+fn derive_v3_temporal(
+    state: &GameState,
+    tracking: &EnvTracking,
+    observer: u8,
+) -> (Vec<u8>, Vec<u8>, [[u8; 4]; 3]) {
+    use crate::card::{card_suit_u8, EMPTY};
+    use crate::trick::trick_winner;
+
+    let completed = tracking.play_order.len() / 4;
+    let mut leads = Vec::with_capacity(8);
+    let mut winners = Vec::with_capacity(8);
+    let mut fails_abs = [[0u8; 4]; 4];
+
+    for t in 0..completed {
+        let base = t * 4;
+        let c0 = tracking.play_order[base];
+        let mut lead_seat = 0u8;
+        for p in 0..4u8 {
+            if tracking.played_by[p as usize] & (1u32 << c0) != 0 {
+                lead_seat = p;
+                break;
+            }
+        }
+        let lead_suit = card_suit_u8(c0);
+        leads.push(lead_suit);
+
+        let mut trick_cards = [EMPTY; 4];
+        for j in 0..4usize {
+            let cj = tracking.play_order[base + j];
+            trick_cards[(lead_seat as usize + j) % 4] = cj;
+        }
+        winners.push(trick_winner(&trick_cards, lead_seat, &state.contract));
+
+        for j in 1..4usize {
+            let cj = tracking.play_order[base + j];
+            if card_suit_u8(cj) != lead_suit {
+                let pj = (lead_seat as usize + j) % 4;
+                fails_abs[pj][lead_suit as usize] =
+                    fails_abs[pj][lead_suit as usize].saturating_add(1);
+            }
+        }
+    }
+
+    let rel_seats = [
+        ((observer as usize + 1) % 4),
+        ((observer as usize + 2) % 4),
+        ((observer as usize + 3) % 4),
+    ];
+    let mut fail_rel = [[0u8; 4]; 3];
+    for (i, &seat) in rel_seats.iter().enumerate() {
+        fail_rel[i] = fails_abs[seat];
+    }
+    (leads, winners, fail_rel)
 }
 
 /// Per-card aggregated DD result.
@@ -110,6 +177,7 @@ pub struct IsDdSearch {
     belief_net: Option<BeliefNet>,
     belief_tracking: Option<EnvTracking>,
     elephant: Option<ElephantMemory>,
+    playgen: Option<PlaygenSampler>,
     tt_buf: Vec<u64>,
 }
 
@@ -120,8 +188,18 @@ impl IsDdSearch {
             belief_net: None,
             belief_tracking: None,
             elephant: None,
+            playgen: None,
             tt_buf: new_tt_buffer(),
         }
+    }
+
+    /// Attach a playgen world-sampler model (shared, read-only).
+    pub fn set_playgen_model(&mut self, model: std::sync::Arc<PlaygenModel>) {
+        self.playgen = Some(PlaygenSampler::new(model));
+    }
+
+    pub fn has_playgen(&self) -> bool {
+        self.playgen.is_some()
     }
 
     /// Load a BeliefNet for NN-based beliefs.
@@ -146,6 +224,11 @@ impl IsDdSearch {
             let mut tracking = EnvTracking::new();
             tracking.reset(state.dealer);
             self.belief_tracking = Some(tracking);
+        }
+
+        // Reset playgen sampler for the new deal
+        if let Some(sampler) = &mut self.playgen {
+            sampler.init_deal(state, observer);
         }
 
         // Reset elephant memory for new deal (re-initialized per config in search).
@@ -184,6 +267,9 @@ impl IsDdSearch {
         if let Some(beliefs) = &mut self.beliefs {
             beliefs.record_action(state_before, player, action);
         }
+        if let Some(sampler) = &mut self.playgen {
+            sampler.record_action(state_before, player, action);
+        }
         if let Some(tracking) = &mut self.belief_tracking {
             tracking.track_action(state_before, action);
         }
@@ -217,9 +303,9 @@ impl IsDdSearch {
             let net = self.belief_net.as_mut().unwrap();
             let tracking = self.belief_tracking.as_ref().unwrap();
 
-            let logits = if net.obs_dim() == BELIEF_OBS_DIM_V2 {
-                // V2: build hard constraints from CardBeliefs, then V2 obs
-                let hard_constraints = if let Some(ref beliefs) = self.beliefs {
+            // Hard constraints from CardBeliefs (shared by V2/V3 obs)
+            let make_hc = |beliefs: &Option<CardBeliefs>| -> [f32; 96] {
+                if let Some(beliefs) = beliefs {
                     let raw = beliefs.raw_weights();
                     let observer_hand = state.hands[observer as usize];
                     let mut played = state.played_cards;
@@ -251,11 +337,24 @@ impl IsDdSearch {
                     hc
                 } else {
                     [0.0f32; 96]
-                };
+                }
+            };
 
+            let logits = if net.obs_dim() == BELIEF_OBS_DIM_V2 {
+                let hard_constraints = make_hc(&self.beliefs);
                 let mut obs_buf = [0.0f32; BELIEF_OBS_DIM_V2];
                 belief_obs::write_belief_observation_v2(
                     &mut obs_buf, 0, state, tracking, observer, &hard_constraints,
+                );
+                net.evaluate(&obs_buf)
+            } else if net.obs_dim() == BELIEF_OBS_DIM_V3 {
+                let hard_constraints = make_hc(&self.beliefs);
+                let (trick_leads, trick_winners, suit_fail_rel) =
+                    derive_v3_temporal(state, tracking, observer);
+                let mut obs_buf = [0.0f32; BELIEF_OBS_DIM_V3];
+                belief_obs::write_belief_observation_v3(
+                    &mut obs_buf, 0, state, tracking, observer,
+                    &hard_constraints, &trick_leads, &trick_winners, &suit_fail_rel,
                 );
                 net.evaluate(&obs_buf)
             } else {
@@ -343,6 +442,53 @@ impl IsDdSearch {
         };
         let heuristic_weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
         (nn_weights, heuristic_weights)
+    }
+
+    /// Monte-Carlo card-location marginals from the playgen world sampler.
+    ///
+    /// Samples up to `n_worlds` determinized worlds from the current position
+    /// (lockstep batches) and counts where each unseen card lands. Returns
+    /// `weights[player][card]` probabilities, or `None` if no playgen model is
+    /// attached or no world could be generated (e.g. during bidding, before
+    /// the contract fixes the canonical trump permutation).
+    pub fn playgen_marginals(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl Rng,
+    ) -> Option<[[f32; 32]; 4]> {
+        let sampler = self.playgen.as_mut()?;
+        const BATCH: usize = 16;
+        let mut counts = [[0u32; 32]; 4];
+        let mut total = 0u32;
+        while (total as usize) < n_worlds {
+            let want = BATCH.min(n_worlds - total as usize);
+            let worlds = sampler.generate_worlds_batch(state, want, temperature, rng);
+            if worlds.is_empty() {
+                break;
+            }
+            for hands in worlds {
+                for p in 0..4 {
+                    let mut h = hands[p];
+                    while h != 0 {
+                        counts[p][h.trailing_zeros() as usize] += 1;
+                        h &= h - 1;
+                    }
+                }
+                total += 1;
+            }
+        }
+        if total == 0 {
+            return None;
+        }
+        let mut weights = [[0f32; 32]; 4];
+        for p in 0..4 {
+            for c in 0..32 {
+                weights[p][c] = counts[p][c] as f32 / total as f32;
+            }
+        }
+        Some(weights)
     }
 
     /// Get elephant memory stats: (surviving_particles, total_particles).
@@ -507,6 +653,12 @@ impl IsDdSearch {
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
 
+        // Playgen worlds are generated in lockstep batches (weights streamed
+        // once per token-step for the whole batch) and consumed from a queue.
+        const PLAYGEN_BATCH: usize = 16;
+        let mut playgen_queue: Vec<[u32; 4]> = Vec::new();
+        let mut playgen_dry = false;
+
         loop {
             if let Some(d) = deadline {
                 if Instant::now() >= d {
@@ -516,7 +668,30 @@ impl IsDdSearch {
                 break;
             }
 
-            let det_state = if let Some(ref w) = weights {
+            let use_playgen = config.playgen_frac > 0.0
+                && self.playgen.is_some()
+                && !playgen_dry
+                && rng.gen::<f32>() < config.playgen_frac;
+
+            let det_state = if use_playgen {
+                if playgen_queue.is_empty() {
+                    let sampler = self.playgen.as_mut().unwrap();
+                    playgen_queue =
+                        sampler.generate_worlds_batch(state, PLAYGEN_BATCH, config.playgen_temp, rng);
+                    if playgen_queue.is_empty() {
+                        // Repeated dead-ends or too-long sequence: stop trying.
+                        playgen_dry = true;
+                    }
+                }
+                playgen_queue
+                    .pop()
+                    .map(|hands| {
+                        let mut s = *state;
+                        s.hands = hands;
+                        s
+                    })
+                    .or_else(|| determinize_greedy(state, observer, rng))
+            } else if let Some(ref w) = weights {
                 determinize_weighted(state, observer, w, rng)
                     .or_else(|| determinize_greedy(state, observer, rng))
             } else {

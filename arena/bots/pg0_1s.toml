@@ -1,0 +1,11 @@
+# Playgen A/B baseline: IS-DD 10 dets, 100% constraint-uniform worlds (no playgen)
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 10000
+time_ms = 1000

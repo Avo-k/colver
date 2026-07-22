@@ -52,6 +52,16 @@ path = "src/bin/train_joint.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
+name = "train_playgen"
+path = "src/bin/train_playgen.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
+name = "export_playgen"
+path = "src/bin/export_playgen.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
 name = "enrich_pool"
 path = "src/bin/enrich_pool.rs"
 required-features = ["dmc_train"]

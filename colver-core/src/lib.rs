@@ -28,6 +28,7 @@ pub use belief::belief_state;
 #[cfg(feature = "dmc_train")]
 pub use belief::belief_candle;
 
+pub mod playgen;
 pub mod rule_player;
 pub mod suit_perm;
 pub mod game_replay;

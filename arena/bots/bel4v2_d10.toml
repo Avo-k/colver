@@ -1,0 +1,14 @@
+# Belief-net A/B: IS-DD 10 dets, NN soft beliefs (belief_v4_fix, fixed tracker + v6 auctions)
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 10
+time_ms = 0
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"

@@ -160,6 +160,47 @@ fn bid_action_adjusted(
     best_action
 }
 
+/// Softmax-sample a legal bid action from Q-values at the given temperature.
+fn bid_action_sampled(
+    bn: &mut BidNet,
+    obs: &[f32],
+    legal_mask: u64,
+    temperature: f32,
+    rng: &mut StdRng,
+) -> u8 {
+    let q = bn.evaluate(obs);
+    let mut actions = [0u8; 43];
+    let mut weights = [0f32; 43];
+    let mut n = 0usize;
+    let mut max_q = f32::NEG_INFINITY;
+    let mut mask = legal_mask;
+    while mask != 0 {
+        let bit = mask.trailing_zeros() as u8;
+        if (bit as usize) < 43 {
+            actions[n] = bit;
+            weights[n] = q[bit as usize];
+            if weights[n] > max_q {
+                max_q = weights[n];
+            }
+            n += 1;
+        }
+        mask &= mask - 1;
+    }
+    let mut total = 0f32;
+    for w in weights[..n].iter_mut() {
+        *w = ((*w - max_q) / temperature).exp();
+        total += *w;
+    }
+    let mut r = rng.gen::<f32>() * total;
+    for i in 0..n {
+        r -= weights[i];
+        if r <= 0.0 {
+            return actions[i];
+        }
+    }
+    actions[n - 1]
+}
+
 // ══════════════════════════════════════════════════════════════════════
 //  Bot config (parsed from TOML)
 // ══════════════════════════════════════════════════════════════════════
@@ -178,6 +219,7 @@ struct BotConfig {
     switch_at: u8,        // for dmc_then_dd: switch to DD after this many tricks (default 5)
     bid_hidden: usize,        // hidden size for bid NN (default 256)
     bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
+    bid_temperature: f32,     // softmax sampling temperature over legal Q-values (0.0 = greedy)
     score_aware: bool,        // if true, adjust NN Q-values based on match score (endgame heuristics)
     belief_model: Option<String>,
     bid_belief_model: Option<String>,
@@ -188,6 +230,9 @@ struct BotConfig {
     elephant_use_dominance: bool,
     elephant_decay: f32,
     dominance_factor: f32,
+    playgen_model: Option<String>,
+    playgen_frac: f32,
+    playgen_temp: f32,
 }
 
 impl Default for BotConfig {
@@ -205,6 +250,7 @@ impl Default for BotConfig {
             switch_at: 5,
             bid_hidden: 256,
             bid_penalty: 0.0,
+            bid_temperature: 0.0,
             score_aware: false,
             belief_model: None,
             bid_belief_model: None,
@@ -215,6 +261,9 @@ impl Default for BotConfig {
             elephant_use_dominance: true,
             elephant_decay: 0.8,
             dominance_factor: 1.0,
+            playgen_model: None,
+            playgen_frac: 0.0,
+            playgen_temp: 1.0,
         }
     }
 }
@@ -233,11 +282,15 @@ impl BotConfig {
 
     /// Short label for the bid strategy, e.g. "nn:bid_v2/bid_nn_final" or "improved_v2"
     fn bid_label(&self) -> String {
-        if let Some(ref model) = self.bid_model {
+        let mut label = if let Some(ref model) = self.bid_model {
             format!("{}:{}", self.bid_strategy, Self::short_model_name(model))
         } else {
             self.bid_strategy.clone()
+        };
+        if self.bid_temperature > 0.0 {
+            label.push_str(&format!("@T{}", self.bid_temperature));
         }
+        label
     }
 
     /// Short label for the play method, e.g. "dmc:play_20M" or "smart_is_dd:50ms"
@@ -253,6 +306,12 @@ impl BotConfig {
         };
         if self.elephant_memory {
             label.push_str("+lefant");
+        }
+        if self.playgen_model.is_some() && self.playgen_frac > 0.0 {
+            label.push_str(&format!("+pg{:.0}", self.playgen_frac * 100.0));
+            if (self.playgen_temp - 1.0).abs() > 1e-6 {
+                label.push_str(&format!("t{:.1}", self.playgen_temp));
+            }
         }
         label
     }
@@ -294,6 +353,7 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("bid", "model") => cfg.bid_model = Some(val.to_string()),
                 ("bid", "hidden") => cfg.bid_hidden = val.parse().unwrap_or(256),
                 ("bid", "penalty") => cfg.bid_penalty = val.parse().unwrap_or(0.0),
+                ("bid", "temperature") => cfg.bid_temperature = val.parse().unwrap_or(0.0),
                 ("bid", "score_aware") => cfg.score_aware = val == "true",
                 ("play", "method") => cfg.play_method = val.to_string(),
                 ("play", "model") => cfg.play_model = Some(val.to_string()),
@@ -314,6 +374,9 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("play", "elephant_use_dominance") => cfg.elephant_use_dominance = val == "true",
                 ("play", "elephant_decay") => cfg.elephant_decay = val.parse().unwrap_or(0.8),
                 ("play", "dominance_factor") => cfg.dominance_factor = val.parse().unwrap_or(1.0),
+                ("play", "playgen_model") => cfg.playgen_model = Some(val.to_string()),
+                ("play", "playgen_frac") => cfg.playgen_frac = val.parse().unwrap_or(0.0),
+                ("play", "playgen_temp") => cfg.playgen_temp = val.parse().unwrap_or(1.0),
                 _ => {} // ignore unknown keys
             }
         }
@@ -441,6 +504,7 @@ struct Agent {
     card_play: CardPlayMethod,
     bid_weights_idx: Option<usize>,  // index into shared bid_weights, None = use bid_function
     bid_penalty: f32,                // Q-value penalty scaling for high bids
+    bid_temperature: f32,            // softmax sampling temperature (0.0 = greedy argmax)
     score_aware: bool,               // enables match-score bid adjustments (endgame heuristics)
     belief_path: Option<String>,
     bid_belief_path: Option<String>,
@@ -454,6 +518,9 @@ struct Agent {
     elephant_use_dominance: bool,
     elephant_decay: f32,
     dominance_factor: f32,
+    playgen_model: Option<String>,
+    playgen_frac: f32,
+    playgen_temp: f32,
 }
 
 /// All shared model weights for the tournament.
@@ -537,6 +604,7 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         card_play,
         bid_weights_idx,
         bid_penalty: cfg.bid_penalty,
+        bid_temperature: cfg.bid_temperature,
         score_aware: cfg.score_aware,
         belief_path: cfg.belief_model.clone(),
         bid_belief_path: cfg.bid_belief_model.clone(),
@@ -550,7 +618,34 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         elephant_use_dominance: cfg.elephant_use_dominance,
         elephant_decay: cfg.elephant_decay,
         dominance_factor: cfg.dominance_factor,
+        playgen_model: cfg.playgen_model.clone(),
+        playgen_frac: cfg.playgen_frac,
+        playgen_temp: cfg.playgen_temp,
     })
+}
+
+/// Process-wide cache of loaded playgen models (13MB each, shared across threads).
+static PLAYGEN_MODELS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<colver_core::playgen::infer::PlaygenModel>>>,
+> = std::sync::OnceLock::new();
+
+fn get_playgen_model(path: &str) -> Option<std::sync::Arc<colver_core::playgen::infer::PlaygenModel>> {
+    let cache = PLAYGEN_MODELS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut map = cache.lock().unwrap();
+    if let Some(m) = map.get(path) {
+        return Some(m.clone());
+    }
+    match colver_core::playgen::infer::PlaygenModel::load(path) {
+        Ok(m) => {
+            let arc = std::sync::Arc::new(m);
+            map.insert(path.to_string(), arc.clone());
+            Some(arc)
+        }
+        Err(e) => {
+            eprintln!("failed to load playgen model {}: {}", path, e);
+            None
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -582,7 +677,10 @@ fn play_match(
     let make_dd_config = |a: &Agent| {
         let mut cfg = IsDdConfig {
             determinizations: a.determinizations,
-            time_limit_ms: Some(a.time_ms),
+            // time_ms = 0 → no time limit (fixed determinization count)
+            time_limit_ms: if a.time_ms > 0 { Some(a.time_ms) } else { None },
+            playgen_frac: a.playgen_frac,
+            playgen_temp: a.playgen_temp,
             use_elephant_memory: a.elephant_memory,
             elephant_smoothing: a.elephant_smoothing,
             elephant_dominance_penalty: a.elephant_dominance_penalty,
@@ -594,6 +692,10 @@ fn play_match(
         if let Some(et) = a.early_termination {
             cfg.early_termination = et;
         }
+        // A [belief] model in the TOML means the bot intends to use NN beliefs.
+        // (Previously the net was loaded but never consulted — use_nn_beliefs
+        // stayed false — so belief-net bots silently ran without it.)
+        cfg.use_nn_beliefs = a.belief_path.is_some();
         cfg
     };
     let make_oracle_config = |a: &Agent| MctsConfig {
@@ -647,11 +749,23 @@ fn play_match(
             let _ = ns_smart_dd[0].load_belief_net(path);
             let _ = ns_smart_dd[1].load_belief_net(path);
         }
+        if let Some(path) = &ns_agent.playgen_model {
+            if let Some(model) = get_playgen_model(path) {
+                ns_smart_dd[0].set_playgen_model(model.clone());
+                ns_smart_dd[1].set_playgen_model(model);
+            }
+        }
     }
     if ew_is_smart_dd {
         if let Some(path) = &ew_agent.belief_path {
             let _ = ew_smart_dd[0].load_belief_net(path);
             let _ = ew_smart_dd[1].load_belief_net(path);
+        }
+        if let Some(path) = &ew_agent.playgen_model {
+            if let Some(model) = get_playgen_model(path) {
+                ew_smart_dd[0].set_playgen_model(model.clone());
+                ew_smart_dd[1].set_playgen_model(model);
+            }
         }
     }
 
@@ -775,7 +889,11 @@ fn play_match(
                                     my_cum, opp_cum,
                                 );
                             }
-                            bn.best_action_fast(&bid_obs_buf[..bid_net_obs_dim], legal_mask)
+                            if agent.bid_temperature > 0.0 {
+                                bid_action_sampled(bn, &bid_obs_buf[..bid_net_obs_dim], legal_mask, agent.bid_temperature, rng)
+                            } else {
+                                bn.best_action_fast(&bid_obs_buf[..bid_net_obs_dim], legal_mask)
+                            }
                         } else if agent.score_aware {
                             bid_obs::write_bid_observation(
                                 &mut bid_obs_buf, 0, &state, &tracking.bid_history,
@@ -795,7 +913,11 @@ fn play_match(
                             bid_obs::write_bid_observation(
                                 &mut bid_obs_buf, 0, &state, &tracking.bid_history,
                             );
-                            bn.best_action_fast(&bid_obs_buf, legal_mask)
+                            if agent.bid_temperature > 0.0 {
+                                bid_action_sampled(bn, &bid_obs_buf, legal_mask, agent.bid_temperature, rng)
+                            } else {
+                                bn.best_action_fast(&bid_obs_buf, legal_mask)
+                            }
                         }
                     } else {
                         agent.bid_function.bid(&state)

@@ -1,0 +1,14 @@
+# Playgen sweep: frac 0.100 temp 1.0, 5 dets
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 5
+time_ms = 0
+playgen_model = "models/playgen/playgen_final.bin"
+playgen_frac = 01.00
+playgen_temp = 1.0

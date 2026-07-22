@@ -1,0 +1,17 @@
+# Hybrid under time budget: belief-weighted worlds + 30% playgen worlds
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 10000
+time_ms = 1000
+playgen_model = "models/playgen/playgen_final.bin"
+playgen_frac = 0.3
+playgen_temp = 0.8
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"
