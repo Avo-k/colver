@@ -105,6 +105,7 @@ export function runOracleSim(hand, numSims, onUpdate, onDone) {
                 completed: d.completed,
                 total: d.total,
                 success_counts: d.success_counts,
+                oracle_synth: d.oracle_synth,
                 elapsed_ms: d.elapsed_ms,
             });
         } else if (d.type === 'oracle_done') {
@@ -114,6 +115,7 @@ export function runOracleSim(hand, numSims, onUpdate, onDone) {
                 completed: d.completed,
                 total: d.total,
                 success_counts: d.success_counts,
+                oracle_synth: d.oracle_synth,
                 sampled_deals: d.sampled_deals,
                 elapsed_ms: d.elapsed_ms,
             });

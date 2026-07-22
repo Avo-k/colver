@@ -94,6 +94,82 @@
     align-items: center;
     justify-content: center;
     gap: 14px;
+    flex-wrap: wrap;
+}
+#annonces-verdict .verdict-alt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 14px;
+    border-left: 1px solid rgba(212, 175, 55, 0.25);
+}
+#annonces-verdict .verdict-alt-label {
+    color: #bbb;
+    font-size: 0.85rem;
+}
+#annonces-alt-status {
+    flex-basis: 100%;
+    text-align: center;
+    color: #bbb;
+    font-size: 0.85rem;
+}
+#doudou-forced-label {
+    color: #d4af37;
+    font-weight: 400;
+    font-size: 0.85rem;
+}
+.oracle-forced {
+    outline: 2px solid #d4af37;
+    outline-offset: -2px;
+    border-radius: 4px;
+}
+
+/* DouDou50 synthesis block + team filter */
+.doudou-synth {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 8px 0 10px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: 8px;
+    font-size: 0.82rem;
+}
+.synth-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: baseline;
+}
+.synth-label {
+    color: #999;
+    min-width: 130px;
+    flex-shrink: 0;
+}
+.synth-value { color: #ddd; }
+.synth-dim { color: #777; }
+
+#doudou-team-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+    font-size: 0.82rem;
+}
+.doudou-filter-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid #444;
+    border-radius: 6px;
+    color: #bbb;
+    font-size: 0.78rem;
+    padding: 2px 10px;
+    cursor: pointer;
+}
+.doudou-filter-btn:hover { border-color: #666; }
+.doudou-filter-btn.active {
+    background: rgba(212, 175, 55, 0.15);
+    border-color: #d4af37;
+    color: #d4af37;
 }
 #annonces-verdict .verdict-label {
     color: #bbb;

@@ -5,7 +5,7 @@
 import { send, onMessage, offMessage } from '../ws.js';
 import { navigateTo } from '../router.js';
 import {
-    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit,
+    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, cardCode,
     bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
@@ -130,7 +130,7 @@ function openBidAnalysis(idx) {
         const m = replayBoard.moveHistory[i].move;
         if (m && m.phase === 0) history.push(m.action);
     }
-    let url = `/analyse/annonces?hand=${hand.join(',')}`;
+    let url = `/analyse/annonces?hand=${hand.map(cardCode).join(',')}`;
     if (history.length) url += `&history=${history.join(',')}`;
     navigateTo(url);
 }

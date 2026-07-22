@@ -37,6 +37,29 @@ export function suitSortKeys(cards) {
 export function cardSuit(idx) { return idx >> 3; }
 export function cardRank(idx) { return idx & 7; }
 
+// Two-char card codes for URLs (CFN-style): rank char + suit letter, e.g. "7S", "KH", "TS".
+const CODE_RANKS = ['7', '8', '9', 'J', 'Q', 'K', 'T', 'A'];
+const CODE_SUITS = ['S', 'H', 'D', 'C'];
+
+export function cardCode(idx) {
+    return CODE_RANKS[cardRank(idx)] + CODE_SUITS[cardSuit(idx)];
+}
+
+// Parse a hand URL token: either a two-char code ("KH") or a legacy integer index.
+// Returns the card index 0-31, or -1 if invalid.
+export function parseCardToken(tok) {
+    tok = tok.trim().toUpperCase();
+    if (/^\d+$/.test(tok)) {
+        const n = parseInt(tok, 10);
+        return n >= 0 && n < 32 ? n : -1;
+    }
+    if (tok.length !== 2) return -1;
+    const rank = CODE_RANKS.indexOf(tok[0]);
+    const suit = CODE_SUITS.indexOf(tok[1]);
+    if (rank < 0 || suit < 0) return -1;
+    return suit * 8 + rank;
+}
+
 export function cardSvgPath(cardIdx) {
     const suit = cardSuit(cardIdx);
     const rank = cardRank(cardIdx);

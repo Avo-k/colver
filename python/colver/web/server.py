@@ -216,6 +216,104 @@ def _get_doudou_env(bid_model_path, dmc_model_path, dealer, hands):
     return env
 
 
+def _bid_action_suit(action):
+    """Suit of a bid action (1-36 value bids, 37-40 capots), else None."""
+    if 1 <= action <= 36:
+        return (action - 1) % 4
+    if 37 <= action <= 40:
+        return action - 37
+    return None
+
+
+def _doudou_new_cells():
+    # cells[suit][col] = [ns_count, ns_achieved, ew_count, ew_achieved]
+    return [[[0, 0, 0, 0] for _ in range(10)] for _ in range(4)]
+
+
+def _doudou_new_stats():
+    return {
+        "voids": 0,
+        "ns_contracts": 0, "ns_achieved": 0,
+        "ew_contracts": 0, "ew_achieved": 0,
+        "taker_seats": [0, 0, 0, 0],        # N, E, S, W
+        "trump_counts": [0, 0, 0, 0],       # S, H, D, C
+        "coinche": 0, "coinche_achieved": 0, "surcoinche": 0,
+        "south_bids": 0,                    # deals where South made a suit bid
+        "partner_support": 0,               # Nord's next action: same-suit bid
+        "partner_other": 0,                 # Nord's next action: other-suit bid
+        "partner_pass": 0,                  # Nord's next action: pass/coinche
+        "opp_overbid": 0,                   # deals where E/W bid over South's bid
+        "ns_value_sum": 0,                  # for avg NS contract value
+        "pts_ns_sum": 0.0, "pts_ew_sum": 0.0, "pts_n": 0,
+    }
+
+
+def _doudou_accumulate(cells, stats, dd):
+    """Fold one Dédé sim result into the aggregates."""
+    if dd["void"]:
+        stats["voids"] += 1
+        return
+    suit, value, team, achieved = dd["trump"], dd["value"], dd["team"], dd["achieved"]
+    col = 9 if value == 250 else (value - 80) // 10
+    if 0 <= col <= 9 and 0 <= suit <= 3:
+        base = 0 if team == 0 else 2
+        cells[suit][col][base] += 1
+        if achieved:
+            cells[suit][col][base + 1] += 1
+    key = "ns" if team == 0 else "ew"
+    stats[f"{key}_contracts"] += 1
+    if achieved:
+        stats[f"{key}_achieved"] += 1
+
+    stats["trump_counts"][suit] += 1
+    coinche = dd.get("coinche", 0)
+    if coinche >= 1:
+        stats["coinche"] += 1
+        if achieved:
+            stats["coinche_achieved"] += 1
+    if coinche == 2:
+        stats["surcoinche"] += 1
+    if team == 0:
+        stats["ns_value_sum"] += value
+
+    scores = dd.get("scores")
+    if scores:
+        stats["pts_ns_sum"] += scores[0]
+        stats["pts_ew_sum"] += scores[1]
+        stats["pts_n"] += 1
+
+    auction = dd.get("auction") or []
+    taker_seat = None
+    for s, a in auction:
+        if _bid_action_suit(a) is not None:
+            taker_seat = s
+    if taker_seat is not None:
+        stats["taker_seats"][taker_seat] += 1
+
+    # South's first suit bid → partner reaction + adverse overbid
+    s_idx = next((i for i, (s, a) in enumerate(auction)
+                  if s == 2 and _bid_action_suit(a) is not None), None)
+    if s_idx is not None:
+        stats["south_bids"] += 1
+        south_suit = _bid_action_suit(auction[s_idx][1])
+        partner_done = False
+        overbid = False
+        for s, a in auction[s_idx + 1:]:
+            a_suit = _bid_action_suit(a)
+            if s == 0 and not partner_done:
+                partner_done = True
+                if a_suit is None:
+                    stats["partner_pass"] += 1
+                elif a_suit == south_suit:
+                    stats["partner_support"] += 1
+                else:
+                    stats["partner_other"] += 1
+            if s in (1, 3) and a_suit is not None:
+                overbid = True
+        if overbid:
+            stats["opp_overbid"] += 1
+
+
 async def _run_annonces_sim(ws: WebSocket, data: dict):
     """Oracle DD + Dédé simulation, runs as a background task."""
     import time as _time
@@ -252,6 +350,8 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         # Phase 1: Oracle (DD solves) — parallel sliding window on _DD_EXECUTOR
         # (solve_all_suits releases the GIL, so the solves genuinely overlap).
         success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
+        oracle_ns_sums = [0, 0, 0, 0]
+        oracle_best_counts = [0, 0, 0, 0]
         sampled_deals = []
         oracle_start = _time.monotonic()
 
@@ -270,9 +370,12 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 for fut in done:
                     result = fut.result()
                     for suit_idx, (ns, ew) in enumerate(result["suits"]):
+                        oracle_ns_sums[suit_idx] += ns
                         for t_idx, thr in enumerate(THRESHOLDS):
                             if ns >= thr:
                                 success_counts[suit_idx][t_idx] += 1
+                    best = max(range(4), key=lambda s: result["suits"][s][0])
+                    oracle_best_counts[best] += 1
                     sampled_deals.append(result["hands"])
                     completed += 1
 
@@ -281,6 +384,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     "completed": completed, "total": num_sims,
                     "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
                     "success_counts": success_counts,
+                    "oracle_synth": {"ns_sums": oracle_ns_sums, "best_counts": oracle_best_counts},
                 })
         finally:
             for fut in pending:
@@ -291,14 +395,14 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "completed": num_sims, "total": num_sims,
             "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
             "success_counts": success_counts,
+            "oracle_synth": {"ns_sums": oracle_ns_sums, "best_counts": oracle_best_counts},
             "sampled_deals": sampled_deals,
         })
 
         # Phase 2: Dédé (NN bid + DMC play) — slow
         if BID_MODEL_PATH and DMC_MODEL_PATH:
-            doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)]
-            doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
-                            "ew_contracts": 0, "ew_achieved": 0}
+            doudou_cells = _doudou_new_cells()
+            doudou_stats = _doudou_new_stats()
             doudou_start = _time.monotonic()
 
             for i in range(num_sims):
@@ -306,19 +410,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     None, _run_doudou_sim_with_hands, all_hands[i],
                     BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
 
-                if dd["void"]:
-                    doudou_stats["voids"] += 1
-                else:
-                    suit, value, team, achieved = dd["trump"], dd["value"], dd["team"], dd["achieved"]
-                    col = 9 if value == 250 else (value - 80) // 10
-                    if 0 <= col <= 9 and 0 <= suit <= 3:
-                        doudou_cells[suit][col][0] += 1
-                        if achieved:
-                            doudou_cells[suit][col][1] += 1
-                    key = "ns" if team == 0 else "ew"
-                    doudou_stats[f"{key}_contracts"] += 1
-                    if achieved:
-                        doudou_stats[f"{key}_achieved"] += 1
+                _doudou_accumulate(doudou_cells, doudou_stats, dd)
 
                 await ws.send_json({
                     "type": "annonces_doudou_update",
@@ -353,6 +445,8 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
     num_sims = max(1, min(1000, int(data.get("num_sims", 50))))
     prior_actions_raw = data.get("prior_actions", None)
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
+    forced_action_raw = data.get("forced_action", None)
+    forced_action = int(forced_action_raw) if forced_action_raw is not None else None
 
     if len(hand) != 8:
         await ws.send_json({"type": "annonces_doudou_update", "error": "8 cartes requises"})
@@ -368,30 +462,33 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
         dealer = (seat - 1 - len(prior_actions) + 32) % 4
         start = _time.monotonic()
 
-        doudou_cells = [[[0, 0] for _ in range(10)] for _ in range(4)]
-        doudou_stats = {"voids": 0, "ns_contracts": 0, "ns_achieved": 0,
-                        "ew_contracts": 0, "ew_achieved": 0}
+        # Bid legality depends only on the auction history, not on the deal —
+        # validate the forced action once before launching the sims.
+        if forced_action is not None:
+            hands_check = [None] * 4
+            hands_check[seat] = sorted(hand)
+            others = [s for s in range(4) if s != seat]
+            for j, p in enumerate(others):
+                hands_check[p] = sorted(remaining[j * 8:(j + 1) * 8])
+            env_check = _colver_pkg.Env.deal_with_hands(dealer, hands_check)
+            for action in prior_actions:
+                env_check.step(action)
+            if env_check.phase() != 0 or forced_action not in env_check.legal_actions():
+                await ws.send_json({"type": "annonces_doudou_update",
+                                    "error": "Annonce illégale dans cette situation"})
+                return
+
+        doudou_cells = _doudou_new_cells()
+        doudou_stats = _doudou_new_stats()
 
         for i in range(num_sims):
             result = await loop.run_in_executor(
                 None, _run_single_doudou_sim, hand, list(remaining),
-                BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
+                BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions, forced_action)
 
             dd = result.get("doudou")
             if dd:
-                if dd["void"]:
-                    doudou_stats["voids"] += 1
-                else:
-                    suit, value, team, achieved = dd["trump"], dd["value"], dd["team"], dd["achieved"]
-                    col = 9 if value == 250 else (value - 80) // 10
-                    if 0 <= col <= 9 and 0 <= suit <= 3:
-                        doudou_cells[suit][col][0] += 1
-                        if achieved:
-                            doudou_cells[suit][col][1] += 1
-                    key = "ns" if team == 0 else "ew"
-                    doudou_stats[f"{key}_contracts"] += 1
-                    if achieved:
-                        doudou_stats[f"{key}_achieved"] += 1
+                _doudou_accumulate(doudou_cells, doudou_stats, dd)
 
             await ws.send_json({
                 "type": "annonces_doudou_update",
@@ -1144,6 +1241,8 @@ def _run_doudou_sim_with_hands(hands, bid_model_path, dmc_model_path,
         "team": taker,
         "coinche": contract["coinche"],
         "achieved": rewards[taker] > 0,
+        "auction": [[int(s), int(a)] for s, a in env.get_bid_history()],
+        "scores": [float(rewards[0]), float(rewards[1])],
     }
 
 
@@ -1227,14 +1326,20 @@ def _run_single_combined_sim(hand, remaining, bid_model_path, dmc_model_path,
                 "team": taker,
                 "coinche": contract["coinche"],
                 "achieved": rewards[taker] > 0,
+                "auction": [[int(s), int(a)] for s, a in env.get_bid_history()],
+                "scores": [float(rewards[0]), float(rewards[1])],
             }
 
     return {"suits": dd_result["suits"], "hands": deal_hands, "doudou": doudou}
 
 
 def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
-                            dealer=0, prior_actions=None):
-    """Run ONE Dédé-only sim: shuffle opponent hands, NN bid + DMC play (no DD solve)."""
+                            dealer=0, prior_actions=None, forced_action=None):
+    """Run ONE Dédé-only sim: shuffle opponent hands, NN bid + DMC play (no DD solve).
+
+    If forced_action is given, South's next bid (right after prior_actions) is
+    forced to it; the rest of the auction and the play stay NN-driven.
+    """
     import random
 
     remaining = list(remaining)
@@ -1253,6 +1358,10 @@ def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
     if prior_actions:
         for action in prior_actions:
             env.step(action)
+
+    # Forced bid: South's turn comes right after the replayed history
+    if forced_action is not None and env.phase() == 0 and not env.is_terminal():
+        env.step(forced_action)
 
     # Bidding phase
     safety = 0
@@ -1277,6 +1386,8 @@ def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
             "team": taker,
             "coinche": contract["coinche"],
             "achieved": rewards[taker] > 0,
+            "auction": [[int(s), int(a)] for s, a in env.get_bid_history()],
+            "scores": [float(rewards[0]), float(rewards[1])],
         }
 
     return {"doudou": doudou}

@@ -53,6 +53,8 @@ self.onmessage = async function(e) {
             new Array(10).fill(0),
             new Array(10).fill(0),
         ];
+        const ns_sums = [0, 0, 0, 0];      // sum of NS DD points per suit
+        const best_counts = [0, 0, 0, 0];  // worlds where suit is NS's best trump
         const sampled_deals = [];
 
         for (let i = 0; i < numSims; i++) {
@@ -68,15 +70,19 @@ self.onmessage = async function(e) {
 
             const result = JSON.parse(resultJson);
 
-            // Accumulate success counts
+            // Accumulate success counts + synthesis aggregates
+            let bestSuit = 0;
             for (let suit = 0; suit < 4; suit++) {
                 const ns = result.suits[suit][0];
+                ns_sums[suit] += ns;
+                if (ns > result.suits[bestSuit][0]) bestSuit = suit;
                 for (let t = 0; t < THRESHOLDS.length; t++) {
                     if (ns >= THRESHOLDS[t]) {
                         success_counts[suit][t]++;
                     }
                 }
             }
+            best_counts[bestSuit]++;
 
             // Save deal for sample viewer
             sampled_deals.push(result.hands);
@@ -91,6 +97,7 @@ self.onmessage = async function(e) {
                 completed,
                 total: numSims,
                 success_counts,
+                oracle_synth: { ns_sums, best_counts },
                 elapsed_ms,
             });
 
@@ -109,6 +116,7 @@ self.onmessage = async function(e) {
             completed,
             total: numSims,
             success_counts,
+            oracle_synth: { ns_sums, best_counts },
             sampled_deals,
             elapsed_ms,
         });

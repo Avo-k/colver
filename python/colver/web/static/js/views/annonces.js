@@ -2,7 +2,7 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, bidActionHtml, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
 import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -63,6 +63,12 @@ const TEMPLATE = `
         <div id="annonces-verdict" class="hidden">
             <span class="verdict-label">Dans cette situation, Bid V6 joue</span>
             <span id="annonces-verdict-action"></span>
+            <span class="verdict-alt">
+                <label for="annonces-alt-select" class="verdict-alt-label">Analyser une autre annonce :</label>
+                <select id="annonces-alt-select"></select>
+                <button id="annonces-alt-btn" class="secondary-btn">Analyser</button>
+            </span>
+            <span id="annonces-alt-status" class="hidden"></span>
         </div>
         <div id="annonces-results-area" class="hidden">
             <div class="annonces-result-panel" id="annonces-nn-panel">
@@ -97,7 +103,7 @@ const TEMPLATE = `
                 <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-doudou-panel">
                     <div id="annonces-doudou-header" class="section-title">
-                        <span>DouDou50</span>
+                        <span>DouDou50<span id="doudou-forced-label"></span></span>
                         <div id="doudou-progress" class="sim-progress hidden">
                             <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
                             <span class="sim-progress-text"></span>
@@ -116,6 +122,20 @@ const TEMPLATE = `
 let annoncesHand = new Set();
 let annoncesHistory = [];
 let xgbResults = null; // cached XGB analysis results
+let forcedAction = null; // alternative bid being analysed (null = Bid V6's own choice)
+
+// Keep the URL in sync with the current hand/history, hand as two-char card
+// codes ("7S,KH,...") rather than raw indices.
+function syncUrl() {
+    const parts = [];
+    if (annoncesHand.size > 0) {
+        parts.push('hand=' + Array.from(annoncesHand).sort((a, b) => a - b).map(cardCode).join(','));
+    }
+    if (annoncesHistory.length > 0) {
+        parts.push('history=' + annoncesHistory.join(','));
+    }
+    history.replaceState(null, '', window.location.pathname + (parts.length ? '?' + parts.join('&') : ''));
+}
 
 function isLocalMode() {
     const toggle = document.getElementById('annonces-local-toggle');
@@ -168,8 +188,7 @@ function initAnnoncesGrid() {
     }
 }
 
-function initActionSelect() {
-    const select = document.getElementById('annonces-action-select');
+function populateBidActionSelect(select) {
     select.innerHTML = '';
     const addOpt = (value, text) => {
         const opt = document.createElement('option');
@@ -189,6 +208,10 @@ function initActionSelect() {
     }
     addOpt(41, 'Coinche');
     addOpt(42, 'Surcoinche');
+}
+
+function initActionSelect() {
+    populateBidActionSelect(document.getElementById('annonces-action-select'));
 }
 
 function toggleAnnoncesCard(idx) {
@@ -216,6 +239,7 @@ function updateAnnoncesDisplay() {
 
     const handEl = document.getElementById('annonces-hand-display');
     renderHand(handEl, Array.from(annoncesHand));
+    syncUrl();
 }
 
 function renderAnnoncesHistory() {
@@ -264,6 +288,7 @@ function renderAnnoncesHistory() {
     yourRow.appendChild(yourBadge);
     yourRow.appendChild(yourLabel);
     list.appendChild(yourRow);
+    syncUrl();
 }
 
 // ── XGBoost interpretability ──
@@ -374,6 +399,7 @@ function handleBidEvalResult(data) {
 
     document.getElementById('annonces-verdict').classList.remove('hidden');
     document.getElementById('annonces-verdict-action').innerHTML = bidActionHtml(bestAction);
+    document.getElementById('annonces-alt-select').value = String(bestAction);
 
     document.getElementById('annonces-results-header').innerHTML =
         `Bid V6 : ${bidActionHtml(bestAction)}`;
@@ -495,7 +521,22 @@ function renderOracleQuantiles(successCounts, completed) {
     return html;
 }
 
-function renderOracleTable(successCounts, completed, total, elapsedMs) {
+// Per-suit synthesis: average NS double-dummy points and % of worlds where
+// this suit is NS's best trump.
+function renderOracleSynth(synth, completed) {
+    let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
+        '<th>Points NS <span class="oracle-quant-sub">moy. DD</span></th>' +
+        '<th>Meilleure couleur <span class="oracle-quant-sub">% mondes</span></th></tr></thead><tbody>';
+    for (const suit of SUIT_DISPLAY_ORDER) {
+        const avg = Math.round(synth.ns_sums[suit] / completed);
+        const bestPct = Math.round(synth.best_counts[suit] / completed * 100);
+        html += `<tr><td>${suitHtml(suit)}</td><td>${avg}</td><td>${bestPct} %</td></tr>`;
+    }
+    html += '</tbody></table>';
+    return html;
+}
+
+function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSynth) {
     updateProgressBar('oracle-progress', completed, total, elapsedMs);
 
     const body = document.getElementById('annonces-sim-body');
@@ -504,6 +545,10 @@ function renderOracleTable(successCounts, completed, total, elapsedMs) {
     html += renderOracleStrips(successCounts, completed);
     html += '<div class="oracle-variant-label">Paliers</div>';
     html += renderOracleQuantiles(successCounts, completed);
+    if (oracleSynth && completed > 0) {
+        html += '<div class="oracle-variant-label">Moyennes</div>';
+        html += renderOracleSynth(oracleSynth, completed);
+    }
     html += '<div class="oracle-variant-label">Tableau complet</div>';
 
     html += '<table id="oracle-table"><thead><tr><th></th>';
@@ -529,6 +574,7 @@ function renderOracleTable(successCounts, completed, total, elapsedMs) {
     }
     html += '</tbody></table>';
     body.innerHTML = html;
+    highlightOracleCell(forcedAction);
 }
 
 function renderSimViewer(deals, numSims) {
@@ -602,6 +648,69 @@ function pctFontSize(count) {
     return (0.65 + t * 0.20).toFixed(2);          // rem
 }
 
+const DOUDOU_TEAM_LABELS = { all: 'Tous', ns: 'NS', ew: 'EW' };
+let doudouTeamFilter = 'all';
+let lastDoudouData = null; // cached last render args, for filter switching
+
+// Cell = [ns_count, ns_achieved, ew_count, ew_achieved] (legacy 2-tuple tolerated).
+function doudouCellCounts(cell, filter) {
+    if (cell.length === 2) return [cell[0], cell[1]];
+    if (filter === 'ns') return [cell[0], cell[1]];
+    if (filter === 'ew') return [cell[2], cell[3]];
+    return [cell[0] + cell[2], cell[1] + cell[3]];
+}
+
+// Consolidated auction/outcome synthesis over all sims.
+function renderDoudouSynth(stats, completed) {
+    const contracts = stats.ns_contracts + stats.ew_contracts;
+    if (!contracts || stats.taker_seats === undefined) return '';
+    const pct = (n, d) => d > 0 ? Math.round(n / d * 100) : 0;
+    const rows = [];
+
+    let trumpHtml = SUIT_DISPLAY_ORDER.map(s =>
+        `${suitHtml(s)} ${pct(stats.trump_counts[s], contracts)}%`).join(' \u00b7 ');
+    if (stats.voids > 0) {
+        trumpHtml += ` \u00b7 <span class="synth-dim">pass\u00e9e ${pct(stats.voids, completed)}%</span>`;
+    }
+    rows.push(['Couleur jou\u00e9e', trumpHtml]);
+
+    rows.push(['Qui prend le contrat', [['Sud', 2], ['Nord', 0], ['Est', 1], ['Ouest', 3]]
+        .map(([name, s]) => `${name} ${pct(stats.taker_seats[s], contracts)}%`).join(' \u00b7 ')]);
+
+    rows.push(['Contrats r\u00e9ussis',
+        `NS ${pct(stats.ns_achieved, stats.ns_contracts)}% (${stats.ns_achieved}/${stats.ns_contracts})` +
+        ` \u00b7 EW ${pct(stats.ew_achieved, stats.ew_contracts)}% (${stats.ew_achieved}/${stats.ew_contracts})`]);
+
+    if (stats.south_bids > 0) {
+        const sb = stats.south_bids;
+        rows.push(['Nord apr\u00e8s votre annonce',
+            `soutient ${pct(stats.partner_support, sb)}% \u00b7 autre couleur ${pct(stats.partner_other, sb)}%` +
+            ` \u00b7 passe ${pct(stats.partner_pass, sb)}% <span class="synth-dim">(${sb} donnes)</span>`]);
+        rows.push(['Surench\u00e8re adverse', `${pct(stats.opp_overbid, sb)}%`]);
+    }
+
+    if (stats.coinche > 0) {
+        let c = `${pct(stats.coinche, contracts)}% des contrats (r\u00e9ussis ${stats.coinche_achieved}/${stats.coinche})`;
+        if (stats.surcoinche > 0) c += ` \u00b7 surcoinch\u00e9 ${stats.surcoinche}\u00d7`;
+        rows.push(['Coinch\u00e9', c]);
+    } else {
+        rows.push(['Coinch\u00e9', '<span class="synth-dim">jamais</span>']);
+    }
+
+    const avgParts = [];
+    if (stats.ns_contracts > 0) {
+        avgParts.push(`contrat NS moyen ${Math.round(stats.ns_value_sum / stats.ns_contracts)}`);
+    }
+    if (stats.pts_n > 0) {
+        avgParts.push(`points NS ${Math.round(stats.pts_ns_sum / stats.pts_n)} / EW ${Math.round(stats.pts_ew_sum / stats.pts_n)}`);
+    }
+    if (avgParts.length) rows.push(['Moyennes', avgParts.join(' \u00b7 ')]);
+
+    return '<div class="doudou-synth">' + rows.map(([label, value]) =>
+        `<div class="synth-row"><span class="synth-label">${label}</span><span class="synth-value">${value}</span></div>`
+    ).join('') + '</div>';
+}
+
 function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs) {
     const panel = document.getElementById('annonces-doudou-panel');
     if (!doudouCells) {
@@ -609,31 +718,31 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
         return;
     }
     panel.classList.remove('hidden');
+    lastDoudouData = { doudouCells, doudouStats, completed, total, elapsedMs };
 
     updateProgressBar('doudou-progress', completed, total, elapsedMs);
-
-    const v = doudouStats.voids;
-    const nsC = doudouStats.ns_contracts;
-    const nsA = doudouStats.ns_achieved;
-    const ewC = doudouStats.ew_contracts;
-    const ewA = doudouStats.ew_achieved;
-    const nsPct = nsC > 0 ? Math.round(nsA / nsC * 100) : 0;
-    const ewPct = ewC > 0 ? Math.round(ewA / ewC * 100) : 0;
-    document.getElementById('doudou-stats-text').textContent =
-        `${v} passe, NS ${nsPct}% (${nsA}/${nsC}), EW ${ewPct}% (${ewA}/${ewC})`;
+    document.getElementById('doudou-stats-text').textContent = '';
 
     const body = document.getElementById('annonces-doudou-body');
+
+    let html = renderDoudouSynth(doudouStats, completed);
+
+    // Team filter (column pruning uses total counts so columns stay stable)
+    html += '<div id="doudou-team-filter"><span class="synth-label">Contrats pris par</span>' +
+        ['all', 'ns', 'ew'].map(f =>
+            `<button class="doudou-filter-btn${f === doudouTeamFilter ? ' active' : ''}" data-filter="${f}">${DOUDOU_TEAM_LABELS[f]}</button>`
+        ).join('') + '</div>';
 
     // Prune leading/trailing columns with no observation in any suit
     let firstCol = 0, lastCol = DOUDOU_COLS.length - 1;
     const colUsed = DOUDOU_COLS.map((_, col) =>
-        SUIT_DISPLAY_ORDER.some(suit => doudouCells[suit][col][0] > 0));
+        SUIT_DISPLAY_ORDER.some(suit => doudouCellCounts(doudouCells[suit][col], 'all')[0] > 0));
     if (colUsed.some(Boolean)) {
         firstCol = colUsed.indexOf(true);
         lastCol = colUsed.lastIndexOf(true);
     }
 
-    let html = '<table id="doudou-table"><thead><tr><th></th>';
+    html += '<table id="doudou-table"><thead><tr><th></th>';
     for (let col = firstCol; col <= lastCol; col++) {
         html += `<th>${DOUDOU_COLS[col]}</th>`;
     }
@@ -642,7 +751,7 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     for (const suit of SUIT_DISPLAY_ORDER) {
         html += `<tr><td>${suitHtml(suit)}</td>`;
         for (let col = firstCol; col <= lastCol; col++) {
-            const [count, achieved] = doudouCells[suit][col];
+            const [count, achieved] = doudouCellCounts(doudouCells[suit][col], doudouTeamFilter);
             if (count === 0) {
                 html += '<td class="doudou-empty">\u00b7</td>';
             } else {
@@ -660,6 +769,76 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     }
     html += '</tbody></table>';
     body.innerHTML = html;
+
+    body.querySelectorAll('.doudou-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            doudouTeamFilter = btn.dataset.filter;
+            const d = lastDoudouData;
+            if (d) renderDoudouTable(d.doudouCells, d.doudouStats, d.completed, d.total, d.elapsedMs);
+        });
+    });
+}
+
+// Highlight the oracle cell corresponding to the forced annonce (bid actions 1-40).
+function highlightOracleCell(action) {
+    const table = document.getElementById('oracle-table');
+    if (!table) return;
+    table.querySelectorAll('.oracle-forced').forEach(el => el.classList.remove('oracle-forced'));
+    if (action === null || action < 1 || action > 40) return;
+    let suit, col;
+    if (action <= 36) {
+        suit = (action - 1) % 4;
+        col = Math.floor((action - 1) / 4);
+    } else {
+        suit = action - 37;
+        col = 9; // Capot
+    }
+    const row = table.querySelectorAll('tbody tr')[SUIT_DISPLAY_ORDER.indexOf(suit)];
+    if (!row) return;
+    const cell = row.children[col + 1];
+    if (cell) cell.classList.add('oracle-forced');
+}
+
+function resetDoudouPanel() {
+    lastDoudouData = null;
+    const panel = document.getElementById('annonces-doudou-panel');
+    panel.classList.remove('hidden');
+    document.getElementById('annonces-doudou-body').innerHTML = '';
+    document.getElementById('doudou-stats-text').textContent = '';
+    const dp = document.getElementById('doudou-progress');
+    dp.classList.add('hidden');
+    dp.classList.remove('done');
+    dp.querySelector('.sim-progress-fill').style.width = '0%';
+    dp.querySelector('.sim-progress-text').textContent = '';
+    const forcedLabel = document.getElementById('doudou-forced-label');
+    if (forcedLabel) {
+        forcedLabel.innerHTML = forcedAction !== null
+            ? ` — annonce forcée : ${bidActionHtml(forcedAction)}` : '';
+    }
+}
+
+// Rerun the DouDou50 simulation with South's bid forced to `action`
+// (subsequent bids and play stay NN-driven). Also highlights the matching
+// oracle cell — the oracle table itself is bid-independent, so no rerun needed.
+function runAltAnalysis(action) {
+    if (annoncesHand.size !== 8) return;
+    forcedAction = action;
+
+    const statusEl = document.getElementById('annonces-alt-status');
+    statusEl.classList.remove('hidden');
+    statusEl.innerHTML = `Analyse de ${bidActionHtml(action)} en cours…`;
+
+    highlightOracleCell(action);
+    resetDoudouPanel();
+
+    const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 50));
+    send({
+        type: 'annonces_doudou',
+        hand: Array.from(annoncesHand),
+        prior_actions: annoncesHistory,
+        num_sims: numSims,
+        forced_action: action,
+    });
 }
 
 function handleSimUpdate(data) {
@@ -668,11 +847,11 @@ function handleSimUpdate(data) {
             `<div class="annonces-error">${data.error}</div>`;
         return;
     }
-    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
 }
 
 function handleSimDone(data) {
-    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
         renderSimViewer(data.sampled_deals, data.completed);
     }
@@ -681,12 +860,25 @@ function handleSimDone(data) {
 // --- DouDou-only server handlers (used in local mode for DouDou part) ---
 
 function handleDoudouUpdate(data) {
-    if (data.error) return; // Silently ignore — DouDou is optional in local mode
+    if (data.error) {
+        if (forcedAction !== null) {
+            const statusEl = document.getElementById('annonces-alt-status');
+            statusEl.classList.remove('hidden');
+            statusEl.innerHTML = `<span class="annonces-error">${data.error}</span>`;
+        }
+        return; // Otherwise silently ignore — DouDou is optional in local mode
+    }
     renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
 }
 
 function handleDoudouDone(data) {
+    if (data.error) return;
     renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
+    if (forcedAction !== null) {
+        const statusEl = document.getElementById('annonces-alt-status');
+        statusEl.classList.remove('hidden');
+        statusEl.innerHTML = `DouDou50 simulé avec annonce forcée : ${bidActionHtml(forcedAction)}`;
+    }
 }
 
 // --- Eval paths ---
@@ -704,16 +896,10 @@ function resetPanels(numSims) {
     const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
     renderOracleTable(emptyCountsSeed, 0, numSims, null);
-    // Reset DouDou panel — show it but with empty state
-    const doudouPanel = document.getElementById('annonces-doudou-panel');
-    doudouPanel.classList.remove('hidden');
-    document.getElementById('annonces-doudou-body').innerHTML = '';
-    document.getElementById('doudou-stats-text').textContent = '';
-    const dp = document.getElementById('doudou-progress');
-    dp.classList.add('hidden');
-    dp.classList.remove('done');
-    dp.querySelector('.sim-progress-fill').style.width = '0%';
-    dp.querySelector('.sim-progress-text').textContent = '';
+    // Reset alternative-annonce state and DouDou panel (shown, empty state)
+    forcedAction = null;
+    document.getElementById('annonces-alt-status').classList.add('hidden');
+    resetDoudouPanel();
 }
 
 async function evalLocal(hand, numSims) {
@@ -737,7 +923,7 @@ async function evalLocal(hand, numSims) {
     // 2. Oracle via Worker (streaming)
     wasmBridge.runOracleSim(hand, numSims,
         (data) => {
-            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
         },
         (data) => {
             if (data.error) {
@@ -745,7 +931,7 @@ async function evalLocal(hand, numSims) {
                     `<div class="annonces-error">${data.error}</div>`;
                 return;
             }
-            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms);
+            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
             if (data.sampled_deals && data.sampled_deals.length > 0) {
                 renderSimViewer(data.sampled_deals, data.completed);
             }
@@ -769,13 +955,18 @@ export function mount(container) {
 
     initAnnoncesGrid();
     initActionSelect();
+    populateBidActionSelect(document.getElementById('annonces-alt-select'));
 
-    // Pre-fill from URL params (e.g. ?hand=0,1,2,...&history=5,0,17)
+    document.getElementById('annonces-alt-btn').addEventListener('click', () => {
+        runAltAnalysis(parseInt(document.getElementById('annonces-alt-select').value));
+    });
+
+    // Pre-fill from URL params (e.g. ?hand=7S,KH,... or legacy ?hand=0,1,2,...; &history=5,0,17)
     const params = new URLSearchParams(window.location.search);
     const handParam = params.get('hand');
     const histParam = params.get('history');
     if (handParam) {
-        annoncesHand = new Set(handParam.split(',').map(Number).filter(n => n >= 0 && n < 32));
+        annoncesHand = new Set(handParam.split(',').map(parseCardToken).filter(n => n >= 0 && n < 32));
     }
     if (histParam) {
         annoncesHistory = histParam.split(',').map(Number).filter(n => n >= 0 && n <= 42);

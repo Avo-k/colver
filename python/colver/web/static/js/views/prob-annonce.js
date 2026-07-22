@@ -1,7 +1,7 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidActionHtml } from '../shared/cards.js';
+import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidActionHtml, cardCode } from '../shared/cards.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
@@ -314,7 +314,7 @@ function handleCorrection(data) {
 
     // Set study link with hand + bid history
     const studyBtn = document.getElementById('pa-study-btn');
-    const handStr = paHand.join(',');
+    const handStr = paHand.map(cardCode).join(',');
     const histStr = paBidHistory.join(',');
     studyBtn.href = `/analyse/annonces?hand=${handStr}${histStr.length ? '&history=' + histStr : ''}`;
 
