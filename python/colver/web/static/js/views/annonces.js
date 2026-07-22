@@ -40,6 +40,20 @@ const TEMPLATE = `
                 </div>
             </div>
         </div>
+        <div class="annonces-result-panel hidden" id="annonces-nn-panel">
+            <div id="annonces-results-header" class="section-title"></div>
+            <p class="nn-explainer">R\u00e9seau de neurones entra\u00een\u00e9 par renforcement sur des millions de parties en jeu parfait (double-dummy).</p>
+            <div id="annonces-results-body"></div>
+            <div class="hidden" id="annonces-xgb-panel">
+                <div id="annonces-xgb-header" class="section-title">
+                    <span>Facteurs cl\u00e9s</span>
+                    <select id="xgb-suit-select"></select>
+                </div>
+                <p class="xgb-explainer">Mod\u00e8le XGBoost distill\u00e9 du NN \u2014 il <em>approxime</em> les d\u00e9cisions du r\u00e9seau \u00e0 l\u2019aide de caract\u00e9ristiques interpr\u00e9tables. Ces contributions ne proviennent <strong>pas</strong> du r\u00e9seau de neurones.</p>
+                <div id="xgb-waterfall"></div>
+                <div id="xgb-probability"></div>
+            </div>
+        </div>
     </div>
     <div id="annonces-right">
         <div id="annonces-hand-preview">
@@ -47,17 +61,6 @@ const TEMPLATE = `
             <div class="hand" id="annonces-hand-display"></div>
             <div id="annonces-eval-row">
                 <button id="annonces-eval-btn" disabled>\u00c9valuer</button>
-                <label class="annonces-sim-label">Simulations :
-                    <input type="number" id="annonces-sim-count" value="50" min="1" max="1000" style="width:55px">
-                </label>
-                <div class="annonces-toggle-wrap">
-                    <span class="annonces-toggle-label" id="annonces-label-server">Serveur</span>
-                    <label class="annonces-toggle">
-                        <input type="checkbox" id="annonces-local-toggle">
-                        <span class="annonces-toggle-track"></span>
-                    </label>
-                    <span class="annonces-toggle-label" id="annonces-label-local">Calcul local</span>
-                </div>
             </div>
         </div>
         <div id="annonces-verdict" class="hidden">
@@ -67,43 +70,26 @@ const TEMPLATE = `
                 <label for="annonces-alt-select" class="verdict-alt-label">Analyser une autre annonce :</label>
                 <select id="annonces-alt-select"></select>
                 <button id="annonces-alt-btn" class="secondary-btn">Analyser</button>
+                <label class="annonces-sim-label">Simulations :
+                    <input type="number" id="annonces-sim-count" value="50" min="1" max="1000" style="width:55px">
+                </label>
             </span>
             <span id="annonces-alt-status" class="hidden"></span>
         </div>
         <div id="annonces-results-area" class="hidden">
-            <div class="annonces-result-panel" id="annonces-nn-panel">
-                <div id="annonces-results-header" class="section-title"></div>
-                <p class="nn-explainer">R\u00e9seau de neurones entra\u00een\u00e9 par renforcement sur des millions de parties en jeu parfait (double-dummy).</p>
-                <div id="annonces-results-body"></div>
-                <div class="hidden" id="annonces-sim-viewer-wrap">
-                    <details id="annonces-sim-viewer">
-                        <summary>Voir 10 exemples de distribution</summary>
-                        <div id="annonces-sim-viewer-content"></div>
-                    </details>
-                </div>
-                <div class="hidden" id="annonces-xgb-panel">
-                    <div id="annonces-xgb-header" class="section-title">
-                        <span>Facteurs cl\u00e9s</span>
-                        <select id="xgb-suit-select"></select>
+            <div class="annonces-result-panel hidden" id="annonces-doudou-panel">
+                <div id="annonces-doudou-header" class="section-title">
+                    <span>DouDou50<span id="doudou-forced-label"></span></span>
+                    <div id="doudou-progress" class="sim-progress hidden">
+                        <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
+                        <span class="sim-progress-text"></span>
                     </div>
-                    <p class="xgb-explainer">Mod\u00e8le XGBoost distill\u00e9 du NN \u2014 il <em>approxime</em> les d\u00e9cisions du r\u00e9seau \u00e0 l\u2019aide de caract\u00e9ristiques interpr\u00e9tables. Ces contributions ne proviennent <strong>pas</strong> du r\u00e9seau de neurones.</p>
-                    <div id="xgb-waterfall"></div>
-                    <div id="xgb-probability"></div>
+                    <span id="doudou-stats-text"></span>
                 </div>
+                <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite. La taille du chiffre refl\u00e8te la fiabilit\u00e9\u00a0: plus il y a d\u2019observations, plus le score est lisible. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
+                <div id="annonces-doudou-body"></div>
             </div>
-            <div class="annonces-result-panel" id="annonces-sim-panel">
-                <div class="hidden" id="annonces-doudou-panel">
-                    <div id="annonces-doudou-header" class="section-title">
-                        <span>DouDou50<span id="doudou-forced-label"></span></span>
-                        <div id="doudou-progress" class="sim-progress hidden">
-                            <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
-                            <span class="sim-progress-text"></span>
-                        </div>
-                        <span id="doudou-stats-text"></span>
-                    </div>
-                    <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite. La taille du chiffre refl\u00e8te la fiabilit\u00e9\u00a0: plus il y a d\u2019observations, plus le score est lisible. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
-                    <div id="annonces-doudou-body"></div>
-                </div>
+            <div class="annonces-result-panel" id="annonces-oracle-panel">
                 <div id="annonces-sim-header" class="section-title">
                     <span>Oracle</span>
                     <div id="oracle-progress" class="sim-progress hidden">
@@ -113,6 +99,12 @@ const TEMPLATE = `
                 </div>
                 <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
                 <div id="annonces-sim-body"></div>
+                <div class="hidden" id="annonces-sim-viewer-wrap">
+                    <details id="annonces-sim-viewer">
+                        <summary>Voir 10 exemples de distribution</summary>
+                        <div id="annonces-sim-viewer-content"></div>
+                    </details>
+                </div>
             </div>
         </div>
     </div>
@@ -135,26 +127,6 @@ function syncUrl() {
         parts.push('history=' + annoncesHistory.join(','));
     }
     history.replaceState(null, '', window.location.pathname + (parts.length ? '?' + parts.join('&') : ''));
-}
-
-function isLocalMode() {
-    const toggle = document.getElementById('annonces-local-toggle');
-    return toggle && toggle.checked;
-}
-
-function setLocalMode(on) {
-    const toggle = document.getElementById('annonces-local-toggle');
-    if (toggle) toggle.checked = on;
-    updateToggleLabels();
-    try { localStorage.setItem('annonces-local', on ? '1' : '0'); } catch(e) {}
-}
-
-function updateToggleLabels() {
-    const local = isLocalMode();
-    const labelLocal = document.getElementById('annonces-label-local');
-    const labelServer = document.getElementById('annonces-label-server');
-    if (labelLocal) labelLocal.classList.toggle('active', local);
-    if (labelServer) labelServer.classList.toggle('active', !local);
 }
 
 function annoncesPlayerSeat(turnIdx, historyLen) {
@@ -874,8 +846,16 @@ function handleDoudouDone(data) {
 
 // --- Eval paths ---
 
+// Hide all result panels (hand cleared / redrawn).
+function hideResults() {
+    document.getElementById('annonces-results-area').classList.add('hidden');
+    document.getElementById('annonces-nn-panel').classList.add('hidden');
+    document.getElementById('annonces-verdict').classList.add('hidden');
+}
+
 function resetPanels(numSims) {
     document.getElementById('annonces-results-area').classList.remove('hidden');
+    document.getElementById('annonces-nn-panel').classList.remove('hidden');
     document.getElementById('annonces-verdict').classList.add('hidden');
     document.getElementById('annonces-results-header').textContent = 'Bid V6';
     document.getElementById('annonces-results-body').innerHTML =
@@ -898,7 +878,6 @@ async function evalLocal(hand, numSims) {
         await wasmBridge.ensureReady();
     } catch (err) {
         console.warn('[annonces] WASM init failed, falling back to server:', err);
-        setLocalMode(false);
         evalServer(hand, numSims);
         return;
     }
@@ -971,13 +950,6 @@ export function mount(container) {
         setTimeout(() => document.getElementById('annonces-eval-btn').click(), 100);
     }
 
-    // Restore toggle state from localStorage
-    const toggle = document.getElementById('annonces-local-toggle');
-    const stored = localStorage.getItem('annonces-local');
-    toggle.checked = stored !== '0'; // default on
-    updateToggleLabels();
-    toggle.addEventListener('change', updateToggleLabels);
-
     // Event handlers
     document.getElementById('annonces-history-add-btn').addEventListener('click', () => {
         const select = document.getElementById('annonces-action-select');
@@ -999,13 +971,13 @@ export function mount(container) {
         }
         annoncesHand = new Set(indices.slice(0, 8));
         updateAnnoncesDisplay();
-        document.getElementById('annonces-results-area').classList.add('hidden');
+        hideResults();
     });
 
     document.getElementById('annonces-clear-btn').addEventListener('click', () => {
         annoncesHand.clear();
         updateAnnoncesDisplay();
-        document.getElementById('annonces-results-area').classList.add('hidden');
+        hideResults();
     });
 
     document.getElementById('annonces-eval-btn').addEventListener('click', () => {
@@ -1017,11 +989,9 @@ export function mount(container) {
 
         resetPanels(numSims);
 
-        if (isLocalMode()) {
-            evalLocal(hand, numSims);
-        } else {
-            evalServer(hand, numSims);
-        }
+        // Local WASM by default (BidNet + Oracle); falls back to the server
+        // if WASM init fails. DouDou always runs server-side (10MB DMC model).
+        evalLocal(hand, numSims);
     });
 
     // XGB suit dropdown
