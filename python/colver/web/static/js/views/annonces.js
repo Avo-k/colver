@@ -71,7 +71,7 @@ const TEMPLATE = `
                 <select id="annonces-alt-select"></select>
                 <button id="annonces-alt-btn" class="secondary-btn">Analyser</button>
                 <label class="annonces-sim-label">Simulations :
-                    <input type="number" id="annonces-sim-count" value="50" min="1" max="1000" style="width:55px">
+                    <input type="number" id="annonces-sim-count" value="200" min="1" max="1000" style="width:55px">
                 </label>
             </span>
             <span id="annonces-alt-status" class="hidden"></span>
@@ -794,7 +794,7 @@ function runAltAnalysis(action) {
     highlightOracleCell(action);
     resetDoudouPanel();
 
-    const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 50));
+    const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 200));
     send({
         type: 'annonces_doudou',
         hand: Array.from(annoncesHand),
@@ -982,7 +982,7 @@ export function mount(container) {
 
     document.getElementById('annonces-eval-btn').addEventListener('click', () => {
         const hand = Array.from(annoncesHand);
-        const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 50));
+        const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 200));
 
         // Cancel any previous simulation before starting a new one
         wasmBridge.cancelOracle();

@@ -566,7 +566,9 @@
     margin-top: 16px;
 }
 
-#annonces-nn-panel { max-width: 500px; }
+/* Width 0 + min-width 100%: don't let the panel's content widen the left
+   column — follow the width set by the config box above instead. */
+#annonces-nn-panel { width: 0; min-width: 100%; }
 #annonces-doudou-panel { flex: 1; min-width: 0; }
 #annonces-oracle-panel { flex: 1; min-width: 0; }
 
@@ -689,12 +691,6 @@
 }
 
 /* DouDou table */
-#annonces-doudou-panel {
-    margin-top: 12px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255,255,255,0.06);
-}
-
 .doudou-explainer {
     color: #777;
     font-size: 0.78rem;
@@ -961,9 +957,6 @@
     }
     #annonces-left {
         overflow-y: visible;
-    }
-    #annonces-nn-panel {
-        max-width: none;
     }
 }
 
