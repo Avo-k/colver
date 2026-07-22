@@ -463,15 +463,27 @@ impl TrumpCeilingTracker {
                 // Didn't follow lead suit
 
                 if card_s != trump_suit {
-                    // Didn't play trump either. If partner isn't master,
-                    // rules require trumping if possible -> void in trump.
+                    // Didn't play trump either.
                     if !partner_is_master_before_play(state, player) {
-                        self.deduced_voids[player as usize] |= 1 << trump_suit;
+                        if let Some(best_rank) = best_trump_rank_on_trick(state, trump_suit) {
+                            // "Ne pisse pas": an opponent cut and the player discarded.
+                            // Discarding is legal while holding lower trumps, so this
+                            // only proves no trump above the best trump on the trick.
+                            self.ceiling_mask[player as usize] |=
+                                HIGHER_TRUMP_MASK[best_rank as usize];
+                        } else {
+                            // No trump on the trick: trumping was mandatory if
+                            // possible -> void in trump.
+                            self.deduced_voids[player as usize] |= 1 << trump_suit;
+                        }
                     }
                 }
 
-                // Trump ceiling: played trump but couldn't overtrump
-                if card_s == trump_suit {
+                // Trump ceiling: played trump but couldn't overtrump.
+                // Only a fact when partner isn't master — with partner master,
+                // any card is legal, so undertrumping can be voluntary (e.g.
+                // dumping the lowest trump while holding higher ones).
+                if card_s == trump_suit && !partner_is_master_before_play(state, player) {
                     if let Some(best_rank) = best_trump_rank_on_trick(state, trump_suit) {
                         let played_strength = TRUMP_STRENGTH[card_rank(card_played) as usize];
                         let best_strength = TRUMP_STRENGTH[best_rank as usize];
