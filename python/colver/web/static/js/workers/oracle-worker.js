@@ -54,8 +54,20 @@ self.onmessage = async function(e) {
             new Array(10).fill(0),
         ];
         const ns_sums = [0, 0, 0, 0];      // sum of NS DD points per suit
+        const ns_vals = [[], [], [], []];  // per-suit NS points, for medians
         const best_counts = [0, 0, 0, 0];  // worlds where suit is NS's best trump
         const sampled_deals = [];
+
+        const oracleSynth = () => ({
+            ns_sums,
+            ns_medians: ns_vals.map(vals => {
+                if (!vals.length) return 0;
+                const s = [...vals].sort((a, b) => a - b);
+                const mid = Math.floor(s.length / 2);
+                return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+            }),
+            best_counts,
+        });
 
         for (let i = 0; i < numSims; i++) {
             if (cancelFlag) break;
@@ -75,6 +87,7 @@ self.onmessage = async function(e) {
             for (let suit = 0; suit < 4; suit++) {
                 const ns = result.suits[suit][0];
                 ns_sums[suit] += ns;
+                ns_vals[suit].push(ns);
                 if (ns > result.suits[bestSuit][0]) bestSuit = suit;
                 for (let t = 0; t < THRESHOLDS.length; t++) {
                     if (ns >= THRESHOLDS[t]) {
@@ -97,7 +110,7 @@ self.onmessage = async function(e) {
                 completed,
                 total: numSims,
                 success_counts,
-                oracle_synth: { ns_sums, best_counts },
+                oracle_synth: oracleSynth(),
                 elapsed_ms,
             });
 
@@ -116,7 +129,7 @@ self.onmessage = async function(e) {
             completed,
             total: numSims,
             success_counts,
-            oracle_synth: { ns_sums, best_counts },
+            oracle_synth: oracleSynth(),
             sampled_deals,
             elapsed_ms,
         });

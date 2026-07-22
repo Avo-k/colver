@@ -92,15 +92,6 @@ const TEMPLATE = `
                 </div>
             </div>
             <div class="annonces-result-panel" id="annonces-sim-panel">
-                <div id="annonces-sim-header" class="section-title">
-                    <span>Oracle</span>
-                    <div id="oracle-progress" class="sim-progress hidden">
-                        <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
-                        <span class="sim-progress-text"></span>
-                    </div>
-                </div>
-                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
-                <div id="annonces-sim-body"></div>
                 <div class="hidden" id="annonces-doudou-panel">
                     <div id="annonces-doudou-header" class="section-title">
                         <span>DouDou50<span id="doudou-forced-label"></span></span>
@@ -113,6 +104,15 @@ const TEMPLATE = `
                     <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite. La taille du chiffre refl\u00e8te la fiabilit\u00e9\u00a0: plus il y a d\u2019observations, plus le score est lisible. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
                     <div id="annonces-doudou-body"></div>
                 </div>
+                <div id="annonces-sim-header" class="section-title">
+                    <span>Oracle</span>
+                    <div id="oracle-progress" class="sim-progress hidden">
+                        <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
+                        <span class="sim-progress-text"></span>
+                    </div>
+                </div>
+                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
+                <div id="annonces-sim-body"></div>
             </div>
         </div>
     </div>
@@ -503,34 +503,27 @@ function renderOracleStrips(successCounts, completed) {
     return html;
 }
 
-function renderOracleQuantiles(successCounts, completed) {
-    let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
-        '<th>Sûr <span class="oracle-quant-sub">≥80%</span></th>' +
-        '<th>Équilibré <span class="oracle-quant-sub">≥50%</span></th>' +
-        '<th>Tendu <span class="oracle-quant-sub">≥20%</span></th></tr></thead><tbody>';
-    for (const suit of SUIT_DISPLAY_ORDER) {
-        const pcts = oraclePcts(successCounts, suit, completed);
-        html += `<tr><td>${suitHtml(suit)}</td>`;
-        for (const level of ORACLE_MARKER_LEVELS) {
-            const idx = oracleCrossing(pcts, level);
-            html += `<td>${idx >= 0 ? THRESHOLD_LABELS[idx] : '—'}</td>`;
-        }
-        html += '</tr>';
-    }
-    html += '</tbody></table>';
-    return html;
-}
-
-// Per-suit synthesis: average NS double-dummy points and % of worlds where
-// this suit is NS's best trump.
-function renderOracleSynth(synth, completed) {
+// Per-suit synthesis: average/median NS double-dummy points, % of worlds where
+// this suit is NS's best trump, plus compact Sûr/Tendu thresholds (ex-Paliers).
+function renderOracleSynth(synth, successCounts, completed) {
     let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
         '<th>Points NS <span class="oracle-quant-sub">moy. DD</span></th>' +
-        '<th>Meilleure couleur <span class="oracle-quant-sub">% mondes</span></th></tr></thead><tbody>';
+        '<th>Méd.</th>' +
+        '<th>Meilleure couleur <span class="oracle-quant-sub">% mondes</span></th>' +
+        '<th class="oracle-mini-col">Sûr <span class="oracle-quant-sub">≥80%</span></th>' +
+        '<th class="oracle-mini-col">Tendu <span class="oracle-quant-sub">≥20%</span></th>' +
+        '</tr></thead><tbody>';
     for (const suit of SUIT_DISPLAY_ORDER) {
         const avg = Math.round(synth.ns_sums[suit] / completed);
+        const med = synth.ns_medians ? Math.round(synth.ns_medians[suit]) : null;
         const bestPct = Math.round(synth.best_counts[suit] / completed * 100);
-        html += `<tr><td>${suitHtml(suit)}</td><td>${avg}</td><td>${bestPct} %</td></tr>`;
+        const pcts = oraclePcts(successCounts, suit, completed);
+        const sur = oracleCrossing(pcts, 80);
+        const tendu = oracleCrossing(pcts, 20);
+        html += `<tr><td>${suitHtml(suit)}</td><td>${avg}</td><td>${med !== null ? med : '—'}</td>` +
+            `<td>${bestPct} %</td>` +
+            `<td class="oracle-mini-col">${sur >= 0 ? THRESHOLD_LABELS[sur] : '—'}</td>` +
+            `<td class="oracle-mini-col">${tendu >= 0 ? THRESHOLD_LABELS[tendu] : '—'}</td></tr>`;
     }
     html += '</tbody></table>';
     return html;
@@ -543,11 +536,9 @@ function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSyn
 
     let html = '<div class="oracle-variant-label">Bandeau</div>';
     html += renderOracleStrips(successCounts, completed);
-    html += '<div class="oracle-variant-label">Paliers</div>';
-    html += renderOracleQuantiles(successCounts, completed);
     if (oracleSynth && completed > 0) {
         html += '<div class="oracle-variant-label">Moyennes</div>';
-        html += renderOracleSynth(oracleSynth, completed);
+        html += renderOracleSynth(oracleSynth, successCounts, completed);
     }
     html += '<div class="oracle-variant-label">Tableau complet</div>';
 

@@ -351,9 +351,22 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         # (solve_all_suits releases the GIL, so the solves genuinely overlap).
         success_counts = [[0] * len(THRESHOLDS) for _ in range(4)]
         oracle_ns_sums = [0, 0, 0, 0]
+        oracle_ns_vals = [[], [], [], []]  # per-suit NS points, for medians
         oracle_best_counts = [0, 0, 0, 0]
         sampled_deals = []
         oracle_start = _time.monotonic()
+
+        def _oracle_synth():
+            medians = []
+            for vals in oracle_ns_vals:
+                if not vals:
+                    medians.append(0)
+                    continue
+                s = sorted(vals)
+                mid = len(s) // 2
+                medians.append(s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2)
+            return {"ns_sums": oracle_ns_sums, "ns_medians": medians,
+                    "best_counts": oracle_best_counts}
 
         window = min(_DD_EXECUTOR._max_workers, num_sims)
         completed = 0
@@ -371,6 +384,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     result = fut.result()
                     for suit_idx, (ns, ew) in enumerate(result["suits"]):
                         oracle_ns_sums[suit_idx] += ns
+                        oracle_ns_vals[suit_idx].append(ns)
                         for t_idx, thr in enumerate(THRESHOLDS):
                             if ns >= thr:
                                 success_counts[suit_idx][t_idx] += 1
@@ -384,7 +398,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     "completed": completed, "total": num_sims,
                     "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
                     "success_counts": success_counts,
-                    "oracle_synth": {"ns_sums": oracle_ns_sums, "best_counts": oracle_best_counts},
+                    "oracle_synth": _oracle_synth(),
                 })
         finally:
             for fut in pending:
@@ -395,7 +409,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "completed": num_sims, "total": num_sims,
             "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
             "success_counts": success_counts,
-            "oracle_synth": {"ns_sums": oracle_ns_sums, "best_counts": oracle_best_counts},
+            "oracle_synth": _oracle_synth(),
             "sampled_deals": sampled_deals,
         })
 

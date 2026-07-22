@@ -124,6 +124,13 @@
     border-radius: 4px;
 }
 
+/* Compact Sûr/Tendu columns inside the Moyennes table */
+.oracle-quant-table th.oracle-mini-col,
+.oracle-quant-table td.oracle-mini-col {
+    font-size: 0.72rem;
+    color: #999;
+}
+
 /* DouDou50 synthesis block + team filter */
 .doudou-synth {
     display: flex;
