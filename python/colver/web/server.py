@@ -75,6 +75,21 @@ if _belief_model:
 else:
     print("[server] No belief net model found, using heuristic beliefs")
 
+# Playgen world-sampler model (transformer, MC belief marginals)
+_playgen_model = _colver_pkg.playgen_model_path()
+if _playgen_model is None:
+    try:
+        _playgen_model = _colver_pkg.download_playgen_model()
+    except Exception as e:
+        print(f"[server] Playgen model download failed: {e}")
+        _playgen_model = None
+
+PLAYGEN_MODEL_PATH = str(_playgen_model) if _playgen_model else None
+if _playgen_model:
+    print(f"[server] Playgen model available at {PLAYGEN_MODEL_PATH}")
+else:
+    print("[server] No playgen model found, playgen beliefs disabled")
+
 print(f"[server] ROOT_PATH={ROOT_PATH}")
 
 
@@ -886,6 +901,7 @@ async def websocket_endpoint(ws: WebSocket):
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
                     bid_model_path=BID_MODEL_PATH,
                     belief_model_path=BELIEF_MODEL_PATH,
+                    playgen_model_path=PLAYGEN_MODEL_PATH,
                 )
                 try:
                     result = await loop.run_in_executor(None, belief_session.generate)
@@ -917,8 +933,10 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 observer = int(data.get("observer", 0))
+                with_playgen = bool(data.get("playgen", False))
+                loop = asyncio.get_event_loop()
                 try:
-                    result = belief_session.get_beliefs(observer)
+                    result = await loop.run_in_executor(None, belief_session.get_beliefs, observer, with_playgen)
                     await ws.send_json({"type": "belief_weights", **result})
                 except Exception as e:
                     await ws.send_json({"type": "error", "msg": f"Erreur croyances : {e}"})

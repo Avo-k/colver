@@ -597,10 +597,11 @@ class PlayProblemSession:
 class BeliefSession:
     """Belief visualization: generate a game, step through it, query beliefs at each position."""
 
-    def __init__(self, dmc_model_path=None, bid_model_path=None, belief_model_path=None):
+    def __init__(self, dmc_model_path=None, bid_model_path=None, belief_model_path=None, playgen_model_path=None):
         self.dmc_model_path = dmc_model_path
         self.bid_model_path = bid_model_path
         self.belief_model_path = belief_model_path
+        self.playgen_model_path = playgen_model_path
         self.env = None
         self.initial_hands = None
         self.all_actions = []  # list of (player, action, phase)
@@ -648,6 +649,8 @@ class BeliefSession:
             self.env.load_bid_model(self.bid_model_path)
         if self.belief_model_path:
             self.env.load_belief_net(self.belief_model_path)
+        if self.playgen_model_path:
+            self.env.load_playgen_model(self.playgen_model_path)
         self.env.dede_init()
 
         return {
@@ -708,6 +711,8 @@ class BeliefSession:
                 self.env.load_bid_model(self.bid_model_path)
             if self.belief_model_path:
                 self.env.load_belief_net(self.belief_model_path)
+            if self.playgen_model_path:
+                self.env.load_playgen_model(self.playgen_model_path)
             self.env.dede_init()
             self.action_idx = 0
         # Replay up to target
@@ -717,13 +722,27 @@ class BeliefSession:
             self.action_idx += 1
         return self._get_state_info()
 
-    def get_beliefs(self, observer: int) -> dict:
-        """Return NN + heuristic belief weights + ground truth hands."""
+    PLAYGEN_WORLDS = 50
+    PLAYGEN_TEMP = 0.8
+
+    def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:
+        """Return NN + heuristic (+ playgen on demand) belief weights + ground truth hands.
+
+        Playgen marginals cost ~2-3s of MC sampling, so they are only computed
+        when the client displays them (with_playgen=True).
+        """
         result = self.env.get_belief_weights(observer)
+        playgen = None
+        if with_playgen and self.playgen_model_path:
+            # MC marginals over sampled worlds; None during bidding (contract unknown)
+            playgen = self.env.get_playgen_beliefs(
+                observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
+            )
         return {
             "observer": observer,
             "nn": result["nn"],
             "heuristic": result["heuristic"],
+            "playgen": playgen,
             "ground_truth": self.initial_hands,
         }
 

@@ -45,9 +45,10 @@ let currentLastAction = null;
 let initialHands = null;
 let dealer = 0;
 let observer = 0;
-let viewMode = 'nn'; // 'nn', 'heuristic', 'compare'
+let viewMode = 'nn'; // 'nn', 'playgen', 'heuristic', 'compare'
 let nnWeights = null;
 let heuristicWeights = null;
+let playgenWeights = null; // null pendant les enchères (contrat inconnu)
 let groundTruth = null;
 let loading = false;
 
@@ -80,6 +81,7 @@ const TEMPLATE = `
             </div>
             <div id="belief-mode-btns">
                 <button class="belief-mode-btn active" data-mode="nn">NN</button>
+                <button class="belief-mode-btn" data-mode="playgen">Playgen</button>
                 <button class="belief-mode-btn" data-mode="heuristic">Heuristique</button>
                 <button class="belief-mode-btn" data-mode="compare">Comparer</button>
             </div>
@@ -99,7 +101,9 @@ function setLoading(msg) {
 }
 
 function requestWeights() {
-    send({ type: 'belief_get_weights', observer });
+    // Le calcul playgen (~2s de MC) n'est demandé que si le mode l'affiche
+    const withPlaygen = viewMode === 'playgen' || viewMode === 'compare';
+    send({ type: 'belief_get_weights', observer, playgen: withPlaygen });
 }
 
 function onGenerated(data) {
@@ -113,6 +117,7 @@ function onGenerated(data) {
     currentLastAction = null;
     nnWeights = null;
     heuristicWeights = null;
+    playgenWeights = null;
     groundTruth = null;
 
     const slider = document.getElementById('belief-slider');
@@ -143,6 +148,7 @@ function onWeights(data) {
     if (data.observer !== observer) return;
     nnWeights = data.nn;
     heuristicWeights = data.heuristic;
+    playgenWeights = data.playgen || null;
     groundTruth = data.ground_truth;
     renderGrid();
     renderStats();
@@ -188,8 +194,17 @@ function renderGrid() {
 
     if (!groundTruth) return;
 
-    const weights = viewMode === 'heuristic' ? heuristicWeights : nnWeights;
-    const weights2 = viewMode === 'compare' ? heuristicWeights : null;
+    // Sources to display: single bar in nn/playgen/heuristic modes, stacked in compare
+    const sources = [];
+    if (viewMode === 'nn') sources.push({ w: nnWeights, label: null });
+    else if (viewMode === 'playgen') sources.push({ w: playgenWeights, label: null });
+    else if (viewMode === 'heuristic') sources.push({ w: heuristicWeights, label: null });
+    else {
+        if (nnWeights) sources.push({ w: nnWeights, label: 'NN' });
+        if (playgenWeights) sources.push({ w: playgenWeights, label: 'PG' });
+        if (heuristicWeights) sources.push({ w: heuristicWeights, label: 'Heur.' });
+    }
+    const activeSources = sources.filter(s => s.w);
 
     // Determine known/played cards for observer
     const observerHand = new Set(currentState ? currentState.hands[observer] : (initialHands ? initialHands[observer] : []));
@@ -255,15 +270,10 @@ function renderGrid() {
                 // Unknown card — show belief bars
                 cardDiv.appendChild(img);
 
-                if (weights) {
-                    const bar = createBeliefBar(weights, cardIdx, observer, groundTruth, viewMode === 'compare' ? 'NN' : null);
-                    cardDiv.appendChild(bar);
+                for (const src of activeSources) {
+                    cardDiv.appendChild(createBeliefBar(src.w, cardIdx, observer, groundTruth, src.label));
                 }
-                if (weights2) {
-                    const bar2 = createBeliefBar(weights2, cardIdx, observer, groundTruth, 'Heur.');
-                    cardDiv.appendChild(bar2);
-                }
-                if (!weights && !weights2) {
+                if (activeSources.length === 0) {
                     const noData = document.createElement('div');
                     noData.className = 'belief-no-data';
                     noData.textContent = '-';
@@ -346,7 +356,17 @@ function renderStats() {
 
     const modes = [];
     if (viewMode === 'nn' || viewMode === 'compare') modes.push({ w: nnWeights, label: 'NN' });
+    if (viewMode === 'playgen' || viewMode === 'compare') modes.push({ w: playgenWeights, label: 'Playgen' });
     if (viewMode === 'heuristic' || viewMode === 'compare') modes.push({ w: heuristicWeights, label: 'Heuristique' });
+
+    // Playgen n'existe qu'en phase de jeu (contrat requis pour générer des mondes)
+    if ((viewMode === 'playgen' || viewMode === 'compare') && !playgenWeights
+        && currentState && currentState.phase === 0) {
+        const note = document.createElement('div');
+        note.className = 'belief-stat-group';
+        note.innerHTML = `<span class="belief-stat-label">Playgen</span><span class="belief-stat-item">indisponible pendant les enchères</span>`;
+        statsEl.appendChild(note);
+    }
 
     // Determine unknown cards
     const handsSource = currentState ? currentState.hands : initialHands;
@@ -456,6 +476,10 @@ function onModeClick(e) {
     if (!btn) return;
     viewMode = btn.dataset.mode;
     document.querySelectorAll('.belief-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === viewMode));
+    // Playgen pas encore calculé pour cette position → re-demander
+    if ((viewMode === 'playgen' || viewMode === 'compare') && !playgenWeights) {
+        requestWeights();
+    }
     renderGrid();
     renderStats();
 }
@@ -480,7 +504,7 @@ export function mount(container) {
     // Reset state
     totalActions = 0; currentIdx = 0; currentState = null;
     currentLastAction = null; initialHands = null;
-    nnWeights = null; heuristicWeights = null; groundTruth = null;
+    nnWeights = null; heuristicWeights = null; playgenWeights = null; groundTruth = null;
     observer = 0; viewMode = 'nn'; loading = false;
 
     // Wire events

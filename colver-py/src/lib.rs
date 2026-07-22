@@ -251,6 +251,8 @@ struct Env {
     bid_net: Option<BidNet>,
     // Belief net model path (shared across dede searches)
     belief_net_path: Option<String>,
+    // Playgen world-sampler model (shared read-only across dede searches)
+    playgen_model: Option<std::sync::Arc<colver_core::playgen::infer::PlaygenModel>>,
 }
 
 #[pymethods]
@@ -273,6 +275,7 @@ impl Env {
             dmc_net: None,
             bid_net: None,
             belief_net_path: None,
+            playgen_model: None,
         }
     }
 
@@ -717,6 +720,7 @@ impl Env {
             dmc_net: None,
             bid_net: None,
             belief_net_path: None,
+            playgen_model: None,
         })
     }
 
@@ -928,10 +932,63 @@ impl Env {
         self.belief_net_path.is_some()
     }
 
+    /// Load a playgen world-sampler model (COLVPG01) for IS-DD searches.
+    /// Call before dede_init() so the sampler sees the full action prefix.
+    fn load_playgen_model(&mut self, path: &str) -> PyResult<()> {
+        let model = colver_core::playgen::infer::PlaygenModel::load(path).map_err(|e| {
+            pyo3::exceptions::PyIOError::new_err(format!("Failed to load playgen model: {}", e))
+        })?;
+        let model = std::sync::Arc::new(model);
+        if let Some(ref mut searches) = self.dede_searches {
+            for search in searches.iter_mut() {
+                search.set_playgen_model(model.clone());
+            }
+        }
+        self.playgen_model = Some(model);
+        Ok(())
+    }
+
+    /// Check if a playgen model is loaded.
+    fn has_playgen_model(&self) -> bool {
+        self.playgen_model.is_some()
+    }
+
+    /// Monte-Carlo card-location marginals from the playgen world sampler,
+    /// from `observer`'s perspective. Samples up to `n_worlds` determinized
+    /// worlds and counts where each card lands. Returns weights[player][card]
+    /// (4×32), or None during bidding / if sampling fails.
+    #[pyo3(signature = (observer, n_worlds=50, temperature=1.0))]
+    fn get_playgen_beliefs(
+        &mut self,
+        observer: u8,
+        n_worlds: usize,
+        temperature: f32,
+    ) -> PyResult<Option<Vec<Vec<f32>>>> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "observer must be 0-3",
+            ));
+        }
+        let searches = self.dede_searches.as_mut().unwrap();
+        let marginals = searches[observer as usize].playgen_marginals(
+            &self.state,
+            n_worlds,
+            temperature,
+            &mut self.rng,
+        );
+        Ok(marginals.map(|w| w.iter().map(|row| row.to_vec()).collect()))
+    }
+
     /// Initialize IS-DD (Dédé) beliefs for a new deal.
     /// Must be called after reset() and before action_dede().
     fn dede_init(&mut self) {
         let belief_path = self.belief_net_path.clone();
+        let playgen_model = self.playgen_model.clone();
         let searches = self.dede_searches.get_or_insert_with(|| {
             let mut s = [
                 IsDdSearch::new(),
@@ -942,6 +999,11 @@ impl Env {
             if let Some(ref path) = belief_path {
                 for search in s.iter_mut() {
                     let _ = search.load_belief_net(path);
+                }
+            }
+            if let Some(ref model) = playgen_model {
+                for search in s.iter_mut() {
+                    search.set_playgen_model(model.clone());
                 }
             }
             s
@@ -1332,6 +1394,7 @@ impl Env {
             dmc_net: None,
             bid_net: None,
             belief_net_path: None,
+            playgen_model: None,
         })
     }
 
