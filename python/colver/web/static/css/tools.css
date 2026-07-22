@@ -1544,6 +1544,82 @@
     color: #82e0aa;
 }
 
+#belief-precompute {
+    font-size: 0.75rem;
+    color: #888;
+    white-space: nowrap;
+    min-width: 90px;
+}
+.belief-precompute-done { color: #82e0aa; }
+
+/* History strip: bids as chips, plays as mini cards grouped by trick */
+#belief-history {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    margin-bottom: 12px;
+    background: rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 6px;
+}
+#belief-history:empty { display: none; }
+
+.belief-hist-item {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 2px solid var(--seat-color, rgba(255,255,255,0.08));
+    color: #999;
+    border-radius: 4px;
+    padding: 2px 5px;
+    cursor: pointer;
+    font-size: 0.7rem;
+    line-height: 1.2;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    opacity: 0.38;
+    transition: opacity 0.15s, background 0.15s;
+}
+.belief-hist-item:hover { opacity: 0.85; background: rgba(255,255,255,0.12); }
+.belief-hist-item.belief-hist-done { opacity: 1; }
+.belief-hist-item.belief-hist-current {
+    background: rgba(212,175,55,0.18);
+    border-color: #d4af37;
+    border-bottom-color: var(--seat-color, #d4af37);
+}
+
+.belief-hist-start {
+    border-bottom-width: 1px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.62rem;
+}
+
+.belief-hist-seat {
+    font-weight: 700;
+    font-size: 0.6rem;
+    color: var(--seat-color, #888);
+}
+
+.belief-hist-card { padding: 2px 3px; }
+.belief-hist-card img {
+    width: 20px;
+    height: auto;
+    display: block;
+    border-radius: 2px;
+}
+
+.belief-hist-trick {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.03);
+}
+
 /* Belief grid */
 #belief-grid {
     display: flex;

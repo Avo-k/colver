@@ -607,6 +607,14 @@ class BeliefSession:
         self.all_actions = []  # list of (player, action, phase)
         self.action_idx = 0
         self.dealer = 0
+        # Playgen MC marginals are expensive (~1s/position): cache per (action_idx, observer)
+        self.playgen_cache = {}
+        # Precompute sweep state (dedicated env, advanced by precompute_step)
+        self._sweep_env = None
+        self._sweep_observer = 0
+        self._sweep_i = 0
+        self._sweep_done = 0
+        self._sweep_total = 0
 
     def generate(self) -> dict:
         """Play a full game with DMC + NN bid, store all actions."""
@@ -653,11 +661,18 @@ class BeliefSession:
             self.env.load_playgen_model(self.playgen_model_path)
         self.env.dede_init()
 
+        self.playgen_cache = {}
+        self._sweep_env = None
+
         return {
             "initial_hands": self.initial_hands,
             "dealer": self.dealer,
             "total_actions": len(self.all_actions),
             "num_bid_actions": num_bid_actions,
+            "actions": [
+                {"player": p, "action": a, "phase": ph}
+                for p, a, ph in self.all_actions
+            ],
         }
 
     def _get_state_info(self) -> dict:
@@ -728,16 +743,22 @@ class BeliefSession:
     def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:
         """Return NN + heuristic (+ playgen on demand) belief weights + ground truth hands.
 
-        Playgen marginals cost ~2-3s of MC sampling, so they are only computed
-        when the client displays them (with_playgen=True).
+        Playgen marginals cost ~1s of MC sampling, so they are only computed
+        when the client displays them (with_playgen=True) and cached per
+        (position, observer) — the precompute sweep fills the same cache.
         """
         result = self.env.get_belief_weights(observer)
         playgen = None
         if with_playgen and self.playgen_model_path:
-            # MC marginals over sampled worlds; None during bidding (contract unknown)
-            playgen = self.env.get_playgen_beliefs(
-                observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
-            )
+            key = (self.action_idx, observer)
+            playgen = self.playgen_cache.get(key)
+            if playgen is None:
+                # MC marginals over sampled worlds; None during bidding (contract unknown)
+                playgen = self.env.get_playgen_beliefs(
+                    observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
+                )
+                if playgen is not None:
+                    self.playgen_cache[key] = playgen
         return {
             "observer": observer,
             "nn": result["nn"],
@@ -745,6 +766,60 @@ class BeliefSession:
             "playgen": playgen,
             "ground_truth": self.initial_hands,
         }
+
+    def precompute_start(self, observer: int) -> int:
+        """Prepare a playgen precompute sweep for `observer` on a dedicated env.
+
+        Returns the number of play-phase positions to compute (0 if no playgen
+        model or void deal).
+        """
+        self._sweep_observer = observer
+        self._sweep_i = 0
+        self._sweep_done = 0
+        num_bid = sum(1 for _, _, p in self.all_actions if p == 0)
+        self._sweep_total = max(0, len(self.all_actions) - num_bid)
+        if not self.playgen_model_path or self._sweep_total == 0:
+            self._sweep_env = None
+            self._sweep_total = 0
+            return 0
+        env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+        if self.bid_model_path:
+            env.load_bid_model(self.bid_model_path)
+        if self.belief_model_path:
+            env.load_belief_net(self.belief_model_path)
+        env.load_playgen_model(self.playgen_model_path)
+        env.dede_init()
+        self._sweep_env = env
+        return self._sweep_total
+
+    def precompute_step(self):
+        """Advance the sweep by one playgen position (~1s of MC sampling).
+
+        Returns (done, total) after each computed position, or None when the
+        sweep is finished. Designed to be called repeatedly from an executor
+        so the caller can stream progress between steps.
+        """
+        if self._sweep_env is None:
+            return None
+        while self._sweep_i < len(self.all_actions):
+            _, action, _ = self.all_actions[self._sweep_i]
+            self._sweep_env.dede_step(action)
+            self._sweep_i += 1
+            idx = self._sweep_i
+            if int(self._sweep_env.phase()) == 1 and not self._sweep_env.is_terminal():
+                key = (idx, self._sweep_observer)
+                if key not in self.playgen_cache:
+                    w = self._sweep_env.get_playgen_beliefs(
+                        self._sweep_observer,
+                        n_worlds=self.PLAYGEN_WORLDS,
+                        temperature=self.PLAYGEN_TEMP,
+                    )
+                    if w is not None:
+                        self.playgen_cache[key] = w
+                self._sweep_done += 1
+                return (self._sweep_done, self._sweep_total)
+        self._sweep_env = None
+        return None
 
 
 class ReplaySession(TrickTracker):

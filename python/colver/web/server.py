@@ -434,6 +434,7 @@ async def websocket_endpoint(ws: WebSocket):
     watch_game_id = None
     play_move_delay = 2.0
     sim_task = None  # background task for annonces_sim / annonces_doudou
+    belief_precompute_task = None  # background playgen precompute sweep
 
     async def _cancel_sim_task():
         nonlocal sim_task
@@ -444,6 +445,38 @@ async def websocket_endpoint(ws: WebSocket):
             except asyncio.CancelledError:
                 pass
         sim_task = None
+
+    async def _cancel_belief_precompute():
+        nonlocal belief_precompute_task
+        if belief_precompute_task and not belief_precompute_task.done():
+            belief_precompute_task.cancel()
+            try:
+                await belief_precompute_task
+            except asyncio.CancelledError:
+                pass
+        belief_precompute_task = None
+
+    async def _belief_precompute_loop(session, observer):
+        """Sweep all play positions, filling the session playgen cache, streaming progress."""
+        loop = asyncio.get_event_loop()
+        try:
+            total = await loop.run_in_executor(None, session.precompute_start, observer)
+            await ws.send_json({"type": "belief_precompute", "observer": observer,
+                                "done": 0, "total": total})
+            while True:
+                r = await loop.run_in_executor(None, session.precompute_step)
+                if r is None:
+                    break
+                done, total = r
+                await ws.send_json({"type": "belief_precompute", "observer": observer,
+                                    "done": done, "total": total})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            try:
+                await ws.send_json({"type": "error", "msg": f"Pré-calcul playgen : {e}"})
+            except Exception:
+                pass
 
     try:
         while True:
@@ -896,6 +929,7 @@ async def websocket_endpoint(ws: WebSocket):
                     await ws.send_json({"type": "error", "msg": f"Évaluation échouée : {e}"})
 
             elif msg_type == "belief_generate":
+                await _cancel_belief_precompute()
                 loop = asyncio.get_event_loop()
                 belief_session = BeliefSession(
                     dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
@@ -906,8 +940,22 @@ async def websocket_endpoint(ws: WebSocket):
                 try:
                     result = await loop.run_in_executor(None, belief_session.generate)
                     await ws.send_json({"type": "belief_generated", **result})
+                    # Warm the playgen cache in the background for the default observer
+                    if PLAYGEN_MODEL_PATH:
+                        belief_precompute_task = asyncio.create_task(
+                            _belief_precompute_loop(belief_session, 0))
                 except Exception as e:
                     await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
+
+            elif msg_type == "belief_precompute":
+                if belief_session is None:
+                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    continue
+                if PLAYGEN_MODEL_PATH:
+                    observer = int(data.get("observer", 0))
+                    await _cancel_belief_precompute()
+                    belief_precompute_task = asyncio.create_task(
+                        _belief_precompute_loop(belief_session, observer))
 
             elif msg_type == "belief_step":
                 if belief_session is None:
@@ -947,6 +995,8 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         if sim_task and not sim_task.done():
             sim_task.cancel()
+        if belief_precompute_task and not belief_precompute_task.done():
+            belief_precompute_task.cancel()
     finally:
         await rooms.handle_disconnect(ws)
 

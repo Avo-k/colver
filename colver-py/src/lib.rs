@@ -960,6 +960,7 @@ impl Env {
     #[pyo3(signature = (observer, n_worlds=50, temperature=1.0))]
     fn get_playgen_beliefs(
         &mut self,
+        py: Python<'_>,
         observer: u8,
         n_worlds: usize,
         temperature: f32,
@@ -974,13 +975,15 @@ impl Env {
                 "observer must be 0-3",
             ));
         }
+        // MC sampling takes ~1s: release the GIL so the web server's event
+        // loop (and parallel precompute workers) keep running.
+        let state = self.state;
         let searches = self.dede_searches.as_mut().unwrap();
-        let marginals = searches[observer as usize].playgen_marginals(
-            &self.state,
-            n_worlds,
-            temperature,
-            &mut self.rng,
-        );
+        let search = &mut searches[observer as usize];
+        let rng = &mut self.rng;
+        let marginals = py.allow_threads(move || {
+            search.playgen_marginals(&state, n_worlds, temperature, rng)
+        });
         Ok(marginals.map(|w| w.iter().map(|row| row.to_vec()).collect()))
     }
 

@@ -39,6 +39,8 @@ function actionHtml(action, phase) {
 // Module state
 let totalActions = 0;
 let numBidActions = 0;
+let allActions = null; // [{player, action, phase}] — full game history
+let precompute = null; // {observer, done, total} — playgen cache warming progress
 let currentIdx = 0;
 let currentState = null;
 let currentLastAction = null;
@@ -85,8 +87,10 @@ const TEMPLATE = `
                 <button class="belief-mode-btn" data-mode="heuristic">Heuristique</button>
                 <button class="belief-mode-btn" data-mode="compare">Comparer</button>
             </div>
+            <span id="belief-precompute"></span>
         </div>
     </div>
+    <div id="belief-history"></div>
     <div id="belief-grid"></div>
     <div id="belief-stats"></div>
 </div>
@@ -112,6 +116,10 @@ function onGenerated(data) {
     dealer = data.dealer;
     totalActions = data.total_actions;
     numBidActions = data.num_bid_actions;
+    allActions = data.actions || null;
+    precompute = null;
+    renderHistory();
+    renderPrecompute();
     currentIdx = 0;
     currentState = null;
     currentLastAction = null;
@@ -141,7 +149,27 @@ function onState(data) {
     if (slider) slider.value = currentIdx;
 
     updateInfo();
+    updateHistoryPosition();
     requestWeights();
+}
+
+function onPrecompute(data) {
+    precompute = data;
+    renderPrecompute();
+}
+
+function renderPrecompute() {
+    const el = document.getElementById('belief-precompute');
+    if (!el) return;
+    if (!precompute || precompute.observer !== observer || precompute.total === 0) {
+        el.textContent = '';
+        return;
+    }
+    if (precompute.done >= precompute.total) {
+        el.innerHTML = `Playgen <span class="belief-precompute-done">✓</span>`;
+    } else {
+        el.textContent = `Playgen ⏳ ${precompute.done}/${precompute.total}`;
+    }
 }
 
 function onWeights(data) {
@@ -185,6 +213,76 @@ function updateInfo() {
     } else if (lastAction) {
         lastAction.textContent = '';
     }
+}
+
+function renderHistory() {
+    const el = document.getElementById('belief-history');
+    if (!el) return;
+    el.innerHTML = '';
+    if (!allActions) return;
+
+    // Position 0 (before any action)
+    const start = document.createElement('button');
+    start.className = 'belief-hist-item belief-hist-start';
+    start.textContent = 'Début';
+    start.dataset.idx = '0';
+    start.title = 'Avant la première annonce';
+    el.appendChild(start);
+
+    let trickDiv = null;
+    for (let i = 0; i < allActions.length; i++) {
+        const { player, action, phase } = allActions[i];
+        const item = document.createElement('button');
+        item.className = 'belief-hist-item';
+        item.dataset.idx = String(i + 1); // position AFTER this action
+        item.style.setProperty('--seat-color', SEAT_COLORS[player]);
+        item.title = `${SEAT_NAMES[player]} : ${actionHtml(action, phase).replace(/<[^>]*>/g, '')}`;
+
+        if (phase === 0) {
+            item.classList.add('belief-hist-bid');
+            item.innerHTML = `<span class="belief-hist-seat">${SEAT_NAMES[player]}</span>${actionHtml(action, phase)}`;
+            el.appendChild(item);
+        } else {
+            // Group play actions 4 by 4 (tricks)
+            const playIdx = i - numBidActions;
+            if (playIdx % 4 === 0) {
+                trickDiv = document.createElement('span');
+                trickDiv.className = 'belief-hist-trick';
+                el.appendChild(trickDiv);
+            }
+            item.classList.add('belief-hist-card');
+            const img = document.createElement('img');
+            img.src = cardSvgPath(action);
+            img.alt = actionHtml(action, phase).replace(/<[^>]*>/g, '');
+            img.draggable = false;
+            item.appendChild(img);
+            const seat = document.createElement('span');
+            seat.className = 'belief-hist-seat';
+            seat.textContent = SEAT_NAMES[player];
+            item.appendChild(seat);
+            trickDiv.appendChild(item);
+        }
+    }
+    updateHistoryPosition();
+}
+
+function updateHistoryPosition() {
+    const el = document.getElementById('belief-history');
+    if (!el) return;
+    el.querySelectorAll('.belief-hist-item').forEach(item => {
+        const idx = parseInt(item.dataset.idx);
+        item.classList.toggle('belief-hist-done', idx <= currentIdx);
+        item.classList.toggle('belief-hist-current', idx === currentIdx);
+    });
+    // Keep the current item in view
+    const cur = el.querySelector('.belief-hist-current');
+    if (cur) cur.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+}
+
+function onHistoryClick(e) {
+    const item = e.target.closest('.belief-hist-item');
+    if (!item) return;
+    stepTo(parseInt(item.dataset.idx));
 }
 
 function renderGrid() {
@@ -468,6 +566,10 @@ function onObserverClick(e) {
     if (!btn) return;
     observer = parseInt(btn.dataset.obs);
     document.querySelectorAll('.belief-obs-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.obs) === observer));
+    // Re-warm the playgen cache for the new observer
+    precompute = null;
+    renderPrecompute();
+    send({ type: 'belief_precompute', observer });
     requestWeights();
 }
 
@@ -504,6 +606,7 @@ export function mount(container) {
     // Reset state
     totalActions = 0; currentIdx = 0; currentState = null;
     currentLastAction = null; initialHands = null;
+    allActions = null; precompute = null;
     nnWeights = null; heuristicWeights = null; playgenWeights = null; groundTruth = null;
     observer = 0; viewMode = 'nn'; loading = false;
 
@@ -516,12 +619,14 @@ export function mount(container) {
     document.getElementById('belief-slider').addEventListener('input', onSliderInput);
     document.getElementById('belief-observer-btns').addEventListener('click', onObserverClick);
     document.getElementById('belief-mode-btns').addEventListener('click', onModeClick);
+    document.getElementById('belief-history').addEventListener('click', onHistoryClick);
     document.addEventListener('keydown', onKeyDown);
 
     // WebSocket handlers
     onMessage('belief_generated', onGenerated);
     onMessage('belief_state', onState);
     onMessage('belief_weights', onWeights);
+    onMessage('belief_precompute', onPrecompute);
     onMessage('error', onError);
 
     // Auto-load a game on tab entry
@@ -532,6 +637,7 @@ export function unmount() {
     offMessage('belief_generated', onGenerated);
     offMessage('belief_state', onState);
     offMessage('belief_weights', onWeights);
+    offMessage('belief_precompute', onPrecompute);
     offMessage('error', onError);
     document.removeEventListener('keydown', onKeyDown);
 }
