@@ -99,13 +99,13 @@ const TEMPLATE = `
                 </div>
                 <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
                 <div id="annonces-sim-body"></div>
-                <div class="hidden" id="annonces-sim-viewer-wrap">
-                    <details id="annonces-sim-viewer">
-                        <summary>Voir 10 exemples de distribution</summary>
-                        <div id="annonces-sim-viewer-content"></div>
-                    </details>
-                </div>
             </div>
+        </div>
+        <div class="annonces-result-panel hidden" id="annonces-sim-viewer-wrap">
+            <details id="annonces-sim-viewer">
+                <summary>Voir 10 exemples de distribution</summary>
+                <div id="annonces-sim-viewer-content"></div>
+            </details>
         </div>
     </div>
 </div>
@@ -426,8 +426,9 @@ function updateProgressBar(id, completed, total, elapsedMs) {
 
 // Success % → strip cell color. Lightness rises monotonically with pct so the
 // strip stays readable for colorblind users; hue sweeps red → green.
+// ≤5%: near-black — this contract essentially never makes it.
 function oraclePctColor(pct) {
-    if (pct === 0) return 'transparent';
+    if (pct <= 5) return 'hsl(0, 0%, 10%)';
     return `hsl(${8 + 1.32 * pct}, 58%, ${24 + 0.32 * pct}%)`;
 }
 
@@ -506,36 +507,13 @@ function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSyn
 
     const body = document.getElementById('annonces-sim-body');
 
-    let html = '<div class="oracle-variant-label">Bandeau</div>';
-    html += renderOracleStrips(successCounts, completed);
+    let html = '';
     if (oracleSynth && completed > 0) {
         html += '<div class="oracle-variant-label">Moyennes</div>';
         html += renderOracleSynth(oracleSynth, successCounts, completed);
     }
-    html += '<div class="oracle-variant-label">Tableau complet</div>';
-
-    html += '<table id="oracle-table"><thead><tr><th></th>';
-    for (const label of THRESHOLD_LABELS) {
-        html += `<th>${label}</th>`;
-    }
-    html += '</tr></thead><tbody>';
-
-    // 4 suit rows
-    for (const suit of SUIT_DISPLAY_ORDER) {
-        const pcts = oraclePcts(successCounts, suit, completed);
-        html += `<tr><td>${suitHtml(suit)}</td>`;
-        for (let t = 0; t < THRESHOLDS.length; t++) {
-            const pct = pcts[t];
-            let cls;
-            if (pct === 0) cls = 'oracle-zero';
-            else if (pct >= 60) cls = 'oracle-high';
-            else if (pct >= 30) cls = 'oracle-mid';
-            else cls = 'oracle-low';
-            html += `<td class="${cls}">${pct}</td>`;
-        }
-        html += '</tr>';
-    }
-    html += '</tbody></table>';
+    html += '<div class="oracle-variant-label">Réussite par contrat</div>';
+    html += renderOracleStrips(successCounts, completed);
     body.innerHTML = html;
     highlightOracleCell(forcedAction);
 }
@@ -742,11 +720,11 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     });
 }
 
-// Highlight the oracle cell corresponding to the forced annonce (bid actions 1-40).
+// Highlight the bandeau cell corresponding to the forced annonce (bid actions 1-40).
 function highlightOracleCell(action) {
-    const table = document.getElementById('oracle-table');
-    if (!table) return;
-    table.querySelectorAll('.oracle-forced').forEach(el => el.classList.remove('oracle-forced'));
+    const strips = document.getElementById('oracle-strips');
+    if (!strips) return;
+    strips.querySelectorAll('.oracle-forced').forEach(el => el.classList.remove('oracle-forced'));
     if (action === null || action < 1 || action > 40) return;
     let suit, col;
     if (action <= 36) {
@@ -756,7 +734,7 @@ function highlightOracleCell(action) {
         suit = action - 37;
         col = 9; // Capot
     }
-    const row = table.querySelectorAll('tbody tr')[SUIT_DISPLAY_ORDER.indexOf(suit)];
+    const row = strips.querySelectorAll('.oracle-strip-row')[SUIT_DISPLAY_ORDER.indexOf(suit)];
     if (!row) return;
     const cell = row.children[col + 1];
     if (cell) cell.classList.add('oracle-forced');
@@ -851,6 +829,7 @@ function hideResults() {
     document.getElementById('annonces-results-area').classList.add('hidden');
     document.getElementById('annonces-nn-panel').classList.add('hidden');
     document.getElementById('annonces-verdict').classList.add('hidden');
+    document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
 }
 
 function resetPanels(numSims) {

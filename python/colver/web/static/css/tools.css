@@ -636,16 +636,6 @@
 }
 .oracle-quant-table td:first-child { font-size: 1.05rem; }
 
-/* Oracle table */
-#oracle-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-#oracle-table th { color: #888; font-weight: 600; padding: 4px 6px; text-align: center; }
-#oracle-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid #222; }
-#oracle-table td:first-child { font-size: 1.1rem; }
-.oracle-high { color: #82e0aa; }
-.oracle-mid  { color: #d4af37; }
-.oracle-low  { color: #ef9a9a; }
-.oracle-zero { color: #444; }
-
 /* Section titles with inline progress bars */
 #annonces-sim-header, #annonces-doudou-header {
     display: flex;
