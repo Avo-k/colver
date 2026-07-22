@@ -8,6 +8,7 @@ Belote Contrée engine + RL training stack.
 - [RULES.md](RULES.md) — game rules summary
 - [BENCH.md](BENCH.md) — performance benchmarks
 - [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
+- [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
 - `règles officielles belote contrée.pdf` — official FFB rules
 
 ## Subsystems
