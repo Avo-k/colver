@@ -79,6 +79,14 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
   1. **Surcoinche multiplier:** ×3 (was ×4). Affects surcontré réussi and chute.
   2. **Contré/surcontré scoring formula:** base is now 160 + contrat×mult (was 320/640 + contrat×mult). Capot is a regular contract at 250 (was flat 500/1000/2000).
 
+### Terminologie (FR)
+
+Vocabulaire à utiliser avec l'utilisateur (ne pas dire « chicane ») :
+- **avoir une coupe** / **couper** / **couper à [couleur]** — ne pas/plus avoir de carte dans une couleur
+- **coupe franche** — coupe présente dès la donne, avant même de commencer à jouer
+- **grosses cartes** / **cartes à points** — les cartes qui valent des points (As, Dix, Roi, Dame, Valet) ; ne pas dire « honneurs »
+- **avoir une longue** — avoir beaucoup de cartes dans une même couleur (ex. « une longue à cœur »)
+
 ### Performance-Critical Path
 
 `play.rs::legal_plays()` is the hottest function — all bitwise, no allocations. Target: >1M rollouts/sec single-threaded.
