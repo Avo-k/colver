@@ -1,0 +1,11 @@
+# v6 75M with softmax bid sampling T=0.10 (strong: ~62% divergence from greedy per decision)
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+temperature = 0.10
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true
