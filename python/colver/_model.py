@@ -8,7 +8,7 @@ from urllib.request import urlretrieve
 _DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.4.0/dmc_50.bin"
 _DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.7.0/bid_v6_isdd.bin"
 _DEFAULT_BELIEF_URL = "https://github.com/Avo-k/colver/releases/download/v0.7.0/belief_v4_fix_v2.bin"
-_DEFAULT_PLAYGEN_URL = "https://github.com/Avo-k/colver/releases/download/v0.7.0/playgen_v2_half.bin"
+_DEFAULT_PLAYGEN_URL = "https://github.com/Avo-k/colver/releases/download/v0.8.0/playgen_v2_final.bin"
 _CACHE_DIR = Path.home() / ".cache" / "colver" / "models"
 
 
@@ -177,7 +177,7 @@ def download_belief_model(
     return dest
 
 
-def playgen_model_path(name: str = "playgen_v2_half.bin") -> Path | None:
+def playgen_model_path(name: str = "playgen_v2_final.bin") -> Path | None:
     """Find a playgen world-sampler model weights file.
 
     Checks ``COLVER_PLAYGEN_MODEL_PATH`` env-var first, then
@@ -201,7 +201,7 @@ def playgen_model_path(name: str = "playgen_v2_half.bin") -> Path | None:
 
 def download_playgen_model(
     url: str | None = None,
-    name: str = "playgen_v2_half.bin",
+    name: str = "playgen_v2_final.bin",
     force: bool = False,
 ) -> Path:
     """Download playgen model weights to ``~/.cache/colver/models/``.
