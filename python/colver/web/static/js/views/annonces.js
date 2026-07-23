@@ -391,6 +391,21 @@ function handleBidEvalResult(data) {
     if (qValues.length > 5) {
         html += `<button class="ann-see-more" id="ann-qvalues-more">Voir plus (${qValues.length - 5})</button>`;
     }
+    if (data.playgen_policy && data.playgen_policy.length) {
+        const pol = data.playgen_policy.slice().sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const polBest = pol[0][0];
+        html += '<div class="oracle-variant-label">Playgen v2 <span class="oracle-quant-sub">p(annonce)</span></div>';
+        html += '<div class="visit-bars">';
+        pol.forEach(([action, p]) => {
+            const pct = (p * 100).toFixed(1);
+            html += `<div class="visit-row${action === polBest ? ' best' : ''}">
+                <span class="visit-name">${bidActionHtml(action)}</span>
+                <div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${Math.max(2, p * 100)}%"></div></div>
+                <span class="visit-count">${pct}%</span>
+            </div>`;
+        });
+        html += '</div>';
+    }
     document.getElementById('annonces-results-body').innerHTML = html;
     const moreBtn = document.getElementById('ann-qvalues-more');
     if (moreBtn) {
@@ -502,12 +517,23 @@ function renderOracleSynth(synth, successCounts, completed) {
     return html;
 }
 
+let worldsSource = 'uniform';
+
+const WORLDS_SOURCE_LABELS = {
+    playgen: 'mondes playgen v2 — conditionn\u00e9s \u00e0 l\u2019ench\u00e8re',
+    mixte: 'mondes playgen v2 + compl\u00e9ment uniforme',
+    uniform: 'mondes uniformes',
+};
+
 function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSynth) {
     updateProgressBar('oracle-progress', completed, total, elapsedMs);
 
     const body = document.getElementById('annonces-sim-body');
 
     let html = '';
+    if (worldsSource !== 'uniform') {
+        html += `<div class="oracle-worlds-badge">${WORLDS_SOURCE_LABELS[worldsSource] || worldsSource}</div>`;
+    }
     if (oracleSynth && completed > 0) {
         html += '<div class="oracle-variant-label">Moyennes</div>';
         html += renderOracleSynth(oracleSynth, successCounts, completed);
@@ -788,10 +814,12 @@ function handleSimUpdate(data) {
             `<div class="annonces-error">${data.error}</div>`;
         return;
     }
+    if (data.worlds_source) worldsSource = data.worlds_source;
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
 }
 
 function handleSimDone(data) {
+    if (data.worlds_source) worldsSource = data.worlds_source;
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
         renderSimViewer(data.sampled_deals, data.completed);

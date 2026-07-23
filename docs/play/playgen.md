@@ -238,3 +238,59 @@ time-budget podium stands: belief ≥ hybrid > playgen > uniform.
       surcoinche handling audit, then full leaderboard run
 - [ ] Later: scorer mode (hands revealed in prompt, conditioning dropout) for
       importance-weighted DD aggregation
+
+---
+
+## Playgen v2 (2026-07-23): physical suits + auction as prediction target
+
+Design changes vs v1 (decided with the user):
+
+- **No trump canonicalization.** Suits stay physical; augmentation is a full
+  random suit permutation (all 24 variants) applied per sample at load time.
+  The model must learn suit equivariance and route "which suit is trump" from
+  the contract tokens — same regime as the bid NN's 24× augmentation. This is
+  what unlocks the auction: the v1 canonical frame (`perm[trump]=0`) needed a
+  known contract and therefore could not tokenize mid-auction.
+- **Auction actions are prediction targets.** Sequence
+  `[BOS][OBSPOS][h1..h8]([ACT][BIDTOK])×B≤24([ACT][CARD])×P≤32` (max 122
+  tokens). A 43-way bid head reads at bid ACT positions, masked to the
+  *public* legal bid set (no belief machinery needed — bid legality is
+  public). Corpus max auction length is 21; cap 24 (`MAX_BID_ENTRIES_V2`).
+- **Void deals kept** as auction-only samples (all-pass probability matters
+  for future mid-auction generation).
+- Loss = mean CE over all predictions (play + bid, λ=1; bids ≈ 18% of preds).
+
+**Code:** `tokenize_replay_v2`/`PlaygenSampleV2`/`random_suit_perm`/
+`permute_bid_action`/`permute_bid_mask` (tokens.rs), `PlaygenConfig` + bid
+head (model.rs), `train_playgen --v2`, `export_playgen --v2` → **COLVPG02**
+(bid head appended after card head), infer.rs auto-detects magic; the sampler
+emits the header at `init_deal` and ACT+BID pairs during the auction
+(identity perm — all v1 canon↔phys code paths are identity-safe). Arena/IS-DD
+wiring unchanged: point `playgen_model` at a COLVPG02 file.
+
+**Validation:** 1M corpus × 4 observers: 127.87M play preds + 32.6M bid
+preds, 0 skipped, 0 false exclusions; perm-equivariance test (tokenizing
+under perm == permuting tokens).
+
+**Training (running):** moxxi RTX 3090 (CUDA 13.3 via
+`CUDARC_CUDA_VERSION=13010` override — cudarc 0.19.2 caps at 13.1), corpus
+9M games (8M moxxi seeds 101-108 + 1M local seed 7). d=384 L=6 H=8 =
+10.74M params, batch 192 (256 OOMs at 24GB — manual-softmax activations ×
+L=122²), lr 2e-4, warmup 2000, 160K steps ≈ 30.7M game-samples (same budget
+as v1's 60K×512). ~2.2 steps/s ≈ 20h. Checkpoints:
+`moxxi:~/playgen/models/playgen_v2/`, log `~/playgen/logs/train_v2.log`.
+Local 4090 smoke (300 steps): loss 2.20→1.49, play-acc 0.40, bid-acc 0.61.
+
+**After training:** rsync checkpoint → `export_playgen --v2 --d-model 384
+--layers 6 --heads 8` → `playgen_forward_accuracy_v2` (teacher-forcing parity,
+play + bid heads) → `playgen_generate_worlds`/`playgen_batch_worlds` (work
+as-is on v2 models) → arena pgNN bots with the v2 .bin. Note ~3.3× v1 FLOPs:
+expect ~55-60 ms/world; the fixed-dets comparison is the fair first test,
+then the 1s/move re-run to see if per-world quality flips the time-budget
+verdict.
+
+**New capability unlocked (not yet wired):** mid-auction worlds (sample
+auction continuation + full play → hidden hands during bidding, for
+BisDd/dd_bid) and sampled auction rollouts for bid EV — the bid head +
+`PlaygenModel::bid_logits` exist; needs a public bid-state machine in the
+sampler's generate path.

@@ -987,6 +987,104 @@ impl Env {
         Ok(marginals.map(|w| w.iter().map(|row| row.to_vec()).collect()))
     }
 
+    /// Playgen bid-policy probabilities at the current auction point
+    /// (v2 playgen models only). Returns 43 masked-softmax probabilities
+    /// (0.0 for illegal bids), or None if unavailable.
+    fn get_playgen_bid_policy(
+        &mut self,
+        observer: u8,
+        temperature: f32,
+    ) -> PyResult<Option<Vec<f32>>> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "observer must be 0-3",
+            ));
+        }
+        let state = self.state;
+        let searches = self.dede_searches.as_mut().unwrap();
+        let search = &mut searches[observer as usize];
+        let Some(logits) = search.playgen_bid_policy(&state) else {
+            return Ok(None);
+        };
+        let mask = state.legal_actions();
+        let t = temperature.max(1e-3);
+        let mut max_l = f32::NEG_INFINITY;
+        for c in 0..43 {
+            if mask & (1u64 << c) != 0 && logits[c] > max_l {
+                max_l = logits[c];
+            }
+        }
+        let mut probs = vec![0.0f32; 43];
+        let mut total = 0.0f32;
+        for c in 0..43 {
+            if mask & (1u64 << c) != 0 {
+                let p = ((logits[c] - max_l) / t).exp();
+                probs[c] = p;
+                total += p;
+            }
+        }
+        if total > 0.0 {
+            for p in probs.iter_mut() {
+                *p /= total;
+            }
+        }
+        Ok(Some(probs))
+    }
+
+    /// Sample full deals from the current mid-auction position via the
+    /// playgen model (v2 only): the auction is completed with the bid head,
+    /// then the deal is played out to reveal the hidden hands.
+    /// Returns up to `n_worlds` deals as 4 lists of 8 card ids, or None.
+    fn playgen_sample_auction_deals(
+        &mut self,
+        py: Python<'_>,
+        observer: u8,
+        n_worlds: usize,
+        temperature: f32,
+    ) -> PyResult<Option<Vec<Vec<Vec<u8>>>>> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "observer must be 0-3",
+            ));
+        }
+        let state = self.state;
+        let searches = self.dede_searches.as_mut().unwrap();
+        let search = &mut searches[observer as usize];
+        let rng = &mut self.rng;
+        // Slow (~0.4s/deal): release the GIL for the web event loop.
+        let worlds = py.allow_threads(move || {
+            search.playgen_auction_deals(&state, n_worlds, temperature, rng)
+        });
+        if worlds.is_empty() {
+            return Ok(None);
+        }
+        let out = worlds
+            .iter()
+            .map(|hands| {
+                hands
+                    .iter()
+                    .map(|&h| {
+                        let mut cards: Vec<u8> =
+                            (0..32u8).filter(|&c| h & (1 << c) != 0).collect();
+                        cards.sort_unstable();
+                        cards
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(Some(out))
+    }
+
     /// Initialize IS-DD (Dédé) beliefs for a new deal.
     /// Must be called after reset() and before action_dede().
     fn dede_init(&mut self) {

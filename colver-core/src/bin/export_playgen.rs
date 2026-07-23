@@ -1,18 +1,20 @@
-//! Export a playgen safetensors checkpoint to flat-f32 COLVPG01 weights for
-//! pure-Rust inference (`playgen::infer::PlaygenModel`).
+//! Export a playgen safetensors checkpoint to flat-f32 weights for pure-Rust
+//! inference (`playgen::infer::PlaygenModel`). V1 → COLVPG01; `--v2` (bid
+//! head, physical suits, 122-token positions) → COLVPG02 with the bid head
+//! appended after the card head.
 //!
 //! Usage:
 //!   cargo run -p colver-core --bin export_playgen --features dmc_train --release -- \
 //!     models/playgen/playgen_final.safetensors models/playgen/playgen_final.bin \
-//!     --d-model 256 --layers 4 --heads 8
+//!     --d-model 256 --layers 4 --heads 8 [--v2]
 
 use candle_core::Device;
-use colver_core::playgen::model::PlaygenTrainer;
+use colver_core::playgen::model::{PlaygenConfig, PlaygenTrainer};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: export_playgen <in.safetensors> <out.bin> [--d-model N --layers N --heads N]");
+        eprintln!("usage: export_playgen <in.safetensors> <out.bin> [--d-model N --layers N --heads N --v2]");
         std::process::exit(1);
     }
     let input = &args[1];
@@ -20,17 +22,24 @@ fn main() {
     let mut d_model = 256usize;
     let mut n_layers = 4usize;
     let mut n_heads = 8usize;
+    let mut v2 = false;
     let mut i = 3;
     while i < args.len() {
         match args[i].as_str() {
             "--d-model" => { d_model = args[i + 1].parse().unwrap(); i += 2; }
             "--layers" => { n_layers = args[i + 1].parse().unwrap(); i += 2; }
             "--heads" => { n_heads = args[i + 1].parse().unwrap(); i += 2; }
+            "--v2" => { v2 = true; i += 1; }
             other => { eprintln!("unknown arg {}", other); std::process::exit(1); }
         }
     }
 
-    let mut trainer = PlaygenTrainer::new(d_model, n_layers, n_heads, 1e-4, 0.0, Device::Cpu)
+    let cfg = if v2 {
+        PlaygenConfig::v2(d_model, n_layers, n_heads)
+    } else {
+        PlaygenConfig::v1(d_model, n_layers, n_heads)
+    };
+    let mut trainer = PlaygenTrainer::with_config(cfg, 1e-4, 0.0, Device::Cpu)
         .expect("trainer init");
     trainer.load_checkpoint(input).expect("load checkpoint");
 
@@ -66,9 +75,13 @@ fn main() {
     floats.extend(get("out_norm.weight"));
     floats.extend(get("head.weight"));
     floats.extend(get("head.bias"));
+    if v2 {
+        floats.extend(get("bid_head.weight"));
+        floats.extend(get("bid_head.bias"));
+    }
 
     let mut bytes: Vec<u8> = Vec::with_capacity(20 + floats.len() * 4);
-    bytes.extend_from_slice(b"COLVPG01");
+    bytes.extend_from_slice(if v2 { b"COLVPG02" } else { b"COLVPG01" });
     bytes.extend_from_slice(&(d_model as u32).to_le_bytes());
     bytes.extend_from_slice(&(n_layers as u32).to_le_bytes());
     bytes.extend_from_slice(&(n_heads as u32).to_le_bytes());

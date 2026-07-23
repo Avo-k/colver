@@ -3,21 +3,11 @@
 Notes d'idées pour la page `/analyse/annonces`. Rien ici n'est engagé ; c'est un
 backlog de réflexion. (Dernière mise à jour : 2026-07-23)
 
-## 1. Oracle : choisir entre « Bandeau » et « Tableau complet »
+## 1. ~~Oracle : choisir entre « Bandeau » et « Tableau complet »~~ — FAIT (2026-07-23)
 
-Les deux vues disent la même chose (le % de réussite par couleur × palier) ;
-seule la forme change. Il faut en garder une seule, ou les fusionner :
-
-- **Option A — garder le bandeau seul**, avec les % au survol (déjà en title)
-  et éventuellement le % affiché dans la cellule au-delà d'une certaine largeur
-  d'écran. Le plus compact.
-- **Option B — garder le tableau complet seul**, en lui appliquant le dégradé
-  de couleur du bandeau (aujourd'hui il n'a que 4 classes de couleur).
-- **Option C — bandeau par défaut + tableau complet replié** dans un
-  `<details>` (comme « Voir 10 exemples de distribution »).
-
-À trancher aussi : la place des marqueurs ▴80/▴50/▴20 si le bandeau disparaît
-(ils vivent sous le bandeau ; le tableau Moyennes porte déjà Sûr/Tendu).
+Résolu en option A : bandeau seul (renommé « Réussite par contrat »), Moyennes
+affichées en premier, cellules ≤5 % en quasi-noir (« n'arrive jamais »), % au
+survol. Reste possible un jour : afficher le % dans la cellule sur écran large.
 
 ## 2. Simulations : augmenter le nombre par défaut
 
@@ -65,11 +55,9 @@ Effets attendus :
 Attention : l'échantillonnage belief introduit un biais si le modèle est mal
 calibré — garder le mode uniforme comme référence comparable.
 
-## 4. Déplacer « Voir 10 exemples de distribution »
+## 4. ~~Déplacer « Voir 10 exemples de distribution »~~ — FAIT (2026-07-23)
 
-Le repli vit en bas de la box Oracle (il y a suivi les donnes qu'il montre).
-Emplacement à repenser — pistes : une box/onglet à part, près de la synthèse
-DouDou, ou un lien discret dans l'en-tête Oracle. À noter que si le
-sampling belief-conditionné (§3) arrive, ces exemples deviennent le moyen
-naturel de *vérifier à l'œil* la crédibilité des mondes tirés — ça pourrait
-mériter une place plus visible à ce moment-là.
+Déplacé en box repliée pleine largeur sous les colonnes DouDou50/Oracle.
+À garder en tête : si le sampling belief-conditionné (§3) arrive, ces exemples
+deviennent le moyen naturel de *vérifier à l'œil* la crédibilité des mondes
+tirés — ça pourrait mériter une place plus visible à ce moment-là.

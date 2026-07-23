@@ -737,7 +737,9 @@ class BeliefSession:
             self.action_idx += 1
         return self._get_state_info()
 
-    PLAYGEN_WORLDS = 50
+    # 30 worlds keeps the marginals readable while staying ~6-8s/position with
+    # the v2 model (43MB, ~3-5x slower per world than v1).
+    PLAYGEN_WORLDS = 30
     PLAYGEN_TEMP = 0.8
 
     def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:

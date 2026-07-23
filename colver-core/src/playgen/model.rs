@@ -10,7 +10,32 @@ use candle_core::{DType, Device, Result, Tensor, D};
 use candle_nn::{embedding, linear, AdamW, Embedding, Linear, Module, Optimizer, ParamsAdamW,
                 VarBuilder, VarMap};
 
-use super::tokens::{MAX_SEQ_LEN, NUM_ACTOR, NUM_CARD_ACTIONS, NUM_PRIMARY, NUM_SEG, NUM_SUIT};
+use super::tokens::{
+    MAX_SEQ_LEN, MAX_SEQ_LEN_V2, NUM_ACTOR, NUM_BID_ACTIONS, NUM_CARD_ACTIONS, NUM_PRIMARY,
+    NUM_SEG, NUM_SUIT,
+};
+
+/// Architecture config. V1: `bid_head = false`, `max_seq_len = MAX_SEQ_LEN`.
+/// V2 (physical suits + auction targets): `bid_head = true`,
+/// `max_seq_len = MAX_SEQ_LEN_V2`.
+#[derive(Clone, Copy)]
+pub struct PlaygenConfig {
+    pub d_model: usize,
+    pub n_layers: usize,
+    pub n_heads: usize,
+    pub bid_head: bool,
+    pub max_seq_len: usize,
+}
+
+impl PlaygenConfig {
+    pub fn v1(d_model: usize, n_layers: usize, n_heads: usize) -> Self {
+        PlaygenConfig { d_model, n_layers, n_heads, bid_head: false, max_seq_len: MAX_SEQ_LEN }
+    }
+
+    pub fn v2(d_model: usize, n_layers: usize, n_heads: usize) -> Self {
+        PlaygenConfig { d_model, n_layers, n_heads, bid_head: true, max_seq_len: MAX_SEQ_LEN_V2 }
+    }
+}
 
 struct RMSNorm {
     weight: Tensor,
@@ -124,32 +149,44 @@ pub struct PlaygenNet {
     layers: Vec<TransformerBlock>,
     out_norm: RMSNorm,
     head: Linear,
+    bid_head: Option<Linear>,
 }
 
 impl PlaygenNet {
     pub fn new(d_model: usize, n_layers: usize, n_heads: usize, vb: VarBuilder) -> Result<Self> {
+        Self::with_config(PlaygenConfig::v1(d_model, n_layers, n_heads), vb)
+    }
+
+    pub fn with_config(cfg: PlaygenConfig, vb: VarBuilder) -> Result<Self> {
+        let d_model = cfg.d_model;
         let d_ff = (2 * 4 * d_model) / 3;
-        let mut layers = Vec::with_capacity(n_layers);
-        for i in 0..n_layers {
+        let mut layers = Vec::with_capacity(cfg.n_layers);
+        for i in 0..cfg.n_layers {
             layers.push(TransformerBlock::new(
-                d_model, n_heads, d_ff,
+                d_model, cfg.n_heads, d_ff,
                 vb.pp(format!("layers.{}", i)),
             )?);
         }
+        let bid_head = if cfg.bid_head {
+            Some(linear(d_model, NUM_BID_ACTIONS, vb.pp("bid_head"))?)
+        } else {
+            None
+        };
         Ok(PlaygenNet {
             primary_emb: embedding(NUM_PRIMARY, d_model, vb.pp("primary_emb"))?,
             suit_emb: embedding(NUM_SUIT, d_model, vb.pp("suit_emb"))?,
             actor_emb: embedding(NUM_ACTOR, d_model, vb.pp("actor_emb"))?,
             seg_emb: embedding(NUM_SEG, d_model, vb.pp("seg_emb"))?,
-            pos_emb: embedding(MAX_SEQ_LEN, d_model, vb.pp("pos_emb"))?,
+            pos_emb: embedding(cfg.max_seq_len, d_model, vb.pp("pos_emb"))?,
             layers,
             out_norm: RMSNorm::new(d_model, 1e-6, vb.pp("out_norm"))?,
             head: linear(d_model, NUM_CARD_ACTIONS, vb.pp("head"))?,
+            bid_head,
         })
     }
 
-    /// Forward: 4× [B, L] i64 token tensors → [B, L, 32] card logits.
-    pub fn forward(
+    /// Backbone forward: 4× [B, L] i64 token tensors → [B, L, d] normed hidden.
+    pub fn forward_hidden(
         &self,
         primary: &Tensor,
         suit: &Tensor,
@@ -175,7 +212,19 @@ impl PlaygenNet {
             x = layer.forward(&x, attn_bias)?;
         }
 
-        let normed = self.out_norm.forward(&x)?;
+        self.out_norm.forward(&x)
+    }
+
+    /// Forward: 4× [B, L] i64 token tensors → [B, L, 32] card logits.
+    pub fn forward(
+        &self,
+        primary: &Tensor,
+        suit: &Tensor,
+        actor: &Tensor,
+        segment: &Tensor,
+        attn_bias: &Tensor,
+    ) -> Result<Tensor> {
+        let normed = self.forward_hidden(primary, suit, actor, segment, attn_bias)?;
         self.head.forward(&normed)
     }
 }
@@ -199,19 +248,28 @@ pub struct PlaygenBatch {
     pub segment: Vec<i64>,
     pub batch_size: usize,
     pub seq_len: usize,
-    /// Flat indices b * seq_len + pos of ACT tokens.
+    /// Flat indices b * seq_len + pos of play ACT tokens.
     pub pred_idx: Vec<u32>,
     pub targets: Vec<u32>,
     /// Legality masks, 1.0 = legal, [n_preds * 32].
     pub mask: Vec<f32>,
+    /// Flat indices of bid ACT tokens (v2; empty for v1 batches).
+    pub bid_pred_idx: Vec<u32>,
+    pub bid_targets: Vec<u32>,
+    /// Bid legality masks, 1.0 = legal, [n_bid_preds * 43].
+    pub bid_mask: Vec<f32>,
 }
 
 pub struct EvalStats {
     pub loss_sum: f64,
     pub correct: usize,
     pub n: usize,
-    /// Per-prediction NLL (same order as batch predictions).
+    /// Per-prediction NLL (same order as batch play predictions).
     pub nll: Vec<f32>,
+    pub bid_loss_sum: f64,
+    pub bid_correct: usize,
+    pub bid_n: usize,
+    pub bid_nll: Vec<f32>,
 }
 
 pub struct PlaygenTrainer {
@@ -230,9 +288,18 @@ impl PlaygenTrainer {
         weight_decay: f64,
         device: Device,
     ) -> Result<Self> {
+        Self::with_config(PlaygenConfig::v1(d_model, n_layers, n_heads), lr, weight_decay, device)
+    }
+
+    pub fn with_config(
+        cfg: PlaygenConfig,
+        lr: f64,
+        weight_decay: f64,
+        device: Device,
+    ) -> Result<Self> {
         let varmap = VarMap::new();
         let vb = VarBuilder::from_varmap(&varmap, DType::F32, &device);
-        let net = PlaygenNet::new(d_model, n_layers, n_heads, vb)?;
+        let net = PlaygenNet::with_config(cfg, vb)?;
         let optimizer = AdamW::new(
             varmap.all_vars(),
             ParamsAdamW { lr, beta1: 0.9, beta2: 0.98, eps: 1e-8, weight_decay },
@@ -252,11 +319,49 @@ impl PlaygenTrainer {
         self.optimizer.set_learning_rate(lr);
     }
 
-    /// Masked-CE forward. Returns (per-pred NLL tensor [N], argmax hits).
-    fn forward_loss(&self, batch: &PlaygenBatch) -> Result<(Tensor, usize)> {
+    /// Masked-CE at selected positions. Returns (per-pred NLL [N], argmax hits).
+    fn masked_nll(
+        &self,
+        flat_hidden: &Tensor,
+        head: &Linear,
+        pred_idx: &[u32],
+        targets: &[u32],
+        mask: &[f32],
+        n_actions: usize,
+    ) -> Result<(Tensor, usize)> {
+        let device = &self.device;
+        let n = targets.len();
+
+        let pred_idx_t = Tensor::from_slice(pred_idx, n, device)?;
+        let at_preds = head.forward(&flat_hidden.index_select(&pred_idx_t, 0)?)?; // [N, A]
+
+        // Apply legality mask: illegal → -1e9
+        let mask_t = Tensor::from_slice(mask, (n, n_actions), device)?;
+        let bias_mask = ((mask_t - 1.0)? * 1e9)?;
+        let masked = (at_preds + bias_mask)?;
+
+        // log_softmax (manual)
+        let max_l = masked.max_keepdim(D::Minus1)?;
+        let shifted = masked.broadcast_sub(&max_l)?;
+        let lse = shifted.exp()?.sum_keepdim(D::Minus1)?.log()?;
+        let logp = shifted.broadcast_sub(&lse)?; // [N, A]
+
+        let targets_t = Tensor::from_slice(targets, (n, 1), device)?;
+        let nll = logp.gather(&targets_t, D::Minus1)?.squeeze(D::Minus1)?.neg()?; // [N]
+
+        let argmax: Vec<u32> = masked.argmax(D::Minus1)?.to_vec1()?;
+        let correct = argmax.iter().zip(targets.iter()).filter(|(a, t)| a == t).count();
+
+        Ok((nll, correct))
+    }
+
+    /// Forward with both heads. Returns (play_nll, play_correct, bid_nll, bid_correct).
+    fn forward_loss(
+        &self,
+        batch: &PlaygenBatch,
+    ) -> Result<(Option<Tensor>, usize, Option<Tensor>, usize)> {
         let device = &self.device;
         let (b, l) = (batch.batch_size, batch.seq_len);
-        let n = batch.targets.len();
 
         let primary = Tensor::from_slice(&batch.primary, (b, l), device)?;
         let suit = Tensor::from_slice(&batch.suit, (b, l), device)?;
@@ -264,53 +369,83 @@ impl PlaygenTrainer {
         let segment = Tensor::from_slice(&batch.segment, (b, l), device)?;
         let bias = causal_bias(l, device)?;
 
-        let logits = self.net.forward(&primary, &suit, &actor, &segment, &bias)?;
-        let flat = logits.reshape((b * l, NUM_CARD_ACTIONS))?;
+        let hidden = self.net.forward_hidden(&primary, &suit, &actor, &segment, &bias)?;
+        let d = hidden.dim(D::Minus1)?;
+        let flat = hidden.reshape((b * l, d))?;
 
-        let pred_idx = Tensor::from_slice(&batch.pred_idx, n, device)?;
-        let at_preds = flat.index_select(&pred_idx, 0)?; // [N, 32]
+        let (play_nll, play_correct) = if batch.targets.is_empty() {
+            (None, 0)
+        } else {
+            let (nll, c) = self.masked_nll(
+                &flat, &self.net.head,
+                &batch.pred_idx, &batch.targets, &batch.mask, NUM_CARD_ACTIONS,
+            )?;
+            (Some(nll), c)
+        };
 
-        // Apply legality mask: illegal → -1e9
-        let mask = Tensor::from_slice(&batch.mask, (n, NUM_CARD_ACTIONS), device)?;
-        let bias_mask = ((mask - 1.0)? * 1e9)?;
-        let masked = (at_preds + bias_mask)?;
+        let (bid_nll, bid_correct) = if batch.bid_targets.is_empty() {
+            (None, 0)
+        } else {
+            let bid_head = self
+                .net
+                .bid_head
+                .as_ref()
+                .expect("batch has bid targets but model has no bid head");
+            let (nll, c) = self.masked_nll(
+                &flat, bid_head,
+                &batch.bid_pred_idx, &batch.bid_targets, &batch.bid_mask, NUM_BID_ACTIONS,
+            )?;
+            (Some(nll), c)
+        };
 
-        // log_softmax (manual)
-        let max_l = masked.max_keepdim(D::Minus1)?;
-        let shifted = masked.broadcast_sub(&max_l)?;
-        let lse = shifted.exp()?.sum_keepdim(D::Minus1)?.log()?;
-        let logp = shifted.broadcast_sub(&lse)?; // [N, 32]
-
-        let targets = Tensor::from_slice(&batch.targets, (n, 1), device)?;
-        let nll = logp.gather(&targets, D::Minus1)?.squeeze(D::Minus1)?.neg()?; // [N]
-
-        let argmax: Vec<u32> = masked.argmax(D::Minus1)?.to_vec1()?;
-        let correct = argmax
-            .iter()
-            .zip(batch.targets.iter())
-            .filter(|(a, t)| a == t)
-            .count();
-
-        Ok((nll, correct))
+        Ok((play_nll, play_correct, bid_nll, bid_correct))
     }
 
-    /// One optimizer step. Returns (mean loss, accuracy, n_preds).
-    pub fn train_step(&mut self, batch: &PlaygenBatch) -> Result<(f32, f32, usize)> {
-        let n = batch.targets.len();
-        let (nll, correct) = self.forward_loss(batch)?;
-        let loss = nll.mean_all()?;
+    /// One optimizer step; loss = mean over all predictions (play + bid).
+    /// Returns (mean loss, play accuracy, n_play_preds, bid accuracy, n_bid_preds).
+    pub fn train_step(&mut self, batch: &PlaygenBatch) -> Result<(f32, f32, usize, f32, usize)> {
+        let n_play = batch.targets.len();
+        let n_bid = batch.bid_targets.len();
+        let (play_nll, play_c, bid_nll, bid_c) = self.forward_loss(batch)?;
+        let all_nll = match (&play_nll, &bid_nll) {
+            (Some(p), Some(b)) => Tensor::cat(&[p, b], 0)?,
+            (Some(p), None) => p.clone(),
+            (None, Some(b)) => b.clone(),
+            (None, None) => panic!("empty batch"),
+        };
+        let loss = all_nll.mean_all()?;
         self.optimizer.backward_step(&loss)?;
         let loss_val: f32 = loss.detach().to_vec0()?;
-        Ok((loss_val, correct as f32 / n as f32, n))
+        Ok((
+            loss_val,
+            play_c as f32 / n_play.max(1) as f32,
+            n_play,
+            bid_c as f32 / n_bid.max(1) as f32,
+            n_bid,
+        ))
     }
 
     /// Eval without gradient. Returns per-prediction NLLs for breakdowns.
     pub fn eval_step(&self, batch: &PlaygenBatch) -> Result<EvalStats> {
-        let n = batch.targets.len();
-        let (nll, correct) = self.forward_loss(batch)?;
-        let nll_v: Vec<f32> = nll.detach().to_vec1()?;
-        let loss_sum: f64 = nll_v.iter().map(|&x| x as f64).sum();
-        Ok(EvalStats { loss_sum, correct, n, nll: nll_v })
+        let (play_nll, play_c, bid_nll, bid_c) = self.forward_loss(batch)?;
+        let nll_v: Vec<f32> = match &play_nll {
+            Some(t) => t.detach().to_vec1()?,
+            None => Vec::new(),
+        };
+        let bid_nll_v: Vec<f32> = match &bid_nll {
+            Some(t) => t.detach().to_vec1()?,
+            None => Vec::new(),
+        };
+        Ok(EvalStats {
+            loss_sum: nll_v.iter().map(|&x| x as f64).sum(),
+            correct: play_c,
+            n: nll_v.len(),
+            nll: nll_v,
+            bid_loss_sum: bid_nll_v.iter().map(|&x| x as f64).sum(),
+            bid_correct: bid_c,
+            bid_n: bid_nll_v.len(),
+            bid_nll: bid_nll_v,
+        })
     }
 
     pub fn save_checkpoint(&self, path: &str) -> Result<()> {

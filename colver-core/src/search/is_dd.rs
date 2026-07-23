@@ -491,6 +491,28 @@ impl IsDdSearch {
         Some(weights)
     }
 
+    /// Playgen bid-policy logits (43) at the current auction point
+    /// (v2 playgen models only; None otherwise).
+    pub fn playgen_bid_policy(&mut self, state: &GameState) -> Option<[f32; 43]> {
+        self.playgen.as_mut()?.bid_policy(state)
+    }
+
+    /// Sample full deals from a mid-auction position via the playgen model
+    /// (v2 only): auction completed with the bid head, deal played out to
+    /// reveal hands. Returns up to `n_worlds` hand assignments.
+    pub fn playgen_auction_deals(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl Rng,
+    ) -> Vec<[u32; 4]> {
+        match self.playgen.as_mut() {
+            Some(sampler) => sampler.generate_deals_from_auction(state, n_worlds, temperature, rng),
+            None => Vec::new(),
+        }
+    }
+
     /// Get elephant memory stats: (surviving_particles, total_particles).
     pub fn elephant_stats(&self) -> (usize, usize) {
         match &self.elephant {

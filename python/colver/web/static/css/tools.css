@@ -589,6 +589,18 @@
 }
 .oracle-variant-label:first-child { margin-top: 0; }
 
+/* Oracle — worlds source badge (playgen v2 conditioning) */
+.oracle-worlds-badge {
+    display: inline-block;
+    color: #7fae7f;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid #3c5a3c;
+    border-radius: 10px;
+    padding: 2px 8px;
+    margin-bottom: 6px;
+}
+
 /* Oracle — gradient strips */
 #oracle-strips { display: grid; gap: 0; }
 .oracle-strip-header, .oracle-strip-row, .oracle-strip-markers {

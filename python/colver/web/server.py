@@ -335,17 +335,49 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         dealer = (seat - 1 - len(prior_actions) + 32) % 4
         THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162]
 
-        # Pre-generate all distributions
         others = [s for s in range(4) if s != seat]
-        all_hands = []
-        for _ in range(num_sims):
+
+        def _uniform_hands():
             r = list(remaining)
             _random.shuffle(r)
             h = [None] * 4
             h[seat] = sorted(hand)
             for j, p in enumerate(others):
                 h[p] = sorted(r[j * 8:(j + 1) * 8])
-            all_hands.append(h)
+            return h
+
+        # Worlds: playgen v2 (conditioned on the current auction) when
+        # available, uniform otherwise. Generation is slow (~0.4s/deal) so it
+        # runs chunk-wise in an executor, overlapped with the DD solves below.
+        playgen_env = None
+        worlds_source = "uniform"
+        if PLAYGEN_MODEL_PATH:
+            def _mk_playgen_env():
+                e = _colver_pkg.Env.deal_with_hands(dealer, _uniform_hands())
+                e.load_playgen_model(PLAYGEN_MODEL_PATH)
+                e.dede_init()
+                for a in prior_actions:
+                    e.dede_step(a)
+                # Probe: v1 playgen weights cannot sample auctions (None).
+                probe = e.playgen_sample_auction_deals(seat, 1, 1.0)
+                return e if probe else None
+            try:
+                playgen_env = await loop.run_in_executor(None, _mk_playgen_env)
+            except Exception:
+                playgen_env = None
+            if playgen_env is not None:
+                worlds_source = "playgen"
+
+        all_hands = []
+        if playgen_env is None:
+            for _ in range(num_sims):
+                all_hands.append(_uniform_hands())
+
+        PLAYGEN_CHUNK = 8
+
+        def _gen_chunk(n):
+            deals = playgen_env.playgen_sample_auction_deals(seat, n, 1.0)
+            return deals or []
 
         # Phase 1: Oracle (DD solves) — parallel sliding window on _DD_EXECUTOR
         # (solve_all_suits releases the GIL, so the solves genuinely overlap).
@@ -372,15 +404,42 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         completed = 0
         next_i = 0
         pending = set()
+        gen_task = None
+        gen_requested = 0
+        if playgen_env is not None:
+            gen_requested = min(PLAYGEN_CHUNK, num_sims)
+            gen_task = loop.run_in_executor(None, _gen_chunk, gen_requested)
         try:
             while completed < num_sims:
-                while next_i < num_sims and len(pending) < window:
+                if gen_task is not None and gen_task.done():
+                    all_hands.extend(gen_task.result())
+                    if gen_requested < num_sims:
+                        n = min(PLAYGEN_CHUNK, num_sims - gen_requested)
+                        gen_requested += n
+                        gen_task = loop.run_in_executor(None, _gen_chunk, n)
+                    else:
+                        gen_task = None
+                        # Shortfall (failed generations) → uniform top-up.
+                        while len(all_hands) < num_sims:
+                            all_hands.append(_uniform_hands())
+                            worlds_source = "mixte"
+
+                while next_i < min(num_sims, len(all_hands)) and len(pending) < window:
                     pending.add(loop.run_in_executor(
                         _DD_EXECUTOR, _run_dd_sim_with_hands, all_hands[next_i], dealer))
                     next_i += 1
-                done, pending = await asyncio.wait(
-                    pending, return_when=asyncio.FIRST_COMPLETED)
+
+                wait_set = set(pending)
+                if gen_task is not None:
+                    wait_set.add(gen_task)
+                if not wait_set:
+                    break
+                done, _ = await asyncio.wait(
+                    wait_set, return_when=asyncio.FIRST_COMPLETED)
                 for fut in done:
+                    if fut is gen_task:
+                        continue  # consumed at the top of the loop
+                    pending.discard(fut)
                     result = fut.result()
                     for suit_idx, (ns, ew) in enumerate(result["suits"]):
                         oracle_ns_sums[suit_idx] += ns
@@ -399,10 +458,13 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
                     "success_counts": success_counts,
                     "oracle_synth": _oracle_synth(),
+                    "worlds_source": worlds_source,
                 })
         finally:
             for fut in pending:
                 fut.cancel()
+            if gen_task is not None:
+                gen_task.cancel()
 
         await ws.send_json({
             "type": "annonces_sim_done",
@@ -411,6 +473,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "success_counts": success_counts,
             "oracle_synth": _oracle_synth(),
             "sampled_deals": sampled_deals,
+            "worlds_source": worlds_source,
         })
 
         # Phase 2: Dédé (NN bid + DMC play) — slow
@@ -921,13 +984,34 @@ async def websocket_endpoint(ws: WebSocket):
                     dealer = (seat - 1 - n_prior + 32) % 4
                     env = _colver_pkg.Env.deal_with_hands(dealer, hands)
                     env.load_bid_model(BID_MODEL_PATH)
+                    playgen_ok = False
+                    if PLAYGEN_MODEL_PATH:
+                        try:
+                            env.load_playgen_model(PLAYGEN_MODEL_PATH)
+                            env.dede_init()
+                            playgen_ok = True
+                        except Exception:
+                            playgen_ok = False
                     for action in prior_actions:
-                        env.step(action)
+                        if playgen_ok:
+                            env.dede_step(action)
+                        else:
+                            env.step(action)
                     result = env.action_bid_nn()
+                    playgen_policy = None
+                    if playgen_ok:
+                        # v2 playgen models only; returns None on v1 weights.
+                        pol = env.get_playgen_bid_policy(seat, 1.0)
+                        if pol is not None:
+                            playgen_policy = [
+                                [a, round(float(p), 4)]
+                                for a, p in enumerate(pol) if p > 0.0005
+                            ]
                     await ws.send_json({
                         "type": "bid_eval_result",
                         "q_values": [[int(a), round(float(q), 3)] for a, q in result["q_values"]],
                         "best_action": int(result["best_action"]),
+                        "playgen_policy": playgen_policy,
                     })
                 except Exception as e:
                     await ws.send_json({"type": "bid_eval_result", "error": str(e)})

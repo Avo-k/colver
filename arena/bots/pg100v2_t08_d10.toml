@@ -1,0 +1,14 @@
+# Playgen A/B: IS-DD 10 dets, 100% playgen worlds
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 10
+time_ms = 0
+playgen_model = "models/playgen_v2/playgen_v2_60k.bin"
+playgen_frac = 1.0
+playgen_temp = 0.8
