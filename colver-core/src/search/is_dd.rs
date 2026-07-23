@@ -75,6 +75,17 @@ pub struct IsDdConfig {
     pub playgen_frac: f32,
     /// Softmax temperature for playgen world sampling (default 1.0 = posterior).
     pub playgen_temp: f32,
+    /// Ensemble pool: among NON-playgen worlds, fraction sampled with belief
+    /// weights (when available); the rest use constraint-uniform sampling for
+    /// coverage. Default 1.0 = previous behavior (all weighted when a belief
+    /// source is active).
+    pub belief_frac: f32,
+    /// Auction-credibility importance weighting of worlds in the DD
+    /// aggregation (requires `load_cred_bid_net`). Each world's weight is the
+    /// product of per-bid rank factors (would the bid net replay the observed
+    /// bid with this world's hand?), flattened by this exponent.
+    /// 0.0 = off (default); 0.5 = recommended soft weighting.
+    pub cred_alpha: f32,
 }
 
 impl Default for IsDdConfig {
@@ -95,6 +106,8 @@ impl Default for IsDdConfig {
             early_termination: true,
             playgen_frac: 0.0,
             playgen_temp: 1.0,
+            belief_frac: 1.0,
+            cred_alpha: 0.0,
         }
     }
 }
@@ -178,6 +191,12 @@ pub struct IsDdSearch {
     belief_tracking: Option<EnvTracking>,
     elephant: Option<ElephantMemory>,
     playgen: Option<PlaygenSampler>,
+    /// Bid net used as an auction-credibility judge (see `cred_alpha`).
+    cred_bid_net: Option<crate::bid_net::BidNet>,
+    /// Observed auction this deal: (bidder, action) in order.
+    auction: Vec<(u8, u8)>,
+    /// State at deal start (pre-auction), for credibility replays.
+    init_state: Option<GameState>,
     tt_buf: Vec<u64>,
 }
 
@@ -189,8 +208,17 @@ impl IsDdSearch {
             belief_tracking: None,
             elephant: None,
             playgen: None,
+            cred_bid_net: None,
+            auction: Vec::new(),
+            init_state: None,
             tt_buf: new_tt_buffer(),
         }
+    }
+
+    /// Load the bid net used as auction-credibility judge (`cred_alpha`).
+    pub fn load_cred_bid_net(&mut self, path: &str) -> std::io::Result<()> {
+        self.cred_bid_net = Some(crate::bid_net::BidNet::load(path)?);
+        Ok(())
     }
 
     /// Attach a playgen world-sampler model (shared, read-only).
@@ -230,6 +258,10 @@ impl IsDdSearch {
         if let Some(sampler) = &mut self.playgen {
             sampler.init_deal(state, observer);
         }
+
+        // Credibility judge: remember the pre-auction state, reset the log.
+        self.auction.clear();
+        self.init_state = Some(*state);
 
         // Reset elephant memory for new deal (re-initialized per config in search).
         if let Some(ref mut elephant) = self.elephant {
@@ -272,6 +304,9 @@ impl IsDdSearch {
         }
         if let Some(tracking) = &mut self.belief_tracking {
             tracking.track_action(state_before, action);
+        }
+        if state_before.phase == Phase::Bidding {
+            self.auction.push((player, action));
         }
         // Update elephant memory: filter particles based on observed play.
         if state_before.phase == Phase::Playing {
@@ -513,6 +548,65 @@ impl IsDdSearch {
         }
     }
 
+    /// Auction-credibility weight of a world: for each observed bid by a
+    /// player other than `observer`, ask the credibility bid net whether it
+    /// would replay that bid holding the world's hand for that player. Rank
+    /// factors (argmax 1.0, top-3 0.7, else 0.35) multiply; the product is
+    /// flattened by `alpha`. Returns 1.0 when disabled or no judge is loaded.
+    fn credibility_weight(&mut self, world_hands: &[u32; 4], observer: u8, alpha: f32) -> f32 {
+        if alpha <= 0.0 || self.auction.is_empty() {
+            return 1.0;
+        }
+        let Some(base) = self.init_state else { return 1.0 };
+        let Some(net) = self.cred_bid_net.as_mut() else { return 1.0 };
+
+        let obs_dim = net.obs_dim();
+        let mut obs = vec![0.0f32; obs_dim];
+        let mut s = base;
+        s.hands = *world_hands;
+        let mut hist: Vec<(u8, u8)> = Vec::with_capacity(self.auction.len());
+        let mut w = 1.0f32;
+
+        for &(p, a) in &self.auction {
+            if p != observer && s.phase == Phase::Bidding {
+                use crate::bid_obs::{
+                    self, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+                    BID_OBS_DIM_SCORE_AWARE_V3,
+                };
+                // Standalone-deal convention: cumulative scores 0-0.
+                match obs_dim {
+                    BID_OBS_DIM_SCORE_AWARE_V3 => {
+                        bid_obs::write_bid_observation_score_aware_v3(&mut obs, 0, &s, &hist, 0, 0)
+                    }
+                    BID_OBS_DIM_SCORE_AWARE_V2 => {
+                        bid_obs::write_bid_observation_score_aware_v2(&mut obs, 0, &s, &hist, 0, 0)
+                    }
+                    BID_OBS_DIM_SCORE_AWARE => {
+                        bid_obs::write_bid_observation_score_aware(&mut obs, 0, &s, &hist, 0, 0)
+                    }
+                    _ => bid_obs::write_bid_observation(&mut obs, 0, &s, &hist),
+                }
+                let q = net.evaluate(&obs);
+                let legal = s.legal_actions();
+                let qa = q[a as usize];
+                let mut better = 0u32;
+                for c in 0..43u8 {
+                    if c != a && legal & (1u64 << c) != 0 && q[c as usize] > qa {
+                        better += 1;
+                    }
+                }
+                w *= match better {
+                    0 => 1.0,
+                    1 | 2 => 0.7,
+                    _ => 0.35,
+                };
+            }
+            hist.push((p, a));
+            s.step(a);
+        }
+        w.powf(alpha)
+    }
+
     /// Get elephant memory stats: (surviving_particles, total_particles).
     pub fn elephant_stats(&self) -> (usize, usize) {
         match &self.elephant {
@@ -655,9 +749,10 @@ impl IsDdSearch {
             }
         }
 
-        // Score accumulators: sum of NS points per card, count per card
-        let mut score_sum = [0i64; 32];
-        let mut score_count = [0u32; 32];
+        // Score accumulators: weighted sum of NS points per card, weight per card
+        // (weights are 1.0 unless auction-credibility weighting is enabled).
+        let mut score_sum = [0f64; 32];
+        let mut weight_sum = [0f64; 32];
 
         // Collect determinized hands for elephant memory.
         let store_particles = config.use_elephant_memory && self.elephant.is_some();
@@ -713,10 +808,12 @@ impl IsDdSearch {
                         s
                     })
                     .or_else(|| determinize_greedy(state, observer, rng))
-            } else if let Some(ref w) = weights {
+            } else if weights.is_some() && rng.gen::<f32>() < config.belief_frac {
+                let w = weights.as_ref().unwrap();
                 determinize_weighted(state, observer, w, rng)
                     .or_else(|| determinize_greedy(state, observer, rng))
             } else {
+                // Ensemble coverage floor: constraint-uniform world.
                 determinize_greedy(state, observer, rng)
             };
 
@@ -733,12 +830,18 @@ impl IsDdSearch {
                 det_hands.push(det_state.hands);
             }
 
+            let cred_w = if config.cred_alpha > 0.0 {
+                self.credibility_weight(&det_state.hands, observer, config.cred_alpha) as f64
+            } else {
+                1.0
+            };
+
             let scores = solve_with_scores(&det_state, Some(&mut self.tt_buf));
 
             for i in 0..scores.count {
                 let (card, ns_pts) = scores.scores[i];
-                score_sum[card as usize] += ns_pts as i64;
-                score_count[card as usize] += 1;
+                score_sum[card as usize] += ns_pts as f64 * cred_w;
+                weight_sum[card as usize] += cred_w;
             }
 
             successful_dets += 1;
@@ -761,9 +864,9 @@ impl IsDdSearch {
         let mut mask = legal;
         while mask != 0 {
             let card = mask.trailing_zeros() as u8;
-            let count = score_count[card as usize];
-            let avg = if count > 0 {
-                score_sum[card as usize] as f32 / count as f32
+            let wsum = weight_sum[card as usize];
+            let avg = if wsum > 1e-9 {
+                (score_sum[card as usize] / wsum) as f32
             } else {
                 81.0 // neutral fallback (≈162/2)
             };

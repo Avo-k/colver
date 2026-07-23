@@ -233,6 +233,9 @@ struct BotConfig {
     playgen_model: Option<String>,
     playgen_frac: f32,
     playgen_temp: f32,
+    belief_frac: f32,
+    cred_alpha: f32,
+    cred_bid_model: Option<String>,
 }
 
 impl Default for BotConfig {
@@ -264,6 +267,9 @@ impl Default for BotConfig {
             playgen_model: None,
             playgen_frac: 0.0,
             playgen_temp: 1.0,
+            belief_frac: 1.0,
+            cred_alpha: 0.0,
+            cred_bid_model: None,
         }
     }
 }
@@ -306,6 +312,12 @@ impl BotConfig {
         };
         if self.elephant_memory {
             label.push_str("+lefant");
+        }
+        if self.belief_frac < 1.0 {
+            label.push_str(&format!("+bf{:.0}", self.belief_frac * 100.0));
+        }
+        if self.cred_alpha > 0.0 {
+            label.push_str(&format!("+cred{:.1}", self.cred_alpha));
         }
         if self.playgen_model.is_some() && self.playgen_frac > 0.0 {
             label.push_str(&format!("+pg{:.0}", self.playgen_frac * 100.0));
@@ -377,6 +389,9 @@ fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
                 ("play", "playgen_model") => cfg.playgen_model = Some(val.to_string()),
                 ("play", "playgen_frac") => cfg.playgen_frac = val.parse().unwrap_or(0.0),
                 ("play", "playgen_temp") => cfg.playgen_temp = val.parse().unwrap_or(1.0),
+                ("play", "belief_frac") => cfg.belief_frac = val.parse().unwrap_or(1.0),
+                ("play", "cred_alpha") => cfg.cred_alpha = val.parse().unwrap_or(0.0),
+                ("play", "cred_bid_model") => cfg.cred_bid_model = Some(val.to_string()),
                 _ => {} // ignore unknown keys
             }
         }
@@ -521,6 +536,9 @@ struct Agent {
     playgen_model: Option<String>,
     playgen_frac: f32,
     playgen_temp: f32,
+    belief_frac: f32,
+    cred_alpha: f32,
+    cred_bid_model: Option<String>,
 }
 
 /// All shared model weights for the tournament.
@@ -621,6 +639,12 @@ fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, Stri
         playgen_model: cfg.playgen_model.clone(),
         playgen_frac: cfg.playgen_frac,
         playgen_temp: cfg.playgen_temp,
+        belief_frac: cfg.belief_frac,
+        cred_alpha: cfg.cred_alpha,
+        // Credibility judge defaults to the bot's own bid model.
+        cred_bid_model: cfg.cred_bid_model.clone().or_else(|| {
+            if cfg.cred_alpha > 0.0 { cfg.bid_model.clone() } else { None }
+        }),
     })
 }
 
@@ -681,6 +705,8 @@ fn play_match(
             time_limit_ms: if a.time_ms > 0 { Some(a.time_ms) } else { None },
             playgen_frac: a.playgen_frac,
             playgen_temp: a.playgen_temp,
+            belief_frac: a.belief_frac,
+            cred_alpha: a.cred_alpha,
             use_elephant_memory: a.elephant_memory,
             elephant_smoothing: a.elephant_smoothing,
             elephant_dominance_penalty: a.elephant_dominance_penalty,
@@ -755,6 +781,12 @@ fn play_match(
                 ns_smart_dd[1].set_playgen_model(model);
             }
         }
+        if ns_agent.cred_alpha > 0.0 {
+            if let Some(path) = &ns_agent.cred_bid_model {
+                let _ = ns_smart_dd[0].load_cred_bid_net(path);
+                let _ = ns_smart_dd[1].load_cred_bid_net(path);
+            }
+        }
     }
     if ew_is_smart_dd {
         if let Some(path) = &ew_agent.belief_path {
@@ -765,6 +797,12 @@ fn play_match(
             if let Some(model) = get_playgen_model(path) {
                 ew_smart_dd[0].set_playgen_model(model.clone());
                 ew_smart_dd[1].set_playgen_model(model);
+            }
+        }
+        if ew_agent.cred_alpha > 0.0 {
+            if let Some(path) = &ew_agent.cred_bid_model {
+                let _ = ew_smart_dd[0].load_cred_bid_net(path);
+                let _ = ew_smart_dd[1].load_cred_bid_net(path);
             }
         }
     }

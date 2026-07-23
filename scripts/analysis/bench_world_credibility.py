@@ -13,8 +13,9 @@ Usage:
       [--positions 30] [--worlds 12] [--seed 42] \
       [--playgen models/playgen_v2/playgen_v2_half.bin]
 
-Résultats de référence (playgen v2 @60K, 30 positions, 564 jugements) :
-  playgen : argmax 59%  top3 91%
+Résultats de référence (playgen v2 @60K, 30 positions, 564 jugements ×3) :
+  playgen : argmax 61%  top3 92%
+  belief  : argmax 30%  top3 61%   (bid_belief_v4, hidden 256)
   uniform : argmax  9%  top3 27%
 """
 import argparse
@@ -38,11 +39,14 @@ def main():
     ap.add_argument("--worlds", type=int, default=12)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--playgen", default="models/playgen_v2/playgen_v2_half.bin")
+    ap.add_argument("--belief", default="models/bid_belief_v4.bin",
+                    help="bid belief net (COLVBB, obs 108); vide pour désactiver")
     ap.add_argument("--temperature", type=float, default=1.0)
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
-    stats = {s: {"argmax": 0, "top3": 0, "n": 0} for s in ("playgen", "uniform")}
+    samplers = ["playgen", "belief", "uniform"] if args.belief else ["playgen", "uniform"]
+    stats = {s: {"argmax": 0, "top3": 0, "n": 0} for s in samplers}
     t_start = time.time()
     pos_done = 0
 
@@ -78,6 +82,14 @@ def main():
         pg_worlds = penv.playgen_sample_auction_deals(
             observer, args.worlds, args.temperature) or []
 
+        bel_worlds = []
+        if args.belief:
+            benv = Env.deal_with_hands(dealer, hands)
+            for a in actions:
+                benv.step(a)
+            bel_worlds = benv.bid_belief_sample_deals(
+                observer, args.worlds, args.belief) or []
+
         obs_hand = hands[observer]
         rest = [c for c in range(32) if c not in obs_hand]
         un_worlds = []
@@ -90,7 +102,10 @@ def main():
                 w[p] = sorted(r[j * 8:(j + 1) * 8])
             un_worlds.append(w)
 
-        for label, worlds in (("playgen", pg_worlds), ("uniform", un_worlds)):
+        pools = [("playgen", pg_worlds), ("uniform", un_worlds)]
+        if args.belief:
+            pools.insert(1, ("belief", bel_worlds))
+        for label, worlds in pools:
             for w in worlds:
                 e2 = Env.deal_with_hands(dealer, [list(map(int, h)) for h in w])
                 e2.load_bid_model(BID_MODEL)

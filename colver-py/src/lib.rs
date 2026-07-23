@@ -1085,6 +1085,72 @@ impl Env {
         Ok(Some(out))
     }
 
+    /// Sample full deals from the current mid-auction position using the bid
+    /// belief net (COLVBB, obs 108): NN marginals conditioned on the auction
+    /// drive a weighted determinization. Hands during bidding are complete, so
+    /// each draw is a full deal. Returns up to `n_worlds` deals as 4 lists of
+    /// 8 card ids, or None if sampling failed.
+    fn bid_belief_sample_deals(
+        &mut self,
+        py: Python<'_>,
+        observer: u8,
+        n_worlds: usize,
+        model_path: &str,
+    ) -> PyResult<Option<Vec<Vec<Vec<u8>>>>> {
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "observer must be 0-3",
+            ));
+        }
+        if self.state.phase != Phase::Bidding {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "state must be in bidding phase",
+            ));
+        }
+        // Bid belief nets (COLVBB) use hidden=256; fall back from the default.
+        let mut net = colver_core::belief_net::BeliefNet::load(model_path)
+            .or_else(|_| colver_core::belief_net::BeliefNet::load_with_hidden(model_path, 256))
+            .map_err(|e| {
+                pyo3::exceptions::PyIOError::new_err(format!("Failed to load belief net: {}", e))
+            })?;
+
+        let state = self.state;
+        let bid_history = self.bid_history.clone();
+        let rng = &mut self.rng;
+        let worlds: Vec<[u32; 4]> = py.allow_threads(move || {
+            use colver_core::belief_state::BeliefState;
+            let mut bs = BeliefState::new(observer, state.hands[observer as usize]);
+            // Replay the auction so heuristic constraints accumulate.
+            let mut s = GameState::new(state.dealer, state.hands);
+            for &(p, a) in &bid_history {
+                bs.record_bid(p, a, &s);
+                s.step(a);
+            }
+            bs.apply_nn_bid_beliefs(&mut net, &state, &bid_history);
+            (0..n_worlds)
+                .filter_map(|_| bs.determinize(&state, rng).map(|d| d.hands))
+                .collect()
+        });
+        if worlds.is_empty() {
+            return Ok(None);
+        }
+        let out = worlds
+            .iter()
+            .map(|hands| {
+                hands
+                    .iter()
+                    .map(|&h| {
+                        let mut cards: Vec<u8> =
+                            (0..32u8).filter(|&c| h & (1 << c) != 0).collect();
+                        cards.sort_unstable();
+                        cards
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(Some(out))
+    }
+
     /// Initialize IS-DD (Dédé) beliefs for a new deal.
     /// Must be called after reset() and before action_dede().
     fn dede_init(&mut self) {

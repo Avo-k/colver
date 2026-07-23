@@ -1,0 +1,15 @@
+# Ablation: belief champion + credibility weighting only (no playgen, no uniform floor)
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "smart_is_dd"
+determinizations = 10000
+time_ms = 1000
+cred_alpha = 0.5
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"
