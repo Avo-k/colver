@@ -369,9 +369,11 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 worlds_source = "playgen"
 
         all_hands = []
+        all_sources = []
         if playgen_env is None:
             for _ in range(num_sims):
                 all_hands.append(_uniform_hands())
+                all_sources.append("uniform")
 
         PLAYGEN_CHUNK = 8
 
@@ -386,6 +388,8 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         oracle_ns_vals = [[], [], [], []]  # per-suit NS points, for medians
         oracle_best_counts = [0, 0, 0, 0]
         sampled_deals = []
+        sampled_sources = []
+        worlds_counts = {}
         oracle_start = _time.monotonic()
 
         def _oracle_synth():
@@ -412,7 +416,9 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         try:
             while completed < num_sims:
                 if gen_task is not None and gen_task.done():
-                    all_hands.extend(gen_task.result())
+                    chunk = gen_task.result()
+                    all_hands.extend(chunk)
+                    all_sources.extend(["playgen"] * len(chunk))
                     if gen_requested < num_sims:
                         n = min(PLAYGEN_CHUNK, num_sims - gen_requested)
                         gen_requested += n
@@ -422,11 +428,14 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                         # Shortfall (failed generations) → uniform top-up.
                         while len(all_hands) < num_sims:
                             all_hands.append(_uniform_hands())
+                            all_sources.append("uniform")
                             worlds_source = "mixte"
 
                 while next_i < min(num_sims, len(all_hands)) and len(pending) < window:
-                    pending.add(loop.run_in_executor(
-                        _DD_EXECUTOR, _run_dd_sim_with_hands, all_hands[next_i], dealer))
+                    fut = loop.run_in_executor(
+                        _DD_EXECUTOR, _run_dd_sim_with_hands, all_hands[next_i], dealer)
+                    fut.world_index = next_i
+                    pending.add(fut)
                     next_i += 1
 
                 wait_set = set(pending)
@@ -450,6 +459,9 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     best = max(range(4), key=lambda s: result["suits"][s][0])
                     oracle_best_counts[best] += 1
                     sampled_deals.append(result["hands"])
+                    src = all_sources[fut.world_index]
+                    sampled_sources.append(src)
+                    worlds_counts[src] = worlds_counts.get(src, 0) + 1
                     completed += 1
 
                 await ws.send_json({
@@ -459,6 +471,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     "success_counts": success_counts,
                     "oracle_synth": _oracle_synth(),
                     "worlds_source": worlds_source,
+                    "worlds_counts": worlds_counts,
                 })
         finally:
             for fut in pending:
@@ -473,7 +486,9 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "success_counts": success_counts,
             "oracle_synth": _oracle_synth(),
             "sampled_deals": sampled_deals,
+            "sampled_sources": sampled_sources,
             "worlds_source": worlds_source,
+            "worlds_counts": worlds_counts,
         })
 
         # Phase 2: Dédé (NN bid + DMC play) — slow

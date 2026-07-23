@@ -518,6 +518,7 @@ function renderOracleSynth(synth, successCounts, completed) {
 }
 
 let worldsSource = 'uniform';
+let worldsCounts = null;
 
 const WORLDS_SOURCE_LABELS = {
     playgen: 'mondes playgen v2 — conditionn\u00e9s \u00e0 l\u2019ench\u00e8re',
@@ -532,7 +533,13 @@ function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSyn
 
     let html = '';
     if (worldsSource !== 'uniform') {
-        html += `<div class="oracle-worlds-badge">${WORLDS_SOURCE_LABELS[worldsSource] || worldsSource}</div>`;
+        let label = WORLDS_SOURCE_LABELS[worldsSource] || worldsSource;
+        if (worldsCounts) {
+            const pg = worldsCounts.playgen || 0;
+            const un = worldsCounts.uniform || 0;
+            label += un > 0 ? ` \u2014 ${pg} playgen + ${un} uniformes` : ` \u2014 ${pg}/${pg + un}`;
+        }
+        html += `<div class="oracle-worlds-badge">${label}</div>`;
     }
     if (oracleSynth && completed > 0) {
         html += '<div class="oracle-variant-label">Moyennes</div>';
@@ -544,7 +551,7 @@ function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSyn
     highlightOracleCell(forcedAction);
 }
 
-function renderSimViewer(deals, numSims) {
+function renderSimViewer(deals, numSims, sources) {
     const wrap = document.getElementById('annonces-sim-viewer-wrap');
     wrap.classList.remove('hidden');
     const content = document.getElementById('annonces-sim-viewer-content');
@@ -552,13 +559,16 @@ function renderSimViewer(deals, numSims) {
 
     // Show at most 10 randomly sampled deals
     let sampled = deals;
+    let sampledSources = sources || null;
     if (deals.length > 10) {
         const indices = Array.from({ length: deals.length }, (_, i) => i);
         for (let i = indices.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [indices[i], indices[j]] = [indices[j], indices[i]];
         }
-        sampled = indices.slice(0, 10).sort((a, b) => a - b).map(i => deals[i]);
+        const keep = indices.slice(0, 10).sort((a, b) => a - b);
+        sampled = keep.map(i => deals[i]);
+        sampledSources = sources ? keep.map(i => sources[i]) : null;
     }
 
     const shown = sampled.length;
@@ -567,8 +577,11 @@ function renderSimViewer(deals, numSims) {
     let html = '';
     for (let d = 0; d < sampled.length; d++) {
         const deal = sampled[d];
+        const srcChip = sampledSources && sampledSources[d]
+            ? `<span class="sim-deal-src${sampledSources[d] === 'playgen' ? ' pg' : ''}">${sampledSources[d] === 'playgen' ? 'playgen' : 'uniforme'}</span>`
+            : '';
         html += `<details class="sim-deal-details">
-            <summary>Donne ${d + 1}</summary>
+            <summary>Donne ${d + 1} ${srcChip}</summary>
             <div class="sim-deal-hands">`;
         for (const seat of [0, 1, 3]) {
             const cards = deal[String(seat)];
@@ -815,14 +828,16 @@ function handleSimUpdate(data) {
         return;
     }
     if (data.worlds_source) worldsSource = data.worlds_source;
+    if (data.worlds_counts) worldsCounts = data.worlds_counts;
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
 }
 
 function handleSimDone(data) {
     if (data.worlds_source) worldsSource = data.worlds_source;
+    if (data.worlds_counts) worldsCounts = data.worlds_counts;
     renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
-        renderSimViewer(data.sampled_deals, data.completed);
+        renderSimViewer(data.sampled_deals, data.completed, data.sampled_sources);
     }
 }
 

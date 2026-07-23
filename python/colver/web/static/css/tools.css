@@ -3355,3 +3355,16 @@
     min-width: 3.6em;
 }
 .history-nocontract { color: #777; font-weight: 400; font-style: italic; }
+
+/* Sim viewer — per-deal world source chip */
+.sim-deal-src {
+    font-size: 0.62rem;
+    font-weight: 600;
+    color: #999;
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+.sim-deal-src.pg { color: #7fae7f; border-color: #3c5a3c; }
