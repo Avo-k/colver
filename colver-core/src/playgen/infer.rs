@@ -1171,6 +1171,22 @@ impl PlaygenSampler {
         temperature: f32,
         rng: &mut impl rand::Rng,
     ) -> Vec<[u32; 4]> {
+        self.generate_worlds_batch_scored(state, n_worlds, temperature, rng)
+            .into_iter()
+            .map(|(w, _)| w)
+            .collect()
+    }
+
+    /// Scored variant of [`generate_worlds_batch`]: each world carries the
+    /// cumulative log-probability (masked softmax at temperature 1) of the
+    /// hidden-actor cards sampled along its continuation.
+    pub fn generate_worlds_batch_scored(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl rand::Rng,
+    ) -> Vec<([u32; 4], WorldLogp)> {
         if self.perm.is_none() || self.dead || n_worlds == 0 {
             return Vec::new();
         }
@@ -1219,10 +1235,11 @@ impl PlaygenSampler {
         let mut assigned = vec![[0u32; 4]; n_worlds];
         let mut obs_remaining = vec![observer_hand_now; n_worlds];
         let mut alive = vec![true; n_worlds];
+        let mut logps = vec![WorldLogp::default(); n_worlds];
         let mut act_toks = vec![Tok { primary: P_ACT0, suit: S_NULL, actor: 0, segment: SEG_PLAY }; n_worlds];
         let mut card_toks = act_toks.clone();
 
-        for _step in 0..steps {
+        for step_i in 0..steps {
             // ACT query tokens (dead lanes: padded with a valid token, ignored)
             for k in 0..n_worlds {
                 let rel = if alive[k] { self.rel(gens[k].current) } else { 0 };
@@ -1270,6 +1287,15 @@ impl PlaygenSampler {
                 let mask_canon = permute_mask(mask_phys, &perm);
                 let logits = self.model.logits(&hidden[k * self.model.d..(k + 1) * self.model.d]);
                 let canon_card = sample_masked(&logits, mask_canon, temperature, rng);
+                if actor != observer {
+                    let lp = masked_logp(&logits, mask_canon as u64, canon_card);
+                    logps[k].sum += lp;
+                    logps[k].n += 1;
+                    if step_i * 2 < steps {
+                        logps[k].half_sum += lp;
+                        logps[k].half_n += 1;
+                    }
+                }
                 let phys_card = {
                     let cs = canon_card / 8;
                     let rank = canon_card % 8;
@@ -1311,10 +1337,49 @@ impl PlaygenSampler {
                     continue 'lane;
                 }
             }
-            worlds.push(hands);
+            worlds.push((hands, logps[k]));
         }
         worlds
     }
+}
+
+/// Cumulative log-probability of a world's sampled play continuation
+/// (hidden actors only, masked softmax at temperature 1).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WorldLogp {
+    /// Sum over the full continuation.
+    pub sum: f32,
+    pub n: u32,
+    /// Sum over the first half of the generation steps (early-pruning signal).
+    pub half_sum: f32,
+    pub half_n: u32,
+}
+
+/// Cumulative log-probability of a mid-auction deal sample: auction
+/// completion (all seats) and hidden-actor playout, separately.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AuctionLogp {
+    pub bid_sum: f32,
+    pub bid_n: u32,
+    pub play_sum: f32,
+    pub play_n: u32,
+}
+
+/// log p of `action` under the masked softmax of `logits` at temperature 1.
+fn masked_logp(logits: &[f32], mask: u64, action: u8) -> f32 {
+    let mut max_l = f32::NEG_INFINITY;
+    for c in 0..logits.len() {
+        if mask & (1u64 << c) != 0 && logits[c] > max_l {
+            max_l = logits[c];
+        }
+    }
+    let mut denom = 0.0f32;
+    for c in 0..logits.len() {
+        if mask & (1u64 << c) != 0 {
+            denom += (logits[c] - max_l).exp();
+        }
+    }
+    logits[action as usize] - max_l - denom.ln()
 }
 
 impl PlaygenSampler {
@@ -1353,6 +1418,22 @@ impl PlaygenSampler {
         temperature: f32,
         rng: &mut impl rand::Rng,
     ) -> Vec<[u32; 4]> {
+        self.generate_deals_from_auction_scored(state, n_worlds, temperature, rng)
+            .into_iter()
+            .map(|(w, _)| w)
+            .collect()
+    }
+
+    /// Scored variant of [`generate_deals_from_auction`]: each deal carries
+    /// the cumulative log-probability of its sampled auction completion and
+    /// hidden-actor playout.
+    pub fn generate_deals_from_auction_scored(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl rand::Rng,
+    ) -> Vec<([u32; 4], AuctionLogp)> {
         if !self.model.v2 || self.dead || state.phase != Phase::Bidding || n_worlds == 0 {
             return Vec::new();
         }
@@ -1364,6 +1445,7 @@ impl PlaygenSampler {
         'world: for _ in 0..n_worlds {
             for _attempt in 0..4 {
                 let mut cache = self.cache.clone();
+                let mut alp = AuctionLogp::default();
                 // Public auction state machine: bid legality never reads hands,
                 // so a clone of the (dummy-hand) state is safe to step.
                 let mut sim = *state;
@@ -1388,6 +1470,8 @@ impl PlaygenSampler {
                     let logits = self.model.bid_logits(&hidden);
                     let action =
                         sample_bid_masked(&logits, sim.legal_actions(), temperature, rng);
+                    alp.bid_sum += masked_logp(&logits, sim.legal_actions(), action);
+                    alp.bid_n += 1;
                     let (p_tok, phys_suit) = bid_token(action);
                     let pos = cache.len;
                     self.model.forward_token(
@@ -1469,6 +1553,10 @@ impl PlaygenSampler {
                     }
                     let logits = self.model.logits(&hidden);
                     let c = sample_masked(&logits, mask, temperature, rng);
+                    if actor != observer {
+                        alp.play_sum += masked_logp(&logits, mask as u64, c);
+                        alp.play_n += 1;
+                    }
                     let pos = cache.len;
                     self.model.forward_token(
                         &mut cache,
@@ -1499,7 +1587,7 @@ impl PlaygenSampler {
                     all |= hands[p];
                 }
                 if valid {
-                    worlds.push(hands);
+                    worlds.push((hands, alp));
                     continue 'world;
                 }
             }

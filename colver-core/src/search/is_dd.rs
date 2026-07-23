@@ -24,7 +24,7 @@ use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
 use crate::dmc_obs::EnvTracking;
 use crate::elephant::{blend_with_evidence, ElephantMemory};
-use crate::playgen::infer::{PlaygenModel, PlaygenSampler};
+use crate::playgen::infer::{AuctionLogp, PlaygenModel, PlaygenSampler, WorldLogp};
 use crate::solver::{new_tt_buffer, solve_with_scores};
 use crate::state::{GameState, Phase};
 
@@ -197,6 +197,8 @@ pub struct IsDdSearch {
     auction: Vec<(u8, u8)>,
     /// State at deal start (pre-auction), for credibility replays.
     init_state: Option<GameState>,
+    /// Cards played so far per seat (current trick included).
+    played_by: [u32; 4],
     tt_buf: Vec<u64>,
 }
 
@@ -211,6 +213,7 @@ impl IsDdSearch {
             cred_bid_net: None,
             auction: Vec::new(),
             init_state: None,
+            played_by: [0; 4],
             tt_buf: new_tt_buffer(),
         }
     }
@@ -262,6 +265,7 @@ impl IsDdSearch {
         // Credibility judge: remember the pre-auction state, reset the log.
         self.auction.clear();
         self.init_state = Some(*state);
+        self.played_by = [0; 4];
 
         // Reset elephant memory for new deal (re-initialized per config in search).
         if let Some(ref mut elephant) = self.elephant {
@@ -307,6 +311,9 @@ impl IsDdSearch {
         }
         if state_before.phase == Phase::Bidding {
             self.auction.push((player, action));
+        }
+        if state_before.phase == Phase::Playing {
+            self.played_by[player as usize] |= 1u32 << action;
         }
         // Update elephant memory: filter particles based on observed play.
         if state_before.phase == Phase::Playing {
@@ -548,6 +555,23 @@ impl IsDdSearch {
         }
     }
 
+    /// Scored variant of [`Self::playgen_auction_deals`]: each deal carries
+    /// the cumulative log-probability of its sampled continuation.
+    pub fn playgen_auction_deals_scored(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl Rng,
+    ) -> Vec<([u32; 4], AuctionLogp)> {
+        match self.playgen.as_mut() {
+            Some(sampler) => {
+                sampler.generate_deals_from_auction_scored(state, n_worlds, temperature, rng)
+            }
+            None => Vec::new(),
+        }
+    }
+
     /// Auction-credibility weight of a world: for each observed bid by a
     /// player other than `observer`, ask the credibility bid net whether it
     /// would replay that bid holding the world's hand for that player. Rank
@@ -563,7 +587,16 @@ impl IsDdSearch {
         let obs_dim = net.obs_dim();
         let mut obs = vec![0.0f32; obs_dim];
         let mut s = base;
-        s.hands = *world_hands;
+        // Initial hands = world's remaining cards ∪ cards already played.
+        // (The determinized world only assigns cards still in hand.)
+        let mut init_hands = [0u32; 4];
+        for p in 0..4usize {
+            init_hands[p] = world_hands[p] | self.played_by[p];
+            if crate::card::card_count(init_hands[p]) != 8 {
+                return 1.0; // inconsistent reconstruction — skip weighting
+            }
+        }
+        s.hands = init_hands;
         let mut hist: Vec<(u8, u8)> = Vec::with_capacity(self.auction.len());
         let mut w = 1.0f32;
 
@@ -645,6 +678,23 @@ impl IsDdSearch {
     ) -> Vec<[u32; 4]> {
         match self.playgen.as_mut() {
             Some(sampler) => sampler.generate_worlds_batch(state, n_worlds, temperature, rng),
+            None => Vec::new(),
+        }
+    }
+
+    /// Scored variant of [`Self::playgen_worlds`]: each world carries the
+    /// cumulative log-probability of its sampled continuation (hidden actors).
+    pub fn playgen_worlds_scored(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl Rng,
+    ) -> Vec<([u32; 4], WorldLogp)> {
+        match self.playgen.as_mut() {
+            Some(sampler) => {
+                sampler.generate_worlds_batch_scored(state, n_worlds, temperature, rng)
+            }
             None => Vec::new(),
         }
     }
