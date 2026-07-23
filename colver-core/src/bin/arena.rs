@@ -1493,7 +1493,7 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  arena list                                 List available bots");
     eprintln!("  arena h2h <bot_a> <bot_b> [--matches N]   Head-to-head comparison");
-    eprintln!("  arena round-robin [--matches N] [--bots a,b,c]  Round-robin tournament");
+    eprintln!("  arena round-robin [--matches N] [--bots a,b,c] [--no-save]  Round-robin tournament");
     eprintln!("  arena results [--bot name]                 Show results leaderboard");
     eprintln!("  arena trace <bot_a> <bot_b> [--deals N]   Play same deals with both bots, show diffs");
     eprintln!();
@@ -1664,6 +1664,7 @@ fn cmd_round_robin(args: &[String]) {
     let n_threads = parse_flag_u32(args, "--threads", default_threads() as u32) as usize;
     let seed = parse_flag_u64(args, "--seed", 42);
     let bot_filter = parse_flag(args, "--bots");
+    let no_save = has_flag(args, "--no-save");
 
     let all_bots = load_all_bots();
     let bots: Vec<&BotConfig> = if let Some(ref filter) = bot_filter {
@@ -1731,10 +1732,12 @@ fn cmd_round_robin(args: &[String]) {
             let pair_secs = pair_start.elapsed().as_secs_f64();
 
             // Persist each pair with its own wall time
-            append_csv_result(&agents[i].name, &agents[j].name,
-                &agents[i].bid_label, &agents[i].play_label,
-                &agents[j].bid_label, &agents[j].play_label,
-                &r1, &r2, pair_seed, pair_secs);
+            if !no_save {
+                append_csv_result(&agents[i].name, &agents[j].name,
+                    &agents[i].bid_label, &agents[i].play_label,
+                    &agents[j].bid_label, &agents[j].play_label,
+                    &r1, &r2, pair_seed, pair_secs);
+            }
 
             // Aggregate into matrices
             win_matrix[i][j] += r1.ns_wins + r2.ew_wins;
@@ -1811,7 +1814,11 @@ fn cmd_round_robin(args: &[String]) {
     println!();
     println!("  Wall: {:.1}s ({} matches, {:.1}/min)",
         elapsed.as_secs_f64(), total_matches, total_matches as f64 / elapsed.as_secs_f64() * 60.0);
-    println!("  Results saved to {}", RESULTS_PATH);
+    if no_save {
+        println!("  (--no-save: results NOT written to CSV)");
+    } else {
+        println!("  Results saved to {}", RESULTS_PATH);
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════
