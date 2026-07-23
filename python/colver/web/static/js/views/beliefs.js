@@ -1,7 +1,7 @@
 // Croyances view — belief network visualization
 // Step through a game and see how NN/heuristic beliefs evolve
 
-import { send, onMessage, offMessage } from '../ws.js';
+import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 
 const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
@@ -578,9 +578,36 @@ function onModeClick(e) {
     renderStats();
 }
 
+// The server keeps the belief session per WebSocket connection. On reconnect
+// that session is gone, but we still hold the full deal client-side — rebuild
+// it at the current position so navigation keeps working seamlessly.
+function restoreSession() {
+    if (!allActions || totalActions === 0) return false;
+    send({
+        type: 'belief_restore',
+        dealer,
+        initial_hands: initialHands,
+        actions: allActions,
+        target: currentIdx,
+        observer,
+    });
+    return true;
+}
+
+function onWsOpen() {
+    // Only fires on a *re*connect while this view is mounted (the initial
+    // connect predates mount). Silently restore the lost server session.
+    restoreSession();
+}
+
 function onError(data) {
     setLoading('');
     console.error('Belief error:', data.msg);
+    // Self-heal if the server lost our session (e.g. a click raced a reconnect
+    // before onWsOpen restored it).
+    if (data.msg && data.msg.includes('session croyances') && restoreSession()) {
+        return;
+    }
 }
 
 // Keyboard navigation
@@ -620,6 +647,7 @@ export function mount(container) {
     onMessage('belief_weights', onWeights);
     onMessage('belief_precompute', onPrecompute);
     onMessage('error', onError);
+    onOpen(onWsOpen);
 
     // Auto-load a game on tab entry
     onGenerateClick();
@@ -631,5 +659,6 @@ export function unmount() {
     offMessage('belief_weights', onWeights);
     offMessage('belief_precompute', onPrecompute);
     offMessage('error', onError);
+    offOpen(onWsOpen);
     document.removeEventListener('keydown', onKeyDown);
 }

@@ -710,6 +710,44 @@ class BeliefSession:
             ],
         }
 
+    def restore(self, dealer, initial_hands, actions) -> dict:
+        """Rebuild a session from a deal the client already holds (no new deal).
+
+        Used when the WebSocket reconnects: the per-connection server session is
+        gone, but the client still has the exact deal + action list, so we
+        reconstruct it deterministically instead of generating a fresh game.
+        """
+        self.dealer = int(dealer)
+        self.initial_hands = [list(h) for h in initial_hands]
+        self.all_actions = [
+            (int(a["player"]), int(a["action"]), int(a["phase"])) for a in actions
+        ]
+        self.action_idx = 0
+
+        self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+        if self.bid_model_path:
+            self.env.load_bid_model(self.bid_model_path)
+        if self.belief_model_path:
+            self.env.load_belief_net(self.belief_model_path)
+        if self.playgen_model_path:
+            self.env.load_playgen_model(self.playgen_model_path)
+        self.env.dede_init()
+
+        self.playgen_cache = {}
+        self._sweep_env = None
+
+        num_bid_actions = sum(1 for _, _, p in self.all_actions if p == 0)
+        return {
+            "initial_hands": self.initial_hands,
+            "dealer": self.dealer,
+            "total_actions": len(self.all_actions),
+            "num_bid_actions": num_bid_actions,
+            "actions": [
+                {"player": p, "action": a, "phase": ph}
+                for p, a, ph in self.all_actions
+            ],
+        }
+
     def _get_state_info(self) -> dict:
         """Get current state info for the client."""
         env = self.env

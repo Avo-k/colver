@@ -1172,6 +1172,32 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
 
+            elif msg_type == "belief_restore":
+                # WS reconnected: rebuild the (per-connection) session from the
+                # deal the client still holds, then jump to its last position.
+                await _cancel_belief_precompute()
+                loop = asyncio.get_event_loop()
+                belief_session = BeliefSession(
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
+                    playgen_model_path=PLAYGEN_MODEL_PATH,
+                )
+                try:
+                    belief_session.restore(
+                        data["dealer"], data["initial_hands"], data["actions"])
+                    target = int(data.get("target", 0))
+                    result = await loop.run_in_executor(
+                        None, belief_session.step_to, target)
+                    await ws.send_json({"type": "belief_state", **result})
+                    if PLAYGEN_MODEL_PATH:
+                        observer = int(data.get("observer", 0))
+                        belief_precompute_task = asyncio.create_task(
+                            _belief_precompute_loop(belief_session, observer))
+                except Exception as e:
+                    belief_session = None
+                    await ws.send_json({"type": "error", "msg": f"Restauration échouée : {e}"})
+
             elif msg_type == "belief_precompute":
                 if belief_session is None:
                     await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
