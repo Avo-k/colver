@@ -2,7 +2,7 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, renderHandMini, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
 import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -602,7 +602,7 @@ function renderSimViewer(deals, numSims, sources) {
             const cards = deal[String(seat)];
             if (!cards) continue;
             const el = document.getElementById(`sim-hand-${d}-${seat}`);
-            if (el) renderHand(el, cards);
+            if (el) renderHandMini(el, cards, 34);
         }
     }
 }

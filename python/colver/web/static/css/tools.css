@@ -793,33 +793,30 @@
 
 .sim-deal-hands {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 16px;
     padding: 6px 0;
 }
 
 .sim-hand-section {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
 }
 
 .sim-hand-label {
-    width: 20px;
-    text-align: center;
-    font-size: 0.75rem;
+    text-align: left;
+    font-size: 0.72rem;
     font-weight: 700;
     color: #888;
     flex-shrink: 0;
 }
 
 .sim-hand {
-    gap: 2px;
-}
-
-.sim-hand .card {
-    width: 36px;
-    height: auto;
+    gap: 3px;
+    justify-content: flex-start;
 }
 
 /* XGBoost interpretability panel */
@@ -1624,20 +1621,15 @@
     color: var(--seat-color, #888);
 }
 
-.belief-hist-card { padding: 2px 3px; }
-.belief-hist-card img {
-    width: 20px;
-    height: auto;
-    display: block;
-    border-radius: 2px;
-}
+.belief-hist-card { padding: 2px 5px; }
 
 .belief-hist-trick {
     display: inline-flex;
-    gap: 2px;
-    padding: 2px;
+    gap: 3px;
+    padding: 3px 4px;
     border-radius: 5px;
-    background: rgba(255,255,255,0.03);
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.05);
 }
 
 /* Belief grid */

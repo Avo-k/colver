@@ -124,6 +124,43 @@ export function renderHand(container, cards, clickable = false, onClick = null, 
     }
 }
 
+// Shared hand ordering (suit alternation + rank order, trump-aware).
+export function sortHand(cards, trumpSuit = -1) {
+    const sortKeys = suitSortKeys(cards);
+    return [...cards].sort((a, b) => {
+        const suitA = cardSuit(a), suitB = cardSuit(b);
+        if (suitA !== suitB) return sortKeys[suitA] - sortKeys[suitB];
+        const orderA = suitA === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
+        const orderB = suitB === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
+        return orderA[cardRank(a)] - orderB[cardRank(b)];
+    });
+}
+
+// Compact "corner index" mini card — pure CSS text (no image), legible at small sizes.
+// Used where cards are shown small and spread (e.g. annonces sim hands).
+export function miniCardIndex(cardIdx, w = 34) {
+    const suit = cardSuit(cardIdx), rank = cardRank(cardIdx);
+    const el = document.createElement('div');
+    let cls = 'mini-card-index';
+    if (suit === 1 || suit === 2) cls += ' red';
+    if (RANKS[rank].length > 1) cls += ' ten';
+    el.className = cls;
+    el.style.width = w + 'px';
+    el.style.height = Math.round(w * 1.4) + 'px';
+    el.style.fontSize = w + 'px';
+    el.dataset.card = cardIdx;
+    el.innerHTML = `<span class="mc-corner"><span class="mc-rank">${RANKS[rank]}</span><span class="mc-suit">${SUITS[suit]}</span></span>`;
+    return el;
+}
+
+// Render a spread hand of corner-index mini cards (no overlap).
+export function renderHandMini(container, cards, w = 34, trumpSuit = -1) {
+    container.innerHTML = '';
+    for (const c of sortHand(cards, trumpSuit)) {
+        container.appendChild(miniCardIndex(c, w));
+    }
+}
+
 export function renderFaceDownHand(container, count) {
     const current = container.children.length;
     if (current === count && count > 0 && container.firstChild && container.firstChild.classList.contains('face-down')) {

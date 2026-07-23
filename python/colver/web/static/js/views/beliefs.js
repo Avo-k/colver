@@ -251,15 +251,7 @@ function renderHistory() {
                 el.appendChild(trickDiv);
             }
             item.classList.add('belief-hist-card');
-            const img = document.createElement('img');
-            img.src = cardSvgPath(action);
-            img.alt = actionHtml(action, phase).replace(/<[^>]*>/g, '');
-            img.draggable = false;
-            item.appendChild(img);
-            const seat = document.createElement('span');
-            seat.className = 'belief-hist-seat';
-            seat.textContent = SEAT_NAMES[player];
-            item.appendChild(seat);
+            item.innerHTML = `<span class="belief-hist-seat">${SEAT_NAMES[player]}</span>${actionHtml(action, phase)}`;
             trickDiv.appendChild(item);
         }
     }
