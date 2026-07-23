@@ -1223,6 +1223,26 @@ impl Env {
         ))
     }
 
+    /// Provide externally sampled worlds (remaining hands per seat, current
+    /// position — e.g. from the GPU playgen sidecar) to the current player's
+    /// IS-DD search. Consumed first by the next action_dede*() call; invalid
+    /// worlds are skipped. Each world is a list of 4 u32 CardSet bitmasks.
+    fn dede_inject_worlds(&mut self, worlds: Vec<Vec<u32>>) -> PyResult<()> {
+        if !self.dede_initialized {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "Call dede_init() first",
+            ));
+        }
+        let converted: Vec<[u32; 4]> = worlds
+            .into_iter()
+            .filter_map(|w| w.try_into().ok())
+            .collect();
+        let player = self.state.current_player() as usize;
+        let searches = self.dede_searches.as_mut().unwrap();
+        searches[player].set_injected_worlds(converted);
+        Ok(())
+    }
+
     /// Get IS-DD (Dédé) action for current state. time_ms is the search budget in ms.
     /// Must call dede_init() first and use dede_step() for all moves.
     fn action_dede(&mut self, time_ms: u32) -> PyResult<u8> {

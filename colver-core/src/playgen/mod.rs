@@ -12,3 +12,6 @@ pub mod infer;
 
 #[cfg(feature = "dmc_train")]
 pub mod model;
+
+#[cfg(feature = "dmc_train")]
+pub mod gpu;

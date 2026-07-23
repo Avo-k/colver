@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
+from colver.web import playgen_gpu as _playgen_gpu
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.rooms as rooms
@@ -351,12 +352,18 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         # runs chunk-wise in an executor, overlapped with the DD solves below.
         playgen_env = None
         worlds_source = "uniform"
+        # (player, action) pairs of the auction prefix, for the GPU sidecar.
+        gpu_prior_pairs = []
+        gpu_deal_hands = None
         if PLAYGEN_MODEL_PATH:
             def _mk_playgen_env():
-                e = _colver_pkg.Env.deal_with_hands(dealer, _uniform_hands())
+                nonlocal gpu_deal_hands
+                gpu_deal_hands = _uniform_hands()
+                e = _colver_pkg.Env.deal_with_hands(dealer, gpu_deal_hands)
                 e.load_playgen_model(PLAYGEN_MODEL_PATH)
                 e.dede_init()
                 for a in prior_actions:
+                    gpu_prior_pairs.append((int(e.current_player()), int(a)))
                     e.dede_step(a)
                 # Probe: v1 playgen weights cannot sample auctions (None).
                 probe = e.playgen_sample_auction_deals(seat, 1, 1.0)
@@ -375,9 +382,17 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 all_hands.append(_uniform_hands())
                 all_sources.append("uniform")
 
-        PLAYGEN_CHUNK = 8
+        # GPU sidecar: one batched call is far cheaper than chunked CPU calls
+        # (shared prefill), so generate everything in a single chunk.
+        _gpu = _playgen_gpu.enabled()
+        PLAYGEN_CHUNK = num_sims if _gpu else 8
 
         def _gen_chunk(n):
+            if _gpu:
+                deals = _playgen_gpu.auction_deals(
+                    dealer, gpu_deal_hands, gpu_prior_pairs, seat, n, 1.0)
+                if deals:
+                    return deals
             deals = playgen_env.playgen_sample_auction_deals(seat, n, 1.0)
             return deals or []
 

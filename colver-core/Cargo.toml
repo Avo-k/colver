@@ -11,6 +11,7 @@ parallel = ["dep:rayon", "rand"]
 nn = ["rand"]
 dmc_train = ["rand", "dep:candle-core", "dep:candle-nn", "dep:clap"]
 tch_train = ["rand", "dep:tch", "dep:clap"]
+gpu_server = ["dmc_train", "dep:tiny_http", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 rand = { version = "0.8", optional = true }
@@ -19,6 +20,9 @@ candle-core = { version = "0.9", optional = true, features = ["cuda"] }
 candle-nn = { version = "0.9", optional = true }
 clap = { version = "4", optional = true, features = ["derive"] }
 tch = { version = "0.23", optional = true, features = ["download-libtorch"] }
+tiny_http = { version = "0.12", optional = true }
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
@@ -55,6 +59,16 @@ required-features = ["dmc_train"]
 name = "train_playgen"
 path = "src/bin/train_playgen.rs"
 required-features = ["dmc_train"]
+
+[[bin]]
+name = "bench_playgen_gpu"
+path = "src/bin/bench_playgen_gpu.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
+name = "playgen_gpu_server"
+path = "src/bin/playgen_gpu_server.rs"
+required-features = ["gpu_server"]
 
 [[bin]]
 name = "export_playgen"

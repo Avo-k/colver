@@ -37,21 +37,22 @@ const NUM_SEG: usize = super::tokens::NUM_SEG;
 // Model weights
 // ---------------------------------------------------------------------------
 
-struct Block {
-    attn_norm: Vec<f32>,
-    qkv_w: Vec<f32>, // [3d, d]
-    qkv_b: Vec<f32>,
-    out_w: Vec<f32>, // [d, d]
-    out_b: Vec<f32>,
-    ffn_norm: Vec<f32>,
-    gate_w: Vec<f32>, // [dff, d]
-    gate_b: Vec<f32>,
-    up_w: Vec<f32>, // [dff, d]
-    up_b: Vec<f32>,
-    down_w: Vec<f32>, // [d, dff]
-    down_b: Vec<f32>,
+pub struct Block {
+    pub attn_norm: Vec<f32>,
+    pub qkv_w: Vec<f32>, // [3d, d]
+    pub qkv_b: Vec<f32>,
+    pub out_w: Vec<f32>, // [d, d]
+    pub out_b: Vec<f32>,
+    pub ffn_norm: Vec<f32>,
+    pub gate_w: Vec<f32>, // [dff, d]
+    pub gate_b: Vec<f32>,
+    pub up_w: Vec<f32>, // [dff, d]
+    pub up_b: Vec<f32>,
+    pub down_w: Vec<f32>, // [d, dff]
+    pub down_b: Vec<f32>,
 }
 
+/// Weights are public for external experiments (e.g. GPU inference benches).
 pub struct PlaygenModel {
     pub d: usize,
     pub n_layers: usize,
@@ -60,18 +61,18 @@ pub struct PlaygenModel {
     pub v2: bool,
     /// Sequence-length capacity (98 for v1, 122 for v2).
     pub max_seq_len: usize,
-    dff: usize,
-    primary_emb: Vec<f32>,
-    suit_emb: Vec<f32>,
-    actor_emb: Vec<f32>,
-    seg_emb: Vec<f32>,
-    pos_emb: Vec<f32>,
-    blocks: Vec<Block>,
-    out_norm: Vec<f32>,
-    head_w: Vec<f32>, // [32, d]
-    head_b: Vec<f32>,
-    bid_head_w: Vec<f32>, // [43, d] (v2 only, else empty)
-    bid_head_b: Vec<f32>,
+    pub dff: usize,
+    pub primary_emb: Vec<f32>,
+    pub suit_emb: Vec<f32>,
+    pub actor_emb: Vec<f32>,
+    pub seg_emb: Vec<f32>,
+    pub pos_emb: Vec<f32>,
+    pub blocks: Vec<Block>,
+    pub out_norm: Vec<f32>,
+    pub head_w: Vec<f32>, // [32, d]
+    pub head_b: Vec<f32>,
+    pub bid_head_w: Vec<f32>, // [43, d] (v2 only, else empty)
+    pub bid_head_b: Vec<f32>,
 }
 
 struct Reader<'a> {
@@ -222,13 +223,14 @@ fn dot8(a: &[f32], b: &[f32]) -> f32 {
     total
 }
 
-/// Batched matmul: x [K, n_in] → out [K, n_out]. Streams each weight row once
-/// and reuses it across the K lanes (weight traffic amortized).
+/// Batched matmul over active lanes: x [K, n_in] → out [K, n_out]. Streams
+/// each weight row once and reuses it across the active lanes (weight traffic
+/// amortized). Inactive lanes are skipped (their `out` rows are left as-is).
 fn matmul_batch(
     w: &[f32],
     b: &[f32],
     x: &[f32],
-    k_lanes: usize,
+    active: &[bool],
     n_in: usize,
     n_out: usize,
     out: &mut [f32],
@@ -236,21 +238,26 @@ fn matmul_batch(
     for o in 0..n_out {
         let row = &w[o * n_in..(o + 1) * n_in];
         let bo = b[o];
-        for k in 0..k_lanes {
+        for (k, &a) in active.iter().enumerate() {
+            if !a {
+                continue;
+            }
             let xk = &x[k * n_in..(k + 1) * n_in];
             out[k * n_out + o] = dot8(row, xk) + bo;
         }
     }
 }
 
-/// Batched KV cache: `K` lanes advancing in lockstep. Per layer, keys/values
-/// are stored in fixed-stride per-lane blocks `[k][MAX_SEQ_LEN][d]` so each
+/// Batched KV cache: `K` lanes advancing in lockstep token-steps, each lane
+/// at its own sequence position (`lens[k]`). Per layer, keys/values are
+/// stored in fixed-stride per-lane blocks `[k][MAX_SEQ_LEN][d]` so each
 /// lane's attention scan over time steps stays contiguous.
 pub struct KvCacheBatch {
     k: Vec<Vec<f32>>,
     v: Vec<Vec<f32>>,
     n_lanes: usize,
-    pub len: usize,
+    /// Per-lane sequence length (== next write position).
+    pub lens: Vec<usize>,
 }
 
 impl KvCacheBatch {
@@ -273,29 +280,36 @@ impl KvCacheBatch {
             k.push(kl);
             v.push(vl);
         }
-        KvCacheBatch { k, v, n_lanes, len: plen }
+        KvCacheBatch { k, v, n_lanes, lens: vec![plen; n_lanes] }
     }
 }
 
 impl PlaygenModel {
-    /// Lockstep forward: process one token per lane (`toks.len() == n_lanes`),
-    /// all at sequence position `pos`. Returns final hidden states [K * d].
+    /// Lockstep forward: process one token per active lane
+    /// (`toks.len() == active.len() == n_lanes`), each lane at its own
+    /// sequence position `cache.lens[k]` (advanced on return). Inactive
+    /// lanes are skipped entirely. Returns final hidden states [K * d]
+    /// (inactive lanes' rows are unspecified).
     pub fn forward_tokens_batch(
         &self,
         cache: &mut KvCacheBatch,
         toks: &[Tok],
-        pos: usize,
+        active: &[bool],
     ) -> Vec<f32> {
         let d = self.d;
         let kl_n = cache.n_lanes;
         debug_assert_eq!(toks.len(), kl_n);
-        debug_assert!(pos < self.max_seq_len);
-        debug_assert_eq!(cache.len, pos);
+        debug_assert_eq!(active.len(), kl_n);
         let hd = d / self.n_heads;
         let lane_stride = self.max_seq_len * d;
 
         let mut x = vec![0.0f32; kl_n * d];
         for (k, tok) in toks.iter().enumerate() {
+            if !active[k] {
+                continue;
+            }
+            let pos = cache.lens[k];
+            debug_assert!(pos < self.max_seq_len);
             let xk = &mut x[k * d..(k + 1) * d];
             for i in 0..d {
                 xk[i] = self.primary_emb[tok.primary as usize * d + i]
@@ -317,13 +331,20 @@ impl PlaygenModel {
         for (l, blk) in self.blocks.iter().enumerate() {
             // --- Attention ---
             for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
                 rmsnorm(&x[k * d..(k + 1) * d], &blk.attn_norm, &mut normed[k * d..(k + 1) * d]);
             }
-            matmul_batch(&blk.qkv_w, &blk.qkv_b, &normed, kl_n, d, 3 * d, &mut qkv);
+            matmul_batch(&blk.qkv_w, &blk.qkv_b, &normed, active, d, 3 * d, &mut qkv);
 
-            let t_len = pos + 1;
             let scale = 1.0 / (hd as f32).sqrt();
             for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
+                let pos = cache.lens[k];
+                let t_len = pos + 1;
                 let q = &qkv[k * 3 * d..k * 3 * d + d];
                 let k_new = &qkv[k * 3 * d + d..k * 3 * d + 2 * d];
                 let v_new = &qkv[k * 3 * d + 2 * d..k * 3 * d + 3 * d];
@@ -366,27 +387,49 @@ impl PlaygenModel {
                     }
                 }
             }
-            matmul_batch(&blk.out_w, &blk.out_b, &attn_out, kl_n, d, d, &mut proj);
-            for i in 0..kl_n * d {
-                x[i] += proj[i];
+            matmul_batch(&blk.out_w, &blk.out_b, &attn_out, active, d, d, &mut proj);
+            for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
+                for i in k * d..(k + 1) * d {
+                    x[i] += proj[i];
+                }
             }
 
             // --- FFN ---
             for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
                 rmsnorm(&x[k * d..(k + 1) * d], &blk.ffn_norm, &mut normed[k * d..(k + 1) * d]);
             }
-            matmul_batch(&blk.gate_w, &blk.gate_b, &normed, kl_n, d, self.dff, &mut gate);
-            matmul_batch(&blk.up_w, &blk.up_b, &normed, kl_n, d, self.dff, &mut up);
-            for i in 0..kl_n * self.dff {
-                gate[i] = gelu(gate[i]) * up[i];
+            matmul_batch(&blk.gate_w, &blk.gate_b, &normed, active, d, self.dff, &mut gate);
+            matmul_batch(&blk.up_w, &blk.up_b, &normed, active, d, self.dff, &mut up);
+            for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
+                for i in k * self.dff..(k + 1) * self.dff {
+                    gate[i] = gelu(gate[i]) * up[i];
+                }
             }
-            matmul_batch(&blk.down_w, &blk.down_b, &gate, kl_n, self.dff, d, &mut ffn_out);
-            for i in 0..kl_n * d {
-                x[i] += ffn_out[i];
+            matmul_batch(&blk.down_w, &blk.down_b, &gate, active, self.dff, d, &mut ffn_out);
+            for k in 0..kl_n {
+                if !active[k] {
+                    continue;
+                }
+                for i in k * d..(k + 1) * d {
+                    x[i] += ffn_out[i];
+                }
             }
         }
 
-        cache.len += 1;
+        for k in 0..kl_n {
+            if active[k] {
+                cache.lens[k] += 1;
+            }
+        }
         x
     }
 }
@@ -543,19 +586,19 @@ impl PlaygenModel {
 
 /// Public-information trick context during generation.
 #[derive(Clone)]
-struct GenState {
-    contract: Contract,
-    trick_cards: [Card; 4], // by seat, EMPTY if not played
-    trick_lead: u8,
-    trick_count: u8,
-    current: u8,
-    plays_done: u8,
-    played: u32,
-    remaining: [u8; 4],
+pub(crate) struct GenState {
+    pub(crate) contract: Contract,
+    pub(crate) trick_cards: [Card; 4], // by seat, EMPTY if not played
+    pub(crate) trick_lead: u8,
+    pub(crate) trick_count: u8,
+    pub(crate) current: u8,
+    pub(crate) plays_done: u8,
+    pub(crate) played: u32,
+    pub(crate) remaining: [u8; 4],
     /// Suit void bitmask per seat (observed + deduced, physical suits).
-    voids: [u8; 4],
+    pub(crate) voids: [u8; 4],
     /// Impossible trump ranks per seat.
-    ceiling: [u8; 4],
+    pub(crate) ceiling: [u8; 4],
 }
 
 /// Best trump rank on a (partial) trick.
@@ -689,7 +732,7 @@ impl GenState {
     }
 
     /// Update deduced constraints from a play, then advance the trick.
-    fn step(&mut self, player: u8, c: Card) {
+    pub(crate) fn step(&mut self, player: u8, c: Card) {
         let (dv, dc) = deduce_play_constraints(
             &self.trick_cards,
             self.trick_lead,
@@ -721,7 +764,7 @@ impl GenState {
 
     /// Legal plays for a hand fully known to us (the observer's own turns).
     /// Mirrors `play.rs::legal_plays` on public trick context.
-    fn legal_for_hand(&self, hand: u32, player: u8) -> u32 {
+    pub(crate) fn legal_for_hand(&self, hand: u32, player: u8) -> u32 {
         if self.trick_count == 0 {
             return hand;
         }
@@ -804,6 +847,9 @@ pub struct PlaygenSampler {
     bids: Vec<(u8, u8)>,
     /// Tokens not yet run through the model.
     pending: Vec<Tok>,
+    /// Full observed-prefix token history (already-synced + pending), for
+    /// external forward backends (e.g. GPU inference).
+    toks_history: Vec<Tok>,
     cache: KvCache,
     /// Deduced constraints from the observed prefix (trump voids not tracked
     /// by the engine, trump ceilings).
@@ -826,6 +872,7 @@ impl PlaygenSampler {
             perm: None,
             bids: Vec::new(),
             pending: Vec::new(),
+            toks_history: Vec::new(),
             cache,
             prefix_voids: [0; 4],
             prefix_ceiling: [0; 4],
@@ -841,6 +888,7 @@ impl PlaygenSampler {
         self.perm = None;
         self.bids.clear();
         self.pending.clear();
+        self.toks_history.clear();
         self.cache = KvCache::new(&self.model);
         self.prefix_voids = [0; 4];
         self.prefix_ceiling = [0; 4];
@@ -995,6 +1043,7 @@ impl PlaygenSampler {
             return;
         }
         let toks = std::mem::take(&mut self.pending);
+        self.toks_history.extend(toks.iter().copied());
         for tok in toks {
             let pos = self.cache.len;
             if pos >= self.model.max_seq_len {
@@ -1002,6 +1051,32 @@ impl PlaygenSampler {
             }
             self.model.forward_token(&mut self.cache, tok, pos);
         }
+    }
+
+    /// Observed-prefix tokens (v2: header + hand + auction so far), for
+    /// external forward backends (e.g. GPU inference). Includes tokens not
+    /// yet run through the CPU cache.
+    pub fn prefix_tokens(&self) -> Vec<Tok> {
+        let mut t = self.toks_history.clone();
+        t.extend(self.pending.iter().copied());
+        t
+    }
+
+    pub fn observer(&self) -> u8 {
+        self.observer
+    }
+
+    pub fn observer_hand(&self) -> u32 {
+        self.observer_initial_hand
+    }
+
+    /// V2: number of auction actions recorded so far.
+    pub fn bid_entries_count(&self) -> usize {
+        self.bid_entries
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.dead
     }
 
     /// Sample one determinized world from the current position.
@@ -1180,20 +1255,13 @@ impl PlaygenSampler {
     /// Scored variant of [`generate_worlds_batch`]: each world carries the
     /// cumulative log-probability (masked softmax at temperature 1) of the
     /// hidden-actor cards sampled along its continuation.
-    pub fn generate_worlds_batch_scored(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl rand::Rng,
-    ) -> Vec<([u32; 4], WorldLogp)> {
-        if self.perm.is_none() || self.dead || n_worlds == 0 {
-            return Vec::new();
+    /// Everything needed to continue a mid-play position, independent of the
+    /// forward backend. Built once here so the CPU and GPU paths cannot drift
+    /// on the constraint bookkeeping (voids, trump ceilings, remaining counts).
+    pub(crate) fn play_gen_spec(&self, state: &GameState) -> Option<PlayGenSpec> {
+        if self.perm.is_none() || self.dead {
+            return None;
         }
-        self.sync_cache();
-        let perm = self.perm.unwrap();
-        let observer = self.observer;
-
         let mut trick_mask = 0u32;
         for i in 0..4 {
             let c = state.current_trick[i];
@@ -1201,7 +1269,6 @@ impl PlaygenSampler {
                 trick_mask |= card::card_to_bit(c);
             }
         }
-
         let base = GenState {
             contract: state.contract,
             trick_cards: state.current_trick,
@@ -1224,11 +1291,37 @@ impl PlaygenSampler {
             ],
             ceiling: self.prefix_ceiling,
         };
-        let observer_hand_now = state.hands[observer as usize];
         let steps = 32 - base.plays_done as usize;
-        if self.cache.len + 2 * steps > self.model.max_seq_len {
-            return Vec::new(); // cannot happen for legal games
+        let prefix_len = self.toks_history.len() + self.pending.len();
+        if prefix_len + 2 * steps > self.model.max_seq_len {
+            return None; // cannot happen for legal games
         }
+        Some(PlayGenSpec {
+            base,
+            perm: self.perm.unwrap(),
+            observer: self.observer,
+            observer_initial_hand: self.observer_initial_hand,
+            observer_hand_now: state.hands[self.observer as usize],
+            steps,
+        })
+    }
+
+    pub fn generate_worlds_batch_scored(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl rand::Rng,
+    ) -> Vec<([u32; 4], WorldLogp)> {
+        if n_worlds == 0 {
+            return Vec::new();
+        }
+        let spec = match self.play_gen_spec(state) {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        self.sync_cache();
+        let PlayGenSpec { base, perm, observer, observer_hand_now, steps, .. } = spec;
 
         let mut cache = KvCacheBatch::from_prefix(&self.model, &self.cache, n_worlds);
         let mut gens: Vec<GenState> = vec![base; n_worlds];
@@ -1240,14 +1333,13 @@ impl PlaygenSampler {
         let mut card_toks = act_toks.clone();
 
         for step_i in 0..steps {
-            // ACT query tokens (dead lanes: padded with a valid token, ignored)
+            // ACT query tokens (dead lanes skipped by the active mask)
             for k in 0..n_worlds {
                 let rel = if alive[k] { self.rel(gens[k].current) } else { 0 };
                 act_toks[k] =
                     Tok { primary: P_ACT0 + rel, suit: S_NULL, actor: rel, segment: SEG_PLAY };
             }
-            let pos = cache.len;
-            let hidden = self.model.forward_tokens_batch(&mut cache, &act_toks, pos);
+            let hidden = self.model.forward_tokens_batch(&mut cache, &act_toks, &alive);
 
             for k in 0..n_worlds {
                 if !alive[k] {
@@ -1321,8 +1413,7 @@ impl PlaygenSampler {
                 gens[k].step(actor, phys_card);
             }
 
-            let pos = cache.len;
-            self.model.forward_tokens_batch(&mut cache, &card_toks, pos);
+            self.model.forward_tokens_batch(&mut cache, &card_toks, &alive);
         }
 
         let mut worlds = Vec::with_capacity(n_worlds);
@@ -1341,6 +1432,21 @@ impl PlaygenSampler {
         }
         worlds
     }
+}
+
+/// Backend-independent description of a mid-play continuation task.
+/// See [`PlaygenSampler::play_gen_spec`].
+pub(crate) struct PlayGenSpec {
+    pub base: GenState,
+    pub perm: [u8; 4],
+    pub observer: u8,
+    /// All 8 cards originally dealt to the observer — the unseen set is
+    /// `ALL_CARDS & !observer_initial_hand & !played`, so this must be the
+    /// initial hand, not what is left of it.
+    pub observer_initial_hand: u32,
+    pub observer_hand_now: u32,
+    /// Number of cards still to be played (each costs 2 tokens).
+    pub steps: usize,
 }
 
 /// Cumulative log-probability of a world's sampled play continuation
@@ -1366,7 +1472,7 @@ pub struct AuctionLogp {
 }
 
 /// log p of `action` under the masked softmax of `logits` at temperature 1.
-fn masked_logp(logits: &[f32], mask: u64, action: u8) -> f32 {
+pub(crate) fn masked_logp(logits: &[f32], mask: u64, action: u8) -> f32 {
     let mut max_l = f32::NEG_INFINITY;
     for c in 0..logits.len() {
         if mask & (1u64 << c) != 0 && logits[c] > max_l {
@@ -1438,162 +1544,236 @@ impl PlaygenSampler {
             return Vec::new();
         }
         self.sync_cache();
+        let mut worlds = Vec::with_capacity(n_worlds);
+        // Dead lanes (void deals, over-long auctions, playout dead-ends) are
+        // dropped; re-run lockstep rounds on the missing count, mirroring the
+        // old 4-attempts-per-world retry budget.
+        for _round in 0..4 {
+            let missing = n_worlds - worlds.len();
+            if missing == 0 {
+                break;
+            }
+            self.auction_batch_round(state, missing, temperature, rng, &mut worlds);
+        }
+        worlds
+    }
+
+    /// One lockstep round of mid-auction deal sampling: `n_lanes` lanes
+    /// advance one token-step at a time, each at its own sequence position
+    /// (auction completions have different lengths, so lanes desynchronize —
+    /// a lane starts its playout while others are still bidding).
+    fn auction_batch_round(
+        &mut self,
+        state: &GameState,
+        n_lanes: usize,
+        temperature: f32,
+        rng: &mut impl rand::Rng,
+        out: &mut Vec<([u32; 4], AuctionLogp)>,
+    ) {
+        const BIDDING: u8 = 0;
+        const PLAYING: u8 = 1;
+        const DONE: u8 = 2;
+        const DEAD: u8 = 3;
+
         let observer = self.observer;
         let observer_hand = self.observer_initial_hand;
-        let mut worlds = Vec::with_capacity(n_worlds);
+        let mut cache = KvCacheBatch::from_prefix(&self.model, &self.cache, n_lanes);
 
-        'world: for _ in 0..n_worlds {
-            for _attempt in 0..4 {
-                let mut cache = self.cache.clone();
-                let mut alp = AuctionLogp::default();
-                // Public auction state machine: bid legality never reads hands,
-                // so a clone of the (dummy-hand) state is safe to step.
-                let mut sim = *state;
-                let mut bid_entries = self.bid_entries;
-                let mut ok = true;
+        // Public auction state machine per lane: bid legality never reads
+        // hands, so clones of the (dummy-hand) state are safe to step.
+        let mut phases = vec![BIDDING; n_lanes];
+        let mut sims = vec![*state; n_lanes];
+        let mut bid_entries = vec![self.bid_entries; n_lanes];
+        let placeholder_gen = GenState {
+            contract: state.contract,
+            trick_cards: [card::EMPTY; 4],
+            trick_lead: 0,
+            trick_count: 0,
+            current: 0,
+            plays_done: 0,
+            played: 0,
+            remaining: [8; 4],
+            voids: [0; 4],
+            ceiling: [0; 4],
+        };
+        let mut gens = vec![placeholder_gen; n_lanes]; // valid once PLAYING
+        let mut assigned = vec![[0u32; 4]; n_lanes];
+        let mut obs_remaining = vec![observer_hand; n_lanes];
+        let mut alps = vec![AuctionLogp::default(); n_lanes];
+        let dummy = Tok { primary: P_ACT0, suit: S_NULL, actor: 0, segment: SEG_BID };
+        let mut act_toks = vec![dummy; n_lanes];
+        let mut action_toks = vec![dummy; n_lanes];
+        let mut act_active = vec![false; n_lanes];
+        let mut action_active = vec![false; n_lanes];
 
-                while sim.phase == Phase::Bidding {
-                    if bid_entries >= MAX_BID_ENTRIES_V2
-                        || cache.len + 2 >= self.model.max_seq_len
-                    {
-                        ok = false;
-                        break;
+        loop {
+            // 1) ACT query tokens for lanes still generating.
+            let mut any = false;
+            for k in 0..n_lanes {
+                act_active[k] = false;
+                match phases[k] {
+                    BIDDING => {
+                        if bid_entries[k] >= MAX_BID_ENTRIES_V2
+                            || cache.lens[k] + 2 >= self.model.max_seq_len
+                        {
+                            phases[k] = DEAD;
+                            continue;
+                        }
+                        let rel = self.rel(sims[k].current_player());
+                        act_toks[k] = Tok {
+                            primary: P_ACT0 + rel,
+                            suit: S_NULL,
+                            actor: rel,
+                            segment: SEG_BID,
+                        };
+                        act_active[k] = true;
+                        any = true;
                     }
-                    let bidder = sim.current_player();
-                    let rel = self.rel(bidder);
-                    let pos = cache.len;
-                    let hidden = self.model.forward_token(
-                        &mut cache,
-                        Tok { primary: P_ACT0 + rel, suit: S_NULL, actor: rel, segment: SEG_BID },
-                        pos,
-                    );
-                    let logits = self.model.bid_logits(&hidden);
-                    let action =
-                        sample_bid_masked(&logits, sim.legal_actions(), temperature, rng);
-                    alp.bid_sum += masked_logp(&logits, sim.legal_actions(), action);
-                    alp.bid_n += 1;
-                    let (p_tok, phys_suit) = bid_token(action);
-                    let pos = cache.len;
-                    self.model.forward_token(
-                        &mut cache,
-                        Tok {
+                    PLAYING => {
+                        if cache.lens[k] + 2 >= self.model.max_seq_len {
+                            phases[k] = DEAD;
+                            continue;
+                        }
+                        let rel = self.rel(gens[k].current);
+                        act_toks[k] = Tok {
+                            primary: P_ACT0 + rel,
+                            suit: S_NULL,
+                            actor: rel,
+                            segment: SEG_PLAY,
+                        };
+                        act_active[k] = true;
+                        any = true;
+                    }
+                    _ => {}
+                }
+            }
+            if !any {
+                break;
+            }
+            let hidden = self.model.forward_tokens_batch(&mut cache, &act_toks, &act_active);
+
+            // 2) Per-lane sampling → action tokens.
+            for k in 0..n_lanes {
+                action_active[k] = false;
+                if !act_active[k] {
+                    continue;
+                }
+                let h = &hidden[k * self.model.d..(k + 1) * self.model.d];
+                match phases[k] {
+                    BIDDING => {
+                        let rel = self.rel(sims[k].current_player());
+                        let logits = self.model.bid_logits(h);
+                        let action =
+                            sample_bid_masked(&logits, sims[k].legal_actions(), temperature, rng);
+                        alps[k].bid_sum += masked_logp(&logits, sims[k].legal_actions(), action);
+                        alps[k].bid_n += 1;
+                        let (p_tok, phys_suit) = bid_token(action);
+                        action_toks[k] = Tok {
                             primary: p_tok,
                             suit: if phys_suit == 255 { S_NULL } else { phys_suit },
                             actor: rel,
                             segment: SEG_BID,
-                        },
-                        pos,
-                    );
-                    sim.step(action);
-                    bid_entries += 1;
-                }
-                if !ok || sim.phase != Phase::Playing {
-                    continue; // over-long or void auction → retry
-                }
-
-                // Play out the deal, assigning hidden cards as they are played.
-                let mut gen = GenState {
-                    contract: sim.contract,
-                    trick_cards: [card::EMPTY; 4],
-                    trick_lead: sim.current_player(),
-                    trick_count: 0,
-                    current: sim.current_player(),
-                    plays_done: 0,
-                    played: 0,
-                    remaining: [8; 4],
-                    voids: [0; 4],
-                    ceiling: [0; 4],
-                };
-                let mut assigned = [0u32; 4];
-                let mut obs_remaining = observer_hand;
-                let mut dead_end = false;
-
-                while gen.plays_done < 32 {
-                    let actor = gen.current;
-                    let rel = self.rel(actor);
-                    let pos = cache.len;
-                    if pos + 1 >= self.model.max_seq_len {
-                        dead_end = true;
-                        break;
-                    }
-                    let hidden = self.model.forward_token(
-                        &mut cache,
-                        Tok { primary: P_ACT0 + rel, suit: S_NULL, actor: rel, segment: SEG_PLAY },
-                        pos,
-                    );
-                    // Same semantics as `generate_world`: assignment happens at
-                    // play time, so `gen.played` already covers every card
-                    // assigned to any seat.
-                    let mask = if actor == observer {
-                        gen.legal_for_hand(obs_remaining, actor)
-                    } else {
-                        let unseen = card::ALL_CARDS & !observer_hand & !gen.played;
-                        let mut m = 0u32;
-                        for c in 0..32u8 {
-                            let bit = 1u32 << c;
-                            if unseen & bit == 0 {
-                                continue;
+                        };
+                        sims[k].step(action);
+                        bid_entries[k] += 1;
+                        match sims[k].phase {
+                            Phase::Playing => {
+                                let lead = sims[k].current_player();
+                                gens[k] = GenState {
+                                    contract: sims[k].contract,
+                                    trick_cards: [card::EMPTY; 4],
+                                    trick_lead: lead,
+                                    trick_count: 0,
+                                    current: lead,
+                                    plays_done: 0,
+                                    played: 0,
+                                    remaining: [8; 4],
+                                    voids: [0; 4],
+                                    ceiling: [0; 4],
+                                };
+                                phases[k] = PLAYING;
+                                action_active[k] = true;
                             }
-                            let suit = c / 8;
-                            if gen.voids[actor as usize] & (1 << suit) != 0 {
-                                continue;
-                            }
-                            if suit == gen.contract.trump
-                                && gen.ceiling[actor as usize] & (1 << (c % 8)) != 0
-                            {
-                                continue;
-                            }
-                            m |= bit;
+                            Phase::Bidding => action_active[k] = true,
+                            Phase::Done => phases[k] = DEAD, // void deal
                         }
-                        m
-                    };
-                    if mask == 0 || gen.remaining[actor as usize] == 0 {
-                        dead_end = true;
-                        break;
                     }
-                    let logits = self.model.logits(&hidden);
-                    let c = sample_masked(&logits, mask, temperature, rng);
-                    if actor != observer {
-                        alp.play_sum += masked_logp(&logits, mask as u64, c);
-                        alp.play_n += 1;
-                    }
-                    let pos = cache.len;
-                    self.model.forward_token(
-                        &mut cache,
-                        Tok {
+                    PLAYING => {
+                        let actor = gens[k].current;
+                        let rel = self.rel(actor);
+                        let mask = if actor == observer {
+                            gens[k].legal_for_hand(obs_remaining[k], actor)
+                        } else {
+                            let unseen = card::ALL_CARDS & !observer_hand & !gens[k].played;
+                            let mut m = 0u32;
+                            for c in 0..32u8 {
+                                let bit = 1u32 << c;
+                                if unseen & bit == 0 {
+                                    continue;
+                                }
+                                let suit = c / 8;
+                                if gens[k].voids[actor as usize] & (1 << suit) != 0 {
+                                    continue;
+                                }
+                                if suit == gens[k].contract.trump
+                                    && gens[k].ceiling[actor as usize] & (1 << (c % 8)) != 0
+                                {
+                                    continue;
+                                }
+                                m |= bit;
+                            }
+                            m
+                        };
+                        if mask == 0 || gens[k].remaining[actor as usize] == 0 {
+                            phases[k] = DEAD;
+                            continue;
+                        }
+                        let logits = self.model.logits(h);
+                        let c = sample_masked(&logits, mask, temperature, rng);
+                        if actor != observer {
+                            alps[k].play_sum += masked_logp(&logits, mask as u64, c);
+                            alps[k].play_n += 1;
+                        }
+                        action_toks[k] = Tok {
                             primary: P_RANK0 + c % 8,
                             suit: c / 8,
                             actor: rel,
                             segment: SEG_PLAY,
-                        },
-                        pos,
-                    );
-                    assigned[actor as usize] |= 1u32 << c;
-                    if actor == observer {
-                        obs_remaining &= !(1u32 << c);
+                        };
+                        assigned[k][actor as usize] |= 1u32 << c;
+                        if actor == observer {
+                            obs_remaining[k] &= !(1u32 << c);
+                        }
+                        gens[k].step(actor, c);
+                        if gens[k].plays_done == 32 {
+                            // The final CARD token is never attended to.
+                            phases[k] = DONE;
+                        } else {
+                            action_active[k] = true;
+                        }
                     }
-                    gen.step(actor, c);
-                }
-                if dead_end {
-                    continue;
-                }
-
-                let mut hands = assigned;
-                hands[observer as usize] = observer_hand;
-                let mut valid = card::card_count(hands[observer as usize]) == 8;
-                let mut all = 0u32;
-                for p in 0..4usize {
-                    valid &= card::card_count(hands[p]) == 8 && (all & hands[p]) == 0;
-                    all |= hands[p];
-                }
-                if valid {
-                    worlds.push((hands, alp));
-                    continue 'world;
+                    _ => {}
                 }
             }
-            // 4 failed attempts for this world slot → give up on it.
+            self.model.forward_tokens_batch(&mut cache, &action_toks, &action_active);
         }
-        worlds
+
+        // Collect finished lanes (validity: 8 cards per seat, disjoint).
+        'lane: for k in 0..n_lanes {
+            if phases[k] != DONE {
+                continue;
+            }
+            let mut hands = assigned[k];
+            hands[observer as usize] = observer_hand;
+            let mut all = 0u32;
+            for p in 0..4usize {
+                if card::card_count(hands[p]) != 8 || (all & hands[p]) != 0 {
+                    continue 'lane;
+                }
+                all |= hands[p];
+            }
+            out.push((hands, alps[k]));
+        }
     }
 }
 
@@ -1635,7 +1815,7 @@ pub fn sample_bid_masked(
         .unwrap_or(0)
 }
 
-fn bid_token(action: u8) -> (u8, u8) {
+pub(crate) fn bid_token(action: u8) -> (u8, u8) {
     match action {
         0 => (P_PASS, 255),
         1..=36 => {
@@ -2125,10 +2305,11 @@ mod batch_tests {
         }
         let lanes = 4;
         let mut batch = KvCacheBatch::from_prefix(&model, &prefix, lanes);
+        let active = vec![true; lanes];
         let mut hidden = Vec::new();
-        for (i, tok) in toks.iter().skip(10).enumerate() {
+        for tok in toks.iter().skip(10) {
             let batch_toks = vec![*tok; lanes];
-            hidden = model.forward_tokens_batch(&mut batch, &batch_toks, 10 + i);
+            hidden = model.forward_tokens_batch(&mut batch, &batch_toks, &active);
         }
         for k in 0..lanes {
             let logits_k = model.logits(&hidden[k * model.d..(k + 1) * model.d]);

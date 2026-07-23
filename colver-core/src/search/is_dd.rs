@@ -199,6 +199,9 @@ pub struct IsDdSearch {
     init_state: Option<GameState>,
     /// Cards played so far per seat (current trick included).
     played_by: [u32; 4],
+    /// Externally provided worlds (e.g. GPU sidecar), consumed first by the
+    /// next `search*` call. Remaining-hands format, current position.
+    injected_worlds: Vec<[u32; 4]>,
     tt_buf: Vec<u64>,
 }
 
@@ -214,6 +217,7 @@ impl IsDdSearch {
             auction: Vec::new(),
             init_state: None,
             played_by: [0; 4],
+            injected_worlds: Vec::new(),
             tt_buf: new_tt_buffer(),
         }
     }
@@ -231,6 +235,19 @@ impl IsDdSearch {
 
     pub fn has_playgen(&self) -> bool {
         self.playgen.is_some()
+    }
+
+    /// Provide externally sampled worlds (e.g. from the GPU sidecar) for the
+    /// next `search*` call. Consumed before any internal sampler; invalid
+    /// worlds (wrong counts or wrong observer hand) are skipped.
+    pub fn set_injected_worlds(&mut self, worlds: Vec<[u32; 4]>) {
+        self.injected_worlds = worlds;
+    }
+
+    /// Direct access to the playgen sampler (e.g. to read prefix tokens for
+    /// an external GPU forward backend).
+    pub fn playgen_sampler(&self) -> Option<&PlaygenSampler> {
+        self.playgen.as_ref()
     }
 
     /// Load a BeliefNet for NN-based beliefs.
@@ -877,12 +894,31 @@ impl IsDdSearch {
                 break;
             }
 
+            // Externally injected worlds are consumed first.
+            let injected = loop {
+                match self.injected_worlds.pop() {
+                    Some(hands) => {
+                        let ok = (0..4).all(|p| {
+                            card_count(hands[p]) == card_count(state.hands[p])
+                        }) && hands[observer as usize] == state.hands[observer as usize];
+                        if ok {
+                            break Some(hands);
+                        }
+                    }
+                    None => break None,
+                }
+            };
+
             let use_playgen = config.playgen_frac > 0.0
                 && self.playgen.is_some()
                 && !playgen_dry
                 && rng.gen::<f32>() < config.playgen_frac;
 
-            let det_state = if use_playgen {
+            let det_state = if let Some(hands) = injected {
+                let mut s = *state;
+                s.hands = hands;
+                Some(s)
+            } else if use_playgen {
                 if playgen_queue.is_empty() {
                     let sampler = self.playgen.as_mut().unwrap();
                     playgen_queue =
@@ -939,6 +975,10 @@ impl IsDdSearch {
             successful_dets += 1;
             det_count += 1;
         }
+
+        // Injected worlds are one-shot: drop any leftover so a later search
+        // at another position cannot consume stale worlds.
+        self.injected_worlds.clear();
 
         // Feed determinized hands into elephant memory.
         if store_particles && !det_hands.is_empty() {

@@ -4,6 +4,32 @@ import random
 import time
 import colver
 
+from colver.web import playgen_gpu
+
+
+def _inject_gpu_worlds(env, dealer, initial_hands, history, n_worlds=24):
+    """Fetch playgen worlds from the GPU sidecar and inject them into the
+    env's IS-DD search for the current player. Silent no-op (False) when the
+    sidecar is disabled or unreachable — IS-DD then samples as usual (CPU).
+
+    ``history``: list of {player, action} dicts (bid + play, in order).
+    ``initial_hands`` must be the full pre-auction deal (32 cards)."""
+    if not playgen_gpu.enabled():
+        return False
+    if initial_hands is None or sum(len(h) for h in initial_hands) != 32:
+        return False
+    actions = [(h["player"], h["action"]) for h in history]
+    worlds = playgen_gpu.play_worlds(
+        dealer, initial_hands, actions, int(env.current_player()), n_worlds=n_worlds
+    )
+    if not worlds:
+        return False
+    try:
+        env.dede_inject_worlds(worlds)
+        return True
+    except Exception:
+        return False
+
 
 class TrickTracker:
     """Mixin for tracking completed tricks with point calculations."""
@@ -193,6 +219,7 @@ class PlaySession(TrickTracker):
                 result = self.env.action_dmc_with_stats()
                 return int(result["best_action"])
             elif ai_type == "dede":
+                _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
                 return int(self.env.action_dede(self.dede_time_ms))
             elif ai_type == "oracle_dd":
                 return int(self.env.action_oracle_dd())
@@ -257,6 +284,10 @@ class WatchSession(TrickTracker):
         else:
             self.env = colver.Env()
             self.env.reset()
+
+        # Full pre-auction deal, for the GPU playgen sidecar. Only valid if
+        # the session starts from a fresh deal (a CFN env may be mid-game).
+        self.initial_hands = [list(h) for h in self.env.get_hands()]
 
         # Load DMC model if any seat uses DouDou50
         if dmc_model_path and any(a == "doudou" for a in agents.values()):
@@ -346,11 +377,14 @@ class WatchSession(TrickTracker):
         stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
 
         if agent_type == "dede":
+            gpu = _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
             result = self.env.action_dede_with_stats(self.dede_time_ms)
             action = int(result["best_action"])
             stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
             stats["determinizations"] = int(result["determinizations"])
             stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
+            if gpu:
+                stats["worlds_source"] = "playgen-gpu"
 
         elif agent_type == "oracle_dd":
             t0 = time.monotonic()
@@ -371,6 +405,7 @@ class WatchSession(TrickTracker):
                 stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
                 stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
             else:
+                _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
                 result = self.env.action_dede_with_stats(self.dede_time_ms)
                 action = int(result["best_action"])
                 stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
@@ -741,6 +776,21 @@ class BeliefSession:
     # the v2 model (43MB, ~3-5x slower per world than v1).
     PLAYGEN_WORLDS = 30
     PLAYGEN_TEMP = 0.8
+    # GPU sidecar: worlds are ~50x cheaper, so marginals get much smoother.
+    PLAYGEN_WORLDS_GPU = 200
+
+    def _playgen_marginals(self, env_actions_prefix: int, observer: int):
+        """Playgen marginals at a position: GPU sidecar first (200 worlds),
+        CPU PyO3 fallback (30 worlds). Returns None during bidding."""
+        if playgen_gpu.enabled():
+            actions = [(p, a) for p, a, _ in self.all_actions[:env_actions_prefix]]
+            w = playgen_gpu.beliefs(
+                self.dealer, self.initial_hands, actions, observer,
+                n_worlds=self.PLAYGEN_WORLDS_GPU, temperature=self.PLAYGEN_TEMP,
+            )
+            if w is not None:
+                return w
+        return None
 
     def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:
         """Return NN + heuristic (+ playgen on demand) belief weights + ground truth hands.
@@ -755,10 +805,13 @@ class BeliefSession:
             key = (self.action_idx, observer)
             playgen = self.playgen_cache.get(key)
             if playgen is None:
-                # MC marginals over sampled worlds; None during bidding (contract unknown)
-                playgen = self.env.get_playgen_beliefs(
-                    observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
-                )
+                # GPU sidecar (200 worlds) → CPU fallback (30 worlds);
+                # None during bidding (contract unknown)
+                playgen = self._playgen_marginals(self.action_idx, observer)
+                if playgen is None:
+                    playgen = self.env.get_playgen_beliefs(
+                        observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
+                    )
                 if playgen is not None:
                     self.playgen_cache[key] = playgen
         return {
@@ -811,11 +864,13 @@ class BeliefSession:
             if int(self._sweep_env.phase()) == 1 and not self._sweep_env.is_terminal():
                 key = (idx, self._sweep_observer)
                 if key not in self.playgen_cache:
-                    w = self._sweep_env.get_playgen_beliefs(
-                        self._sweep_observer,
-                        n_worlds=self.PLAYGEN_WORLDS,
-                        temperature=self.PLAYGEN_TEMP,
-                    )
+                    w = self._playgen_marginals(idx, self._sweep_observer)
+                    if w is None:
+                        w = self._sweep_env.get_playgen_beliefs(
+                            self._sweep_observer,
+                            n_worlds=self.PLAYGEN_WORLDS,
+                            temperature=self.PLAYGEN_TEMP,
+                        )
                     if w is not None:
                         self.playgen_cache[key] = w
                 self._sweep_done += 1
