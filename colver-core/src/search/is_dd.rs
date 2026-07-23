@@ -607,6 +607,48 @@ impl IsDdSearch {
         w.powf(alpha)
     }
 
+    /// Sample determinized play-phase worlds without solving them (used by the
+    /// world-credibility benchmark). `use_beliefs` follows the same path as
+    /// `search` (NN soft beliefs + hard constraints when a net is loaded);
+    /// otherwise constraint-uniform sampling. Returns remaining-card hands.
+    pub fn sample_worlds(
+        &mut self,
+        state: &GameState,
+        config: &IsDdConfig,
+        observer: u8,
+        n_worlds: usize,
+        use_beliefs: bool,
+        rng: &mut impl Rng,
+    ) -> Vec<[u32; 4]> {
+        let weights = if use_beliefs {
+            self.compute_weights(state, config, observer)
+        } else {
+            None
+        };
+        (0..n_worlds)
+            .filter_map(|_| match &weights {
+                Some(w) => determinize_weighted(state, observer, w, rng)
+                    .or_else(|| determinize_greedy(state, observer, rng)),
+                None => determinize_greedy(state, observer, rng),
+            })
+            .map(|s| s.hands)
+            .collect()
+    }
+
+    /// Sample play-phase worlds from the playgen model (batch lockstep).
+    pub fn playgen_worlds(
+        &mut self,
+        state: &GameState,
+        n_worlds: usize,
+        temperature: f32,
+        rng: &mut impl Rng,
+    ) -> Vec<[u32; 4]> {
+        match self.playgen.as_mut() {
+            Some(sampler) => sampler.generate_worlds_batch(state, n_worlds, temperature, rng),
+            None => Vec::new(),
+        }
+    }
+
     /// Get elephant memory stats: (surviving_particles, total_particles).
     pub fn elephant_stats(&self) -> (usize, usize) {
         match &self.elephant {
