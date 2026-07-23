@@ -9,6 +9,12 @@ How a player plays cards once bidding ends. Implementations live in [colver-core
 - [smart_ismcts.md](smart_ismcts.md) — Belief-weighted IS-MCTS
 - [dmc.md](dmc.md) — DouZero-style Q-network (DouDou35, DouDou50)
 
+## World sampling
+
+IS-DD and IS-MCTS both need determinized worlds. The samplers that produce them
+(belief nets, playgen transformer, constraint-uniform) are documented under
+[../belief/](../belief/) — see [../belief/playgen.md](../belief/playgen.md).
+
 ## Experiments
 
 - [experiments/triforge.md](experiments/triforge.md) — joint bid+play training, alternating best response

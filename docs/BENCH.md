@@ -58,7 +58,7 @@ Samples D determinized worlds (respecting void constraints), runs standard MCTS 
 
 ### Smart IS-MCTS (Belief-Weighted Determinization)
 
-Same ensemble architecture as Naive IS-MCTS, but uses a `CardBeliefs` model to bias determinization. Maintains per-card per-player probability weights updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). See [SMART_ISMCTS.md](SMART_ISMCTS.md) for detailed design.
+Same ensemble architecture as Naive IS-MCTS, but uses a `CardBeliefs` model to bias determinization. Maintains per-card per-player probability weights updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). See [play/smart_ismcts.md](play/smart_ismcts.md) for detailed design.
 
 | Config (D x I = total) | Opponent | Time/game | Win% (NS) | Avg score (NS - EW) |
 |---|---|---|---|---|
@@ -89,3 +89,36 @@ The gap is expected: perfect-info MCTS "cheats" by seeing all four hands, giving
 - Determinization uses greedy constraint-aware redistribution (respects void suits, card counts)
 - Smart IS-MCTS adds belief overhead of <1ms per game; the cost is in the per-action weight updates (128 floats), not the search itself
 - Smart vs Naive IS-MCTS at equal budget is roughly even (~46-54%), suggesting the soft inference weights need further tuning or that the hard constraints alone capture most of the useful information at this search budget
+
+---
+
+## NN inference kernels (`nn_kernels.rs`, 2026-07-23)
+
+Shared `dot` / `linear` / `layer_norm` for the pure-Rust nets (`dmc_net`,
+`bid_net`, `belief_net`). Sums are split across 8 independent accumulator
+lanes, plus an AVX2-dispatched build.
+
+Why it matters: a single-accumulator dot product serialises one ~4-cycle FP add
+per element and cannot be auto-vectorised — Rust never grants float
+reassociation, so the compiler is not allowed to reorder the sum.
+
+| Net | Before | After | Speedup |
+|---|---|---|---|
+| DmcNet | 926 µs | 178 µs | 5.2× |
+| BidNet | 219 µs | 33 µs | 6.6× |
+| BeliefNet | 158 µs | 23 µs | 6.3× |
+
+End to end: DouDou50 self-play went from 35 to **176 deals/s**.
+
+Numerics move only in the last ulp (max abs deviation 6e-4, no argmax change
+outside an exact tie). **Any new inference net should use these rather than an
+inline loop.** `playgen/infer.rs` has its own equivalent, `dot8`.
+
+## Playgen GPU inference (2026-07-23)
+
+`playgen/gpu.rs` (candle CUDA) batches world generation across lanes. On a
+4090 at B=12 the `bench_world_cred` phases went 52.8 s → 9.1 s (auctions,
+5.8×) and 29.7 s → 9.2 s (play, 3.2×), bit-identical to CPU. Decode is ~6 ms
+per step almost independently of batch size, so the GPU is worthless for a
+single world and decisive for pools: 78 worlds/s at B=32, 328 at B=128, 951 at
+B=512. See [belief/playgen.md](belief/playgen.md).

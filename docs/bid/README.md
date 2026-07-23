@@ -1,5 +1,21 @@
 # Bidding Documentation
 
+## Model zoo (`bid/bid_net.rs`)
+
+Dueling DQN, hidden size auto-detected from the weight file (tries 256, 512,
+1024). Strategies live in [bid_eval/](../../colver-core/src/bid/bid_eval/):
+`BidADd` (NN, default), `Improved`, `Heuristic`, `Smart`, `Roro`, `Maxi`,
+`BidParams` (parametric) — one file each.
+
+| Model | Weights | Obs | Notes |
+|---|---|---|---|
+| Bid a Doudou (v1) | `bid_nn_final.bin` | 114→256²→43 | DouZero self-play |
+| Bid a Dede (v2) | `bid_v2/bid_nn_final.bin` | 108→512³→43 | DD solver + 24× suit augmentation |
+| Bumblebid | — | transformer d=64 L=2 H=4 | experimental, abandoned for MLP |
+| Bid v3 Max | `bid_v3_max_20M/bid_nn_final.bin` | 20M steps | `max(DMC, ISDD)` real points |
+| Bid v5 ISDD | `bid_v5_isdd/bid_nn_final.bin` | 113-dim score-aware v2 | Δ-winprob reward, 1M ISDD pool; first to dominate v2 in both play modes |
+| **Bid v6 ISDD** (default) | `bid_v6_isdd_resume/bid_nn_final.bin` | 117-dim score-aware v3 | 75M steps (45M + 30M resume); +4 belote bits, belote-aware reward (Q+K trump = +20), match simulation (cumulative scores, dealer rotation, reset @ 2000), 5M ISDD pool. Arena vs v5: 55.8% (DMC play) / 57.3% +181 (IS-DD play) |
+
 ## Strategies
 
 Deterministic and learned bidders. Implementation: [colver-core/src/bid/bid_eval/](../../colver-core/src/bid/bid_eval/).
@@ -8,7 +24,7 @@ Deterministic and learned bidders. Implementation: [colver-core/src/bid/bid_eval
 - [strategies/bid_v2.md](strategies/bid_v2.md) — Bid a Dede (current production NN bidder, 20M steps DD-only)
 - [strategies/bid_v3_max.md](strategies/bid_v3_max.md) — bid_v3_max_20M (max(DMC,ISDD) reward signal)
 - [strategies/bid_v4_score_aware.md](strategies/bid_v4_score_aware.md) — bid_v4 score-aware (Δ win probability reward, match-context)
-- [strategies/bid_v5.md](strategies/bid_v5.md) — **current champion** `v5_isdd_25M`: score features v2 + reward clip + EMA + cosine LR, trained on IS-DD-pure pool (25M steps)
+- [strategies/bid_v5.md](strategies/bid_v5.md) — `v5_isdd_25M`: score features v2 + reward clip + EMA + cosine LR, trained on IS-DD-pure pool (25M steps). Superseded as champion by v6 (see model zoo above).
 
 ## Architectures
 

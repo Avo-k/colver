@@ -12,7 +12,7 @@ Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node
 
 ## Smart IS-MCTS Agent (`smart_ismcts.rs` + `card_beliefs.rs`, feature `rand`)
 
-Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 32]; 4]` weight matrix) updated after every action using hard constraints (voids, trump ceiling, played cards) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. See [SMART_ISMCTS.md](SMART_ISMCTS.md) for design.
+Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 32]; 4]` weight matrix) updated after every action using hard constraints (voids, trump ceiling, played cards) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. See [play/smart_ismcts.md](play/smart_ismcts.md) for design.
 
 **API:** `SmartIsMctsSearch::new()`, `init_deal(state, observer, use_soft)`, `record_action(state_before, player, action)`, `search(state, config, rng) -> u8`. Each player needs its own instance; both must observe all actions.
 

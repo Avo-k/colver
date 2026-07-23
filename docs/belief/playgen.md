@@ -327,24 +327,122 @@ the playgen bid policy is shown under the Bid V6 Q-values.
 Self-supervised sampler eval (user's idea): the observed actions are the
 oracle. For each seeded position, sample K worlds per sampler and ask the
 reference policy whether it would replay each observed hidden action holding
-that world's hand. Rust binary, both phases, positions fully seeded:
+that world's hand.
 
 ```bash
-cargo run -p colver-core --bin bench_world_cred --release -- \
-  --bid-positions 30 --play-positions 30 --worlds 12 --seed 42
+cargo run -p colver-core --bin bench_world_cred --release \
+  --features "rand,nn,parallel,dmc_train" -- \
+  --bid-positions 100 --play-positions 100 --worlds 32 --seed 42
 ```
 
-Reference results (playgen v2 @60K, seed 42, argmax/top3):
+### Generate every question first, then answer (fixed 2026-07-23)
+
+**The bug.** The first version ran one loop that drew a position, sampled
+worlds from all three samplers, judged, and looped — all off a single `rng`.
+World sampling consumes a *variable* number of draws depending on the model's
+distribution, so swapping the playgen checkpoint desynced the stream and
+silently re-drew every position after the first. Demonstration on the old
+binary, counting judgements of the `uniform` sampler (which never touches the
+playgen model, so its numbers must not move):
+
+| positions | 60K ckpt | 120K ckpt |
+|---|---|---|
+| 1 | 12 | 12 |
+| 2 | 24 | **48** |
+| 5 | 72 | **96** |
+
+Identical at one position, divergent from the second. In a 30+30 run this
+moved the untouched belief/uniform baselines by up to 5 pp — the same order
+as the checkpoint effect being measured. **Any pre-2026-07-23 cross-checkpoint
+comparison from this bench is void.** Within a single run the three samplers
+always shared their positions, so the sampler *hierarchy* below was never
+affected; only comparisons across runs were.
+
+**The fix** (user's framing: "generate all the questions, then answer them").
+Phase 0 draws every position up front — `generate_bid_positions` /
+`generate_play_positions`, which depend on the bid net and DMC net only, never
+on a sampler. Then each (phase, position, sampler) triple gets its own stream
+from `sub_rng`, a splitmix64 mix of the seed. Consequences:
+
+- A sampler cannot perturb another sampler, nor the positions.
+- The two phases use separate streams too, so `--bid-positions 0` leaves the
+  play positions untouched.
+- **Built-in control**: any baseline that does not depend on the varied
+  component must come out bit-identical across runs. If `belief` or `uniform`
+  moves while only the playgen checkpoint changed, a coupling is back.
+
+**The same single-loop pattern still exists in `bench_logp_cred.rs` and
+`bench_world_compress.rs`.** Their published numbers are single-configuration
+and intra-run, so they stand; but do not use either to compare two
+checkpoints until they get the same two-phase treatment.
+
+The general rule: a benchmark's questions must not be drawn from a stream that
+the thing under test also consumes.
+
+### GPU inference (both phases)
+
+`--gpu` (default when built with `dmc_train`; `--cpu` to force) runs playgen
+generation on CUDA. The play path was added 2026-07-23 — and it turned out the
+GPU code was *already there*: `auction_round`'s `PLAYING` branch is a complete
+play generator, since auction lanes transition to play and deal out all 32
+cards. Only an entry point starting lanes mid-play was missing.
+
+To keep the two backends from drifting, the constraint bookkeeping (starting
+`GenState`: voids, trump ceilings, remaining counts, current trick) is built
+once in `PlaygenSampler::play_gen_spec()` and consumed by both. The forward is
+the only thing that differs. Two things the port had to preserve: the suit
+permutation (`permute_mask` + canon↔physical, a no-op in v2 but applied
+generically), and using the observer's **initial** hand for the `unseen` mask.
+
+The play path is simpler than the auction one: every lane replays the same
+number of cards, so all lanes stay at the same logical position and the
+per-lane `lens` machinery is unnecessary. Dead lanes keep appending dummy
+tokens and are masked out of future attention.
+
+Validated bit-identical to CPU (30 positions: 4043 judgements, 348 worlds, 12
+missing, both backends). Speedups on a 4090 at B=12: auctions **5.8×**
+(52.8 s → 9.1 s), play **3.2×** (29.7 s → 9.2 s). Play gains less because the
+DMC judge and the belief/uniform samplers stayed on CPU. A 100+100 × 32-world
+run takes ~1 min 30 — 8.9× the sample size of the old 30+30 × 12 default for
+roughly the same wall-clock, which is why the default scale was raised.
+
+### Reference results (100+100 positions × 32 worlds, argmax/top3)
+
+Playgen v2 @120K, seed 42 (baselines identical on every seed pair — the
+control described above):
 
 | Phase | playgen | belief NN | uniform |
 |---|---|---|---|
-| Auctions (judge bid v6) | **60% / 92%** | 34% / 64% (bid_belief_v4) | 12% / 32% |
-| Play (judge DouDou50)   | **85% / 98%** | 78% / 96% (belief_v4_fix_v2) | 70% / 94% |
+| Auctions (judge bid v6) | **67% / 95%** | 38% / 68% (bid_belief_v4) | 15% / 34% |
+| Play (judge DouDou50)   | **86% / 98%** | 77% / 95% (belief_v4_fix_v2) | 70% / 93% |
 
 The hierarchy holds in both phases but tightens sharply in play: hard
 constraints already carry most of the play-phase signal (uniform-constrained
 reaches 70% argmax) — auctions are where samplers really differ, which is
 also why bid-phase conditioning (BisDd, annonces) is the biggest payoff.
+
+Note the small-sample bias: at the old 30 × 12 scale the belief baseline read
+34% in auctions, versus 38% here. Sample sizes below ~1000 worlds per sampler
+move by several points; use 100 × 32 or larger for anything decisive.
+
+### Checkpoint A/B: v2 @60K vs @120K (2026-07-23)
+
+First comparison run on the fixed benchmark, three independent position sets:
+
+| seed | auctions 60K | auctions 120K | play 60K | play 120K |
+|---|---|---|---|---|
+| 42 | 63% / 93% | **67% / 95%** | 86% / 97% | 86% / 98% |
+| 43 | 62% / 93% | **66% / 95%** | 86% / 98% | 87% / 98% |
+| 44 | 63% / 92% | **67% / 94%** | 85% / 97% | 87% / 98% |
+
+**Auctions: +4 pp argmax and +2 pp top3, on 3/3 seeds** — the extra 60K
+training steps buy real auction-conditioning quality. **Play: +1 pp**, at the
+edge of resolvability. Consistent with the training curve, where bid-head
+accuracy plateaued at ~0.687 by 50K while the play loss kept falling: the
+auction gain here comes from better *hand* posteriors, not a better bid head.
+
+The 120K checkpoint also produces fewer inconsistent worlds in play (rejected
+by the initial-hand reconstruction): 80 vs 160 missing out of 3200 at seed 42.
 
 ## Ensemble world pool + credibility weighting (2026-07-23)
 
