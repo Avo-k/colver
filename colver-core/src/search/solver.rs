@@ -4,7 +4,6 @@
 /// - Alpha-beta with fail-soft
 /// - Transposition table with relative (future) scores and hash move
 /// - Card equivalence pruning — only one representative per equivalence class
-/// - Quick tricks bounds — guaranteed future points from top cards
 /// - Upper/lower bound pre-pruning
 /// - Principal Variation Search (null-window for non-PV moves)
 /// - Forced-move skip for single legal cards
@@ -270,22 +269,6 @@ fn alphabeta(
         };
     }
 
-    // ---- Quick tricks bounds (at trick start only) ----
-    if state.trick_count == 0 {
-        let (ns_quick, ew_quick) = quick_tricks(state);
-        let ns_min = state.points[0] as i16 + ns_quick;
-        if ns_min > alpha {
-            alpha = ns_min;
-        }
-        let ns_max = state.points[0] as i16 + remaining - ew_quick + dix_max;
-        if ns_max < beta {
-            beta = ns_max;
-        }
-        if alpha >= beta {
-            return if ns_min >= beta { ns_min } else { ns_max };
-        }
-    }
-
     let ns_base = state.points[0] as i16;
 
     let hash = position_hash(state);
@@ -407,114 +390,6 @@ fn alphabeta(
 
     tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move);
     best_score
-}
-
-// ---- Quick tricks ----
-
-/// Ranks ordered by trump strength descending: J(3), 9(2), A(7), 10(6), K(5), Q(4), 8(1), 7(0).
-const TRUMP_RANK_ORDER: [u8; 8] = [3, 2, 7, 6, 5, 4, 1, 0];
-
-/// Compute guaranteed future card points for each team from "sure" tricks.
-/// Returns (ns_quick_points, ew_quick_points).
-/// Only valid at trick start (trick_count == 0).
-fn quick_tricks(state: &GameState) -> (i16, i16) {
-    let trump = state.contract.trump as usize;
-    let trump_shift = SUIT_SHIFT[trump];
-
-    let ns_hand = state.hands[0] | state.hands[2];
-    let ew_hand = state.hands[1] | state.hands[3];
-
-    let mut ns_pts = 0i16;
-    let mut ew_pts = 0i16;
-
-    // Trump suit: consecutive top trumps are always guaranteed
-    let ns_trump = ((ns_hand >> trump_shift) & 0xFF) as u8;
-    let ew_trump = ((ew_hand >> trump_shift) & 0xFF) as u8;
-
-    // NS top consecutive trumps
-    for &rank in &TRUMP_RANK_ORDER {
-        let bit = 1u8 << rank;
-        if (ns_trump | ew_trump) & bit == 0 {
-            continue; // already played
-        }
-        if ns_trump & bit != 0 {
-            ns_pts += TRUMP_POINTS[rank as usize] as i16;
-        } else {
-            break;
-        }
-    }
-
-    // EW top consecutive trumps
-    for &rank in &TRUMP_RANK_ORDER {
-        let bit = 1u8 << rank;
-        if (ns_trump | ew_trump) & bit == 0 {
-            continue;
-        }
-        if ew_trump & bit != 0 {
-            ew_pts += TRUMP_POINTS[rank as usize] as i16;
-        } else {
-            break;
-        }
-    }
-
-    // Plain suits: master cards where neither opponent can ruff
-    for suit in 0..4u8 {
-        if suit as usize == trump {
-            continue;
-        }
-        let shift = SUIT_SHIFT[suit as usize];
-        let ns_suit = ((ns_hand >> shift) & 0xFF) as u8;
-        let ew_suit = ((ew_hand >> shift) & 0xFF) as u8;
-
-        if ns_suit == 0 || ew_suit == 0 {
-            continue; // one team void → no guaranteed plain tricks for either
-        }
-
-        // NS masters: check if either EW player can ruff
-        let e_void = ((state.hands[1] >> shift) & 0xFF) == 0;
-        let w_void = ((state.hands[3] >> shift) & 0xFF) == 0;
-        let e_has_trump = ((state.hands[1] >> trump_shift) & 0xFF) != 0;
-        let w_has_trump = ((state.hands[3] >> trump_shift) & 0xFF) != 0;
-        let ew_can_ruff = (e_void && e_has_trump) || (w_void && w_has_trump);
-
-        if !ew_can_ruff {
-            // Count consecutive top plain cards held by NS
-            for rank in (0..8u8).rev() {
-                let bit = 1u8 << rank;
-                if (ns_suit | ew_suit) & bit == 0 {
-                    continue;
-                }
-                if ns_suit & bit != 0 {
-                    ns_pts += PLAIN_POINTS[rank as usize] as i16;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // EW masters: check if either NS player can ruff
-        let n_void = ((state.hands[0] >> shift) & 0xFF) == 0;
-        let s_void = ((state.hands[2] >> shift) & 0xFF) == 0;
-        let n_has_trump = ((state.hands[0] >> trump_shift) & 0xFF) != 0;
-        let s_has_trump = ((state.hands[2] >> trump_shift) & 0xFF) != 0;
-        let ns_can_ruff = (n_void && n_has_trump) || (s_void && s_has_trump);
-
-        if !ns_can_ruff {
-            for rank in (0..8u8).rev() {
-                let bit = 1u8 << rank;
-                if (ns_suit | ew_suit) & bit == 0 {
-                    continue;
-                }
-                if ew_suit & bit != 0 {
-                    ew_pts += PLAIN_POINTS[rank as usize] as i16;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    (ns_pts, ew_pts)
 }
 
 // ---- Card equivalence ----
@@ -879,41 +754,69 @@ mod tests {
         assert_eq!(between_bits(0, 7), 0b0111_1110); // ranks 1-6
     }
 
+    /// Each root score from `solve_with_scores` must equal an independent solve
+    /// of the position after playing that card. The two paths search the same
+    /// tree in a different order and with a different transposition-table
+    /// history, so any pruning that is not provably sound diverges here.
+    ///
+    /// This caught `quick_tricks`: it credited a whole run of plain-suit master
+    /// cards as guaranteed points after checking only once that opponents could
+    /// not ruff, ignoring that they may become void on the next round. The bogus
+    /// lower bound raised `alpha` above the true value and cut valid lines, which
+    /// made results depend on move ordering — 23% of real positions came out with
+    /// at least one wrong card score.
     #[test]
-    fn test_quick_tricks_top_trumps() {
-        // NS has J+9 of trump (spades) → sure 34 pts (20+14)
-        let p0 = card_to_bit(make_card(Suit::Spades, 3)) // J
-            | card_to_bit(make_card(Suit::Spades, 2)) // 9
-            | card_to_bit(make_card(Suit::Hearts, 0))
-            | card_to_bit(make_card(Suit::Hearts, 1))
-            | card_to_bit(make_card(Suit::Hearts, 2))
-            | card_to_bit(make_card(Suit::Hearts, 3))
-            | card_to_bit(make_card(Suit::Hearts, 4))
-            | card_to_bit(make_card(Suit::Hearts, 5));
-        let p2 = card_to_bit(make_card(Suit::Diamonds, 0))
-            | card_to_bit(make_card(Suit::Diamonds, 1))
-            | card_to_bit(make_card(Suit::Diamonds, 2))
-            | card_to_bit(make_card(Suit::Diamonds, 3))
-            | card_to_bit(make_card(Suit::Diamonds, 4))
-            | card_to_bit(make_card(Suit::Diamonds, 5))
-            | card_to_bit(make_card(Suit::Diamonds, 6))
-            | card_to_bit(make_card(Suit::Diamonds, 7));
-        let ns = p0 | p2;
-        let remaining = ALL_CARDS & !ns;
-        let ew_cards: Vec<u8> = CardIter(remaining).collect();
-        let mut p1: CardSet = 0;
-        let mut p3: CardSet = 0;
-        for (i, &c) in ew_cards.iter().enumerate() {
-            if i < 8 {
-                p1 |= card_to_bit(c);
-            } else {
-                p3 |= card_to_bit(c);
+    fn test_root_scores_match_independent_solve() {
+        use rand::SeedableRng;
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(20260723);
+        let mut tt = new_tt_buffer();
+        let mut compared = 0;
+
+        for _ in 0..25 {
+            let mut state = GameState::deal_random(0, &mut rng);
+            let legal_bids = state.legal_actions() & !1u64;
+            let Some(bid) = (1..=40u8).find(|&a| legal_bids & (1u64 << a) != 0) else {
+                continue;
+            };
+            state.step(bid);
+            for _ in 0..3 {
+                state.step(0);
+            }
+            if state.phase != Phase::Playing {
+                continue;
+            }
+            // Advance a few tricks so solves stay cheap.
+            for _ in 0..12 {
+                let legal = play::legal_plays(&state);
+                if legal == 0 || state.is_terminal() {
+                    break;
+                }
+                play::apply_play(&mut state, legal.trailing_zeros() as u8);
+            }
+            if state.is_terminal() {
+                continue;
+            }
+
+            let scores = solve_with_scores(&state, Some(&mut tt));
+            for i in 0..scores.count {
+                let (card, score) = scores.scores[i];
+                let mut child = state;
+                play::apply_play(&mut child, card);
+                let want = if child.is_terminal() {
+                    child.points[0] as i16
+                } else {
+                    solve(&child)[0] as i16
+                };
+                assert_eq!(
+                    want, score,
+                    "root score for card {card} disagrees with an independent solve"
+                );
+                compared += 1;
             }
         }
 
-        let state = GameState::setup_dd(0, [p0, p1, p2, p3], 0); // trump = spades
-        let (ns_quick, _ew_quick) = quick_tricks(&state);
-        assert!(ns_quick >= 34, "NS should have at least 34 quick pts from J+9, got {}", ns_quick);
+        assert!(compared > 40, "test exercised too few solves: {compared}");
     }
 
     #[test]
