@@ -29,4 +29,5 @@ Belote Contrée engine + RL training stack.
 | Distilled bid rules (XGBoost) | [bid/interpretability/bid_rules_xgb.md](bid/interpretability/bid_rules_xgb.md) |
 | Triforge joint training | [play/experiments/triforge.md](play/experiments/triforge.md) |
 | Belief net + IS-DD | [belief/bis_dd.md](belief/bis_dd.md) |
+| Playgen world sampler (transformer) | [play/playgen.md](play/playgen.md) |
 | Training commands | [training/overview.md](training/overview.md) |

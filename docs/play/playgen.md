@@ -294,3 +294,75 @@ auction continuation + full play → hidden hands during bidding, for
 BisDd/dd_bid) and sampled auction rollouts for bid EV — the bid head +
 `PlaygenModel::bid_logits` exist; needs a public bid-state machine in the
 sampler's generate path.
+
+## V2 @60K checkpoint: validation, deploy, mid-auction worlds (2026-07-23)
+
+Mid-training checkpoint (60K/160K steps) exported as `playgen_v2_half.bin`
+(COLVPG02, **10.74M params**, 43.0 MB — v1: 3.20M, 12.8 MB) to validate the
+whole pipeline before the final model.
+
+**Validation**: pure-Rust teacher-forcing parity exact vs candle eval (play
+nll 0.954 / acc 0.6275; bid acc 0.695); 600/600 valid worlds, 0 dead ends,
+11.7% exact-true (v1: 10.5%). **~93 ms/world** (v1: 18 ms): at 43 MB the
+model is no longer L3-resident — inference is now memory-bound, and the
+lockstep batch path helps again (+20%, it was useless for v1).
+
+**Arena** (fixed 10 dets, 200 matches): v2@60K 52.0% vs v1 (+34/match) —
+statistical tie at 40% of training on a harder task. The real v2 win is the
+new capability, not mid-play world quality.
+
+**Mid-auction deal sampling** (`PlaygenSampler::generate_deals_from_auction`):
+the bid head completes the auction (masked to the *public* legal bid set via
+a cloned GameState — bid legality never reads hands), then the play head
+plays the deal out; the assignment reveals full hidden hands. 100/100 valid,
+~420 ms/deal mid-auction. Plus `bid_policy` (43-way logits at the current
+auction point). Exposed in PyO3 (`playgen_sample_auction_deals`,
+`get_playgen_bid_policy`) and deployed on colver.net: the annonces page
+Oracle/DouDou sims run on **auction-conditioned worlds** (chunked generation
+overlapped with DD solves, uniform fallback, per-deal provenance chips), and
+the playgen bid policy is shown under the Bid V6 Q-values.
+
+## World-credibility benchmark (`bench_world_cred`, 2026-07-23)
+
+Self-supervised sampler eval (user's idea): the observed actions are the
+oracle. For each seeded position, sample K worlds per sampler and ask the
+reference policy whether it would replay each observed hidden action holding
+that world's hand. Rust binary, both phases, positions fully seeded:
+
+```bash
+cargo run -p colver-core --bin bench_world_cred --release -- \
+  --bid-positions 30 --play-positions 30 --worlds 12 --seed 42
+```
+
+Reference results (playgen v2 @60K, seed 42, argmax/top3):
+
+| Phase | playgen | belief NN | uniform |
+|---|---|---|---|
+| Auctions (judge bid v6) | **60% / 92%** | 34% / 64% (bid_belief_v4) | 12% / 32% |
+| Play (judge DouDou50)   | **85% / 98%** | 78% / 96% (belief_v4_fix_v2) | 70% / 94% |
+
+The hierarchy holds in both phases but tightens sharply in play: hard
+constraints already carry most of the play-phase signal (uniform-constrained
+reaches 70% argmax) — auctions are where samplers really differ, which is
+also why bid-phase conditioning (BisDd, annonces) is the biggest payoff.
+
+## Ensemble world pool + credibility weighting (2026-07-23)
+
+User's design: a portfolio of world sources — transformer (high quality,
+slow), belief NN (decent, faster), uniform (volume/coverage) — with per-world
+retroactive validation. Implemented in `IsDdConfig`:
+
+- `belief_frac` (default 1.0): among non-playgen worlds, fraction sampled
+  with belief weights; the rest constraint-uniform (coverage floor).
+- `cred_alpha` (default 0.0 = off): per-world importance weight = product of
+  per-bid rank factors (would the credibility bid net — default: the bot's
+  own bid model — replay each observed hidden bid with this world's hand?
+  argmax 1.0 / top-3 0.7 / else 0.35), flattened as `w^alpha`, applied to the
+  DD score aggregation (weighted mean). Judge cost ~µs/world (auction only).
+
+Arena TOML keys: `belief_frac`, `cred_alpha`, `cred_bid_model`. Bots:
+`ens_1s` (pg30 t0.8 + belief 80% + uniform floor + cred 0.5) and `cred_1s`
+(ablation: belief + cred only) vs champion `bel4v2_1s` — results pending.
+
+Caveat (BeliefState lesson): against humans the judge must stay a soft
+weight, never a hard reject — bid v6 only judges bid-v6-like auctions well.
