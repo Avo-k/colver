@@ -17,6 +17,8 @@
 use crate::card;
 use crate::state::GameState;
 
+use crate::nn_kernels::{self, dot};
+
 const NUM_LAYERS: usize = 2;
 const LN_EPS: f32 = 1e-5;
 const DEFAULT_HIDDEN: usize = 512;
@@ -189,13 +191,10 @@ impl BeliefNet {
 
         // Output: num_outputs logits
         let mut logits = [0.0f32; 128];
+        let trunk = &self.scratch_b[..self.hidden];
         for i in 0..self.num_outputs {
-            let row_start = i * self.hidden;
-            let mut sum = self.b_out[i];
-            for j in 0..self.hidden {
-                sum += self.w_out[row_start + j] * self.scratch_b[j];
-            }
-            logits[i] = sum;
+            logits[i] =
+                self.b_out[i] + dot(&self.w_out[i * self.hidden..(i + 1) * self.hidden], trunk);
         }
 
         logits
@@ -313,35 +312,12 @@ pub fn belief_to_weights(
 
 #[inline]
 fn linear(w: &[f32], b: &[f32], x: &[f32], out: &mut [f32], in_dim: usize, out_dim: usize) {
-    for i in 0..out_dim {
-        let row_start = i * in_dim;
-        let mut sum = b[i];
-        for j in 0..in_dim {
-            sum += w[row_start + j] * x[j];
-        }
-        out[i] = sum;
-    }
+    nn_kernels::linear(w, b, x, out, in_dim, out_dim);
 }
 
 #[inline]
 fn layer_norm(x: &mut [f32], gamma: &[f32], beta: &[f32], dim: usize) {
-    let mut mean = 0.0f32;
-    for i in 0..dim {
-        mean += x[i];
-    }
-    mean /= dim as f32;
-
-    let mut var = 0.0f32;
-    for i in 0..dim {
-        let d = x[i] - mean;
-        var += d * d;
-    }
-    var /= dim as f32;
-
-    let inv_std = 1.0 / (var + LN_EPS).sqrt();
-    for i in 0..dim {
-        x[i] = gamma[i] * (x[i] - mean) * inv_std + beta[i];
-    }
+    nn_kernels::layer_norm(x, gamma, beta, dim, LN_EPS);
 }
 
 #[inline]

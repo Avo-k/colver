@@ -12,6 +12,8 @@
 ///
 /// Weight file layout (per layer): W: in_dim × H, b: H, gamma: H, beta: H
 
+use crate::nn_kernels::{self, dot};
+
 const NUM_ACTIONS: usize = 43;
 const LN_EPS: f32 = 1e-5;
 
@@ -250,19 +252,14 @@ impl BidNet {
         let trunk_out = if self.layers % 2 == 0 { &self.scratch_b } else { &self.scratch_a };
 
         if self.dueling {
-            let mut v = self.b_value;
-            for j in 0..self.hidden {
-                v += self.w_value[j] * trunk_out[j];
-            }
+            let trunk = &trunk_out[..self.hidden];
+            let v = self.b_value + dot(&self.w_value[..self.hidden], trunk);
 
             let mut q = [0.0f32; NUM_ACTIONS];
             let mut adv_sum = 0.0f32;
             for i in 0..NUM_ACTIONS {
-                let row_start = i * self.hidden;
-                let mut a = self.b_adv[i];
-                for j in 0..self.hidden {
-                    a += self.w_adv[row_start + j] * trunk_out[j];
-                }
+                let a = self.b_adv[i]
+                    + dot(&self.w_adv[i * self.hidden..(i + 1) * self.hidden], trunk);
                 q[i] = a;
                 adv_sum += a;
             }
@@ -274,14 +271,7 @@ impl BidNet {
             q
         } else {
             let mut q = [0.0f32; NUM_ACTIONS];
-            for i in 0..NUM_ACTIONS {
-                let row_start = i * self.hidden;
-                let mut sum = self.b_out[i];
-                for j in 0..self.hidden {
-                    sum += self.w_out[row_start + j] * trunk_out[j];
-                }
-                q[i] = sum;
-            }
+            linear(&self.w_out, &self.b_out, trunk_out, &mut q, self.hidden, NUM_ACTIONS);
             q
         }
     }
@@ -350,35 +340,12 @@ impl BidNet {
 
 #[inline]
 fn linear(w: &[f32], b: &[f32], x: &[f32], out: &mut [f32], in_dim: usize, out_dim: usize) {
-    for i in 0..out_dim {
-        let row_start = i * in_dim;
-        let mut sum = b[i];
-        for j in 0..in_dim {
-            sum += w[row_start + j] * x[j];
-        }
-        out[i] = sum;
-    }
+    nn_kernels::linear(w, b, x, out, in_dim, out_dim);
 }
 
 #[inline]
 fn layer_norm(x: &mut [f32], gamma: &[f32], beta: &[f32], dim: usize) {
-    let mut mean = 0.0f32;
-    for i in 0..dim {
-        mean += x[i];
-    }
-    mean /= dim as f32;
-
-    let mut var = 0.0f32;
-    for i in 0..dim {
-        let d = x[i] - mean;
-        var += d * d;
-    }
-    var /= dim as f32;
-
-    let inv_std = 1.0 / (var + LN_EPS).sqrt();
-    for i in 0..dim {
-        x[i] = gamma[i] * (x[i] - mean) * inv_std + beta[i];
-    }
+    nn_kernels::layer_norm(x, gamma, beta, dim, LN_EPS);
 }
 
 #[inline]

@@ -26,6 +26,8 @@
 ///   Advantage head:
 ///     W_a: H × 32 (row-major), b_a: 32
 
+use crate::nn_kernels::{self, dot, linear};
+
 const NUM_ACTIONS: usize = 32;
 const LN_EPS: f32 = 1e-5;
 
@@ -257,21 +259,17 @@ impl DmcNet {
         relu(&mut self.scratch_a);
 
         if self.dueling {
+            let trunk = &self.scratch_a[..self.hidden];
+
             // Value head: V = W_v * trunk + b_v (scalar)
-            let mut v = self.b_value;
-            for j in 0..self.hidden {
-                v += self.w_value[j] * self.scratch_a[j];
-            }
+            let v = self.b_value + dot(&self.w_value[..self.hidden], trunk);
 
             // Advantage head: A[i] = W_a[i] * trunk + b_a[i]
             let mut q = [0.0f32; NUM_ACTIONS];
             let mut adv_sum = 0.0f32;
             for i in 0..NUM_ACTIONS {
-                let row_start = i * self.hidden;
-                let mut a = self.b_adv[i];
-                for j in 0..self.hidden {
-                    a += self.w_adv[row_start + j] * self.scratch_a[j];
-                }
+                let a = self.b_adv[i]
+                    + dot(&self.w_adv[i * self.hidden..(i + 1) * self.hidden], trunk);
                 q[i] = a;
                 adv_sum += a;
             }
@@ -286,14 +284,14 @@ impl DmcNet {
         } else {
             // Standard: q = W_out * scratch_a + b_out
             let mut q = [0.0f32; NUM_ACTIONS];
-            for i in 0..NUM_ACTIONS {
-                let row_start = i * self.hidden;
-                let mut sum = self.b_out[i];
-                for j in 0..self.hidden {
-                    sum += self.w_out[row_start + j] * self.scratch_a[j];
-                }
-                q[i] = sum;
-            }
+            linear(
+                &self.w_out,
+                &self.b_out,
+                &self.scratch_a,
+                &mut q,
+                self.hidden,
+                NUM_ACTIONS,
+            );
             q
         }
     }
@@ -343,43 +341,10 @@ impl DmcNet {
     }
 }
 
-/// Compute out = W * x + b (no activation).
-/// W is row-major: W[i * in_dim + j] = weight from input j to output i.
-#[inline]
-fn linear(w: &[f32], b: &[f32], x: &[f32], out: &mut [f32], in_dim: usize, out_dim: usize) {
-    for i in 0..out_dim {
-        let row_start = i * in_dim;
-        let mut sum = b[i];
-        for j in 0..in_dim {
-            sum += w[row_start + j] * x[j];
-        }
-        out[i] = sum;
-    }
-}
-
-/// Apply LayerNorm in-place: x = gamma * (x - mean) / sqrt(var + eps) + beta
+/// LayerNorm in place, with this net's epsilon.
 #[inline]
 fn layer_norm(x: &mut [f32], gamma: &[f32], beta: &[f32], dim: usize) {
-    // Compute mean
-    let mut mean = 0.0f32;
-    for i in 0..dim {
-        mean += x[i];
-    }
-    mean /= dim as f32;
-
-    // Compute variance
-    let mut var = 0.0f32;
-    for i in 0..dim {
-        let d = x[i] - mean;
-        var += d * d;
-    }
-    var /= dim as f32;
-
-    // Normalize: x = gamma * (x - mean) / sqrt(var + eps) + beta
-    let inv_std = 1.0 / (var + LN_EPS).sqrt();
-    for i in 0..dim {
-        x[i] = gamma[i] * (x[i] - mean) * inv_std + beta[i];
-    }
+    nn_kernels::layer_norm(x, gamma, beta, dim, LN_EPS);
 }
 
 /// Apply ReLU in-place.
