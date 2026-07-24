@@ -12,9 +12,11 @@ How to train each model in the stack.
 | [train_dmc.rs](../../colver-core/src/bin/train_dmc.rs) | Play NN (DMC Q-network) | `dmc_train` |
 | [train_joint.rs](../../colver-core/src/bin/train_joint.rs) | Triforge: alternating bid/play best response | `dmc_train` |
 | [train_belief_net.rs](../../colver-core/src/bin/train_belief_net.rs) | Belief net | `dmc_train` |
+| [train_playgen.rs](../../colver-core/src/bin/train_playgen.rs) | Playgen world model (**IS-DD's world source**) | `dmc_train` |
 
 ## Pipelines documented elsewhere
 
 - [Triforge](../play/experiments/triforge.md) — joint bid+play training
 - [Bumblebid](../bid/architectures/bumblebid.md) — transformer experiments
 - [v3 reward study](../bid/reward_studies/v3_reward_study.md) — bid reward signal study
+- [Playgen](../belief/playgen.md) — world-model training, export, and the GPU sidecar that serves it

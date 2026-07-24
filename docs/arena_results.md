@@ -3,12 +3,32 @@
 The arena is the **king metric** for evaluating any bidding/play change. Each h2h plays both directions for variance reduction. Runs ≥1000 matches per direction for tournament-grade conclusions; 200 matches for quick iteration.
 
 **Scripts:** [colver-core/src/bin/arena.rs](../colver-core/src/bin/arena.rs)
-**Bot configs:** [arena/bots/](../arena/bots/) (TOML files)
+**Bot configs:** [arena/bots/](../arena/bots/) (TOML files, parsed by `AgentSpec` — see [agents.md](agents.md))
 **Raw results:** [arena/results/matches.csv](../arena/results/matches.csv)
+
+> ### ⚠ Rows before 2026-07-24 are not comparable for IS-DD bots
+>
+> The agent refactor of 2026-07-24 moved world generation inside the agent, and
+> made **playgen over the GPU sidecar the default world source**. Every IS-DD
+> bot without an explicit `[worlds]` section therefore plays with a different —
+> and stronger — world sampler than it did when those rows were recorded.
+> DMC-only bots are unaffected (they consume no worlds).
+>
+> Two earlier invalidations still apply to older rows: the **solver fix**
+> (2026-07-23, `quick_tricks` removed) and the **dealer-rotation fix**
+> (2026-04-20). When in doubt, re-run.
+>
+> **Running the arena now needs the sidecar:** export
+> `COLVER_PLAYGEN_GPU_URL=http://<host>:8003`, or give the bot
+> `[worlds] source = "uniform"`. An IS-DD bot with neither refuses to build
+> rather than silently sampling weaker worlds.
 
 ## How to run
 
 ```bash
+# IS-DD bots need a world source (see the warning above)
+export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
+
 # Quick h2h
 cargo run --bin arena --release -- h2h bid_v3_max_20M nn_v2_dmc50 --matches 1000
 

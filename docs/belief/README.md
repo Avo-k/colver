@@ -8,7 +8,7 @@ Implementation: [colver-core/src/belief/](../../colver-core/src/belief/).
 
 - **`CardBeliefs`** ([belief/card_beliefs.rs](../../colver-core/src/belief/card_beliefs.rs)) — heuristic, deprecated. Bidirectional soft inference from bids and play. 0% false exclusion rate on hard constraints.
 - **`BeliefState`** (used by [is_dd.rs](../../colver-core/src/search/is_dd.rs)) — soft weights for IS-DD determinization sampling.
-- **Belief NN v3** (`models/belief_v3.bin`) — 32×3 hidden card prediction, used by `smart_ismcts` + `smart_is_dd` with belief enabled.
+- **Belief NN v3** (`models/belief_v3.bin`) — 32×3 hidden card prediction, used by `smart_ismcts` and by IS-DD when a `[belief] model` is configured.
 - **Bid Belief NN v4** (`models/bid_belief_v4.bin`) — 108→256²→96, replaces heuristic bid soft weights in BeliefState.
 
 Details worth knowing:
@@ -25,7 +25,7 @@ Details worth knowing:
 
 ## Docs
 
-- [bis_dd.md](bis_dd.md) — IS-DD with belief net integration
+- [bis_dd.md](bis_dd.md) — Bis-DD, a DD-only bid+play agent (**removed 2026-07-24**; kept for its negative result on heuristic bid inference)
 - [playgen.md](playgen.md) — **Playgen world sampler**: a causal transformer
   that generates whole worlds autoregressively instead of predicting marginals.
   Same job as the belief nets (posterior over hidden hands), different method —

@@ -11,7 +11,7 @@ Training a bid NN and a play NN simultaneously fails because of coupled non-stat
 
 We observed this empirically across 6+ joint training runs: loss plateaus and cliffs every time the NN bid fraction ramps up, even though eval win rates sometimes improved.
 
-The previous pipeline also had a fundamental problem: the bid NN was trained on Double-Dummy (DD) oracle results. DD assumes perfect play by both sides, which produces unrealistic success rates — the bid NN learned that 84% of contracts succeed, but under realistic play only ~63% do (see [BID_RULES_STUDY.md](BID_RULES_STUDY.md)).
+The previous pipeline also had a fundamental problem: the bid NN was trained on Double-Dummy (DD) oracle results. DD assumes perfect play by both sides, which produces unrealistic success rates — the bid NN learned that 84% of contracts succeed, but under realistic play only ~63% do (see [BID_RULES_STUDY.md](../../bid/interpretability/bid_rules_xgb.md)).
 
 ## The Solution: Iterative Best Response
 
@@ -192,10 +192,10 @@ Compare: joint training ran for 35M steps (~6 hours) with worse results.
 
 ## File Reference
 
-- [train_joint.rs](../colver-core/src/bin/train_joint.rs) — training binary (`--mode` flag)
-- [dmc_candle.rs](../colver-core/src/dmc/dmc_candle.rs) — play NN (ResNet DuelingQNet)
-- [bid_candle.rs](../colver-core/src/bid/bid_candle.rs) — bid NN (variable layers)
-- [dmc_obs.rs](../colver-core/src/dmc/dmc_obs.rs) — canonical play encoding (411-dim)
-- [joint_env.rs](../colver-core/src/joint_env.rs) — vectorized environment
-- [scripts/training/triforge.sh](../scripts/training/triforge.sh) — orchestration script
-- [scripts/training/monitor_joint.py](../scripts/training/monitor_joint.py) — training dashboard
+- [train_joint.rs](../../../colver-core/src/bin/train_joint.rs) — training binary (`--mode` flag)
+- [dmc_candle.rs](../../../colver-core/src/dmc/dmc_candle.rs) — play NN (ResNet DuelingQNet)
+- [bid_candle.rs](../../../colver-core/src/bid/bid_candle.rs) — bid NN (variable layers)
+- [dmc_obs.rs](../../../colver-core/src/dmc/dmc_obs.rs) — canonical play encoding (411-dim)
+- [joint_env.rs](../../../colver-core/src/joint_env.rs) — vectorized environment
+- [scripts/training/triforge.sh](../../../scripts/training/triforge.sh) — orchestration script
+- [scripts/training/monitor_joint.py](../../../scripts/training/monitor_joint.py) — training dashboard

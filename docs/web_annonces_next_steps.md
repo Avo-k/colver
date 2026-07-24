@@ -35,7 +35,7 @@ les modèles de beliefs existants :
   de localisation de chaque carte chez chaque joueur, conditionnée à l'enchère.
   C'est le bon modèle pour la phase d'annonces (le play belief net regarde le
   jeu de la carte). Côté Rust, `BeliefState` + `apply_nn_bid_beliefs()` font
-  déjà ce calcul pour BisDd.
+  déjà ce calcul (il servait à BisDd, retiré depuis).
 - **Playgen** (world sampler transformer) : alternative qui génère des mondes
   complets ; déjà branché sur la page croyances.
 - Procédure d'échantillonnage : tirage séquentiel des cartes selon les probas

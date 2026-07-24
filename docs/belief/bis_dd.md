@@ -1,5 +1,12 @@
 # Bis-DD: DD-Based Unified Bidding & Playing Agent
 
+> **Removed (2026-07-24).** `bis_dd.rs` and the `bis_dd` bid/play methods are
+> gone: the heuristic bid inference at the heart of the design rejected reality
+> 72% of the time against NN bidders, and the bid belief net replaced it. This
+> document is kept as the record of the experiment and its negative result —
+> the code is recoverable from git history. Current agent architecture:
+> [agents.md](../agents.md).
+
 A pure-heuristic agent that uses the DD (double-dummy) solver for **both** bidding and playing decisions, with no trained neural network. Beliefs about other players' hands are built from auction and play observations, then used to filter/weight determinizations before solving.
 
 ## Concept

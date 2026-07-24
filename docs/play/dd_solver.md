@@ -65,4 +65,4 @@ DD assumes the opponents play perfectly with full information. Real opponents do
 
 ## Key role: training signal
 
-The bid model is trained on DD points as the reward target — see [bid/reward_studies/v3_reward_study.md](../bid/reward_studies/v3_reward_study.md). The 5M dd pool ([data_gen/pools.md](../data_gen/pools.md)) was solved offline.
+The bid model is trained on DD points as the reward target — see [bid/reward_studies/v3_reward_study.md](../bid/reward_studies/v3_reward_study.md). The 5M dd pool ([data_gen/pools.md](../data_gen/README.md)) was solved offline.

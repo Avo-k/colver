@@ -13,9 +13,9 @@ touch them directly. See **[agents.md](agents.md)**.
 
 Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node`s and `Edge`s in flat `Vec`s for cache-friendliness. `MctsSearch` is reusable across searches (arenas are cleared between calls). Default: 1000 iterations, `C = sqrt(2)`.
 
-**API:** `MctsSearch::search(&mut self, state, config, rng) -> u8` returns best action. `search_with_stats(...)` returns `SearchResult` with visit counts. `search_with_nn(state, config, value_net, rng)` uses NN leaf evaluation instead of rollouts (feature `nn`). `mcts_search(state, config, rng)` is a convenience one-shot wrapper.
+**API:** `MctsSearch::search(&mut self, state, config, rng) -> u8` returns best action. `search_with_stats(...)` returns `SearchResult` with visit counts. `mcts_search(state, config, rng)` is a convenience one-shot wrapper.
 
-**Algorithm:** Selection (UCB1 descent) → Expansion (enumerate legal actions as edges, create child node) → Simulation (`rollout_random` or NN eval) → Backpropagation. Rewards scaled by `1/2000` for rollouts (NN outputs already in [0,1], no scaling). Best action = most-visited root child.
+**Algorithm:** Selection (UCB1 descent) → Expansion (enumerate legal actions as edges, create child node) → Simulation (`rollout_random` or `heuristic_play_action`) → Backpropagation. Rewards scaled by `1/2000`. Best action = most-visited root child.
 
 ## Smart IS-MCTS Agent (`smart_ismcts.rs` + `card_beliefs.rs`, feature `rand`)
 
@@ -31,7 +31,26 @@ Ensemble determinization without beliefs. Samples D determinized worlds (uniform
 
 - **Random** (`rollout.rs: rollout_random`) — Uniform random legal moves. ~1.3M rollouts/sec.
 - **Heuristic** (`rollout.rs: heuristic_play_action`) — Deterministic, sees all hands. Safe leads, partner feeding, min-winning-card, cheapest trump cut. ~769K full-deal rollouts/sec.
-- **Smart IS-MCTS** — Belief-weighted. ~+7.5% win rate vs Naive IS-MCTS. `search_parallel()` behind `parallel` feature, `search_with_nn()` behind `nn` feature.
+- **Smart IS-MCTS** — Belief-weighted. ~+7.5% win rate vs Naive IS-MCTS. `search_parallel()` behind the `parallel` feature.
+- **IS-DD** — the production card player; see below.
+
+## IS-DD Agent (`is_dd.rs` + `agent/isdd.rs`, feature `rand`)
+
+**The production card player.** Samples determinized worlds consistent with what
+is publicly known, solves each **exactly** with the DD solver, and averages the
+per-card NS points. Exact solves mean far fewer samples are needed than IS-MCTS
+needs with noisy rollouts.
+
+Its strength lives mostly in *where the worlds come from*. `IsDdPlayer` owns a
+[`WorldSource`](agents.md): the playgen transformer over the GPU sidecar by
+default (70% / 88% argmax credibility in auction / play), against 15% / 71% for
+constraint-uniform sampling. Hard constraints (voids, trump ceiling, played
+cards) are facts and always applied; soft beliefs are opt-in.
+
+**API:** `IsDdSearch::search_with_source(state, config, rng, &mut dyn WorldSource)`
+→ `Result<IsDdResult>`, or `search_with_stats(...)` without a source (infallible,
+weaker). Most callers should build an `IsDdPlayer` from an `AgentSpec` instead.
+Full detail: [play/is_dd.md](play/is_dd.md).
 
 ## Double-Dummy Solver (`solver.rs`)
 
@@ -47,7 +66,7 @@ Alpha-beta solver for perfect-information Belote. No feature gate — zero exter
 
 **Techniques:** Alpha-beta fail-soft, TT (256K entries, 2MB, L2-friendly), PVS, killer moves (2/ply), history heuristic (depth²), card equivalence pruning, quick tricks bounds, forced-move optimization. Move ordering: hash move → killers → history + static score.
 
-## Bidding Strategies (`bid_eval.rs`)
+## Bidding Strategies (`bid/bid_eval/`)
 
 Six fixed bidding functions (`BidFunction` enum) plus configurable `parametric_bid(state, &BidParams)`.
 

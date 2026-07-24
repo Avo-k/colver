@@ -103,7 +103,7 @@ If all soft beliefs are off and no hard constraints zero out any unknown (early 
 
 ### Note on bid-derived beliefs
 
-A previous experiment exposed soft bid inference (`partner bid 100 → likely strong trump`) in `BeliefState` for `BisDd`. It was **rejected**: against NN bidders, the heuristic interpretation rejected reality 72% of the time. See [BIS_DD.md](../belief/bis_dd.md). The bid belief NN v4 (`bid_belief_v4.bin`) replaced it. The dominance-based play heuristic in `CardBeliefs::use_soft_inference` is independent of bid interpretation.
+A previous experiment exposed soft bid inference (`partner bid 100 → likely strong trump`) in `BeliefState` for `BisDd` (both since removed). It was **rejected**: against NN bidders, the heuristic interpretation rejected reality 72% of the time. See [BIS_DD.md](../belief/bis_dd.md). The bid belief NN v4 (`bid_belief_v4.bin`) replaced it. The dominance-based play heuristic in `CardBeliefs::use_soft_inference` is independent of bid interpretation.
 
 ## Early termination
 
@@ -139,19 +139,28 @@ Set in [arena/bots/](../../arena/bots/) TOML files:
 
 ```toml
 [play]
-method = "smart_is_dd"     # alternatives: "is_dd", "smart_ismcts"
-time_ms = 50               # → time_limit_ms
-determinizations = 20
+method = "isdd"            # "is_dd" / "smart_is_dd" still parse (legacy names)
+time_ms = 1000             # → time_limit_ms; 0 = count mode
+determinizations = 240     # used when time_ms = 0
+
+[worlds]                   # where the determinized worlds come from
+source = "sidecar"         # sidecar (playgen on GPU, default) | playgen (CPU) | uniform
+url = "http://192.168.1.23:8003"   # or $COLVER_PLAYGEN_GPU_URL
 
 [belief]
-model = "models/belief_v3.bin"     # optional, loads BeliefNet (soft predictions)
+model = "models/belief_v4_fix_v2.bin"   # optional soft predictions
 ```
 
 Hard constraints are applied automatically — there is no flag for them.
 
+**`[worlds]` is not optional in practice.** Omit it and the bot defaults to the
+sidecar; with no URL anywhere it refuses to build rather than quietly sampling
+uniform worlds. Write `source = "uniform"` when that is what you actually want.
+Full reference: [agents.md](../agents.md).
+
 Reference bots:
-- `nn_v2_isdd_no_belief` — heuristic CardBeliefs only, no NN
-- `nn_v2_isdd` — NN belief net + hard constraints (current production strongest)
+- `v6_isdd_75M_belief` — bid v6 + IS-DD + belief net (current champion)
+- `v6_isdd_75M_isdd` — same without the belief net
 
 ## API
 
@@ -204,7 +213,7 @@ method any more — parallelism is a config flag on the single search path.
   cleared per solve, no cross-world information is lost either way.
 - **Requires the `parallel` cargo feature.** Without it the flag is ignored and
   the search falls back to sequential. `colver-py` enables the feature, so the
-  web/PyO3 path (`action_dede*`) always runs parallel.
+  agent path (`AgentSpec`, hence the arena and the web) turns it on by default.
 
 Chunk size is one world in sequential mode (tightest deadline adherence) and one
 worker-pool round (`rayon::current_num_threads()`) in parallel mode.

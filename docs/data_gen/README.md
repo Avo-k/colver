@@ -6,13 +6,13 @@ Pool generation, deal enrichment, replay storage.
 
 A "pool" is a pre-computed set of deals + DD points (and optionally "real" play points from a play model). Stored in `data/pools/`.
 
-- [pools.md](pools.md) — list of all pools, formats, sources
+- pools.md — list of all pools, formats, sources
 
 ## Enrichment Methods
 
 Adding "real play" points to a DD pool by simulating the game with a play model.
 
-- [enrichment_methods.md](enrichment_methods.md) — DMC (GPU-batched), IS-DD (CPU rayon), mixed-team variants, speeds, calibration
+- enrichment_methods.md — DMC (GPU-batched), IS-DD (CPU rayon), mixed-team variants, speeds, calibration
 
 ## Binaries
 

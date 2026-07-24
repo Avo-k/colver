@@ -99,20 +99,14 @@ cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- \
 
 Phase 1: pre-solves deal pool (1M deals x 4 suits). Phase 2: trains Dueling DQN with PER + opponent diversity. `BidNet::load` auto-detects hidden size (tries 256, 512, 1024).
 
-## NN Value Function Training (feature `nn`, parked)
+## Removed: NN value-function training
 
-```bash
-# Generate training data
-cargo run -p colver-core --bin generate_value_data --release --features nn -- \
-  10000 data/training/value_train.bin --fast
-
-# Train (PyTorch)
-python scripts/training/train_value_net.py --data data/training/value_train.bin --output models/value_net.bin
-
-# Evaluate
-cargo run -p colver-core --bin nn_experiment --release --features nn -- \
-  models/value_net.bin 50 --data data/training/value_train.bin
-```
+MCTS with a learned value function was the wrong architecture for a card game —
+every node costs a network eval, so the tree stays tiny — and a DouZero-style
+direct Q-network (DMC) does the same job orders of magnitude faster. The `nn`
+cargo feature, `features.rs`, `value_net.rs`, `generate_value_data` and
+`nn_experiment` were removed on 2026-07-24; recover them from git history if the
+idea is ever worth revisiting.
 
 ## PyPI Publishing
 
@@ -129,31 +123,49 @@ All binaries: `cargo run -p colver-core --bin NAME --release -- ARGS`
 
 | Binary | Feature | Description |
 |--------|---------|-------------|
+| **Evaluation** | | |
+| `arena` | rand / parallel | **Bot comparison framework** — `list`, `h2h`, `round-robin`, `results`, `trace` |
+| `isdd_sweep` | rand | IS-DD parameter sweep (count / time) |
 | `bench` | — | Performance benchmark (~1.3M rollouts/sec) |
-| `mcts_demo` | rand | MCTS vs random demo |
-| `smart_ismcts_demo` | rand | Smart IS-MCTS vs random + vs naive |
-| `oracle_experiment` | rand | Bid achievability with perfect-info MCTS |
-| `bidding_experiment` | rand | Head-to-head bidding strategies |
-| `match_experiment` | rand | Full match play (first to 2000 pts) |
-| `bid_tournament` | rand | Round-robin parameterized bidding |
-| `bid_debug` | rand | Side-by-side bidding printout |
-| `bid_compare` | rand | Bidding comparison with DD oracle |
-| `bid_nn_eval` | rand | Evaluate bid NN vs heuristic bidders |
-| `bid_nn_tournament` | rand | NN bid round-robin across play methods |
-| `strength_experiment` | rand | Rollout policy comparison, D×I sweep |
-| `maxi_diagnose` | rand | Maxi vs DMC play-by-play diagnostic |
-| `v2_tournament` | rand | V2 bidding fine-tune tournament |
 | `dd_bench` | — | DD solver benchmark |
-| `dd_calibrate` | rand | DD bidding calibration |
-| `isdd_sweep` | rand | IS-DD parameter sweep (count/time/soft) |
-| `generate_belief_data` | rand | Belief training data (COLVBL01 format) |
-| `generate_game_data` | rand | Game replays (COLVGM01 format) |
-| `generate_value_data` | nn | NN value function training data |
-| `train_belief_net` | dmc_train | Belief network training |
-| `train_bid_nn` | dmc_train | NN bidding training |
-| `train_dmc` | dmc_train | DMC card play training |
 | `belief_eval` | rand | Belief network evaluation (7 modes) |
-| `nn_experiment` | nn | NN value function evaluation |
+| `eval_beliefs` | rand | Belief model comparison |
+| `bench_world_cred` | rand / dmc_train | **World-sampler credibility benchmark** (playgen vs belief vs uniform) |
+| `bench_world_compress` | rand | World-sampler compression study |
+| `bench_logp_cred` | rand | Log-prob vs credibility correlation |
+| `bench_playgen_gpu` | dmc_train | Playgen GPU vs CPU forward parity + throughput |
+| `calibrate_winprob` | rand | Contract win-probability calibration |
+| `deal_bias` | rand | Gather-cut dealing vs competition shuffling |
+| `retro_eval` | rand | Retrospective bid evaluation |
+| `replay_dmc_vs_isdd` | parallel | DMC vs IS-DD on a replay corpus |
+| **Serving** | | |
+| `playgen_gpu_server` | gpu_server | **Playgen GPU sidecar** — IS-DD's world source in production |
+| **Training** | | |
+| `train_dmc` | dmc_train | DMC card-play training |
+| `train_bid_nn` | dmc_train | Bid NN training |
+| `train_joint` | dmc_train | Triforge joint bid+play training |
+| `train_belief_net` | dmc_train | Belief network training |
+| `train_playgen` | dmc_train | Playgen world-model training |
+| `export_playgen` | dmc_train | Playgen safetensors → `.bin` inference weights |
+| **Data generation** | | |
+| `gen_pool` | rand | DD deal pool (COLVDD01) |
+| `enrich_pool` / `enrich_pool_isdd` / `enrich_pool_mixed` | dmc_train / parallel | Score layers (COLVSC01) |
+| `generate_belief_data` | rand | Belief training data (COLVBL01) |
+| `gen_bid_belief_data` | parallel | Bid-belief training data (COLVBB01) |
+| `generate_game_data` | rand | Game replays (COLVGM01) |
+| `gen_bumblebid_pool` | rand | Bumblebid pool |
+| `migrate_pools` | rand | Legacy pool → base + score layers |
+| **Analysis / diagnostics** | | |
+| `distill_bid` / `distill_play` | rand / parallel | Q-value dumps for interpretability |
+| `dump_obs_q` / `dump_probe_data` | rand | Observation + Q-value probes |
+| `audit_bid_v5` | rand | Bid v5 audit |
+| `maxi_diagnose` | rand | Maxi vs DMC play-by-play |
+| `bid_debug` / `bid_compare` / `bid_nn_eval` | rand | Bidding printouts and comparisons |
+| **Legacy tournaments** (superseded by `arena`) | | |
+| `bid_tournament` / `bid_nn_tournament` / `v2_tournament` | rand | Round-robin bidding |
+| `match_experiment` / `bidding_experiment` / `oracle_experiment` / `strength_experiment` | rand | Older head-to-heads |
+| `dd_calibrate` | rand | DD bidding calibration |
+| `mcts_demo` / `smart_ismcts_demo` | rand | Demos |
 
 ## IS-DD Sweep Results
 

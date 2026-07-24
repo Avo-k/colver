@@ -147,7 +147,7 @@ Accord avec NN : ~85% pos1, 87% pos2, 92% pos3, 88% pos4. -2 à -4pp vs arbre de
 
 - [scripts/probe/simplify_xgb.py](../../../scripts/probe/simplify_xgb.py) : backward elimination + depth/n_est sweep
 - [scripts/probe/final_tree_rules.py](../../../scripts/probe/final_tree_rules.py) : extraction des arbres depth-3
-- [/tmp/xgb_simplify.json](file:///tmp/xgb_simplify.json) : résultats quantitatifs
+- `/tmp/xgb_simplify.json` (artefact local, non versionné) : résultats quantitatifs
 
 ## Comment re-générer sur un autre modèle
 

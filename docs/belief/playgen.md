@@ -132,6 +132,13 @@ playgen_forward_accuracy|playgen_generate_worlds -- --ignored --nocapture`
 
 ## IS-DD integration & arena A/B (2026-07-21)
 
+> **Historical.** The knobs named below (`IsDdConfig::playgen_frac` /
+> `playgen_temp`, `IsDdSearch::set_playgen_model`, and the matching arena TOML
+> keys) were removed by the 2026-07-24 agent refactor. Worlds now come from a
+> [`WorldSource`](../agents.md) that the agent owns: `[worlds] source =
+> "sidecar" | "playgen" | "uniform"`. The findings below still stand — only the
+> spelling changed.
+
 `IsDdConfig { playgen_frac, playgen_temp }` + `IsDdSearch::set_playgen_model`.
 Arena TOML (`method = "smart_is_dd"`): `playgen_model`, `playgen_frac`,
 `playgen_temp`, and `time_ms = 0` → no time limit (fixed determinizations).
@@ -329,7 +336,7 @@ verdict.
 
 **New capability unlocked (not yet wired):** mid-auction worlds (sample
 auction continuation + full play → hidden hands during bidding, for
-BisDd/dd_bid) and sampled auction rollouts for bid EV — the bid head +
+DD-based bidders) and sampled auction rollouts for bid EV — the bid head +
 `PlaygenModel::bid_logits` exist; needs a public bid-state machine in the
 sampler's generate path.
 
@@ -354,8 +361,10 @@ the bid head completes the auction (masked to the *public* legal bid set via
 a cloned GameState — bid legality never reads hands), then the play head
 plays the deal out; the assignment reveals full hidden hands. 100/100 valid,
 ~420 ms/deal mid-auction. Plus `bid_policy` (43-way logits at the current
-auction point). Exposed in PyO3 (`playgen_sample_auction_deals`,
-`get_playgen_bid_policy`) and deployed on colver.net: the annonces page
+auction point). Exposed in PyO3 — since 2026-07-24 through the read-only
+`colver.Analyst` class (`auction_deals`, `bid_policy`, `marginals`; previously
+`Env.playgen_sample_auction_deals` / `get_playgen_bid_policy`) — and deployed
+on colver.net: the annonces page
 Oracle/DouDou sims run on **auction-conditioned worlds** (chunked generation
 overlapped with DD solves, uniform fallback, per-deal provenance chips), and
 the playgen bid policy is shown under the Bid V6 Q-values.
@@ -457,7 +466,8 @@ control described above):
 The hierarchy holds in both phases but tightens sharply in play: hard
 constraints already carry most of the play-phase signal (uniform-constrained
 reaches 70% argmax) — auctions are where samplers really differ, which is
-also why bid-phase conditioning (BisDd, annonces) is the biggest payoff.
+also why bid-phase conditioning (the annonces page, DD-based bidding) is the
+biggest payoff.
 
 Note the small-sample bias: at the old 30 × 12 scale the belief baseline read
 34% in auctions, versus 38% here. Sample sizes below ~1000 worlds per sampler

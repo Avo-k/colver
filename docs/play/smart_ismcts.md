@@ -123,7 +123,7 @@ SmartIsMctsConfig {
 
 Total search budget = `determinizations * iterations_per_det`. Default is 20 x 50 = 1000 iterations per decision.
 
-## Bidding Strategy (`bid_eval.rs`)
+## Bidding Strategy (`bid/bid_eval/`)
 
 Smart IS-MCTS is paired with `smart_bid`, a convention-based bidding strategy that uses J/9 signaling — the same conventions human Contrée players use. This creates a natural synergy: the bidding leaks information that the belief model can exploit.
 

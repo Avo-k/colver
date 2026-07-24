@@ -1,5 +1,12 @@
 # Bis-DD: Belief-Informed IS-DD Agent
 
+> **Removed (2026-07-24).** `bis_dd.rs` and the `bis_dd` bid/play methods are
+> gone: the heuristic bid inference at the heart of the design rejected reality
+> 72% of the time against NN bidders, and the bid belief net replaced it. This
+> document is kept as the record of the experiment and its negative result —
+> the code is recoverable from git history. Current agent architecture:
+> [agents.md](../../agents.md).
+
 A unified agent that maintains persistent beliefs from bidding through play, using rejection-filtered determinization and DD solving for all decisions.
 
 ## Motivation

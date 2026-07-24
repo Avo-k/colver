@@ -5,7 +5,8 @@ How a player plays cards once bidding ends. Implementations live in [colver-core
 ## Methods
 
 - [dd_solver.md](dd_solver.md) — Double-dummy alpha-beta solver (sees all hands, oracle)
-- [is_dd.md](is_dd.md) — Information-Set DD (samples determinizations + DD per world)
+- [is_dd.md](is_dd.md) — **Information-Set DD, the production card player** (samples determinized worlds + one exact DD solve each)
+- [../agents.md](../agents.md) — how a card player is built, configured and driven
 - [smart_ismcts.md](smart_ismcts.md) — Belief-weighted IS-MCTS
 - [dmc.md](dmc.md) — DouZero-style Q-network (DouDou35, DouDou50)
 
