@@ -770,6 +770,15 @@
 #doudou-table tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
 #doudou-table td:first-child { font-size: var(--fs-xl); padding-right: var(--sp-3); }
 
+/* Colonne Total — agrégat de la ligne, séparée du reste par un filet pour
+   qu'on ne la confonde pas avec un seuil de contrat. */
+#doudou-table th.doudou-total-col,
+#doudou-table td.doudou-total-col {
+    border-left: 1px solid var(--c-border-strong);
+    padding-left: var(--sp-3);
+}
+#doudou-table th.doudou-total-col { color: var(--c-text); }
+
 .doudou-empty { color: var(--c-text-dim); opacity: 0.35; }
 .doudou-high .doudou-pct { color: var(--c-success-txt); }
 .doudou-mid .doudou-pct { color: var(--c-accent); }

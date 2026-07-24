@@ -666,6 +666,19 @@ function wilsonLower(successes, n) {
 // un tableau où chaque chiffre a un corps différent est illisible, et les
 // cellules peu observées finissaient sous le seuil de lecture. L'opacité dit
 // la même chose sans toucher au rythme typographique.
+// Rendu d'une cellule « taux de réussite ». La couleur vient de la borne
+// inférieure de Wilson, l'opacité du nombre d'observations.
+function doudouCellHtml(count, achieved, extraCls = '') {
+    if (count === 0) return `<td class="doudou-empty ${extraCls}">\u00b7</td>`;
+    const pct = Math.round(achieved / count * 100);
+    const wlb = Math.round(wilsonLower(achieved, count) * 100);
+    const cls = wlb >= 60 ? 'doudou-high' : wlb >= 30 ? 'doudou-mid' : 'doudou-low';
+    return `<td class="${cls} ${confidenceClass(count)} ${extraCls}" ` +
+        `title="${count} donnes observées, ${achieved} réussies">` +
+        `<span class="doudou-pct">${pct}<span class="doudou-unit">%</span></span>` +
+        `<span class="doudou-count">${count}</span></td>`;
+}
+
 function confidenceClass(count) {
     if (count < 5) return 'conf-lo';
     if (count < 20) return 'conf-mid';
@@ -770,26 +783,25 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     for (let col = firstCol; col <= lastCol; col++) {
         html += `<th>${DOUDOU_COLS[col]}</th>`;
     }
+    html += '<th class="doudou-total-col">Total</th>';
     html += '</tr></thead><tbody>';
 
     for (const suit of SUIT_DISPLAY_ORDER) {
         html += `<tr><td>${suitHtml(suit)}</td>`;
+        // Le total agrège TOUTES les colonnes, pas seulement celles affichées :
+        // l'élagage ne retire aujourd'hui que des colonnes vides, mais le total
+        // reste juste si cette règle change.
+        let totalCount = 0, totalAchieved = 0;
+        for (let col = 0; col < DOUDOU_COLS.length; col++) {
+            const [c, a] = doudouCellCounts(doudouCells[suit][col], doudouTeamFilter);
+            totalCount += c;
+            totalAchieved += a;
+        }
         for (let col = firstCol; col <= lastCol; col++) {
             const [count, achieved] = doudouCellCounts(doudouCells[suit][col], doudouTeamFilter);
-            if (count === 0) {
-                html += '<td class="doudou-empty">\u00b7</td>';
-            } else {
-                const pct = Math.round(achieved / count * 100);
-                const wlb = Math.round(wilsonLower(achieved, count) * 100);
-                let cls;
-                if (wlb >= 60) cls = 'doudou-high';
-                else if (wlb >= 30) cls = 'doudou-mid';
-                else cls = 'doudou-low';
-                html += `<td class="${cls} ${confidenceClass(count)}" title="${count} donnes observées, ${achieved} réussies">` +
-                    `<span class="doudou-pct">${pct}<span class="doudou-unit">%</span></span>` +
-                    `<span class="doudou-count">${count}</span></td>`;
-            }
+            html += doudouCellHtml(count, achieved);
         }
+        html += doudouCellHtml(totalCount, totalAchieved, 'doudou-total-col');
         html += '</tr>';
     }
     html += '</tbody></table>';

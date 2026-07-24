@@ -229,3 +229,50 @@
     outline: 2px solid var(--c-accent);
     outline-offset: 2px;
 }
+
+/* ============================================================
+   TABLEAUX DE DONNÉES — grammaire commune
+   ------------------------------------------------------------
+   Une seule définition pour toutes les tables d'analyse, plutôt
+   qu'un jeu de règles réinventé dans chacune : chiffres tabulaires
+   (les colonnes s'alignent), en-tête discret mais lisible, filet
+   de séparation unique, ligne survolée.
+   ============================================================ */
+#doudou-table,
+.oracle-quant-table,
+.an-table,
+.an-dd-table,
+.classement-table,
+.dd-table {
+    font-variant-numeric: tabular-nums;
+    border-collapse: collapse;
+}
+
+#doudou-table th,
+.oracle-quant-table th,
+.an-table th,
+.an-dd-table th,
+.classement-table th,
+.dd-table th {
+    color: var(--c-text-muted);
+    font-weight: var(--fw-semi);
+    font-size: var(--fs-xs);
+    white-space: nowrap;
+}
+
+#doudou-table td,
+.oracle-quant-table td,
+.an-table td,
+.an-dd-table td,
+.classement-table td,
+.dd-table td {
+    color: var(--c-text);
+}
+
+#doudou-table tbody tr:hover td,
+.oracle-quant-table tbody tr:hover td,
+.an-table tbody tr:hover td,
+.classement-table tbody tr:hover td,
+.dd-table tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}
