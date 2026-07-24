@@ -22,7 +22,8 @@ use crate::bid_eval::BidFunction;
 use crate::card::card_count;
 use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
-use crate::dmc_obs::EnvTracking;
+use crate::dmc_net::DmcNet;
+use crate::dmc_obs::{self, EnvTracking, OBS_DIM_TR};
 use crate::elephant::{blend_with_evidence, ElephantMemory};
 use crate::playgen::infer::{AuctionLogp, PlaygenModel, PlaygenSampler, WorldLogp};
 use crate::solver::{new_tt_buffer, solve_with_scores};
@@ -80,12 +81,24 @@ pub struct IsDdConfig {
     /// coverage. Default 1.0 = previous behavior (all weighted when a belief
     /// source is active).
     pub belief_frac: f32,
-    /// Auction-credibility importance weighting of worlds in the DD
-    /// aggregation (requires `load_cred_bid_net`). Each world's weight is the
-    /// product of per-bid rank factors (would the bid net replay the observed
-    /// bid with this world's hand?), flattened by this exponent.
-    /// 0.0 = off (default); 0.5 = recommended soft weighting.
+    /// Credibility importance weighting of worlds in the DD aggregation. Each
+    /// world's weight is the product of per-action rank factors — "would the
+    /// reference policy replay the observed hidden action holding this world's
+    /// hand?" — flattened by this exponent. Judges both phases when the
+    /// corresponding net is loaded: the **auction** via the bid net
+    /// (`load_cred_bid_net`) and the **play** via the DMC net
+    /// (`load_cred_play_net`). 0.0 = off (default); 0.5 = recommended soft
+    /// weighting. See [`IsDdSearch::credibility_weight`] for the mechanism.
     pub cred_alpha: f32,
+    /// Solve the determinized worlds in parallel (rayon global pool) instead of
+    /// sequentially. World *generation* is always sequential (the playgen
+    /// sampler and RNG are stateful); only the embarrassingly-parallel DD
+    /// solves are spread across threads, each with its own transposition table.
+    /// Results are identical to the sequential path (DD is deterministic and the
+    /// aggregation reduces in a fixed order). Requires the `parallel` cargo
+    /// feature — ignored (falls back to sequential) when it is not compiled in.
+    /// **Off by default**; the web/PyO3 layer turns it on for per-move latency.
+    pub parallel: bool,
 }
 
 impl Default for IsDdConfig {
@@ -108,6 +121,7 @@ impl Default for IsDdConfig {
             playgen_temp: 1.0,
             belief_frac: 1.0,
             cred_alpha: 0.0,
+            parallel: false,
         }
     }
 }
@@ -170,6 +184,19 @@ fn derive_v3_temporal(
     (leads, winners, fail_rel)
 }
 
+/// Credibility rank factor: how much to trust a world given that the reference
+/// policy ranks `better` legal moves strictly above the one actually observed.
+/// Argmax (0) is fully credible; a top-3 move is mildly discounted; anything
+/// worse is heavily discounted. Shared by the auction and play judges.
+#[inline]
+fn rank_factor(better: u32) -> f32 {
+    match better {
+        0 => 1.0,
+        1 | 2 => 0.7,
+        _ => 0.35,
+    }
+}
+
 /// Per-card aggregated DD result.
 pub struct IsDdResult {
     /// Best card for the current player's team.
@@ -193,8 +220,15 @@ pub struct IsDdSearch {
     playgen: Option<PlaygenSampler>,
     /// Bid net used as an auction-credibility judge (see `cred_alpha`).
     cred_bid_net: Option<crate::bid_net::BidNet>,
+    /// DMC net used as a play-credibility judge (see `cred_alpha`). Canonical
+    /// (411-dim, `OBS_DIM_TR`) obs only — mirrors `bench_world_cred`.
+    cred_play_net: Option<DmcNet>,
     /// Observed auction this deal: (bidder, action) in order.
     auction: Vec<(u8, u8)>,
+    /// Observed plays this deal: (player, card) in order. Together with
+    /// `auction` this is the full replayable history used by the credibility
+    /// judge to reconstruct each hidden decision point.
+    plays: Vec<(u8, u8)>,
     /// State at deal start (pre-auction), for credibility replays.
     init_state: Option<GameState>,
     /// Cards played so far per seat (current trick included).
@@ -214,7 +248,9 @@ impl IsDdSearch {
             elephant: None,
             playgen: None,
             cred_bid_net: None,
+            cred_play_net: None,
             auction: Vec::new(),
+            plays: Vec::new(),
             init_state: None,
             played_by: [0; 4],
             injected_worlds: Vec::new(),
@@ -222,9 +258,23 @@ impl IsDdSearch {
         }
     }
 
-    /// Load the bid net used as auction-credibility judge (`cred_alpha`).
+    /// Load the bid net used as the auction-credibility judge (`cred_alpha`).
     pub fn load_cred_bid_net(&mut self, path: &str) -> std::io::Result<()> {
         self.cred_bid_net = Some(crate::bid_net::BidNet::load(path)?);
+        Ok(())
+    }
+
+    /// Load the DMC net used as the play-credibility judge (`cred_alpha`).
+    /// Must be a canonical (411-dim, `OBS_DIM_TR`) model.
+    pub fn load_cred_play_net(&mut self, path: &str) -> std::io::Result<()> {
+        let net = DmcNet::load(path)?;
+        if net.obs_dim() != OBS_DIM_TR {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "play-credibility judge must be a canonical (411-dim) DMC model",
+            ));
+        }
+        self.cred_play_net = Some(net);
         Ok(())
     }
 
@@ -279,8 +329,9 @@ impl IsDdSearch {
             sampler.init_deal(state, observer);
         }
 
-        // Credibility judge: remember the pre-auction state, reset the log.
+        // Credibility judge: remember the pre-auction state, reset the logs.
         self.auction.clear();
+        self.plays.clear();
         self.init_state = Some(*state);
         self.played_by = [0; 4];
 
@@ -331,6 +382,7 @@ impl IsDdSearch {
         }
         if state_before.phase == Phase::Playing {
             self.played_by[player as usize] |= 1u32 << action;
+            self.plays.push((player, action));
         }
         // Update elephant memory: filter particles based on observed play.
         if state_before.phase == Phase::Playing {
@@ -589,71 +641,124 @@ impl IsDdSearch {
         }
     }
 
-    /// Auction-credibility weight of a world: for each observed bid by a
-    /// player other than `observer`, ask the credibility bid net whether it
-    /// would replay that bid holding the world's hand for that player. Rank
-    /// factors (argmax 1.0, top-3 0.7, else 0.35) multiply; the product is
-    /// flattened by `alpha`. Returns 1.0 when disabled or no judge is loaded.
+    /// Credibility weight of a world: replay the observed history holding this
+    /// world's reconstructed full hands and, for each action taken by a hidden
+    /// player (`p != observer`), ask the reference policy whether it would
+    /// replay that action. Both phases are judged when the corresponding net is
+    /// loaded — **bids** by the bid net (`load_cred_bid_net`), **plays** by the
+    /// canonical DMC net (`load_cred_play_net`). Each judged action contributes
+    /// a rank factor by how many legal moves the net ranks strictly above the
+    /// observed one:
+    ///
+    /// | net rates above observed | factor |
+    /// |--------------------------|--------|
+    /// | 0 (it *is* the argmax)   | 1.00   |
+    /// | 1–2 (top-3)              | 0.70   |
+    /// | ≥3                       | 0.35   |
+    ///
+    /// Factors multiply across judged actions; the product is flattened by
+    /// `alpha` (`w.powf(alpha)`). Returns 1.0 when `alpha <= 0`, no judge is
+    /// loaded, or the world cannot be reconstructed into four 8-card hands.
+    ///
+    /// Cost: one bid-net eval per hidden bid + one DMC eval per hidden play,
+    /// per world. Negligible for the auction (~4–8 bids); the play path scales
+    /// with tricks played, so keep world counts modest when it is enabled.
     fn credibility_weight(&mut self, world_hands: &[u32; 4], observer: u8, alpha: f32) -> f32 {
-        if alpha <= 0.0 || self.auction.is_empty() {
+        if alpha <= 0.0 {
             return 1.0;
         }
         let Some(base) = self.init_state else { return 1.0 };
-        let Some(net) = self.cred_bid_net.as_mut() else { return 1.0 };
+        if self.cred_bid_net.is_none() && self.cred_play_net.is_none() {
+            return 1.0;
+        }
 
-        let obs_dim = net.obs_dim();
-        let mut obs = vec![0.0f32; obs_dim];
-        let mut s = base;
-        // Initial hands = world's remaining cards ∪ cards already played.
-        // (The determinized world only assigns cards still in hand.)
+        // Reconstruct full initial hands: the determinized world only assigns
+        // cards still in hand, so add back what each seat has already played.
         let mut init_hands = [0u32; 4];
         for p in 0..4usize {
             init_hands[p] = world_hands[p] | self.played_by[p];
-            if crate::card::card_count(init_hands[p]) != 8 {
+            if card_count(init_hands[p]) != 8 {
                 return 1.0; // inconsistent reconstruction — skip weighting
             }
         }
+
+        let mut s = base;
         s.hands = init_hands;
-        let mut hist: Vec<(u8, u8)> = Vec::with_capacity(self.auction.len());
+        // Replayed public tracking, needed for the canonical DMC play obs.
+        let mut tracking = EnvTracking::new();
+        tracking.reset(base.dealer);
         let mut w = 1.0f32;
 
-        for &(p, a) in &self.auction {
+        // --- Auction: judge each hidden bid with the bid net. ---
+        let mut bid_hist: Vec<(u8, u8)> = Vec::with_capacity(self.auction.len());
+        let mut bid_obs_buf = self
+            .cred_bid_net
+            .as_ref()
+            .map(|n| vec![0.0f32; n.obs_dim()])
+            .unwrap_or_default();
+        for i in 0..self.auction.len() {
+            let (p, a) = self.auction[i];
             if p != observer && s.phase == Phase::Bidding {
-                use crate::bid_obs::{
-                    self, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
-                    BID_OBS_DIM_SCORE_AWARE_V3,
-                };
-                // Standalone-deal convention: cumulative scores 0-0.
-                match obs_dim {
-                    BID_OBS_DIM_SCORE_AWARE_V3 => {
-                        bid_obs::write_bid_observation_score_aware_v3(&mut obs, 0, &s, &hist, 0, 0)
+                if let Some(net) = self.cred_bid_net.as_mut() {
+                    use crate::bid_obs::{
+                        self, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
+                        BID_OBS_DIM_SCORE_AWARE_V3,
+                    };
+                    // Standalone-deal convention: cumulative scores 0-0.
+                    match net.obs_dim() {
+                        BID_OBS_DIM_SCORE_AWARE_V3 => bid_obs::write_bid_observation_score_aware_v3(
+                            &mut bid_obs_buf, 0, &s, &bid_hist, 0, 0,
+                        ),
+                        BID_OBS_DIM_SCORE_AWARE_V2 => bid_obs::write_bid_observation_score_aware_v2(
+                            &mut bid_obs_buf, 0, &s, &bid_hist, 0, 0,
+                        ),
+                        BID_OBS_DIM_SCORE_AWARE => bid_obs::write_bid_observation_score_aware(
+                            &mut bid_obs_buf, 0, &s, &bid_hist, 0, 0,
+                        ),
+                        _ => bid_obs::write_bid_observation(&mut bid_obs_buf, 0, &s, &bid_hist),
                     }
-                    BID_OBS_DIM_SCORE_AWARE_V2 => {
-                        bid_obs::write_bid_observation_score_aware_v2(&mut obs, 0, &s, &hist, 0, 0)
+                    let q = net.evaluate(&bid_obs_buf);
+                    let legal = s.legal_actions();
+                    let mut better = 0u32;
+                    let qa = q[a as usize];
+                    for c in 0..43u8 {
+                        if c != a && legal & (1u64 << c) != 0 && q[c as usize] > qa {
+                            better += 1;
+                        }
                     }
-                    BID_OBS_DIM_SCORE_AWARE => {
-                        bid_obs::write_bid_observation_score_aware(&mut obs, 0, &s, &hist, 0, 0)
-                    }
-                    _ => bid_obs::write_bid_observation(&mut obs, 0, &s, &hist),
+                    w *= rank_factor(better);
                 }
-                let q = net.evaluate(&obs);
-                let legal = s.legal_actions();
-                let qa = q[a as usize];
-                let mut better = 0u32;
-                for c in 0..43u8 {
-                    if c != a && legal & (1u64 << c) != 0 && q[c as usize] > qa {
-                        better += 1;
-                    }
-                }
-                w *= match better {
-                    0 => 1.0,
-                    1 | 2 => 0.7,
-                    _ => 0.35,
-                };
             }
-            hist.push((p, a));
+            bid_hist.push((p, a));
+            tracking.track_action(&s, a);
             s.step(a);
         }
+
+        // --- Play: judge each hidden play with the canonical DMC net. ---
+        if self.cred_play_net.is_some() {
+            for i in 0..self.plays.len() {
+                let (p, a) = self.plays[i];
+                if p != observer && s.phase == Phase::Playing {
+                    let net = self.cred_play_net.as_mut().unwrap();
+                    let obs = dmc_obs::make_observation_tr(&s, &tracking);
+                    let order = dmc_obs::current_player_order(&s, &tracking);
+                    let mask = dmc_obs::cardset_to_canonical(s.legal_actions() as u32, &order);
+                    let q = net.evaluate(&obs);
+                    let ca = dmc_obs::card_to_canonical(a, &order);
+                    let qa = q[ca as usize];
+                    let mut better = 0u32;
+                    for c in 0..32u8 {
+                        if c != ca && mask & (1u32 << c) != 0 && q[c as usize] > qa {
+                            better += 1;
+                        }
+                    }
+                    w *= rank_factor(better);
+                }
+                tracking.track_action(&s, a);
+                s.step(a);
+            }
+        }
+
         w.powf(alpha)
     }
 
@@ -859,7 +964,7 @@ impl IsDdSearch {
         }
 
         // Score accumulators: weighted sum of NS points per card, weight per card
-        // (weights are 1.0 unless auction-credibility weighting is enabled).
+        // (weights are 1.0 unless credibility weighting is enabled).
         let mut score_sum = [0f64; 32];
         let mut weight_sum = [0f64; 32];
 
@@ -880,10 +985,18 @@ impl IsDdSearch {
         let mut det_count = 0u32;
 
         // Playgen worlds are generated in lockstep batches (weights streamed
-        // once per token-step for the whole batch) and consumed from a queue.
-        const PLAYGEN_BATCH: usize = 16;
+        // once per token-step for the whole batch) and consumed from a queue
+        // that persists across chunks.
         let mut playgen_queue: Vec<[u32; 4]> = Vec::new();
         let mut playgen_dry = false;
+
+        // The search runs in chunks: **generate** a batch of worlds sequentially
+        // (the playgen sampler, injected-world queue and RNG are all stateful),
+        // then **solve** the whole batch — in parallel when `config.parallel` is
+        // set, otherwise one by one reusing this search's TT. The chunk is one
+        // world in sequential mode (tightest deadline adherence, identical to the
+        // legacy per-world loop) and one worker-slot's worth in parallel mode.
+        let chunk_size = solve_chunk_size(config.parallel);
 
         loop {
             if let Some(d) = deadline {
@@ -894,86 +1007,65 @@ impl IsDdSearch {
                 break;
             }
 
-            // Externally injected worlds are consumed first.
-            let injected = loop {
-                match self.injected_worlds.pop() {
-                    Some(hands) => {
-                        let ok = (0..4).all(|p| {
-                            card_count(hands[p]) == card_count(state.hands[p])
-                        }) && hands[observer as usize] == state.hands[observer as usize];
-                        if ok {
-                            break Some(hands);
-                        }
-                    }
-                    None => break None,
-                }
-            };
-
-            let use_playgen = config.playgen_frac > 0.0
-                && self.playgen.is_some()
-                && !playgen_dry
-                && rng.gen::<f32>() < config.playgen_frac;
-
-            let det_state = if let Some(hands) = injected {
-                let mut s = *state;
-                s.hands = hands;
-                Some(s)
-            } else if use_playgen {
-                if playgen_queue.is_empty() {
-                    let sampler = self.playgen.as_mut().unwrap();
-                    playgen_queue =
-                        sampler.generate_worlds_batch(state, PLAYGEN_BATCH, config.playgen_temp, rng);
-                    if playgen_queue.is_empty() {
-                        // Repeated dead-ends or too-long sequence: stop trying.
-                        playgen_dry = true;
-                    }
-                }
-                playgen_queue
-                    .pop()
-                    .map(|hands| {
-                        let mut s = *state;
-                        s.hands = hands;
-                        s
-                    })
-                    .or_else(|| determinize_greedy(state, observer, rng))
-            } else if weights.is_some() && rng.gen::<f32>() < config.belief_frac {
-                let w = weights.as_ref().unwrap();
-                determinize_weighted(state, observer, w, rng)
-                    .or_else(|| determinize_greedy(state, observer, rng))
+            // How many worlds to attempt this round.
+            let remaining = if deadline.is_some() {
+                chunk_size
             } else {
-                // Ensemble coverage floor: constraint-uniform world.
-                determinize_greedy(state, observer, rng)
+                chunk_size.min((config.determinizations - det_count) as usize)
             };
 
-            let det_state = match det_state {
-                Some(s) => s,
-                None => {
-                    det_count += 1;
-                    continue;
+            // --- Generate a chunk of worlds (sequential). ---
+            let mut chunk: Vec<GameState> = Vec::with_capacity(remaining);
+            let mut attempted = 0u32;
+            for _ in 0..remaining {
+                attempted += 1;
+                if let Some(s) = self.generate_world(
+                    state,
+                    observer,
+                    &weights,
+                    config,
+                    &mut playgen_queue,
+                    &mut playgen_dry,
+                    rng,
+                ) {
+                    chunk.push(s);
                 }
-            };
+            }
+            det_count += attempted;
+            if chunk.is_empty() {
+                // Every attempt this round failed to determinize; in count mode
+                // `det_count` still advances so we terminate, in time mode we
+                // retry until the deadline. Avoid touching the accumulators.
+                continue;
+            }
 
-            // Store hand assignment for elephant memory.
+            // Store hand assignments for elephant memory.
             if store_particles {
-                det_hands.push(det_state.hands);
+                det_hands.extend(chunk.iter().map(|s| s.hands));
             }
 
-            let cred_w = if config.cred_alpha > 0.0 {
-                self.credibility_weight(&det_state.hands, observer, config.cred_alpha) as f64
+            // --- Credibility weights (sequential: the judge nets are stateful). ---
+            let cred_weights: Vec<f64> = if config.cred_alpha > 0.0 {
+                chunk
+                    .iter()
+                    .map(|s| self.credibility_weight(&s.hands, observer, config.cred_alpha) as f64)
+                    .collect()
             } else {
-                1.0
+                vec![1.0; chunk.len()]
             };
 
-            let scores = solve_with_scores(&det_state, Some(&mut self.tt_buf));
+            // --- Solve the chunk (parallel or sequential). ---
+            let chunk_scores = solve_worlds(&chunk, config.parallel, &mut self.tt_buf);
 
-            for i in 0..scores.count {
-                let (card, ns_pts) = scores.scores[i];
-                score_sum[card as usize] += ns_pts as f64 * cred_w;
-                weight_sum[card as usize] += cred_w;
+            // --- Aggregate in a fixed order (parallel result is identical). ---
+            for (scores, &cw) in chunk_scores.iter().zip(cred_weights.iter()) {
+                for i in 0..scores.count {
+                    let (card, ns_pts) = scores.scores[i];
+                    score_sum[card as usize] += ns_pts as f64 * cw;
+                    weight_sum[card as usize] += cw;
+                }
             }
-
-            successful_dets += 1;
-            det_count += 1;
+            successful_dets += chunk.len() as u32;
         }
 
         // Injected worlds are one-shot: drop any leftover so a later search
@@ -1029,102 +1121,131 @@ impl IsDdSearch {
         }
     }
 
-    /// Parallel search using rayon. Pre-generates seeds, runs determinizations in parallel.
-    /// Each thread gets its own TT buffer (2MB).
-    #[cfg(feature = "parallel")]
-    pub fn search_parallel(
+    /// Generate a single determinized world for the current position, following
+    /// the ensemble policy: **injected** worlds (e.g. GPU sidecar) first, then a
+    /// **playgen** world (probability `playgen_frac`, drawn from a persistent
+    /// lockstep batch), then a **belief-weighted** world (probability
+    /// `belief_frac` when a belief source is active), falling back to a
+    /// **constraint-uniform** world. Hard constraints (voids, trump ceiling,
+    /// played cards) are always honored by the determinizers. Returns `None`
+    /// when a determinizer fails (e.g. an over-constrained position); the caller
+    /// counts the attempt against the budget and moves on.
+    #[allow(clippy::too_many_arguments)]
+    fn generate_world(
         &mut self,
         state: &GameState,
+        observer: u8,
+        weights: &Option<[[f32; 32]; 4]>,
         config: &IsDdConfig,
+        playgen_queue: &mut Vec<[u32; 4]>,
+        playgen_dry: &mut bool,
         rng: &mut impl Rng,
-    ) -> u8 {
-        use rand::SeedableRng;
-        use rayon::prelude::*;
-
-        if state.phase == Phase::Bidding {
-            return config.bid_function.bid(state);
-        }
-
-        let observer = state.current_player();
-        let team = GameState::player_team(observer);
-        let maximizing = team == 0;
-
-        let num_dets = config.determinizations as usize;
-        let seeds: Vec<u64> = (0..num_dets).map(|_| rng.gen()).collect();
-        let weights = self.compute_weights(state, config, observer);
-        let game_state = *state; // Copy for thread safety
-
-        // Each thread returns (score_sum[32], score_count[32])
-        let results: Vec<([i64; 32], [u32; 32])> = seeds
-            .par_iter()
-            .map(|&seed| {
-                let mut local_rng = rand::rngs::StdRng::seed_from_u64(seed);
-                let mut tt = new_tt_buffer();
-
-                let det_state = if let Some(ref w) = weights {
-                    determinize_weighted(&game_state, observer, w, &mut local_rng)
-                        .or_else(|| determinize_greedy(&game_state, observer, &mut local_rng))
-                } else {
-                    determinize_greedy(&game_state, observer, &mut local_rng)
-                };
-
-                let det_state = match det_state {
-                    Some(s) => s,
-                    None => return ([0i64; 32], [0u32; 32]),
-                };
-
-                let scores = solve_with_scores(&det_state, Some(&mut tt));
-
-                let mut sum = [0i64; 32];
-                let mut count = [0u32; 32];
-                for i in 0..scores.count {
-                    let (card, ns_pts) = scores.scores[i];
-                    sum[card as usize] += ns_pts as i64;
-                    count[card as usize] += 1;
+    ) -> Option<GameState> {
+        // Externally injected worlds are consumed first (skip invalid ones).
+        loop {
+            match self.injected_worlds.pop() {
+                Some(hands) => {
+                    let ok = (0..4).all(|p| card_count(hands[p]) == card_count(state.hands[p]))
+                        && hands[observer as usize] == state.hands[observer as usize];
+                    if ok {
+                        let mut s = *state;
+                        s.hands = hands;
+                        return Some(s);
+                    }
                 }
-
-                (sum, count)
-            })
-            .collect();
-
-        // Aggregate
-        let mut total_sum = [0i64; 32];
-        let mut total_count = [0u32; 32];
-        for (sum, count) in &results {
-            for i in 0..32 {
-                total_sum[i] += sum[i];
-                total_count[i] += count[i];
+                None => break,
             }
         }
 
-        let legal = state.legal_actions();
-        let mut best_action = legal.trailing_zeros() as u8;
-        let mut best_avg: f32 = if maximizing { f32::NEG_INFINITY } else { f32::INFINITY };
+        let use_playgen = config.playgen_frac > 0.0
+            && self.playgen.is_some()
+            && !*playgen_dry
+            && rng.gen::<f32>() < config.playgen_frac;
 
-        let mut mask = legal;
-        while mask != 0 {
-            let card = mask.trailing_zeros() as u8;
-            let count = total_count[card as usize];
-            let avg = if count > 0 {
-                total_sum[card as usize] as f32 / count as f32
-            } else {
-                81.0
-            };
-
-            let dominated = if maximizing {
-                avg > best_avg
-            } else {
-                avg < best_avg
-            };
-            if dominated {
-                best_avg = avg;
-                best_action = card;
+        if use_playgen {
+            if playgen_queue.is_empty() {
+                let sampler = self.playgen.as_mut().unwrap();
+                *playgen_queue =
+                    sampler.generate_worlds_batch(state, PLAYGEN_BATCH, config.playgen_temp, rng);
+                if playgen_queue.is_empty() {
+                    // Repeated dead-ends or too-long sequence: stop trying.
+                    *playgen_dry = true;
+                }
             }
-            mask &= mask - 1;
+            return playgen_queue
+                .pop()
+                .map(|hands| {
+                    let mut s = *state;
+                    s.hands = hands;
+                    s
+                })
+                .or_else(|| determinize_greedy(state, observer, rng));
         }
 
-        best_action
+        if weights.is_some() && rng.gen::<f32>() < config.belief_frac {
+            let w = weights.as_ref().unwrap();
+            return determinize_weighted(state, observer, w, rng)
+                .or_else(|| determinize_greedy(state, observer, rng));
+        }
+
+        // Ensemble coverage floor: constraint-uniform world.
+        determinize_greedy(state, observer, rng)
     }
+}
+
+/// Playgen worlds are generated in lockstep batches (the transformer streams
+/// its weights once per token-step for the whole batch).
+const PLAYGEN_BATCH: usize = 16;
+
+/// Worlds solved per generate/solve round. Sequential mode uses one world per
+/// round (tightest deadline adherence, identical to the legacy per-world loop);
+/// parallel mode fills one round of the rayon worker pool.
+#[inline]
+fn solve_chunk_size(parallel: bool) -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        if parallel {
+            return rayon::current_num_threads().max(1);
+        }
+    }
+    let _ = parallel;
+    1
+}
+
+/// Solve a batch of fully-determinized worlds, returning per-world DD scores in
+/// input order. In parallel mode each rayon worker keeps its own reusable TT
+/// (`map_init`); sequential mode reuses the caller's `tt_buf`. DD is exact and
+/// deterministic, so the two paths return identical scores.
+#[cfg(feature = "parallel")]
+fn solve_worlds(
+    worlds: &[GameState],
+    parallel: bool,
+    tt_buf: &mut Vec<u64>,
+) -> Vec<crate::solver::SolveScores> {
+    use rayon::prelude::*;
+    if parallel {
+        worlds
+            .par_iter()
+            .map_init(new_tt_buffer, |tt, s| solve_with_scores(s, Some(tt)))
+            .collect()
+    } else {
+        worlds
+            .iter()
+            .map(|s| solve_with_scores(s, Some(tt_buf)))
+            .collect()
+    }
+}
+
+#[cfg(not(feature = "parallel"))]
+fn solve_worlds(
+    worlds: &[GameState],
+    _parallel: bool,
+    tt_buf: &mut Vec<u64>,
+) -> Vec<crate::solver::SolveScores> {
+    worlds
+        .iter()
+        .map(|s| solve_with_scores(s, Some(tt_buf)))
+        .collect()
 }
 
 /// Convenience wrapper that creates a temporary IsDdSearch without beliefs.
@@ -1327,13 +1448,14 @@ mod tests {
         let mut rng = rand::thread_rng();
         let config = IsDdConfig {
             determinizations: 5,
+            parallel: true,
             ..Default::default()
         };
         let mut found = 0;
         for _ in 0..100 {
             if let Some(state) = random_playing_state(&mut rng) {
                 let mut search = IsDdSearch::new();
-                let action = search.search_parallel(&state, &config, &mut rng);
+                let action = search.search(&state, &config, &mut rng);
                 let legal = state.legal_actions();
                 assert!(
                     legal & (1u64 << action) != 0,
@@ -1347,5 +1469,37 @@ mod tests {
             }
         }
         assert!(found >= 10, "Not enough non-void deals to test");
+    }
+
+    /// Parallel and sequential solving must agree exactly: world generation is
+    /// RNG-driven, so we seed identically and only flip `parallel`. DD is exact
+    /// and the aggregation reduces in a fixed order, so `card_scores` must match.
+    #[cfg(feature = "parallel")]
+    #[test]
+    #[ignore]
+    fn test_parallel_matches_sequential() {
+        use rand::SeedableRng;
+        let mut src = rand::rngs::StdRng::seed_from_u64(12345);
+        let mut checked = 0;
+        for _ in 0..200 {
+            let Some(state) = random_playing_state(&mut src) else { continue };
+            let seq = {
+                let mut rng = rand::rngs::StdRng::seed_from_u64(777);
+                let cfg = IsDdConfig { determinizations: 12, parallel: false, ..Default::default() };
+                IsDdSearch::new().search_with_stats(&state, &cfg, &mut rng)
+            };
+            let par = {
+                let mut rng = rand::rngs::StdRng::seed_from_u64(777);
+                let cfg = IsDdConfig { determinizations: 12, parallel: true, ..Default::default() };
+                IsDdSearch::new().search_with_stats(&state, &cfg, &mut rng)
+            };
+            assert_eq!(seq.best_action, par.best_action, "best_action diverged");
+            assert_eq!(seq.card_scores, par.card_scores, "card_scores diverged");
+            checked += 1;
+            if checked >= 15 {
+                break;
+            }
+        }
+        assert!(checked >= 5, "Not enough non-void deals to test");
     }
 }

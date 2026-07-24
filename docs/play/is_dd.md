@@ -8,15 +8,33 @@ Realistic player based on the [DD solver](dd_solver.md). Samples N "determinized
 
 ## Algorithm
 
+There is **one** search entry point — `search_with_stats` (`search` is a thin
+wrapper that drops the stats). It runs a single pipeline, in chunks, until the
+determinization count or time budget is hit:
+
 ```
-for each determinization (default 20):
-    sample hidden cards weighted by belief weights
-    solve resulting full-information state with DD
-    for each legal card → record exact NS points
-aggregate per-card → pick best (max for NS, min for EW)
+1. GENERATE a chunk of determinized worlds        (sequential, stateful)
+     ├─ injected worlds first (e.g. GPU sidecar), then
+     ├─ playgen world  (prob. playgen_frac, from a lockstep batch), then
+     ├─ belief-weighted world (prob. belief_frac when a belief source is on), else
+     └─ constraint-uniform world  (determinize_greedy)
+2. WEIGHT each world by credibility               (sequential, cred_alpha)
+3. SOLVE each world with DD                        (parallel or sequential)
+4. AGGREGATE Σ score·weight / Σ weight per card    (fixed order)
+→ pick best card (max for NS, min for EW)
 ```
 
-DD returns **exact** NS points per legal card per world, so far fewer samples are needed than IS-MCTS (which uses noisy MCTS rollouts). 20 determinizations is usually enough.
+DD returns **exact** NS points per legal card per world, so far fewer samples are
+needed than IS-MCTS (which uses noisy MCTS rollouts). 20 determinizations is
+usually enough.
+
+**Why generation and solving are split.** World *generation* is inherently
+sequential — the playgen sampler carries a KV-cache, the injected-world queue and
+the RNG are all stateful. DD *solving* is embarrassingly parallel: worlds are
+independent and the transposition table is cleared at the start of every solve
+(`solver.rs::solve_reuse_tt`), so nothing is shared between worlds anyway. The
+pipeline therefore generates a chunk sequentially, then hands the whole chunk to
+the solver — sequentially or across the rayon pool (see [Parallelism](#parallelism)).
 
 ## Hard constraints vs soft beliefs
 
@@ -63,6 +81,11 @@ If all soft beliefs are off and no hard constraints zero out any unknown (early 
 | `early_termination` | true | Skip search when forced (1 legal move) or when beliefs uniquely determine all hidden cards (single DD solve = exact answer). Always on by default. |
 | `dominance_factor` | 1.0 | Used by `use_soft_inference`. When a player follows suit without playing the highest, downweight their higher unknown cards by this factor. 0.3 = aggressive, 1.0 = off (only relevant if soft inference is enabled) |
 | `bid_function` | `ImprovedV2` | Used during bidding phase (IS-DD only acts during play) |
+| `playgen_frac` | 0.0 | Fraction of worlds drawn from the playgen transformer (requires a loaded playgen model). 0 = none, 1 = all. |
+| `playgen_temp` | 1.0 | Softmax temperature for playgen sampling (1.0 = posterior). |
+| `belief_frac` | 1.0 | Among non-playgen worlds, fraction drawn belief-weighted (rest constraint-uniform for coverage). |
+| `cred_alpha` | 0.0 | Credibility world-weighting exponent. See [Credibility weighting](#credibility-weighting). |
+| `parallel` | **false** | Solve worlds across the rayon global pool. See [Parallelism](#parallelism). |
 
 > Hard constraints (voids, trump ceiling, played cards) and `early_termination` are **always on** — they're correct by construction, no flag needed.
 
@@ -165,7 +188,51 @@ let result = search.search_with_stats(&state, &config, &mut rng);
 // result.best_action, result.card_scores, result.determinizations
 ```
 
-Parallel variant: `search_parallel()` (requires `parallel` feature, uses rayon).
+## Parallelism
+
+Set `config.parallel = true` to solve the determinized worlds across the **rayon
+global pool** instead of one at a time. There is no separate `search_parallel`
+method any more — parallelism is a config flag on the single search path.
+
+- **Bounded and shared.** The rayon global pool has `num_cpus` workers shared by
+  *all* concurrent searches, so several web rooms solving at once cannot
+  oversubscribe the machine — they share one pool via work-stealing.
+- **Deterministic.** Results are bit-identical to sequential: world generation is
+  always sequential (same RNG order regardless of the flag), DD is exact, and the
+  aggregation reduces in a fixed input order. The `test_parallel_matches_sequential`
+  test asserts `best_action` and `card_scores` match exactly.
+- **Per-worker TT.** Each rayon worker keeps its own reusable transposition table
+  (`map_init`); sequential mode reuses the search's own `tt_buf`. Since the TT is
+  cleared per solve, no cross-world information is lost either way.
+- **Requires the `parallel` cargo feature.** Without it the flag is ignored and
+  the search falls back to sequential. `colver-py` enables the feature, so the
+  web/PyO3 path (`action_dede*`) always runs parallel.
+
+Chunk size is one world in sequential mode (tightest deadline adherence) and one
+worker-pool round (`rayon::current_num_threads()`) in parallel mode.
+
+## Credibility weighting
+
+`cred_alpha > 0` weights each world in the DD aggregation by how *plausible* it
+is, judged **self-supervisedly** against the observed history: replay the deal
+holding the world's reconstructed hands and ask a reference policy, at each hidden
+player's turn, "would you have played what actually happened?". This is the same
+signal measured in aggregate by [`bench_world_cred`](../belief/playgen.md).
+
+- **Auction** — judged by the bid net (`load_cred_bid_net` / `dede_load_cred_bid_net`).
+- **Play** — judged by the canonical DMC net (`load_cred_play_net` / `dede_load_cred_play_net`).
+
+Each judged action contributes a rank factor (argmax → 1.0, top-3 → 0.7, else →
+0.35); the product across judged actions is flattened by `w.powf(alpha)`. Weight
+1.0 when disabled, no judge loaded, or the world can't be reconstructed.
+
+**Statistical caveat.** Playgen already samples ≈ the posterior, so its credibility
+weight is the likelihood term of that same posterior — re-weighting playgen worlds
+by credibility risks *double-counting*. Prefer credibility either (a) to correct a
+mis-calibrated / over-dispersed sampler, or (b) with playgen treated as a proposal
+only. Measure with `bench_world_cred` before enabling; kept **off by default**
+pending that check. Cost scales with tricks played (one DMC eval per hidden play
+per world), so keep world counts modest when the play judge is on.
 
 ## Comparison with DMC
 

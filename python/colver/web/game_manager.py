@@ -1,5 +1,6 @@
 """Game session management for Colver web UI."""
 
+import os
 import random
 import time
 from collections import OrderedDict
@@ -7,6 +8,20 @@ import colver
 
 from colver.web import playgen_gpu
 from colver.web import game_notation
+
+# IS-DD tuning (env-configurable so prod can be tuned without a code deploy).
+#   COLVER_ISDD_DETS: fixed determinization count. 0 = time mode (default,
+#     budget = the per-move delay); >0 = count mode (solve exactly N worlds).
+#   COLVER_ISDD_PLAYGEN_WORLDS: how many playgen worlds to fetch from the GPU
+#     sidecar and inject per move (consumed before any CPU-sampled world).
+_ISDD_DETS = int(os.environ.get("COLVER_ISDD_DETS", "0"))
+_ISDD_PLAYGEN_WORLDS = int(os.environ.get("COLVER_ISDD_PLAYGEN_WORLDS", "256"))
+
+
+def _configure_dede(env):
+    """Apply env-level IS-DD knobs to a freshly dede_init()'d env."""
+    if _ISDD_DETS > 0:
+        env.dede_set_determinizations(_ISDD_DETS)
 
 
 # ---- Server-wide belief cache -------------------------------------------------
@@ -45,6 +60,7 @@ def compute_game_cfn(dealer, initial_hands, action_ids) -> str:
     """Full-game CFN (auction + play) from a deal and a flat action-id list."""
     env = colver.Env.deal_with_hands(int(dealer), [list(h) for h in initial_hands])
     env.dede_init()
+    _configure_dede(env)
     bids = []
     for a in action_ids:
         a = int(a)
@@ -73,7 +89,7 @@ def _safe_playgen(fn, *args, **kwargs):
         return None
 
 
-def _inject_gpu_worlds(env, dealer, initial_hands, history, n_worlds=24):
+def _inject_gpu_worlds(env, dealer, initial_hands, history, n_worlds=_ISDD_PLAYGEN_WORLDS):
     """Fetch playgen worlds from the GPU sidecar and inject them into the
     env's IS-DD search for the current player. Silent no-op (False) when the
     sidecar is disabled or unreachable — IS-DD then samples as usual (CPU).
@@ -193,6 +209,7 @@ class PlaySession(TrickTracker):
             self.env.load_belief_net(belief_model_path)
         if self.uses_dede:
             self.env.dede_init()
+            _configure_dede(self.env)
         if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
             self.env.load_dmc_model(dmc_model_path)
         if bid_model_path:
@@ -369,6 +386,7 @@ class WatchSession(TrickTracker):
             self.env.load_belief_net(belief_model_path)
         if self.uses_dede:
             self.env.dede_init()
+            _configure_dede(self.env)
 
         # Compute DD oracle scores at deal start (all hands visible in watch mode)
         try:
@@ -622,6 +640,7 @@ class PlayProblemSession:
             hands = [list(h) for h in env.get_hands()]
             bid_history = []
             env.dede_init()
+            _configure_dede(env)
 
             # Bidding phase
             void = False
@@ -736,6 +755,7 @@ class BeliefSession:
         if self.belief_model_path:
             env.load_belief_net(self.belief_model_path)
         env.dede_init()
+        _configure_dede(env)
 
         self.initial_hands = [list(h) for h in env.get_hands()]
         self.dealer = int(env.get_dealer())
@@ -774,6 +794,7 @@ class BeliefSession:
         # Replay to recover (player, action, phase) for each step.
         env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
         env.dede_init()
+        _configure_dede(env)
         self.all_actions = []
         for a in action_ids:
             self.all_actions.append((int(env.current_player()), int(a), int(env.phase())))
@@ -795,6 +816,7 @@ class BeliefSession:
         if self.playgen_model_path:
             self.env.load_playgen_model(self.playgen_model_path)
         self.env.dede_init()
+        _configure_dede(self.env)
         self._sweep_env = None
         self.game_cfn = self._compute_game_cfn()
         return {
@@ -883,6 +905,7 @@ class BeliefSession:
             if self.playgen_model_path:
                 self.env.load_playgen_model(self.playgen_model_path)
             self.env.dede_init()
+            _configure_dede(self.env)
             self.action_idx = 0
         # Replay up to target
         while self.action_idx < target:
@@ -1012,6 +1035,7 @@ class BeliefSession:
             env.load_belief_net(self.belief_model_path)
         env.load_playgen_model(self.playgen_model_path)
         env.dede_init()
+        _configure_dede(env)
         self._sweep_env = env
         return self._sweep_total
 

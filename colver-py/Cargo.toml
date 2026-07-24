@@ -9,7 +9,7 @@ name = "_colver"
 crate-type = ["cdylib"]
 
 [dependencies]
-colver-core = { path = "../colver-core" }
+colver-core = { path = "../colver-core", features = ["parallel"] }
 pyo3 = { version = "0.22", features = ["extension-module"] }
 numpy = "0.22"
 rand = "0.8"

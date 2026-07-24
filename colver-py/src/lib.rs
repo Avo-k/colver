@@ -253,6 +253,16 @@ struct Env {
     belief_net_path: Option<String>,
     // Playgen world-sampler model (shared read-only across dede searches)
     playgen_model: Option<std::sync::Arc<colver_core::playgen::infer::PlaygenModel>>,
+    // Credibility world-weighting for IS-DD (see IsDdConfig::cred_alpha).
+    // 0.0 = off (default). Judge nets are applied to every dede search.
+    dede_cred_alpha: f32,
+    dede_cred_bid_net_path: Option<String>,
+    dede_cred_play_net_path: Option<String>,
+    // Fixed determinization count for IS-DD. 0 = time mode (default, budget =
+    // action_dede's time_ms arg); >0 = count mode (solve exactly N worlds,
+    // ignoring the time budget). Count mode gives a machine-independent number
+    // of worlds at the cost of variable latency.
+    dede_determinizations: u32,
 }
 
 #[pymethods]
@@ -276,6 +286,10 @@ impl Env {
             bid_net: None,
             belief_net_path: None,
             playgen_model: None,
+            dede_cred_alpha: 0.0,
+            dede_cred_bid_net_path: None,
+            dede_cred_play_net_path: None,
+            dede_determinizations: 0,
         }
     }
 
@@ -734,6 +748,10 @@ impl Env {
             bid_net: None,
             belief_net_path: None,
             playgen_model: None,
+            dede_cred_alpha: 0.0,
+            dede_cred_bid_net_path: None,
+            dede_cred_play_net_path: None,
+            dede_determinizations: 0,
         })
     }
 
@@ -966,6 +984,56 @@ impl Env {
         self.playgen_model.is_some()
     }
 
+    /// Set the IS-DD credibility exponent (`IsDdConfig::cred_alpha`). 0.0 = off
+    /// (default). Requires at least one judge net loaded to have any effect;
+    /// see `dede_load_cred_bid_net` / `dede_load_cred_play_net`.
+    fn dede_set_cred_alpha(&mut self, alpha: f32) {
+        self.dede_cred_alpha = alpha;
+    }
+
+    /// Set a fixed IS-DD determinization count. 0 = time mode (default: the
+    /// `action_dede` time_ms arg bounds the search). >0 = count mode: solve
+    /// exactly N determinized worlds regardless of time. Count mode gives a
+    /// machine-independent number of worlds (reproducible strength) at the cost
+    /// of variable latency — prefer time mode when latency must stay bounded.
+    fn dede_set_determinizations(&mut self, n: u32) {
+        self.dede_determinizations = n;
+    }
+
+    /// Load the bid net used as the IS-DD auction-credibility judge. Applied to
+    /// every dede search (and remembered so a later `dede_init` re-applies it).
+    fn dede_load_cred_bid_net(&mut self, path: &str) -> PyResult<()> {
+        if let Some(ref mut searches) = self.dede_searches {
+            for search in searches.iter_mut() {
+                search.load_cred_bid_net(path).map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!(
+                        "Failed to load cred bid net: {}",
+                        e
+                    ))
+                })?;
+            }
+        }
+        self.dede_cred_bid_net_path = Some(path.to_string());
+        Ok(())
+    }
+
+    /// Load the canonical DMC net used as the IS-DD play-credibility judge.
+    /// Applied to every dede search (and remembered for later `dede_init`).
+    fn dede_load_cred_play_net(&mut self, path: &str) -> PyResult<()> {
+        if let Some(ref mut searches) = self.dede_searches {
+            for search in searches.iter_mut() {
+                search.load_cred_play_net(path).map_err(|e| {
+                    pyo3::exceptions::PyIOError::new_err(format!(
+                        "Failed to load cred play net: {}",
+                        e
+                    ))
+                })?;
+            }
+        }
+        self.dede_cred_play_net_path = Some(path.to_string());
+        Ok(())
+    }
+
     /// Monte-Carlo card-location marginals from the playgen world sampler,
     /// from `observer`'s perspective. Samples up to `n_worlds` determinized
     /// worlds and counts where each card lands. Returns weights[player][card]
@@ -1169,6 +1237,8 @@ impl Env {
     fn dede_init(&mut self) {
         let belief_path = self.belief_net_path.clone();
         let playgen_model = self.playgen_model.clone();
+        let cred_bid_path = self.dede_cred_bid_net_path.clone();
+        let cred_play_path = self.dede_cred_play_net_path.clone();
         let searches = self.dede_searches.get_or_insert_with(|| {
             let mut s = [
                 IsDdSearch::new(),
@@ -1184,6 +1254,16 @@ impl Env {
             if let Some(ref model) = playgen_model {
                 for search in s.iter_mut() {
                     search.set_playgen_model(model.clone());
+                }
+            }
+            if let Some(ref path) = cred_bid_path {
+                for search in s.iter_mut() {
+                    let _ = search.load_cred_bid_net(path);
+                }
+            }
+            if let Some(ref path) = cred_play_path {
+                for search in s.iter_mut() {
+                    let _ = search.load_cred_play_net(path);
                 }
             }
             s
@@ -1265,9 +1345,17 @@ impl Env {
             ));
         }
         let player = self.state.current_player() as usize;
+        // Count mode (dede_determinizations > 0) solves a fixed number of worlds
+        // and ignores the time budget; otherwise time mode uses `time_ms`.
+        let count_mode = self.dede_determinizations > 0;
         let config = IsDdConfig {
-            time_limit_ms: Some(time_ms),
+            determinizations: if count_mode { self.dede_determinizations } else { 20 },
+            time_limit_ms: if count_mode { None } else { Some(time_ms) },
             use_nn_beliefs: self.belief_net_path.is_some(),
+            // Solve the determinized worlds across the rayon global pool (shared
+            // and bounded, so concurrent games/rooms don't oversubscribe).
+            parallel: true,
+            cred_alpha: self.dede_cred_alpha,
             ..Default::default()
         };
         let searches = self.dede_searches.as_mut().unwrap();
@@ -1296,9 +1384,17 @@ impl Env {
             ));
         }
         let player = self.state.current_player() as usize;
+        // Count mode (dede_determinizations > 0) solves a fixed number of worlds
+        // and ignores the time budget; otherwise time mode uses `time_ms`.
+        let count_mode = self.dede_determinizations > 0;
         let config = IsDdConfig {
-            time_limit_ms: Some(time_ms),
+            determinizations: if count_mode { self.dede_determinizations } else { 20 },
+            time_limit_ms: if count_mode { None } else { Some(time_ms) },
             use_nn_beliefs: self.belief_net_path.is_some(),
+            // Solve the determinized worlds across the rayon global pool (shared
+            // and bounded, so concurrent games/rooms don't oversubscribe).
+            parallel: true,
+            cred_alpha: self.dede_cred_alpha,
             ..Default::default()
         };
         let searches = self.dede_searches.as_mut().unwrap();
@@ -1595,6 +1691,10 @@ impl Env {
             bid_net: None,
             belief_net_path: None,
             playgen_model: None,
+            dede_cred_alpha: 0.0,
+            dede_cred_bid_net_path: None,
+            dede_cred_play_net_path: None,
+            dede_determinizations: 0,
         })
     }
 
