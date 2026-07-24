@@ -455,12 +455,13 @@ function renderStats() {
     if (viewMode === 'playgen' || viewMode === 'compare') modes.push({ w: playgenWeights, label: 'Playgen' });
     if (viewMode === 'heuristic' || viewMode === 'compare') modes.push({ w: heuristicWeights, label: 'Heuristique' });
 
-    // Playgen n'existe qu'en phase de jeu (contrat requis pour générer des mondes)
+    // Le playgen v2 échantillonne aussi pendant l'enchère ; s'il manque, c'est
+    // qu'il n'est pas encore calculé (ou indisponible) pour cette position.
     if ((viewMode === 'playgen' || viewMode === 'compare') && !playgenWeights
-        && currentState && currentState.phase === 0) {
+        && currentState && !currentState.is_terminal) {
         const note = document.createElement('div');
         note.className = 'belief-stat-group';
-        note.innerHTML = `<span class="belief-stat-label">Playgen</span><span class="belief-stat-item">indisponible pendant les enchères</span>`;
+        note.innerHTML = `<span class="belief-stat-label">Playgen</span><span class="belief-stat-item">en cours de calcul…</span>`;
         statsEl.appendChild(note);
     }
 

@@ -899,8 +899,8 @@ class BeliefSession:
     PLAYGEN_WORLDS_GPU = 200
 
     def _playgen_marginals(self, env_actions_prefix: int, observer: int):
-        """Playgen marginals at a position: GPU sidecar first (200 worlds),
-        CPU PyO3 fallback (30 worlds). Returns None during bidding."""
+        """Play-phase playgen marginals via the GPU sidecar (200 worlds).
+        Returns None if the sidecar is disabled/unreachable (CPU fallback then)."""
         if playgen_gpu.enabled():
             actions = [(p, a) for p, a, _ in self.all_actions[:env_actions_prefix]]
             w = playgen_gpu.beliefs(
@@ -910,6 +910,56 @@ class BeliefSession:
             if w is not None:
                 return w
         return None
+
+    @staticmethod
+    def _marginals_from_deals(deals):
+        """Aggregate sampled full deals (list of 4-hand worlds) into [4][32]
+        marginals P(seat holds card)."""
+        if not deals:
+            return None
+        counts = [[0.0] * 32 for _ in range(4)]
+        n = 0
+        for world in deals:
+            for p in range(4):
+                for c in world[p]:
+                    counts[p][int(c)] += 1.0
+            n += 1
+        if n == 0:
+            return None
+        return [[counts[p][c] / n for c in range(32)] for p in range(4)]
+
+    def _auction_marginals(self, idx: int, observer: int, env):
+        """Playgen marginals during the auction (v2 model): sample deals
+        conditioned on the bids so far, then aggregate. GPU sidecar first."""
+        if playgen_gpu.enabled():
+            actions = [(p, a) for p, a, _ in self.all_actions[:idx]]
+            deals = playgen_gpu.auction_deals(
+                self.dealer, self.initial_hands, actions, observer,
+                n_worlds=self.PLAYGEN_WORLDS_GPU, temperature=self.PLAYGEN_TEMP,
+            )
+            m = self._marginals_from_deals(deals)
+            if m is not None:
+                return m
+        deals = _safe_playgen(
+            env.playgen_sample_auction_deals, observer,
+            self.PLAYGEN_WORLDS, self.PLAYGEN_TEMP,
+        )
+        return self._marginals_from_deals(deals)
+
+    def _compute_playgen(self, idx: int, observer: int, env):
+        """Playgen marginals at position `idx` for either phase (v2 model
+        samples auction-conditioned deals during bidding). None if terminal."""
+        if env.is_terminal():
+            return None
+        if int(env.phase()) == 0:
+            return self._auction_marginals(idx, observer, env)
+        w = self._playgen_marginals(idx, observer)
+        if w is None:
+            w = _safe_playgen(
+                env.get_playgen_beliefs, observer,
+                n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP,
+            )
+        return w
 
     def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:
         """Return NN + heuristic (+ playgen on demand) belief weights + ground truth hands.
@@ -929,14 +979,7 @@ class BeliefSession:
         if with_playgen and self.playgen_model_path:
             playgen = _belief_cache_get(self.game_cfn, "playgen", idx, observer)
             if playgen is None:
-                # GPU sidecar (200 worlds) → CPU fallback (30 worlds);
-                # None during bidding (contract unknown)
-                playgen = self._playgen_marginals(idx, observer)
-                if playgen is None:
-                    playgen = _safe_playgen(
-                        self.env.get_playgen_beliefs,
-                        observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
-                    )
+                playgen = self._compute_playgen(idx, observer, self.env)
                 _belief_cache_put(self.game_cfn, "playgen", idx, observer, playgen)
         return {
             "observer": observer,
@@ -955,8 +998,9 @@ class BeliefSession:
         self._sweep_observer = observer
         self._sweep_i = 0
         self._sweep_done = 0
-        num_bid = sum(1 for _, _, p in self.all_actions if p == 0)
-        self._sweep_total = max(0, len(self.all_actions) - num_bid)
+        # Every non-terminal position (auction + play) — the v2 model samples
+        # auction-conditioned deals, so beliefs exist during the bids too.
+        self._sweep_total = len(self.all_actions)
         if not self.playgen_model_path or self._sweep_total == 0:
             self._sweep_env = None
             self._sweep_total = 0
@@ -972,32 +1016,27 @@ class BeliefSession:
         return self._sweep_total
 
     def precompute_step(self):
-        """Advance the sweep by one playgen position (~1s of MC sampling).
-
-        Returns (done, total) after each computed position, or None when the
-        sweep is finished. Designed to be called repeatedly from an executor
-        so the caller can stream progress between steps.
-        """
+        """Advance the sweep by one position (auction or play), filling the
+        shared cache. Returns (done, total) per computed position, or None when
+        the sweep is finished. Called repeatedly from an executor so the caller
+        can stream progress between positions."""
         if self._sweep_env is None:
             return None
+        env = self._sweep_env
         while self._sweep_i < len(self.all_actions):
-            _, action, _ = self.all_actions[self._sweep_i]
-            self._sweep_env.dede_step(action)
-            self._sweep_i += 1
             idx = self._sweep_i
-            if int(self._sweep_env.phase()) == 1 and not self._sweep_env.is_terminal():
-                obs = self._sweep_observer
+            obs = self._sweep_observer
+            computed = False
+            if not env.is_terminal():
                 if _belief_cache_get(self.game_cfn, "playgen", idx, obs) is None:
-                    w = self._playgen_marginals(idx, obs)
-                    if w is None:
-                        w = _safe_playgen(
-                            self._sweep_env.get_playgen_beliefs,
-                            obs,
-                            n_worlds=self.PLAYGEN_WORLDS,
-                            temperature=self.PLAYGEN_TEMP,
-                        )
+                    w = self._compute_playgen(idx, obs, env)
                     _belief_cache_put(self.game_cfn, "playgen", idx, obs, w)
                 self._sweep_done += 1
+                computed = True
+            _, action, _ = self.all_actions[self._sweep_i]
+            env.dede_step(action)
+            self._sweep_i += 1
+            if computed:
                 return (self._sweep_done, self._sweep_total)
         self._sweep_env = None
         return None
