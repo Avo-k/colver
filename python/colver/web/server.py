@@ -351,28 +351,31 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         # available, uniform otherwise. Generation is slow (~0.4s/deal) so it
         # runs chunk-wise in an executor, overlapped with the DD solves below.
         playgen_env = None
+        playgen_analyst = None
         worlds_source = "uniform"
         # (player, action) pairs of the auction prefix, for the GPU sidecar.
         gpu_prior_pairs = []
         gpu_deal_hands = None
         if PLAYGEN_MODEL_PATH:
-            def _mk_playgen_env():
-                nonlocal gpu_deal_hands
+            def _mk_playgen():
+                nonlocal gpu_deal_hands, gpu_prior_pairs
                 gpu_deal_hands = _uniform_hands()
                 e = _colver_pkg.Env.deal_with_hands(dealer, gpu_deal_hands)
-                e.load_playgen_model(PLAYGEN_MODEL_PATH)
-                e.dede_init()
+                gpu_prior_pairs = []
                 for a in prior_actions:
                     gpu_prior_pairs.append((int(e.current_player()), int(a)))
-                    e.dede_step(a)
-                # Probe: v1 playgen weights cannot sample auctions (None).
-                probe = e.playgen_sample_auction_deals(seat, 1, 1.0)
-                return e if probe else None
+                    e.step(a)
+                analyst = _colver_pkg.Analyst.replay(
+                    PLAYGEN_MODEL_PATH, dealer, gpu_deal_hands,
+                    [int(a) for a in prior_actions], seat,
+                )
+                # Probe: v1 playgen weights cannot sample auctions (empty).
+                return (e, analyst) if analyst.auction_deals(e, 1, 1.0) else (None, None)
             try:
-                playgen_env = await loop.run_in_executor(None, _mk_playgen_env)
+                playgen_env, playgen_analyst = await loop.run_in_executor(None, _mk_playgen)
             except Exception:
-                playgen_env = None
-            if playgen_env is not None:
+                playgen_env, playgen_analyst = None, None
+            if playgen_analyst is not None:
                 worlds_source = "playgen"
 
         all_hands = []
@@ -393,7 +396,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     dealer, gpu_deal_hands, gpu_prior_pairs, seat, n, 1.0)
                 if deals:
                     return deals
-            deals = playgen_env.playgen_sample_auction_deals(seat, n, 1.0)
+            deals = playgen_analyst.auction_deals(playgen_env, n, 1.0)
             return deals or []
 
         # Phase 1: Oracle (DD solves) — parallel sliding window on _DD_EXECUTOR
@@ -761,6 +764,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if "move_delay" in data:
                     play_move_delay = max(1.0, min(8.0, float(data["move_delay"])))
                     play_session.dede_time_ms = int(play_move_delay * 1000)
+                    play_session.bots.set_time_ms(play_session.dede_time_ms)
 
                 state = play_session.play_action(action)
                 msg = {"type": "game_state", "state": state}
@@ -842,6 +846,7 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
                 if "dede_time_ms" in data:
                     watch_session.dede_time_ms = max(1000, min(15000, int(data["dede_time_ms"])))
+                    watch_session.bots.set_time_ms(watch_session.dede_time_ms)
                 if watch_session.env.is_terminal():
                     await ws.send_json({
                         "type": "watch_move",
@@ -1024,24 +1029,22 @@ async def websocket_endpoint(ws: WebSocket):
                     dealer = (seat - 1 - n_prior + 32) % 4
                     env = _colver_pkg.Env.deal_with_hands(dealer, hands)
                     env.load_bid_model(BID_MODEL_PATH)
-                    playgen_ok = False
+                    analyst = None
                     if PLAYGEN_MODEL_PATH:
                         try:
-                            env.load_playgen_model(PLAYGEN_MODEL_PATH)
-                            env.dede_init()
-                            playgen_ok = True
+                            analyst = _colver_pkg.Analyst.replay(
+                                PLAYGEN_MODEL_PATH, dealer, hands,
+                                [int(a) for a in prior_actions], seat,
+                            )
                         except Exception:
-                            playgen_ok = False
+                            analyst = None
                     for action in prior_actions:
-                        if playgen_ok:
-                            env.dede_step(action)
-                        else:
-                            env.step(action)
+                        env.step(action)
                     result = env.action_bid_nn()
                     playgen_policy = None
-                    if playgen_ok:
+                    if analyst is not None:
                         # v2 playgen models only; returns None on v1 weights.
-                        pol = env.get_playgen_bid_policy(seat, 1.0)
+                        pol = analyst.bid_policy(env, 1.0)
                         if pol is not None:
                             playgen_policy = [
                                 [a, round(float(p), 4)]

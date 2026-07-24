@@ -14,14 +14,17 @@ cargo run -p colver-core --bin train_joint --features dmc_train --release -- --m
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/deals/base_5M.bin --score-file data/deals/scores_isdd_5M.sc  # Standalone bid NN training (base pool + optional score layers)
 RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/deals/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
 cargo run -p colver-core --bin gen_bid_belief_data --release --features parallel -- --bid-model models/bid_v2/bid_nn_final.bin --bid-hidden 512 --deals 500000 --output data/belief/bid_belief_500k.bin  # Bid belief training data (COLVBB01, ~14M samples, ~65s)
+CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --features gpu_server && ./target/release/playgen_gpu_server --playgen models/playgen/playgen_v2_final.bin --port 8003  # Playgen GPU sidecar — IS-DD's world source
+export COLVER_PLAYGEN_GPU_URL=http://localhost:8003          # required by any IS-DD agent (arena, web, scripts)
 uv sync                                        # Build and install Python bindings
 uv run python -m colver.web                    # Run web frontend → http://localhost:8000
 ```
 
-**Cargo features:** `rand` (default), `parallel` (rayon), `nn` (NN value function), `dmc_train` (candle GPU training for DMC + bid NN + belief net)
+**Cargo features:** `rand` (default), `parallel` (rayon), `dmc_train` (candle GPU training for DMC + bid NN + belief net), `gpu_server` (the playgen sidecar binary)
 
 See [docs/](docs/) for all documentation. Key entry points:
 - [docs/README.md](docs/README.md) — full doc index
+- [docs/agents.md](docs/agents.md) — **the `Player` / `WorldSource` layer**: how bots are built and driven, and the bot-spec format
 - [docs/training/overview.md](docs/training/overview.md) — training/eval commands
 - [docs/arena_results.md](docs/arena_results.md) — global arena leaderboard (king metric)
 - [docs/bid/](docs/bid/) — bidding strategies, NN bidders, reward studies, interpretability
@@ -35,13 +38,16 @@ Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core
 **Workspace:** `colver-core` (pure Rust, zero deps by default) + `colver-py` (PyO3/numpy FFI) + `python/colver/web/` (FastAPI/WebSocket frontend)
 
 **`colver-core/src/` module layout:**
+- `agent/` — **`Player` trait + `AgentSpec` → `build(seat)`; the only place that knows how a seat plays.** mod (traits), spec (TOML), models (weight cache), isdd, dmc, bid, ismcts
+- `worlds.rs` — `WorldSource` trait: sidecar (playgen on GPU, **default**), local playgen (CPU), constraint-uniform
+- `game_loop.rs` — `play_deal` / `play_match` over `[Box<dyn Player>; 4]`
 - `engine/` — card, state, bidding, trick, play, scoring, game, cfn (foundation, no external deps)
-- `search/` — mcts, ismcts variants, solver, determinize, rollout
+- `search/` — mcts, ismcts variants, is_dd, solver, determinize, rollout
 - `bid/` — bid_eval (split into strategy files: heuristic, smart, roro, improved, parametric, petit_bide, moelleux), bid_obs, bid_net, bid_candle, dd_bid, maxi
 - `dmc/` — dmc_net, dmc_obs, dmc_replay, dmc_env, dmc_candle, dmc_eval
-- `belief/` — belief_net, belief_obs, belief_candle, card_beliefs
-- `playgen/` — tokens (tokenizer v1/v2), model (candle transformer, dmc_train), infer (pure-Rust KV-cache inference, rand)
-- root — suit_perm, game_replay, joint_env, rule_player, features, value_net
+- `belief/` — belief_net, belief_obs, belief_candle, card_beliefs (**load-bearing**: supplies IS-DD's hard constraints, despite the "deprecated" label it carried)
+- `playgen/` — tokens (tokenizer v1/v2), model (candle transformer, dmc_train), infer (pure-Rust KV-cache inference, rand), analysis (read-only introspection)
+- root — suit_perm, game_replay, joint_env, rule_player
 
 All modules re-exported at crate root (`use colver_core::card` still works). Binaries in `src/bin/` (auto-discovered by Cargo). Scripts in `scripts/{training,analysis,export}/`.
 
@@ -99,11 +105,13 @@ Vocabulaire à utiliser avec l'utilisateur (ne pas dire « chicane ») :
 - **DD Solver** (`search/solver.rs`): Alpha-beta with TT, PVS, killer/history heuristics. ~77ms/solve from full deal (4 suits ≈ 310ms), ~13.5ms mid-game. See [docs/play/dd_solver.md](docs/play/dd_solver.md).
   - **BREAKING (2026-07-23): `quick_tricks` removed — it returned wrong DD values (25% of `solve_for_trump` calls). All pre-2026-07-23 DD data is stale**, notably `data/deals/base_5M.bin` and every score layer derived from it. Details + the invariant that caught it: [docs/play/dd_solver.md](docs/play/dd_solver.md).
 - **Pool generator** (`gen_pool` binary): Standalone DD pool generation, no CUDA dep. Uses `RUSTFLAGS="-C target-cpu=native"` + workspace `[profile.release] lto="fat", codegen-units=1` for 2.4× speedup. Checkpoints every 100k deals (resumable).
-- **IS-DD** (`search/is_dd.rs`): Information Set DD — samples determinized worlds from beliefs, solves each with DD, aggregates. **Hard constraints** (voids, trump ceiling, played cards) are facts and are always applied, with no flag. **Soft beliefs** (heuristic `use_soft_inference`, NN beliefs `use_nn_beliefs`, `use_elephant_memory`) are all **off by default** — they're optional probabilistic adjustments. `early_termination` is also on by default (skip search when forced or when beliefs uniquely resolve all hands). `enrich_pool_isdd` binary generates play scores with IS-DD for training data. See [docs/play/is_dd.md](docs/play/is_dd.md).
+- **IS-DD** (`search/is_dd.rs` + `agent/isdd.rs`): Information Set DD — samples determinized worlds, solves each with DD, aggregates. **Hard constraints** (voids, trump ceiling, played cards) are facts and are always applied, with no flag. **Soft beliefs** (`use_soft_inference`, `use_nn_beliefs`) are **off by default**. `early_termination` is on by default. Worlds come from a `WorldSource` owned by `IsDdPlayer` — **playgen over the GPU sidecar by default**. `enrich_pool_isdd` generates play scores with IS-DD for training data. See [docs/play/is_dd.md](docs/play/is_dd.md).
+  - **BREAKING (2026-07-24): the agent refactor.** World generation moved *inside* the agent (`worlds.rs`), so the arena and the web now run the same IS-DD. Consequences: (1) every IS-DD bot without an explicit `[worlds]` section now defaults to **sidecar playgen** where it previously sampled uniform, so **pre-2026-07-24 `matches.csv` rows for IS-DD bots are not comparable**; (2) an IS-DD bot needs `$COLVER_PLAYGEN_GPU_URL` or `worlds.url`, or it fails at construction — set `source = "uniform"` to opt out deliberately; (3) `IsDdSearch::set_injected_worlds` / `playgen_frac` / elephant memory are gone. See [docs/agents.md](docs/agents.md).
 - **DMC Agent "DouDou35"** (`dmc/dmc_net.rs`): DouZero-style Q-network, 415→1024³→32 (legacy obs), pure Rust inference ~1ms. Supports `residual: bool` for skip connections (same weights, different forward). Superseded by **DouDou50** (411→1024³→32, canonical ResNet, trained 50M steps) as the default play model.
 - **NN Bidder** (`bid/bid_net.rs`) + **bidding strategies** (`bid/bid_eval/`): Dueling DQN, hidden size auto-detected. Default is **Bid v6 ISDD** (`models/bid_v6_isdd_resume/bid_nn_final.bin`, 117-dim score-aware v3 obs). Full model zoo (v1→v6) and strategy list: [docs/bid/README.md](docs/bid/README.md).
 - **Belief models** (`belief/`): `CardBeliefs` (heuristic, deprecated), `BeliefState` (soft weights, used by IS-DD), belief NN (`belief_v4_fix_v2.bin`, play) and bid belief NN (`bid_belief_v4.bin`, auctions). `belief_v3.bin` is **not usable** with NN bots. Eval binary: `eval_beliefs`. See [docs/belief/README.md](docs/belief/README.md).
-- **Playgen world sampler** (`playgen/`): causal transformer that continues a game autoregressively from the observer-visible prefix; rolling out reveals hidden hands = a determinized world from the learned posterior. Consumed by IS-DD (`playgen_frac`/`playgen_temp`) and the web. **v2** (COLVPG02, 10.7M params) also predicts auction actions through a 43-way bid head, enabling mid-auction deal sampling. `train_playgen [--v2]` / `export_playgen [--v2]`; inference auto-detects the format and runs on CPU or CUDA. See [docs/belief/playgen.md](docs/belief/playgen.md).
+- **Playgen GPU sidecar** (`playgen_gpu_server`, feature `gpu_server`): serves the playgen model over HTTP so agents get worlds ~50× faster than on CPU. **`worlds::SidecarWorldSource` is IS-DD's default world source**, so an IS-DD agent needs `$COLVER_PLAYGEN_GPU_URL` (or `[worlds] url`) or it refuses to build. Prod: systemd `playgen-gpu.service` on the moxxi host, `http://192.168.1.23:8003` — **keep its `--playgen` model aligned with the released one** (currently `playgen_v2_final.bin`; it silently ran an intermediate checkpoint for a day). See [docs/belief/playgen.md](docs/belief/playgen.md).
+- **Playgen world sampler** (`playgen/`): causal transformer that continues a game autoregressively from the observer-visible prefix; rolling out reveals hidden hands = a determinized world from the learned posterior. Consumed by IS-DD through `worlds::SidecarWorldSource` (GPU, default) or `LocalPlaygenSource` (CPU), and by the web's analysis pages through `playgen::analysis::PlaygenAnalyst` / `colver.Analyst`. **v2** (COLVPG02, 10.7M params) also predicts auction actions through a 43-way bid head, enabling mid-auction deal sampling. `train_playgen [--v2]` / `export_playgen [--v2]`; inference auto-detects the format and runs on CPU or CUDA. See [docs/belief/playgen.md](docs/belief/playgen.md).
 - **World-credibility benchmark** (`bench_world_cred`): compares world samplers (playgen / belief NN / uniform) by asking whether the reference policy would replay the observed hidden actions. `--bid-positions 100 --play-positions 100 --worlds 32 --seed 42`, ~1min30 on a 4090. See [docs/belief/playgen.md](docs/belief/playgen.md).
   - **BREAKING (2026-07-23): benchmark RNG fixed — all pre-fix cross-checkpoint numbers are void** (positions were drawn from the stream the samplers consumed). Within-run comparisons were never affected.
   - **Rule for any benchmark here**: never draw the questions from a stream the thing under test also consumes — generate all positions first, then answer them. Keep an untouched baseline as a control; it must stay bit-identical across runs. `bench_logp_cred.rs` and `bench_world_compress.rs` still have the old pattern.
@@ -168,25 +176,31 @@ cargo run --bin arena --release -- results                                      
 cargo run --bin arena --release -- results --bot nn_dmc35                        # Filter by bot
 ```
 
-**Bot TOML format** (`arena/bots/<name>.toml`):
+**Bot TOML format** (`arena/bots/<name>.toml`) — parsed by `AgentSpec`, used identically by the arena, the web and `colver.Agent`. Full reference: [docs/agents.md](docs/agents.md).
 ```toml
 [bid]
-strategy = "nn"                    # heuristic | improved | improved_v2 | smart | roro | maxi | petit_bide | moelleux | nn
+strategy = "nn"                    # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn
 model = "models/bid_nn_final.bin"  # required if strategy = "nn"
-hidden = 256                       # hidden size for bid NN (default 256, bid_v2 uses 512)
+hidden = 512                       # hidden-size hint (auto-detected from the file when possible)
+score_aware = true                 # endgame adjustments for nets that can't see the match score
 
 [play]
-method = "dmc"                     # naive_ismcts | smart_ismcts | is_dd | smart_is_dd | dmc | dmc_then_dd | oracle | heuristic
-model = "models/dmc_35.bin"        # required if method = "dmc"
-residual = false                   # skip connections for triforge models
-time_ms = 20                       # time budget (ismcts/is_dd)
-determinizations = 20              # for is_dd
-switch_at = 5                      # for dmc_then_dd: switch to DD after N tricks (default 5)
+method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|oracle_dd|heuristic|rule
+model = "models/doudou50.bin"      # required for dmc / dmc_then_isdd
+residual = true                    # skip connections for DouDou50 / triforge models
+time_ms = 1000                     # per-move budget; 0 = count mode
+determinizations = 240             # used when time_ms = 0
+switch_at = 5                      # dmc_then_isdd: trick at which IS-DD takes over
 
-[belief]                           # optional, for smart_ismcts / smart_is_dd
-model = "models/belief_v3.bin"
-use_hard_constraints = true
+[worlds]                           # IS-DD only; defaults to the sidecar
+source = "sidecar"                 # sidecar | playgen (CPU) | uniform
+url = "http://192.168.1.23:8003"   # or $COLVER_PLAYGEN_GPU_URL
+fallback = "strict"                # strict = error out; uniform = degrade and say so
+
+[belief]                           # optional
+model = "models/belief_v4_fix_v2.bin"
 ```
+Legacy keys (`is_dd`/`smart_is_dd`/`dmc_then_dd` method names, `playgen_model`, `use_hard_constraints`) still parse.
 
 **Options:** `--matches N` (per direction, default 100), `--threads N` (default auto), `--seed N` (default 42). Each H2H runs both directions (duplicate matching) for variance reduction.
 

@@ -1,412 +1,45 @@
-/// Arena: systematic bot comparison framework.
-///
-/// Bots are defined as TOML files in arena/bots/. Results stored in arena/results/matches.csv.
-///
-/// Usage:
-///   cargo run --bin arena --release -- list
-///   cargo run --bin arena --release -- h2h bot_a bot_b --matches 200
-///   cargo run --bin arena --release -- round-robin --matches 100 [--bots a,b,c]
-///   cargo run --bin arena --release -- results [--bot name]
+//! Arena: systematic bot comparison framework.
+//!
+//! Bots are TOML files in `arena/bots/`, results are appended to
+//! `arena/results/matches.csv`. The arena itself knows nothing about how a bot
+//! plays: it parses each file into an [`AgentSpec`], asks it for four seated
+//! [`Player`]s, and runs [`game_loop::play_match`]. Everything that decides
+//! *how* a seat plays — which models, which observation layout, where the
+//! determinized worlds come from — lives in `colver_core::agent`, so the arena
+//! and the web server cannot drift apart the way they did when each carried
+//! its own copy of the dispatch.
+//!
+//! ```text
+//!   cargo run --bin arena --release -- list
+//!   cargo run --bin arena --release -- h2h bot_a bot_b --matches 200
+//!   cargo run --bin arena --release -- round-robin --matches 100 [--bots a,b,c]
+//!   cargo run --bin arena --release -- results [--bot name]
+//!   cargo run --bin arena --release -- trace bot_a bot_b [--deals N]
+//! ```
 
-use colver_core::bid_eval::BidFunction;
-use colver_core::bid_net::BidNet;
-use colver_core::bid_obs::{self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE_V2, BID_OBS_DIM_SCORE_AWARE_V3};
-use colver_core::dmc_net::DmcNet;
-use colver_core::dmc_obs::{self, EnvTracking, OBS_DIM, OBS_DIM_TR};
-use colver_core::is_dd::{IsDdConfig, IsDdSearch};
-use colver_core::mcts::{MctsConfig, MctsSearch, RolloutPolicy};
-use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
-use colver_core::rollout::heuristic_play_action;
-use colver_core::rule_player::rule_play_action;
-use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
-use colver_core::state::{GameState, Phase};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-const MATCH_TARGET: i32 = 2000;
+use colver_core::agent::{AgentSpec, MatchContext, Player};
+use colver_core::game_loop::{self, MATCH_TARGET};
+use colver_core::state::GameState;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
 const RESULTS_PATH: &str = "arena/results/matches.csv";
 const BOTS_DIR: &str = "arena/bots";
 
 // ══════════════════════════════════════════════════════════════════════
-//  DD calibration penalty for bid NN Q-values
+//  Bot loading
 // ══════════════════════════════════════════════════════════════════════
 
-/// Select best bid action with a penalty on high bids to correct DD overestimation.
-///
-/// The NN was trained with DD-optimal rewards which overestimate success at high
-/// contract levels. This wrapper subtracts a scaled penalty from Q-values.
-///
-/// Penalty shape is linear in bid value (calibrated from DD vs DouDou50 data):
-///   - PASS (0): no penalty
-///   - Bids 80 (actions 1-4): no penalty (DD well-calibrated here)
-///   - Bids 90-160: penalty scales linearly with (value - 80)
-///   - Capot (37-40): max penalty (DD says 252, real ≈ 162)
-///   - Coinche/Surcoinche (41-42): moderate penalty
-///
-/// `penalty` is the scaling factor — try 0.05 to 0.3.
-fn bid_action_with_penalty(
-    bn: &mut BidNet,
-    obs: &[f32],
-    legal_mask: u64,
-    penalty: f32,
-) -> u8 {
-    bid_action_adjusted(bn, obs, legal_mask, penalty, 0, 0, false)
-}
-
-/// Score-aware wrapper: applies endgame-regime Q-value adjustments on top of the base bid penalty.
-///
-/// Regimes (pass-through outside endgame):
-///   - Leading (my ≥ 1700 ∧ margin ≥ +300): penalize bids ≥130 and capot.
-///   - Trailing desperate (opp ≥ 1700 ∧ margin ≤ -400): penalize PASS + small bids, boost bids ≥120.
-///   - Tight endgame (max ≥ 1600 ∧ |margin| ≤ 200): mild penalty on bids ≥130.
-///
-/// All deltas are in Q-value units (~±1 range ≈ ±500 game pts), calibrated around ±0.08 peak.
-fn bid_action_score_aware(
-    bn: &mut BidNet,
-    obs: &[f32],
-    legal_mask: u64,
-    penalty: f32,
-    my_score: i32,
-    opp_score: i32,
-) -> u8 {
-    bid_action_adjusted(bn, obs, legal_mask, penalty, my_score, opp_score, true)
-}
-
-fn bid_action_adjusted(
-    bn: &mut BidNet,
-    obs: &[f32],
-    legal_mask: u64,
-    penalty: f32,
-    my_score: i32,
-    opp_score: i32,
-    score_aware: bool,
-) -> u8 {
-    let q = bn.evaluate(obs);
-
-    // Penalty per action based on bid level
-    // Calibrated from DD vs DouDou50 data (4M samples):
-    //   80: Δ≈0, 90: Δ≈-2, 100: Δ≈-4, 110: Δ≈-7, 120: Δ≈-9, 130: Δ≈-12, capot: Δ≈-90
-    let bid_penalty = |action: u8| -> f32 {
-        if action == 0 { return 0.0; }             // PASS
-        if action >= 41 { return penalty * 0.5; }   // COINCHE/SURCOINCHE
-        if action >= 37 { return penalty * 2.5; }   // CAPOT (massive DD gap)
-
-        // Regular bids 1-36: value_idx = (action-1)/4, value = 80 + value_idx*10
-        let value_idx = (action - 1) / 4;
-        // Linear scaling: 0 at 80, penalty at 160
-        let level = value_idx as f32 / 8.0; // 0.0 at 80, 1.0 at 160
-        penalty * level
-    };
-
-    // Score-aware endgame delta: computed once per call, bypassed outside endgame.
-    let margin = my_score - opp_score;
-    let lead_end  = score_aware && my_score  >= 1700 && margin >=  300;
-    let trail_end = score_aware && opp_score >= 1700 && margin <= -400;
-    let tight_end = score_aware && my_score.max(opp_score) >= 1600 && margin.abs() <= 200;
-    let any_regime = lead_end || trail_end || tight_end;
-
-    let bid_value_of = |action: u8| -> Option<i32> {
-        if action == 0 || action >= 37 { return None; }
-        Some(80 + ((action as i32 - 1) / 4) * 10)
-    };
-    let score_delta = |action: u8| -> f32 {
-        if !any_regime { return 0.0; }
-        let is_capot = action >= 37 && action < 41;
-        if lead_end {
-            // Discourage big gambles when safely ahead.
-            if let Some(v) = bid_value_of(action) {
-                if v >= 130 { return -0.08 * ((v - 120) as f32 / 40.0); }
-            }
-            if is_capot { return -0.15; }
-            return 0.0;
-        }
-        if trail_end {
-            // Force risk when losing the match.
-            if action == 0 { return -0.10; } // PASS
-            if let Some(v) = bid_value_of(action) {
-                if v <= 100 { return -0.04; }
-                if v >= 120 { return 0.08 * ((v - 110) as f32 / 50.0); }
-            }
-            return 0.0;
-        }
-        if tight_end {
-            // Mild brake on overreach; defense-leaning.
-            if let Some(v) = bid_value_of(action) {
-                if v >= 130 { return -0.04 * ((v - 120) as f32 / 40.0); }
-            }
-            if is_capot { return -0.08; }
-            return 0.0;
-        }
-        0.0
-    };
-
-    let mut best_action = 0u8;
-    let mut best_q = f32::NEG_INFINITY;
-    let mut mask = legal_mask;
-    while mask != 0 {
-        let bit = mask.trailing_zeros() as u8;
-        if (bit as usize) < 43 {
-            let q_adj = q[bit as usize] - bid_penalty(bit) + score_delta(bit);
-            if q_adj > best_q {
-                best_q = q_adj;
-                best_action = bit;
-            }
-        }
-        mask &= mask - 1;
-    }
-    best_action
-}
-
-/// Softmax-sample a legal bid action from Q-values at the given temperature.
-fn bid_action_sampled(
-    bn: &mut BidNet,
-    obs: &[f32],
-    legal_mask: u64,
-    temperature: f32,
-    rng: &mut StdRng,
-) -> u8 {
-    let q = bn.evaluate(obs);
-    let mut actions = [0u8; 43];
-    let mut weights = [0f32; 43];
-    let mut n = 0usize;
-    let mut max_q = f32::NEG_INFINITY;
-    let mut mask = legal_mask;
-    while mask != 0 {
-        let bit = mask.trailing_zeros() as u8;
-        if (bit as usize) < 43 {
-            actions[n] = bit;
-            weights[n] = q[bit as usize];
-            if weights[n] > max_q {
-                max_q = weights[n];
-            }
-            n += 1;
-        }
-        mask &= mask - 1;
-    }
-    let mut total = 0f32;
-    for w in weights[..n].iter_mut() {
-        *w = ((*w - max_q) / temperature).exp();
-        total += *w;
-    }
-    let mut r = rng.gen::<f32>() * total;
-    for i in 0..n {
-        r -= weights[i];
-        if r <= 0.0 {
-            return actions[i];
-        }
-    }
-    actions[n - 1]
-}
-
-// ══════════════════════════════════════════════════════════════════════
-//  Bot config (parsed from TOML)
-// ══════════════════════════════════════════════════════════════════════
-
-#[derive(Clone, Debug)]
-struct BotConfig {
-    name: String,
-    bid_strategy: String,     // "heuristic", "improved", "improved_v2", "smart", "roro", "maxi", "petit_bide", "moelleux", "nn"
-    bid_model: Option<String>,
-    play_method: String,      // "naive_ismcts", "smart_ismcts", "is_dd", "smart_is_dd", "dmc", "oracle", "heuristic"
-    play_model: Option<String>,
-    play_residual: bool,
-    time_ms: u32,
-    determinizations: u32,
-    oracle_iters: u32,
-    switch_at: u8,        // for dmc_then_dd: switch to DD after this many tricks (default 5)
-    bid_hidden: usize,        // hidden size for bid NN (default 256)
-    bid_penalty: f32,             // Q-value penalty for high bids (0.0 = off, calibrated ~0.1-0.3)
-    bid_temperature: f32,     // softmax sampling temperature over legal Q-values (0.0 = greedy)
-    score_aware: bool,        // if true, adjust NN Q-values based on match score (endgame heuristics)
-    belief_model: Option<String>,
-    bid_belief_model: Option<String>,
-    early_termination: Option<bool>,
-    elephant_memory: bool,
-    elephant_smoothing: f32,
-    elephant_dominance_penalty: f32,
-    elephant_use_dominance: bool,
-    elephant_decay: f32,
-    dominance_factor: f32,
-    playgen_model: Option<String>,
-    playgen_frac: f32,
-    playgen_temp: f32,
-    belief_frac: f32,
-    cred_alpha: f32,
-    cred_bid_model: Option<String>,
-}
-
-impl Default for BotConfig {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            bid_strategy: "improved_v2".into(),
-            bid_model: None,
-            play_method: "naive_ismcts".into(),
-            play_model: None,
-            play_residual: false,
-            time_ms: 20,
-            determinizations: 20,
-            oracle_iters: 2000,
-            switch_at: 5,
-            bid_hidden: 256,
-            bid_penalty: 0.0,
-            bid_temperature: 0.0,
-            score_aware: false,
-            belief_model: None,
-            bid_belief_model: None,
-            early_termination: None,
-            elephant_memory: false,
-            elephant_smoothing: 0.05,
-            elephant_dominance_penalty: 0.5,
-            elephant_use_dominance: true,
-            elephant_decay: 0.8,
-            dominance_factor: 1.0,
-            playgen_model: None,
-            playgen_frac: 0.0,
-            playgen_temp: 1.0,
-            belief_frac: 1.0,
-            cred_alpha: 0.0,
-            cred_bid_model: None,
-        }
-    }
-}
-
-impl BotConfig {
-    /// Short model name: include parent dir if not "models/"
-    fn short_model_name(path: &str) -> String {
-        let p = std::path::Path::new(path);
-        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(path);
-        let parent = p.parent().and_then(|d| d.file_name()).and_then(|s| s.to_str());
-        match parent {
-            Some("models") | None => stem.to_string(),
-            Some(dir) => format!("{}/{}", dir, stem),
-        }
-    }
-
-    /// Short label for the bid strategy, e.g. "nn:bid_v2/bid_nn_final" or "improved_v2"
-    fn bid_label(&self) -> String {
-        let mut label = if let Some(ref model) = self.bid_model {
-            format!("{}:{}", self.bid_strategy, Self::short_model_name(model))
-        } else {
-            self.bid_strategy.clone()
-        };
-        if self.bid_temperature > 0.0 {
-            label.push_str(&format!("@T{}", self.bid_temperature));
-        }
-        label
-    }
-
-    /// Short label for the play method, e.g. "dmc:play_20M" or "smart_is_dd:50ms"
-    fn play_label(&self) -> String {
-        let mut label = if let Some(ref model) = self.play_model {
-            format!("{}:{}", self.play_method, Self::short_model_name(model))
-        } else {
-            let mut l = self.play_method.clone();
-            if self.play_method.contains("ismcts") || self.play_method.contains("is_dd") {
-                l = format!("{}:{}ms", l, self.time_ms);
-            }
-            l
-        };
-        if self.elephant_memory {
-            label.push_str("+lefant");
-        }
-        if self.belief_frac < 1.0 {
-            label.push_str(&format!("+bf{:.0}", self.belief_frac * 100.0));
-        }
-        if self.cred_alpha > 0.0 {
-            label.push_str(&format!("+cred{:.1}", self.cred_alpha));
-        }
-        if self.playgen_model.is_some() && self.playgen_frac > 0.0 {
-            label.push_str(&format!("+pg{:.0}", self.playgen_frac * 100.0));
-            if (self.playgen_temp - 1.0).abs() > 1e-6 {
-                label.push_str(&format!("t{:.1}", self.playgen_temp));
-            }
-        }
-        label
-    }
-}
-
-fn parse_bot_config(path: &str) -> Result<BotConfig, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {}", path, e))?;
-
-    let name = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let mut cfg = BotConfig { name, ..Default::default() };
-    let mut section = "";
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = match &line[1..line.len() - 1] {
-                "bid" => "bid",
-                "play" => "play",
-                "belief" => "belief",
-                other => return Err(format!("unknown section [{}] in {}", other, path)),
-            };
-            continue;
-        }
-        if let Some(eq_pos) = line.find('=') {
-            let key = line[..eq_pos].trim();
-            let val = line[eq_pos + 1..].trim().trim_matches('"');
-
-            match (section, key) {
-                ("bid", "strategy") => cfg.bid_strategy = val.to_string(),
-                ("bid", "model") => cfg.bid_model = Some(val.to_string()),
-                ("bid", "hidden") => cfg.bid_hidden = val.parse().unwrap_or(256),
-                ("bid", "penalty") => cfg.bid_penalty = val.parse().unwrap_or(0.0),
-                ("bid", "temperature") => cfg.bid_temperature = val.parse().unwrap_or(0.0),
-                ("bid", "score_aware") => cfg.score_aware = val == "true",
-                ("play", "method") => cfg.play_method = val.to_string(),
-                ("play", "model") => cfg.play_model = Some(val.to_string()),
-                ("play", "residual") => cfg.play_residual = val == "true",
-                ("play", "time_ms") => cfg.time_ms = val.parse().unwrap_or(20),
-                ("play", "determinizations") => cfg.determinizations = val.parse().unwrap_or(20),
-                ("play", "oracle_iters") => cfg.oracle_iters = val.parse().unwrap_or(2000),
-                ("play", "switch_at") => cfg.switch_at = val.parse().unwrap_or(5),
-                ("belief", "model") => cfg.belief_model = Some(val.to_string()),
-                // use_hard_constraints removed: hard constraints are always applied
-                // (they are facts, not beliefs). Field accepted for backward compat.
-                ("belief", "use_hard_constraints") => {}
-                ("belief", "bid_model") => cfg.bid_belief_model = Some(val.to_string()),
-                ("play", "early_termination") => cfg.early_termination = Some(val == "true"),
-                ("play", "elephant_memory") => cfg.elephant_memory = val == "true",
-                ("play", "elephant_smoothing") => cfg.elephant_smoothing = val.parse().unwrap_or(0.05),
-                ("play", "elephant_dominance_penalty") => cfg.elephant_dominance_penalty = val.parse().unwrap_or(0.5),
-                ("play", "elephant_use_dominance") => cfg.elephant_use_dominance = val == "true",
-                ("play", "elephant_decay") => cfg.elephant_decay = val.parse().unwrap_or(0.8),
-                ("play", "dominance_factor") => cfg.dominance_factor = val.parse().unwrap_or(1.0),
-                ("play", "playgen_model") => cfg.playgen_model = Some(val.to_string()),
-                ("play", "playgen_frac") => cfg.playgen_frac = val.parse().unwrap_or(0.0),
-                ("play", "playgen_temp") => cfg.playgen_temp = val.parse().unwrap_or(1.0),
-                ("play", "belief_frac") => cfg.belief_frac = val.parse().unwrap_or(1.0),
-                ("play", "cred_alpha") => cfg.cred_alpha = val.parse().unwrap_or(0.0),
-                ("play", "cred_bid_model") => cfg.cred_bid_model = Some(val.to_string()),
-                _ => {} // ignore unknown keys
-            }
-        }
-    }
-
-    Ok(cfg)
-}
-
-fn load_all_bots() -> Vec<BotConfig> {
-    let mut bots = Vec::new();
+fn load_all_bots() -> Vec<AgentSpec> {
     let dir = match std::fs::read_dir(BOTS_DIR) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Cannot read {}: {}", BOTS_DIR, e);
-            return bots;
+            return Vec::new();
         }
     };
     let mut paths: Vec<_> = dir
@@ -415,724 +48,47 @@ fn load_all_bots() -> Vec<BotConfig> {
         .map(|e| e.path())
         .collect();
     paths.sort();
+
+    let mut bots = Vec::new();
     for path in paths {
-        match parse_bot_config(path.to_str().unwrap_or("")) {
-            Ok(cfg) => bots.push(cfg),
-            Err(e) => eprintln!("  Warning: {}", e),
+        match AgentSpec::from_toml_file(path.to_str().unwrap_or("")) {
+            Ok(spec) => bots.push(spec),
+            Err(e) => eprintln!("  Warning: {}: {}", path.display(), e),
         }
     }
     bots
 }
 
-// ══════════════════════════════════════════════════════════════════════
-//  Shared model weights (thread-safe)
-// ══════════════════════════════════════════════════════════════════════
-
-struct DmcWeights {
-    floats: Vec<f32>,
-    hidden: usize,
-    obs_dim: usize,
-    dueling: bool,
-    residual: bool,
-}
-
-impl DmcWeights {
-    fn load(path: &str, residual: bool) -> std::io::Result<Self> {
-        let net = DmcNet::load(path)?;
-        let obs_dim = net.obs_dim();
-        let hidden = net.hidden();
-        let dueling = net.is_dueling();
-        drop(net);
-        let data = std::fs::read(path)?;
-        let floats: Vec<f32> = data
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        Ok(DmcWeights { floats, hidden, obs_dim, dueling, residual })
-    }
-
-    fn make_net(&self) -> DmcNet {
-        let mut net = DmcNet::from_floats(&self.floats, self.hidden, self.obs_dim, self.dueling).unwrap();
-        if self.residual {
-            net.set_residual(true);
-        }
-        net
-    }
-}
-
-struct BidNetWeights {
-    floats: Vec<f32>,
-    hidden: usize,
-    obs_dim: usize,
-    dueling: bool,
-    layers: usize,
-}
-
-impl BidNetWeights {
-    fn load(path: &str, hidden: usize) -> std::io::Result<Self> {
-        let net = BidNet::load_with_hidden(path, hidden)?;
-        let obs_dim = net.obs_dim();
-        let hidden = net.hidden();
-        let dueling = net.is_dueling();
-        let layers = net.layers();
-        drop(net);
-        let data = std::fs::read(path)?;
-        let floats: Vec<f32> = data
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        Ok(BidNetWeights { floats, hidden, obs_dim, dueling, layers })
-    }
-
-    fn make_net(&self) -> BidNet {
-        BidNet::from_floats_with_layers(&self.floats, self.hidden, self.obs_dim, self.dueling, self.layers).unwrap()
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════
-//  Agent (runtime representation of a bot)
-// ══════════════════════════════════════════════════════════════════════
-
-#[derive(Clone)]
-enum CardPlayMethod {
-    NaiveIsMcts,
-    SmartIsMcts,
-    Oracle,
-    Dmc(usize),      // index into shared dmc_weights
-    IsDd,
-    SmartIsDd,
-    Heuristic,
-    RulePlayer,       // Fair rule-based player (no peeking at opponent hands)
-    DmcThenDd {       // DMC for early tricks, IS-DD for endgame
-        dmc_idx: usize,
-        switch_at: u8, // switch to DD when tricks_completed >= this (e.g. 5 = last 3 tricks)
-    },
-    BisDd,            // Unified DD-based agent (bid + play via BisDdAgent)
-}
-
-#[derive(Clone)]
-struct Agent {
-    name: String,
-    bid_label: String,
-    play_label: String,
-    bid_function: BidFunction,
-    card_play: CardPlayMethod,
-    bid_weights_idx: Option<usize>,  // index into shared bid_weights, None = use bid_function
-    bid_penalty: f32,                // Q-value penalty scaling for high bids
-    bid_temperature: f32,            // softmax sampling temperature (0.0 = greedy argmax)
-    score_aware: bool,               // enables match-score bid adjustments (endgame heuristics)
-    belief_path: Option<String>,
-    bid_belief_path: Option<String>,
-    time_ms: u32,
-    determinizations: u32,
-    oracle_iters: u32,
-    early_termination: Option<bool>,
-    elephant_memory: bool,
-    elephant_smoothing: f32,
-    elephant_dominance_penalty: f32,
-    elephant_use_dominance: bool,
-    elephant_decay: f32,
-    dominance_factor: f32,
-    playgen_model: Option<String>,
-    playgen_frac: f32,
-    playgen_temp: f32,
-    belief_frac: f32,
-    cred_alpha: f32,
-    cred_bid_model: Option<String>,
-}
-
-/// All shared model weights for the tournament.
-struct SharedModels {
-    dmc_weights: Vec<DmcWeights>,
-    bid_weights: Vec<BidNetWeights>,
-}
-
-fn build_agent(cfg: &BotConfig, models: &mut SharedModels) -> Result<Agent, String> {
-    let bid_function = match cfg.bid_strategy.as_str() {
-        "heuristic" => BidFunction::Heuristic,
-        "improved" => BidFunction::Improved,
-        "improved_v2" => BidFunction::ImprovedV2,
-        "improved_v3" => BidFunction::ImprovedV3,
-        "smart" => BidFunction::Smart,
-        "roro" => BidFunction::Roro,
-        "petit_bide" => BidFunction::PetitBide,
-        "moelleux" => BidFunction::Moelleux,
-        "maxi" => BidFunction::Maxi,
-        "bis_dd" => BidFunction::BisDd, // placeholder, actual decisions via stateful BisDdAgent
-        "nn" => BidFunction::ImprovedV2, // placeholder, actual NN used via bid_weights_idx
-        other => return Err(format!("unknown bid strategy '{}' for bot {}", other, cfg.name)),
-    };
-
-    let bid_weights_idx = if cfg.bid_strategy == "nn" {
-        let path = cfg.bid_model.as_deref()
-            .ok_or_else(|| format!("bot {} has bid strategy 'nn' but no bid model", cfg.name))?;
-        // Dedup: reuse if same path already loaded
-        let existing = models.bid_weights.iter().position(|_| {
-            // Simple: always add (models are small). Could dedup by path if needed.
-            false
-        });
-        let idx = if let Some(idx) = existing {
-            idx
-        } else {
-            let w = BidNetWeights::load(path, cfg.bid_hidden)
-                .map_err(|e| format!("cannot load bid model {} for bot {}: {}", path, cfg.name, e))?;
-            models.bid_weights.push(w);
-            models.bid_weights.len() - 1
-        };
-        Some(idx)
-    } else {
-        None
-    };
-
-    let card_play = match cfg.play_method.as_str() {
-        "naive_ismcts" => CardPlayMethod::NaiveIsMcts,
-        "smart_ismcts" => CardPlayMethod::SmartIsMcts,
-        "is_dd" => CardPlayMethod::IsDd,
-        "smart_is_dd" => CardPlayMethod::SmartIsDd,
-        "oracle" => CardPlayMethod::Oracle,
-        "heuristic" => CardPlayMethod::Heuristic,
-        "rule" => CardPlayMethod::RulePlayer,
-        "dmc" => {
-            let path = cfg.play_model.as_deref()
-                .ok_or_else(|| format!("bot {} has play method 'dmc' but no play model", cfg.name))?;
-            let w = DmcWeights::load(path, cfg.play_residual)
-                .map_err(|e| format!("cannot load play model {} for bot {}: {}", path, cfg.name, e))?;
-            let idx = models.dmc_weights.len();
-            models.dmc_weights.push(w);
-            CardPlayMethod::Dmc(idx)
-        }
-        "dmc_then_dd" => {
-            let path = cfg.play_model.as_deref()
-                .ok_or_else(|| format!("bot {} has play method 'dmc_then_dd' but no play model", cfg.name))?;
-            let w = DmcWeights::load(path, cfg.play_residual)
-                .map_err(|e| format!("cannot load play model {} for bot {}: {}", path, cfg.name, e))?;
-            let idx = models.dmc_weights.len();
-            models.dmc_weights.push(w);
-            CardPlayMethod::DmcThenDd { dmc_idx: idx, switch_at: cfg.switch_at }
-        }
-        "bis_dd" => CardPlayMethod::BisDd,
-        other => return Err(format!("unknown play method '{}' for bot {}", other, cfg.name)),
-    };
-
-    Ok(Agent {
-        name: cfg.name.clone(),
-        bid_label: cfg.bid_label(),
-        play_label: cfg.play_label(),
-        bid_function,
-        card_play,
-        bid_weights_idx,
-        bid_penalty: cfg.bid_penalty,
-        bid_temperature: cfg.bid_temperature,
-        score_aware: cfg.score_aware,
-        belief_path: cfg.belief_model.clone(),
-        bid_belief_path: cfg.bid_belief_model.clone(),
-        time_ms: cfg.time_ms,
-        determinizations: cfg.determinizations,
-        oracle_iters: cfg.oracle_iters,
-        early_termination: cfg.early_termination,
-        elephant_memory: cfg.elephant_memory,
-        elephant_smoothing: cfg.elephant_smoothing,
-        elephant_dominance_penalty: cfg.elephant_dominance_penalty,
-        elephant_use_dominance: cfg.elephant_use_dominance,
-        elephant_decay: cfg.elephant_decay,
-        dominance_factor: cfg.dominance_factor,
-        playgen_model: cfg.playgen_model.clone(),
-        playgen_frac: cfg.playgen_frac,
-        playgen_temp: cfg.playgen_temp,
-        belief_frac: cfg.belief_frac,
-        cred_alpha: cfg.cred_alpha,
-        // Credibility judge defaults to the bot's own bid model.
-        cred_bid_model: cfg.cred_bid_model.clone().or_else(|| {
-            if cfg.cred_alpha > 0.0 { cfg.bid_model.clone() } else { None }
-        }),
+fn find_bot<'a>(bots: &'a [AgentSpec], name: &str) -> &'a AgentSpec {
+    bots.iter().find(|b| b.name == name).unwrap_or_else(|| {
+        eprintln!("Bot '{}' not found in {}/", name, BOTS_DIR);
+        std::process::exit(1);
     })
 }
 
-/// Process-wide cache of loaded playgen models (13MB each, shared across threads).
-static PLAYGEN_MODELS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<colver_core::playgen::infer::PlaygenModel>>>,
-> = std::sync::OnceLock::new();
-
-fn get_playgen_model(path: &str) -> Option<std::sync::Arc<colver_core::playgen::infer::PlaygenModel>> {
-    let cache = PLAYGEN_MODELS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    let mut map = cache.lock().unwrap();
-    if let Some(m) = map.get(path) {
-        return Some(m.clone());
-    }
-    match colver_core::playgen::infer::PlaygenModel::load(path) {
-        Ok(m) => {
-            let arc = std::sync::Arc::new(m);
-            map.insert(path.to_string(), arc.clone());
-            Some(arc)
-        }
-        Err(e) => {
-            eprintln!("failed to load playgen model {}: {}", path, e);
-            None
-        }
-    }
+/// Seat two specs at the table: NS takes 0 and 2, EW takes 1 and 3.
+///
+/// Each seat is an independent player object with its own models, beliefs and
+/// RNG stream — partners must not share state, since each only knows its own
+/// hand.
+fn seat_players(
+    ns: &AgentSpec,
+    ew: &AgentSpec,
+    seed: u64,
+) -> Result<[Box<dyn Player>; 4], String> {
+    let build = |spec: &AgentSpec, seat: u8| -> Result<Box<dyn Player>, String> {
+        let mut spec = spec.clone();
+        spec.seed = seed;
+        spec.build(seat).map_err(|e| format!("{}: {}", spec.name, e))
+    };
+    Ok([
+        build(ns, 0)?,
+        build(ew, 1)?,
+        build(ns, 2)?,
+        build(ew, 3)?,
+    ])
 }
 
-// ══════════════════════════════════════════════════════════════════════
-//  Match play (adapted from agent_tournament.rs)
-// ══════════════════════════════════════════════════════════════════════
-
-struct MatchResult {
-    winner: u8,
-    ns_final: i32,
-    ew_final: i32,
-}
-
-fn play_match(
-    ns_agent: &Agent,
-    ew_agent: &Agent,
-    models: &SharedModels,
-    rng: &mut StdRng,
-) -> MatchResult {
-    let make_naive_config = |a: &Agent| NaiveIsMctsConfig {
-        iterations_per_det: 50,
-        time_limit_ms: Some(a.time_ms),
-        ..Default::default()
-    };
-    let make_smart_config = |a: &Agent| SmartIsMctsConfig {
-        iterations_per_det: 50,
-        time_limit_ms: Some(a.time_ms),
-        ..Default::default()
-    };
-    let make_dd_config = |a: &Agent| {
-        let mut cfg = IsDdConfig {
-            determinizations: a.determinizations,
-            // time_ms = 0 → no time limit (fixed determinization count)
-            time_limit_ms: if a.time_ms > 0 { Some(a.time_ms) } else { None },
-            playgen_frac: a.playgen_frac,
-            playgen_temp: a.playgen_temp,
-            belief_frac: a.belief_frac,
-            cred_alpha: a.cred_alpha,
-            use_elephant_memory: a.elephant_memory,
-            elephant_smoothing: a.elephant_smoothing,
-            elephant_dominance_penalty: a.elephant_dominance_penalty,
-            elephant_use_dominance: a.elephant_use_dominance,
-            elephant_decay: a.elephant_decay,
-            dominance_factor: a.dominance_factor,
-            ..Default::default()
-        };
-        if let Some(et) = a.early_termination {
-            cfg.early_termination = et;
-        }
-        // A [belief] model in the TOML means the bot intends to use NN beliefs.
-        // (Previously the net was loaded but never consulted — use_nn_beliefs
-        // stayed false — so belief-net bots silently ran without it.)
-        cfg.use_nn_beliefs = a.belief_path.is_some();
-        cfg
-    };
-    let make_oracle_config = |a: &Agent| MctsConfig {
-        iterations: a.oracle_iters,
-        rollout_policy: RolloutPolicy::HeuristicPlay,
-        ..Default::default()
-    };
-
-    // Pre-create thread-local models
-    let mut dmc_nets: Vec<Option<DmcNet>> = (0..models.dmc_weights.len()).map(|_| None).collect();
-    for agent in [ns_agent, ew_agent] {
-        let idx = match agent.card_play {
-            CardPlayMethod::Dmc(idx) => Some(idx),
-            CardPlayMethod::DmcThenDd { dmc_idx, .. } => Some(dmc_idx),
-            _ => None,
-        };
-        if let Some(idx) = idx {
-            if dmc_nets[idx].is_none() {
-                dmc_nets[idx] = Some(models.dmc_weights[idx].make_net());
-            }
-        }
-    }
-
-    // Pre-create thread-local BidNet if needed
-    let mut bid_nets: Vec<Option<BidNet>> = (0..models.bid_weights.len()).map(|_| None).collect();
-    for agent in [ns_agent, ew_agent] {
-        if let Some(idx) = agent.bid_weights_idx {
-            if bid_nets[idx].is_none() {
-                bid_nets[idx] = Some(models.bid_weights[idx].make_net());
-            }
-        }
-    }
-    let max_bid_obs = models.bid_weights.iter().map(|w| w.obs_dim).max().unwrap_or(BID_OBS_DIM);
-    let mut bid_obs_buf = vec![0.0f32; max_bid_obs];
-
-    // Determine obs buffer size (use largest needed)
-    let max_obs_dim = models.dmc_weights.iter().map(|w| w.obs_dim).max().unwrap_or(OBS_DIM);
-    let mut obs_buf = vec![0.0f32; max_obs_dim];
-
-    let mut ns_cumulative: i32 = 0;
-    let mut ew_cumulative: i32 = 0;
-    let mut dealer: u8 = rng.gen_range(0..4);
-
-    // Pre-create Smart IS-DD searches with belief net (also for DmcThenDd)
-    let ns_is_smart_dd = matches!(ns_agent.card_play, CardPlayMethod::SmartIsDd | CardPlayMethod::DmcThenDd { .. });
-    let ew_is_smart_dd = matches!(ew_agent.card_play, CardPlayMethod::SmartIsDd | CardPlayMethod::DmcThenDd { .. });
-    let mut ns_smart_dd = [IsDdSearch::new(), IsDdSearch::new()];
-    let mut ew_smart_dd = [IsDdSearch::new(), IsDdSearch::new()];
-    if ns_is_smart_dd {
-        if let Some(path) = &ns_agent.belief_path {
-            let _ = ns_smart_dd[0].load_belief_net(path);
-            let _ = ns_smart_dd[1].load_belief_net(path);
-        }
-        if let Some(path) = &ns_agent.playgen_model {
-            if let Some(model) = get_playgen_model(path) {
-                ns_smart_dd[0].set_playgen_model(model.clone());
-                ns_smart_dd[1].set_playgen_model(model);
-            }
-        }
-        if ns_agent.cred_alpha > 0.0 {
-            if let Some(path) = &ns_agent.cred_bid_model {
-                let _ = ns_smart_dd[0].load_cred_bid_net(path);
-                let _ = ns_smart_dd[1].load_cred_bid_net(path);
-            }
-        }
-    }
-    if ew_is_smart_dd {
-        if let Some(path) = &ew_agent.belief_path {
-            let _ = ew_smart_dd[0].load_belief_net(path);
-            let _ = ew_smart_dd[1].load_belief_net(path);
-        }
-        if let Some(path) = &ew_agent.playgen_model {
-            if let Some(model) = get_playgen_model(path) {
-                ew_smart_dd[0].set_playgen_model(model.clone());
-                ew_smart_dd[1].set_playgen_model(model);
-            }
-        }
-        if ew_agent.cred_alpha > 0.0 {
-            if let Some(path) = &ew_agent.cred_bid_model {
-                let _ = ew_smart_dd[0].load_cred_bid_net(path);
-                let _ = ew_smart_dd[1].load_cred_bid_net(path);
-            }
-        }
-    }
-
-    // BisDd agents (2 per team: one per player)
-    let ns_bis_dd_bid = matches!(ns_agent.bid_function, BidFunction::BisDd);
-    let ns_bis_dd_play = matches!(ns_agent.card_play, CardPlayMethod::BisDd);
-    let ns_is_bis_dd = ns_bis_dd_bid || ns_bis_dd_play;
-    let ew_bis_dd_bid = matches!(ew_agent.bid_function, BidFunction::BisDd);
-    let ew_bis_dd_play = matches!(ew_agent.card_play, CardPlayMethod::BisDd);
-    let ew_is_bis_dd = ew_bis_dd_bid || ew_bis_dd_play;
-    let bis_dd_config_ns = colver_core::bis_dd::BisDdConfig {
-        min_dets: ns_agent.determinizations,
-        ..Default::default()
-    };
-    let bis_dd_config_ew = colver_core::bis_dd::BisDdConfig {
-        min_dets: ew_agent.determinizations,
-        ..Default::default()
-    };
-    let mut ns_bis_dd = [
-        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ns.clone(), rng.gen()),
-        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ns, rng.gen()),
-    ];
-    let mut ew_bis_dd = [
-        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ew.clone(), rng.gen()),
-        colver_core::bis_dd::BisDdAgent::new(bis_dd_config_ew, rng.gen()),
-    ];
-
-    // Load bid belief nets for BisDd agents
-    let mut ns_bid_belief_net = if ns_is_bis_dd {
-        ns_agent.bid_belief_path.as_ref().and_then(|path| {
-            colver_core::belief_net::BeliefNet::load_with_hidden(path, 256).ok()
-        })
-    } else { None };
-    let mut ew_bid_belief_net = if ew_is_bis_dd {
-        ew_agent.bid_belief_path.as_ref().and_then(|path| {
-            colver_core::belief_net::BeliefNet::load_with_hidden(path, 256).ok()
-        })
-    } else { None };
-
-    while ns_cumulative < MATCH_TARGET && ew_cumulative < MATCH_TARGET {
-        let mut state = GameState::deal_random(dealer, rng);
-        let mut tracking = EnvTracking::new();
-        tracking.reset(dealer);
-
-        // Per-deal search objects
-        let mut ns_naive = NaiveIsMctsSearch::new();
-        let mut ew_naive = NaiveIsMctsSearch::new();
-        let mut ns_smart = [SmartIsMctsSearch::new(), SmartIsMctsSearch::new()];
-        let mut ew_smart = [SmartIsMctsSearch::new(), SmartIsMctsSearch::new()];
-        let mut ns_dd = IsDdSearch::new();
-        let mut ew_dd = IsDdSearch::new();
-        let mut oracle = MctsSearch::new();
-
-        let ns_is_smart = matches!(ns_agent.card_play, CardPlayMethod::SmartIsMcts);
-        let ew_is_smart = matches!(ew_agent.card_play, CardPlayMethod::SmartIsMcts);
-
-        if ns_is_smart {
-            ns_smart[0].init_deal(&state, 0, true);
-            ns_smart[1].init_deal(&state, 2, true);
-        }
-        if ew_is_smart {
-            ew_smart[0].init_deal(&state, 1, true);
-            ew_smart[1].init_deal(&state, 3, true);
-        }
-        if ns_is_smart_dd {
-            let dd_cfg = make_dd_config(ns_agent);
-            ns_smart_dd[0].init_deal_with_config(&state, 0, &dd_cfg);
-            ns_smart_dd[1].init_deal_with_config(&state, 2, &dd_cfg);
-        }
-        if ew_is_smart_dd {
-            let dd_cfg = make_dd_config(ew_agent);
-            ew_smart_dd[0].init_deal_with_config(&state, 1, &dd_cfg);
-            ew_smart_dd[1].init_deal_with_config(&state, 3, &dd_cfg);
-        }
-        if ns_is_bis_dd {
-            ns_bis_dd[0].init_deal(0, state.hands[0]);
-            ns_bis_dd[1].init_deal(2, state.hands[2]);
-        }
-        if ew_is_bis_dd {
-            ew_bis_dd[0].init_deal(1, state.hands[1]);
-            ew_bis_dd[1].init_deal(3, state.hands[3]);
-        }
-
-        while !state.is_terminal() {
-            let player = state.current_player();
-            let is_ns = player == 0 || player == 2;
-            let agent = if is_ns { ns_agent } else { ew_agent };
-            let state_before = state;
-
-            let action = if state.phase == Phase::Bidding {
-                if ns_bis_dd_bid && is_ns {
-                    let idx = if player == 0 { 0 } else { 1 };
-                    ns_bis_dd[idx].decide(&state)
-                } else if ew_bis_dd_bid && !is_ns {
-                    let idx = if player == 1 { 0 } else { 1 };
-                    ew_bis_dd[idx].decide(&state)
-                } else if let Some(idx) = agent.bid_weights_idx {
-                    if let Some(ref mut bn) = bid_nets[idx] {
-                        let legal_mask = state.legal_actions();
-                        let bid_net_obs_dim = models.bid_weights[idx].obs_dim;
-                        if bid_net_obs_dim > BID_OBS_DIM {
-                            // Score-aware NN: embed match scores in observation (v1 = 110 dim, v2 = 113 dim)
-                            let (my_cum, opp_cum) = if is_ns {
-                                (ns_cumulative, ew_cumulative)
-                            } else {
-                                (ew_cumulative, ns_cumulative)
-                            };
-                            if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
-                                bid_obs::write_bid_observation_score_aware_v3(
-                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                                    my_cum, opp_cum,
-                                );
-                            } else if bid_net_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
-                                bid_obs::write_bid_observation_score_aware_v2(
-                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                                    my_cum, opp_cum,
-                                );
-                            } else {
-                                bid_obs::write_bid_observation_score_aware(
-                                    &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                                    my_cum, opp_cum,
-                                );
-                            }
-                            if agent.bid_temperature > 0.0 {
-                                bid_action_sampled(bn, &bid_obs_buf[..bid_net_obs_dim], legal_mask, agent.bid_temperature, rng)
-                            } else {
-                                bn.best_action_fast(&bid_obs_buf[..bid_net_obs_dim], legal_mask)
-                            }
-                        } else if agent.score_aware {
-                            bid_obs::write_bid_observation(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                            );
-                            let (my_cum, opp_cum) = if is_ns {
-                                (ns_cumulative, ew_cumulative)
-                            } else {
-                                (ew_cumulative, ns_cumulative)
-                            };
-                            bid_action_score_aware(bn, &bid_obs_buf, legal_mask, agent.bid_penalty, my_cum, opp_cum)
-                        } else if agent.bid_penalty > 0.0 {
-                            bid_obs::write_bid_observation(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                            );
-                            bid_action_with_penalty(bn, &bid_obs_buf, legal_mask, agent.bid_penalty)
-                        } else {
-                            bid_obs::write_bid_observation(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history,
-                            );
-                            if agent.bid_temperature > 0.0 {
-                                bid_action_sampled(bn, &bid_obs_buf, legal_mask, agent.bid_temperature, rng)
-                            } else {
-                                bn.best_action_fast(&bid_obs_buf, legal_mask)
-                            }
-                        }
-                    } else {
-                        agent.bid_function.bid(&state)
-                    }
-                } else {
-                    agent.bid_function.bid(&state)
-                }
-            } else {
-                match &agent.card_play {
-                    CardPlayMethod::NaiveIsMcts => {
-                        let config = make_naive_config(agent);
-                        if is_ns {
-                            ns_naive.search(&state, &config, rng)
-                        } else {
-                            ew_naive.search(&state, &config, rng)
-                        }
-                    }
-                    CardPlayMethod::SmartIsMcts => {
-                        let config = make_smart_config(agent);
-                        if is_ns {
-                            let idx = if player == 0 { 0 } else { 1 };
-                            ns_smart[idx].search(&state, &config, rng)
-                        } else {
-                            let idx = if player == 1 { 0 } else { 1 };
-                            ew_smart[idx].search(&state, &config, rng)
-                        }
-                    }
-                    CardPlayMethod::Oracle => {
-                        let config = make_oracle_config(agent);
-                        oracle.search(&state, &config, rng)
-                    }
-                    CardPlayMethod::Dmc(model_idx) => {
-                        let net = dmc_nets[*model_idx].as_mut().unwrap();
-                        let dmc_w = &models.dmc_weights[*model_idx];
-                        if dmc_w.obs_dim == OBS_DIM_TR {
-                            // Canonical obs: need canonical mask + physical conversion
-                            dmc_obs::write_observation_tr(&mut obs_buf, 0, &state, &tracking);
-                            let order = dmc_obs::current_player_order(&state, &tracking);
-                            let canonical_mask = dmc_obs::cardset_to_canonical(state.legal_actions() as u32, &order);
-                            let (canonical_best, _) = net.best_action(&obs_buf, canonical_mask as u32);
-                            dmc_obs::card_to_physical(canonical_best, &order)
-                        } else {
-                            dmc_obs::write_observation(&mut obs_buf, 0, &state, &tracking);
-                            let legal_mask = state.legal_actions() as u32;
-                            let (action, _) = net.best_action(&obs_buf, legal_mask);
-                            action
-                        }
-                    }
-                    CardPlayMethod::IsDd => {
-                        let config = make_dd_config(agent);
-                        if is_ns {
-                            ns_dd.search(&state, &config, rng)
-                        } else {
-                            ew_dd.search(&state, &config, rng)
-                        }
-                    }
-                    CardPlayMethod::SmartIsDd => {
-                        let config = make_dd_config(agent);
-                        if is_ns {
-                            let idx = if player == 0 { 0 } else { 1 };
-                            ns_smart_dd[idx].search(&state, &config, rng)
-                        } else {
-                            let idx = if player == 1 { 0 } else { 1 };
-                            ew_smart_dd[idx].search(&state, &config, rng)
-                        }
-                    }
-                    CardPlayMethod::Heuristic => {
-                        heuristic_play_action(&state)
-                    }
-                    CardPlayMethod::RulePlayer => {
-                        rule_play_action(&state)
-                    }
-                    CardPlayMethod::DmcThenDd { dmc_idx, switch_at } => {
-                        let tricks_done = state.tricks_won[0] + state.tricks_won[1];
-                        if tricks_done >= *switch_at {
-                            // Endgame: use IS-DD (exact solver)
-                            let config = make_dd_config(agent);
-                            if is_ns {
-                                let idx = if player == 0 { 0 } else { 1 };
-                                ns_smart_dd[idx].search(&state, &config, rng)
-                            } else {
-                                let idx = if player == 1 { 0 } else { 1 };
-                                ew_smart_dd[idx].search(&state, &config, rng)
-                            }
-                        } else {
-                            // Early game: use DMC (fast NN)
-                            let net = dmc_nets[*dmc_idx].as_mut().unwrap();
-                            let dmc_w = &models.dmc_weights[*dmc_idx];
-                            if dmc_w.obs_dim == OBS_DIM_TR {
-                                dmc_obs::write_observation_tr(&mut obs_buf, 0, &state, &tracking);
-                                let order = dmc_obs::current_player_order(&state, &tracking);
-                                let canonical_mask = dmc_obs::cardset_to_canonical(state.legal_actions() as u32, &order);
-                                let (canonical_best, _) = net.best_action(&obs_buf, canonical_mask as u32);
-                                dmc_obs::card_to_physical(canonical_best, &order)
-                            } else {
-                                dmc_obs::write_observation(&mut obs_buf, 0, &state, &tracking);
-                                let legal_mask = state.legal_actions() as u32;
-                                let (action, _) = net.best_action(&obs_buf, legal_mask);
-                                action
-                            }
-                        }
-                    }
-                    CardPlayMethod::BisDd => {
-                        if is_ns {
-                            let idx = if player == 0 { 0 } else { 1 };
-                            ns_bis_dd[idx].decide(&state)
-                        } else {
-                            let idx = if player == 1 { 0 } else { 1 };
-                            ew_bis_dd[idx].decide(&state)
-                        }
-                    }
-                }
-            };
-
-            // Record action on smart searches
-            if ns_is_smart {
-                ns_smart[0].record_action(&state_before, player, action);
-                ns_smart[1].record_action(&state_before, player, action);
-            }
-            if ew_is_smart {
-                ew_smart[0].record_action(&state_before, player, action);
-                ew_smart[1].record_action(&state_before, player, action);
-            }
-            if ns_is_smart_dd {
-                ns_smart_dd[0].record_action(&state_before, player, action);
-                ns_smart_dd[1].record_action(&state_before, player, action);
-            }
-            if ew_is_smart_dd {
-                ew_smart_dd[0].record_action(&state_before, player, action);
-                ew_smart_dd[1].record_action(&state_before, player, action);
-            }
-            if ns_is_bis_dd {
-                ns_bis_dd[0].observe(player, action, &state_before);
-                ns_bis_dd[1].observe(player, action, &state_before);
-            }
-            if ew_is_bis_dd {
-                ew_bis_dd[0].observe(player, action, &state_before);
-                ew_bis_dd[1].observe(player, action, &state_before);
-            }
-            tracking.track_action(&state_before, action);
-            state.step(action);
-
-            // Apply bid belief NN when bidding just ended
-            if state_before.phase == Phase::Bidding && state.phase == Phase::Playing {
-                if let Some(ref mut net) = ns_bid_belief_net {
-                    if ns_is_bis_dd {
-                        ns_bis_dd[0].apply_bid_belief(net, &state, &tracking.bid_history);
-                        ns_bis_dd[1].apply_bid_belief(net, &state, &tracking.bid_history);
-                    }
-                }
-                if let Some(ref mut net) = ew_bid_belief_net {
-                    if ew_is_bis_dd {
-                        ew_bis_dd[0].apply_bid_belief(net, &state, &tracking.bid_history);
-                        ew_bis_dd[1].apply_bid_belief(net, &state, &tracking.bid_history);
-                    }
-                }
-            }
-        }
-
-        let score = state.deal_score();
-        if !(score.scores[0] == 0 && score.scores[1] == 0) {
-            ns_cumulative += score.scores[0] as i32;
-            ew_cumulative += score.scores[1] as i32;
-        }
-        dealer = (dealer + 1) % 4;
-    }
-
-    let winner = if ns_cumulative >= MATCH_TARGET && ew_cumulative >= MATCH_TARGET {
-        if ns_cumulative >= ew_cumulative { 0 } else { 1 }
-    } else if ns_cumulative >= MATCH_TARGET {
-        0
-    } else {
-        1
-    };
-
-    MatchResult { winner, ns_final: ns_cumulative, ew_final: ew_cumulative }
-}
 
 // ══════════════════════════════════════════════════════════════════════
 //  Matchup runner (parallel)
@@ -1156,10 +112,9 @@ impl MatchupResult {
 }
 
 fn run_matchup(
-    ns_agent: &Agent,
-    ew_agent: &Agent,
+    ns: &AgentSpec,
+    ew: &AgentSpec,
     n_matches: u32,
-    models: &SharedModels,
     n_threads: usize,
     base_seed: u64,
     progress: &AtomicU32,
@@ -1171,16 +126,40 @@ fn run_matchup(
         for t in 0..n_threads {
             let start = t * per_thread;
             let end = ((t + 1) * per_thread).min(n_matches as usize);
-            if start >= end { continue; }
+            if start >= end {
+                continue;
+            }
             let count = end - start;
 
             handles.push(s.spawn(move || {
-                let mut rng = StdRng::seed_from_u64(base_seed.wrapping_add(t as u64 * 7919));
+                let thread_seed = base_seed.wrapping_add(t as u64 * 7919);
+                let mut rng = StdRng::seed_from_u64(thread_seed);
+                // Players are built once per thread and reused across matches;
+                // `init_deal` is what clears their per-deal state, so this only
+                // saves reloading the nets.
+                let mut players = match seat_players(ns, ew, thread_seed) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                };
                 let mut result = MatchupResult::default();
                 for _ in 0..count {
-                    let mr = play_match(ns_agent, ew_agent, models, &mut rng);
+                    let dealer = rng.gen_range(0..4);
+                    let mr = match game_loop::play_match(&mut players, dealer, &mut rng) {
+                        Ok(mr) => mr,
+                        Err(e) => {
+                            eprintln!("\nMatch aborted: {}", e);
+                            std::process::exit(1);
+                        }
+                    };
                     result.n_matches += 1;
-                    if mr.winner == 0 { result.ns_wins += 1; } else { result.ew_wins += 1; }
+                    if mr.winner == 0 {
+                        result.ns_wins += 1;
+                    } else {
+                        result.ew_wins += 1;
+                    }
                     result.total_margin += (mr.ns_final - mr.ew_final) as i64;
                     progress.fetch_add(1, Ordering::Relaxed);
                 }
@@ -1191,24 +170,25 @@ fn run_matchup(
     });
 
     let mut combined = MatchupResult::default();
-    for r in &results { combined.merge(r); }
+    for r in &results {
+        combined.merge(r);
+    }
     combined
 }
 
 /// Run H2H with duplicate matching (both directions, same seeds).
 fn run_h2h(
-    agent_a: &Agent,
-    agent_b: &Agent,
+    a: &AgentSpec,
+    b: &AgentSpec,
     n_matches: u32,
-    models: &SharedModels,
     n_threads: usize,
     base_seed: u64,
     progress: &AtomicU32,
 ) -> (MatchupResult, MatchupResult) {
-    // Direction 1: A as NS, B as EW
-    let r1 = run_matchup(agent_a, agent_b, n_matches, models, n_threads, base_seed, progress);
-    // Direction 2: B as NS, A as EW (same seed for duplicate matching)
-    let r2 = run_matchup(agent_b, agent_a, n_matches, models, n_threads, base_seed.wrapping_add(1_000_000), progress);
+    // Direction 1: A as NS, B as EW.
+    let r1 = run_matchup(a, b, n_matches, n_threads, base_seed, progress);
+    // Direction 2: sides swapped, so deal luck largely cancels between the two.
+    let r2 = run_matchup(b, a, n_matches, n_threads, base_seed.wrapping_add(1_000_000), progress);
     (r1, r2)
 }
 
@@ -1378,7 +358,7 @@ fn cmd_results(filter_bot: Option<&str>) {
 
     // Load bot configs for bid/play labels
     use std::collections::HashMap;
-    let bot_configs: HashMap<String, BotConfig> = load_all_bots()
+    let bot_configs: HashMap<String, AgentSpec> = load_all_bots()
         .into_iter().map(|b| (b.name.clone(), b)).collect();
     let bot_label = |name: &str| -> (String, String) {
         if let Some(cfg) = bot_configs.get(name) {
@@ -1584,14 +564,8 @@ fn cmd_h2h(args: &[String]) {
     let no_save = has_flag(rest, "--no-save");
 
     let all_bots = load_all_bots();
-    let cfg_a = all_bots.iter().find(|b| b.name == *bot_a_name)
-        .unwrap_or_else(|| { eprintln!("Bot '{}' not found in {}/", bot_a_name, BOTS_DIR); std::process::exit(1); });
-    let cfg_b = all_bots.iter().find(|b| b.name == *bot_b_name)
-        .unwrap_or_else(|| { eprintln!("Bot '{}' not found in {}/", bot_b_name, BOTS_DIR); std::process::exit(1); });
-
-    let mut models = SharedModels { dmc_weights: Vec::new(), bid_weights: Vec::new() };
-    let agent_a = build_agent(cfg_a, &mut models).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
-    let agent_b = build_agent(cfg_b, &mut models).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
+    let agent_a = find_bot(&all_bots, bot_a_name);
+    let agent_b = find_bot(&all_bots, bot_b_name);
 
     println!("=============================================================");
     println!("  ARENA H2H: {} vs {}", agent_a.name, agent_b.name);
@@ -1620,7 +594,7 @@ fn cmd_h2h(args: &[String]) {
     });
 
     let start = Instant::now();
-    let (r1, r2) = run_h2h(&agent_a, &agent_b, n_matches, &models, n_threads, seed, &progress);
+    let (r1, r2) = run_h2h(agent_a, agent_b, n_matches, n_threads, seed, &progress);
     let elapsed = start.elapsed();
 
     progress.store(total, Ordering::Relaxed);
@@ -1637,7 +611,7 @@ fn cmd_h2h(args: &[String]) {
 
     println!("  RESULT: {} {:.1}% vs {} {:.1}%",
         agent_a.name, a_pct, agent_b.name, 100.0 - a_pct);
-    println!("    A: {} | {}     B: {} | {}", agent_a.bid_label, agent_a.play_label, agent_b.bid_label, agent_b.play_label);
+    println!("    A: {} | {}     B: {} | {}", agent_a.bid_label(), agent_a.play_label(), agent_b.bid_label(), agent_b.play_label());
     println!("  Wins: {} {} — {} {}", agent_a.name, a_wins, agent_b.name, b_wins);
     println!("  Avg margin: {:+.0} (from {}'s perspective)", avg_margin, agent_a.name);
     println!("  Dir 1 ({}=NS): {}-{}", agent_a.name, r1.ns_wins, r1.ew_wins);
@@ -1648,8 +622,8 @@ fn cmd_h2h(args: &[String]) {
     // Persist
     if !no_save {
         append_csv_result(&agent_a.name, &agent_b.name,
-            &agent_a.bid_label, &agent_a.play_label,
-            &agent_b.bid_label, &agent_b.play_label,
+            &agent_a.bid_label(), &agent_a.play_label(),
+            &agent_b.bid_label(), &agent_b.play_label(),
             &r1, &r2, seed, elapsed.as_secs_f64());
         println!();
         println!("  Results saved to {}", RESULTS_PATH);
@@ -1667,7 +641,7 @@ fn cmd_round_robin(args: &[String]) {
     let no_save = has_flag(args, "--no-save");
 
     let all_bots = load_all_bots();
-    let bots: Vec<&BotConfig> = if let Some(ref filter) = bot_filter {
+    let bots: Vec<&AgentSpec> = if let Some(ref filter) = bot_filter {
         let names: Vec<&str> = filter.split(',').collect();
         all_bots.iter().filter(|b| names.contains(&b.name.as_str())).collect()
     } else {
@@ -1679,10 +653,7 @@ fn cmd_round_robin(args: &[String]) {
         std::process::exit(1);
     }
 
-    let mut models = SharedModels { dmc_weights: Vec::new(), bid_weights: Vec::new() };
-    let agents: Vec<Agent> = bots.iter().map(|cfg| {
-        build_agent(cfg, &mut models).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); })
-    }).collect();
+    let agents: Vec<&AgentSpec> = bots.clone();
 
     let n = agents.len();
     let total_matchups = n * (n - 1) / 2;
@@ -1696,7 +667,7 @@ fn cmd_round_robin(args: &[String]) {
     println!();
 
     for (i, a) in agents.iter().enumerate() {
-        println!("  [{:>2}] {:<20} {} | {}", i, a.name, a.bid_label, a.play_label);
+        println!("  [{:>2}] {:<20} {} | {}", i, a.name, a.bid_label(), a.play_label());
     }
     println!();
 
@@ -1728,14 +699,14 @@ fn cmd_round_robin(args: &[String]) {
         for j in (i + 1)..n {
             let pair_seed = seed.wrapping_add((i * 1000 + j * 100) as u64);
             let pair_start = Instant::now();
-            let (r1, r2) = run_h2h(&agents[i], &agents[j], n_matches, &models, n_threads, pair_seed, &progress);
+            let (r1, r2) = run_h2h(agents[i], agents[j], n_matches, n_threads, pair_seed, &progress);
             let pair_secs = pair_start.elapsed().as_secs_f64();
 
             // Persist each pair with its own wall time
             if !no_save {
                 append_csv_result(&agents[i].name, &agents[j].name,
-                    &agents[i].bid_label, &agents[i].play_label,
-                    &agents[j].bid_label, &agents[j].play_label,
+                    &agents[i].bid_label(), &agents[i].play_label(),
+                    &agents[j].bid_label(), &agents[j].play_label(),
                     &r1, &r2, pair_seed, pair_secs);
             }
 
@@ -1808,7 +779,7 @@ fn cmd_round_robin(args: &[String]) {
             total_m as f64 / total_p as f64
         };
         println!("  {:>2}. {:<20} {:<22} {:<22} win {:5.1}%  margin {:+5.0}",
-            rank + 1, agents[*idx].name, agents[*idx].bid_label, agents[*idx].play_label, pct, avg_m);
+            rank + 1, agents[*idx].name, agents[*idx].bid_label(), agents[*idx].play_label(), pct, avg_m);
     }
 
     println!();
@@ -1825,7 +796,7 @@ fn cmd_round_robin(args: &[String]) {
 //  Trace: play same deals with two bots, compare decisions
 // ══════════════════════════════════════════════════════════════════════
 
-use colver_core::card::{card_name, cardset_str, card_suit, CardSet};
+use colver_core::card::{card_name, cardset_str};
 
 const SUIT_SYMS: [&str; 4] = ["S", "H", "D", "C"];
 
@@ -1851,127 +822,55 @@ fn bid_action_str(action: u8) -> String {
 
 const SEAT_NAMES: [&str; 4] = ["N", "E", "S", "W"];
 
-#[allow(dead_code)]
+/// One deal replayed by a given seating, for side-by-side comparison.
 struct DealTrace {
-    hands: [CardSet; 4],
-    dealer: u8,
-    bids: Vec<(u8, u8)>,      // (player, action)
-    plays: Vec<(u8, u8)>,     // (player, card)
-    trick_leads: Vec<u8>,     // trick lead player for each trick
+    bids: Vec<(u8, u8)>,  // (player, bid action)
+    plays: Vec<(u8, u8)>, // (player, card)
+    trick_leads: Vec<u8>,
     contract_str: String,
-    ns_score: i16,
-    ew_score: i16,
+    ns_score: i32,
+    ew_score: i32,
     void_deal: bool,
 }
 
-/// Play a single deal with a given agent pair, recording trace.
-fn play_deal_traced(
-    state_orig: &GameState,
-    ns_agent: &Agent,
-    ew_agent: &Agent,
-    models: &SharedModels,
-    dmc_nets: &mut Vec<Option<DmcNet>>,
-    bid_nets: &mut Vec<Option<BidNet>>,
-    obs_buf: &mut Vec<f32>,
-    bid_obs_buf: &mut Vec<f32>,
-) -> DealTrace {
+/// Play one deal with `players` already seated, recording what happened.
+fn trace_deal(state_orig: &GameState, players: &mut [Box<dyn Player>; 4]) -> DealTrace {
     let mut state = *state_orig;
-    let mut tracking = EnvTracking::new();
-    tracking.reset(state.dealer);
+    let mut ctx = MatchContext::new(state.dealer);
+    let (score, decisions) = game_loop::play_deal_traced(&mut state, players, &mut ctx)
+        .unwrap_or_else(|e| {
+            eprintln!("Trace aborted: {}", e);
+            std::process::exit(1);
+        });
 
-    let mut trace = DealTrace {
-        hands: state.hands,
-        dealer: state.dealer,
-        bids: Vec::new(),
-        plays: Vec::new(),
-        trick_leads: Vec::new(),
-        contract_str: String::new(),
-        ns_score: 0,
-        ew_score: 0,
-        void_deal: false,
+    // Split the decision stream back into auction and play. Bids all precede
+    // plays, so the boundary is wherever the first card appears.
+    let n_bids = ctx.tracking.bid_history.len();
+    let bids: Vec<(u8, u8)> = decisions[..n_bids].iter().map(|(p, d)| (*p, d.action)).collect();
+    let plays: Vec<(u8, u8)> = decisions[n_bids..].iter().map(|(p, d)| (*p, d.action)).collect();
+    let trick_leads: Vec<u8> = plays.chunks(4).map(|c| c[0].0).collect();
+
+    let void_deal = state.contract.value == 0;
+    let contract_str = if void_deal {
+        "passed out".to_string()
+    } else {
+        format!(
+            "{}{} by {}",
+            state.contract.value,
+            SUIT_SYMS[state.contract.trump_suit() as usize],
+            if state.contract.team == 0 { "NS" } else { "EW" }
+        )
     };
 
-    while !state.is_terminal() {
-        let player = state.current_player();
-        let is_ns = player == 0 || player == 2;
-        let agent = if is_ns { ns_agent } else { ew_agent };
-
-        let action = if state.phase == Phase::Bidding {
-            if let Some(idx) = agent.bid_weights_idx {
-                if let Some(ref mut bn) = bid_nets[idx] {
-                    bid_obs::write_bid_observation(bid_obs_buf, 0, &state, &tracking.bid_history);
-                    let legal_mask = state.legal_actions();
-                    if agent.bid_penalty > 0.0 {
-                        bid_action_with_penalty(bn, bid_obs_buf, legal_mask, agent.bid_penalty)
-                    } else {
-                        bn.best_action_fast(bid_obs_buf, legal_mask)
-                    }
-                } else {
-                    agent.bid_function.bid(&state)
-                }
-            } else {
-                agent.bid_function.bid(&state)
-            }
-        } else {
-            match &agent.card_play {
-                CardPlayMethod::Heuristic => heuristic_play_action(&state),
-                CardPlayMethod::RulePlayer => rule_play_action(&state),
-                CardPlayMethod::Dmc(model_idx) => {
-                    let net = dmc_nets[*model_idx].as_mut().unwrap();
-                    let dmc_w = &models.dmc_weights[*model_idx];
-                    if dmc_w.obs_dim == OBS_DIM_TR {
-                        dmc_obs::write_observation_tr(obs_buf, 0, &state, &tracking);
-                        let order = dmc_obs::current_player_order(&state, &tracking);
-                        let canonical_mask = dmc_obs::cardset_to_canonical(state.legal_actions() as u32, &order);
-                        let (canonical_best, _) = net.best_action(obs_buf, canonical_mask as u32);
-                        dmc_obs::card_to_physical(canonical_best, &order)
-                    } else {
-                        dmc_obs::write_observation(obs_buf, 0, &state, &tracking);
-                        let legal_mask = state.legal_actions() as u32;
-                        let (action, _) = net.best_action(obs_buf, legal_mask);
-                        action
-                    }
-                }
-                _ => {
-                    // Fallback for search-based methods: use heuristic for trace speed
-                    heuristic_play_action(&state)
-                }
-            }
-        };
-
-        if state.phase == Phase::Bidding {
-            trace.bids.push((player, action));
-        } else {
-            if state.trick_count == 0 {
-                trace.trick_leads.push(player);
-            }
-            trace.plays.push((player, action));
-        }
-
-        tracking.track_action(&state, action);
-        state.step(action);
+    DealTrace {
+        bids,
+        plays,
+        trick_leads,
+        contract_str,
+        ns_score: score[0],
+        ew_score: score[1],
+        void_deal,
     }
-
-    let score = state.deal_score();
-    trace.ns_score = score.scores[0];
-    trace.ew_score = score.scores[1];
-    trace.void_deal = score.scores[0] == 0 && score.scores[1] == 0;
-
-    if state.contract.value > 0 {
-        let val = (state.contract.value as u16 + 8) * 10;
-        let coinche_str = match state.contract.coinche {
-            1 => "x",
-            2 => "xx",
-            _ => "",
-        };
-        trace.contract_str = format!("{}{}{} by {}",
-            val, SUIT_SYMS[state.contract.trump as usize], coinche_str,
-            if state.contract.team == 0 { "NS" } else { "EW" });
-    } else {
-        trace.contract_str = "VOID".to_string();
-    }
-
-    trace
 }
 
 fn cmd_trace(args: &[String]) {
@@ -1987,14 +886,8 @@ fn cmd_trace(args: &[String]) {
     let seed = parse_flag_u64(rest, "--seed", 42);
 
     let all_bots = load_all_bots();
-    let cfg_a = all_bots.iter().find(|b| b.name == *bot_a_name)
-        .unwrap_or_else(|| { eprintln!("Bot '{}' not found", bot_a_name); std::process::exit(1); });
-    let cfg_b = all_bots.iter().find(|b| b.name == *bot_b_name)
-        .unwrap_or_else(|| { eprintln!("Bot '{}' not found", bot_b_name); std::process::exit(1); });
-
-    let mut models = SharedModels { dmc_weights: Vec::new(), bid_weights: Vec::new() };
-    let agent_a = build_agent(cfg_a, &mut models).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
-    let agent_b = build_agent(cfg_b, &mut models).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
+    let agent_a = find_bot(&all_bots, bot_a_name);
+    let agent_b = find_bot(&all_bots, bot_b_name);
 
     println!("═══════════════════════════════════════════════════════════════");
     println!("  TRACE: {} vs {}", agent_a.name, agent_b.name);
@@ -2004,22 +897,11 @@ fn cmd_trace(args: &[String]) {
 
     let mut rng = StdRng::seed_from_u64(seed);
 
-    // Create two full sets of model instances (one per direction)
-    let make_dmc_nets = |models: &SharedModels| -> Vec<Option<DmcNet>> {
-        models.dmc_weights.iter().map(|w| Some(w.make_net())).collect()
-    };
-    let make_bid_nets = |models: &SharedModels| -> Vec<Option<BidNet>> {
-        models.bid_weights.iter().map(|w| Some(w.make_net())).collect()
-    };
-    let mut dmc_nets_a = make_dmc_nets(&models);
-    let mut dmc_nets_b = make_dmc_nets(&models);
-    let mut bid_nets_a = make_bid_nets(&models);
-    let mut bid_nets_b = make_bid_nets(&models);
-
-    let max_obs_dim = models.dmc_weights.iter().map(|w| w.obs_dim).max().unwrap_or(OBS_DIM);
-    let mut obs_buf = vec![0.0f32; max_obs_dim];
-    let max_bid_obs = models.bid_weights.iter().map(|w| w.obs_dim).max().unwrap_or(BID_OBS_DIM);
-    let mut bid_obs_buf = vec![0.0f32; max_bid_obs];
+    // One seating per direction, reused across deals.
+    let mut seating_a = seat_players(agent_a, agent_b, seed)
+        .unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
+    let mut seating_b = seat_players(agent_b, agent_a, seed)
+        .unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
 
     // Stats
     let mut a_better = 0u32;
@@ -2037,13 +919,10 @@ fn cmd_trace(args: &[String]) {
         let dealer = (deal_idx % 4) as u8;
         let state = GameState::deal_random(dealer, &mut rng);
 
-        // Both bots play as NS, opponent is the other bot playing as EW
-        // Config A: A=NS, B=EW
-        let trace_a = play_deal_traced(&state, &agent_a, &agent_b, &models,
-            &mut dmc_nets_a, &mut bid_nets_a, &mut obs_buf, &mut bid_obs_buf);
-        // Config B: B=NS, A=EW
-        let trace_b = play_deal_traced(&state, &agent_b, &agent_a, &models,
-            &mut dmc_nets_b, &mut bid_nets_b, &mut obs_buf, &mut bid_obs_buf);
+        // The same deal played both ways round, so the comparison is about the
+        // bots and not about who was dealt the good hand.
+        let trace_a = trace_deal(&state, &mut seating_a);
+        let trace_b = trace_deal(&state, &mut seating_b);
 
         if trace_a.void_deal && trace_b.void_deal {
             void_deals += 1;

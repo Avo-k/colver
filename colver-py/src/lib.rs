@@ -14,7 +14,9 @@ use colver_core::card::Suit;
 use colver_core::bid_net::BidNet;
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::EnvTracking;
-use colver_core::is_dd::{IsDdConfig, IsDdSearch};
+use colver_core::agent::{AgentSpec, MatchContext, Player};
+use colver_core::is_dd::IsDdSearch;
+use colver_core::playgen::analysis::PlaygenAnalyst;
 use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
@@ -236,9 +238,6 @@ struct Env {
     naive_search: Option<NaiveIsMctsSearch>,
     smart_searches: Option<[SmartIsMctsSearch; 4]>,
     smart_initialized: bool,
-    // IS-DD search objects (lazily initialized)
-    dede_searches: Option<[IsDdSearch; 4]>,
-    dede_initialized: bool,
     // Per-player card tracking for obs v2
     played_by: [u32; 4],
     // Chronological play order (card indices) for timing features
@@ -249,20 +248,6 @@ struct Env {
     dmc_net: Option<DmcNet>,
     // Bid Q-network (loaded lazily)
     bid_net: Option<BidNet>,
-    // Belief net model path (shared across dede searches)
-    belief_net_path: Option<String>,
-    // Playgen world-sampler model (shared read-only across dede searches)
-    playgen_model: Option<std::sync::Arc<colver_core::playgen::infer::PlaygenModel>>,
-    // Credibility world-weighting for IS-DD (see IsDdConfig::cred_alpha).
-    // 0.0 = off (default). Judge nets are applied to every dede search.
-    dede_cred_alpha: f32,
-    dede_cred_bid_net_path: Option<String>,
-    dede_cred_play_net_path: Option<String>,
-    // Fixed determinization count for IS-DD. 0 = time mode (default, budget =
-    // action_dede's time_ms arg); >0 = count mode (solve exactly N worlds,
-    // ignoring the time budget). Count mode gives a machine-independent number
-    // of worlds at the cost of variable latency.
-    dede_determinizations: u32,
 }
 
 #[pymethods]
@@ -277,19 +262,11 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
-            dede_searches: None,
-            dede_initialized: false,
             played_by: [0; 4],
             play_order: Vec::with_capacity(32),
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
-            belief_net_path: None,
-            playgen_model: None,
-            dede_cred_alpha: 0.0,
-            dede_cred_bid_net_path: None,
-            dede_cred_play_net_path: None,
-            dede_determinizations: 0,
         }
     }
 
@@ -298,7 +275,6 @@ impl Env {
         let dealer = self.rng.gen_range(0..4u8);
         self.state = GameState::deal_random(dealer, &mut self.rng);
         self.smart_initialized = false;
-        self.dede_initialized = false;
         self.played_by = [0; 4];
         self.play_order.clear();
         self.bid_history.clear();
@@ -739,19 +715,11 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
-            dede_searches: None,
-            dede_initialized: false,
             played_by: [0; 4],
             play_order: Vec::new(),
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
-            belief_net_path: None,
-            playgen_model: None,
-            dede_cred_alpha: 0.0,
-            dede_cred_bid_net_path: None,
-            dede_cred_play_net_path: None,
-            dede_determinizations: 0,
         })
     }
 
@@ -777,7 +745,6 @@ impl Env {
         }
         self.state = GameState::new(dealer, hand_sets);
         self.smart_initialized = false;
-        self.dede_initialized = false;
         self.played_by = [0; 4];
         self.play_order.clear();
         self.bid_history.clear();
@@ -939,238 +906,7 @@ impl Env {
         Ok(search.search(&self.state, &config, &mut self.rng))
     }
 
-    /// Load a BeliefNet model for NN-based beliefs in IS-DD.
-    /// Call once, then dede_init() will use it for all searches.
-    fn load_belief_net(&mut self, path: &str) -> PyResult<()> {
-        // Validate by loading once, then store path for dede_init to load per-search
-        colver_core::belief_net::BeliefNet::load(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to load belief net: {}", e))
-        })?;
-        self.belief_net_path = Some(path.to_string());
-        // If searches already exist, load into them
-        if let Some(ref mut searches) = self.dede_searches {
-            for search in searches.iter_mut() {
-                search.load_belief_net(path).map_err(|e| {
-                    pyo3::exceptions::PyIOError::new_err(format!("Failed to load belief net: {}", e))
-                })?;
-            }
-        }
-        Ok(())
-    }
 
-    /// Check if a BeliefNet model is loaded.
-    fn has_belief_net(&self) -> bool {
-        self.belief_net_path.is_some()
-    }
-
-    /// Load a playgen world-sampler model (COLVPG01) for IS-DD searches.
-    /// Call before dede_init() so the sampler sees the full action prefix.
-    fn load_playgen_model(&mut self, path: &str) -> PyResult<()> {
-        let model = colver_core::playgen::infer::PlaygenModel::load(path).map_err(|e| {
-            pyo3::exceptions::PyIOError::new_err(format!("Failed to load playgen model: {}", e))
-        })?;
-        let model = std::sync::Arc::new(model);
-        if let Some(ref mut searches) = self.dede_searches {
-            for search in searches.iter_mut() {
-                search.set_playgen_model(model.clone());
-            }
-        }
-        self.playgen_model = Some(model);
-        Ok(())
-    }
-
-    /// Check if a playgen model is loaded.
-    fn has_playgen_model(&self) -> bool {
-        self.playgen_model.is_some()
-    }
-
-    /// Set the IS-DD credibility exponent (`IsDdConfig::cred_alpha`). 0.0 = off
-    /// (default). Requires at least one judge net loaded to have any effect;
-    /// see `dede_load_cred_bid_net` / `dede_load_cred_play_net`.
-    fn dede_set_cred_alpha(&mut self, alpha: f32) {
-        self.dede_cred_alpha = alpha;
-    }
-
-    /// Set a fixed IS-DD determinization count. 0 = time mode (default: the
-    /// `action_dede` time_ms arg bounds the search). >0 = count mode: solve
-    /// exactly N determinized worlds regardless of time. Count mode gives a
-    /// machine-independent number of worlds (reproducible strength) at the cost
-    /// of variable latency — prefer time mode when latency must stay bounded.
-    fn dede_set_determinizations(&mut self, n: u32) {
-        self.dede_determinizations = n;
-    }
-
-    /// Load the bid net used as the IS-DD auction-credibility judge. Applied to
-    /// every dede search (and remembered so a later `dede_init` re-applies it).
-    fn dede_load_cred_bid_net(&mut self, path: &str) -> PyResult<()> {
-        if let Some(ref mut searches) = self.dede_searches {
-            for search in searches.iter_mut() {
-                search.load_cred_bid_net(path).map_err(|e| {
-                    pyo3::exceptions::PyIOError::new_err(format!(
-                        "Failed to load cred bid net: {}",
-                        e
-                    ))
-                })?;
-            }
-        }
-        self.dede_cred_bid_net_path = Some(path.to_string());
-        Ok(())
-    }
-
-    /// Load the canonical DMC net used as the IS-DD play-credibility judge.
-    /// Applied to every dede search (and remembered for later `dede_init`).
-    fn dede_load_cred_play_net(&mut self, path: &str) -> PyResult<()> {
-        if let Some(ref mut searches) = self.dede_searches {
-            for search in searches.iter_mut() {
-                search.load_cred_play_net(path).map_err(|e| {
-                    pyo3::exceptions::PyIOError::new_err(format!(
-                        "Failed to load cred play net: {}",
-                        e
-                    ))
-                })?;
-            }
-        }
-        self.dede_cred_play_net_path = Some(path.to_string());
-        Ok(())
-    }
-
-    /// Monte-Carlo card-location marginals from the playgen world sampler,
-    /// from `observer`'s perspective. Samples up to `n_worlds` determinized
-    /// worlds and counts where each card lands. Returns weights[player][card]
-    /// (4×32), or None during bidding / if sampling fails.
-    #[pyo3(signature = (observer, n_worlds=50, temperature=1.0))]
-    fn get_playgen_beliefs(
-        &mut self,
-        py: Python<'_>,
-        observer: u8,
-        n_worlds: usize,
-        temperature: f32,
-    ) -> PyResult<Option<Vec<Vec<f32>>>> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        if observer >= 4 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "observer must be 0-3",
-            ));
-        }
-        // MC sampling takes ~1s: release the GIL so the web server's event
-        // loop (and parallel precompute workers) keep running.
-        let state = self.state;
-        let searches = self.dede_searches.as_mut().unwrap();
-        let search = &mut searches[observer as usize];
-        let rng = &mut self.rng;
-        let marginals = py.allow_threads(move || {
-            search.playgen_marginals(&state, n_worlds, temperature, rng)
-        });
-        Ok(marginals.map(|w| w.iter().map(|row| row.to_vec()).collect()))
-    }
-
-    /// Playgen bid-policy probabilities at the current auction point
-    /// (v2 playgen models only). Returns 43 masked-softmax probabilities
-    /// (0.0 for illegal bids), or None if unavailable.
-    fn get_playgen_bid_policy(
-        &mut self,
-        observer: u8,
-        temperature: f32,
-    ) -> PyResult<Option<Vec<f32>>> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        if observer >= 4 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "observer must be 0-3",
-            ));
-        }
-        let state = self.state;
-        let searches = self.dede_searches.as_mut().unwrap();
-        let search = &mut searches[observer as usize];
-        let Some(logits) = search.playgen_bid_policy(&state) else {
-            return Ok(None);
-        };
-        let mask = state.legal_actions();
-        let t = temperature.max(1e-3);
-        let mut max_l = f32::NEG_INFINITY;
-        for c in 0..43 {
-            if mask & (1u64 << c) != 0 && logits[c] > max_l {
-                max_l = logits[c];
-            }
-        }
-        let mut probs = vec![0.0f32; 43];
-        let mut total = 0.0f32;
-        for c in 0..43 {
-            if mask & (1u64 << c) != 0 {
-                let p = ((logits[c] - max_l) / t).exp();
-                probs[c] = p;
-                total += p;
-            }
-        }
-        if total > 0.0 {
-            for p in probs.iter_mut() {
-                *p /= total;
-            }
-        }
-        Ok(Some(probs))
-    }
-
-    /// Sample full deals from the current mid-auction position via the
-    /// playgen model (v2 only): the auction is completed with the bid head,
-    /// then the deal is played out to reveal the hidden hands.
-    /// Returns up to `n_worlds` deals as 4 lists of 8 card ids, or None.
-    fn playgen_sample_auction_deals(
-        &mut self,
-        py: Python<'_>,
-        observer: u8,
-        n_worlds: usize,
-        temperature: f32,
-    ) -> PyResult<Option<Vec<Vec<Vec<u8>>>>> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        if observer >= 4 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "observer must be 0-3",
-            ));
-        }
-        let state = self.state;
-        let searches = self.dede_searches.as_mut().unwrap();
-        let search = &mut searches[observer as usize];
-        let rng = &mut self.rng;
-        // Slow (~0.4s/deal): release the GIL for the web event loop.
-        let worlds = py.allow_threads(move || {
-            search.playgen_auction_deals(&state, n_worlds, temperature, rng)
-        });
-        if worlds.is_empty() {
-            return Ok(None);
-        }
-        let out = worlds
-            .iter()
-            .map(|hands| {
-                hands
-                    .iter()
-                    .map(|&h| {
-                        let mut cards: Vec<u8> =
-                            (0..32u8).filter(|&c| h & (1 << c) != 0).collect();
-                        cards.sort_unstable();
-                        cards
-                    })
-                    .collect()
-            })
-            .collect();
-        Ok(Some(out))
-    }
-
-    /// Sample full deals from the current mid-auction position using the bid
-    /// belief net (COLVBB, obs 108): NN marginals conditioned on the auction
-    /// drive a weighted determinization. Hands during bidding are complete, so
-    /// each draw is a full deal. Returns up to `n_worlds` deals as 4 lists of
-    /// 8 card ids, or None if sampling failed.
     fn bid_belief_sample_deals(
         &mut self,
         py: Python<'_>,
@@ -1232,224 +968,6 @@ impl Env {
         Ok(Some(out))
     }
 
-    /// Initialize IS-DD (Dédé) beliefs for a new deal.
-    /// Must be called after reset() and before action_dede().
-    fn dede_init(&mut self) {
-        let belief_path = self.belief_net_path.clone();
-        let playgen_model = self.playgen_model.clone();
-        let cred_bid_path = self.dede_cred_bid_net_path.clone();
-        let cred_play_path = self.dede_cred_play_net_path.clone();
-        let searches = self.dede_searches.get_or_insert_with(|| {
-            let mut s = [
-                IsDdSearch::new(),
-                IsDdSearch::new(),
-                IsDdSearch::new(),
-                IsDdSearch::new(),
-            ];
-            if let Some(ref path) = belief_path {
-                for search in s.iter_mut() {
-                    let _ = search.load_belief_net(path);
-                }
-            }
-            if let Some(ref model) = playgen_model {
-                for search in s.iter_mut() {
-                    search.set_playgen_model(model.clone());
-                }
-            }
-            if let Some(ref path) = cred_bid_path {
-                for search in s.iter_mut() {
-                    let _ = search.load_cred_bid_net(path);
-                }
-            }
-            if let Some(ref path) = cred_play_path {
-                for search in s.iter_mut() {
-                    let _ = search.load_cred_play_net(path);
-                }
-            }
-            s
-        });
-        for (player, search) in searches.iter_mut().enumerate() {
-            search.init_deal(&self.state, player as u8, true);
-        }
-        self.dede_initialized = true;
-    }
-
-    /// Record an action for IS-DD beliefs, then step the game.
-    /// Returns (observation, reward, done, legal_actions) like step().
-    fn dede_step(&mut self, action: u8) -> PyResult<(Vec<f32>, f32, bool, Vec<u8>)> {
-        let player = self.state.current_player();
-        let team = GameState::player_team(player) as usize;
-
-        if self.state.phase == Phase::Bidding {
-            self.bid_history.push((player, action));
-        }
-        if self.state.phase == Phase::Playing {
-            self.play_order.push(action);
-        }
-        track_play(
-            &self.state,
-            action,
-            &mut self.played_by,
-        );
-
-        // Record action in all 4 belief models before stepping
-        if let Some(ref mut searches) = self.dede_searches {
-            for search in searches.iter_mut() {
-                search.record_action(&self.state, player, action);
-            }
-        }
-
-        self.state.step(action);
-
-        let done = self.state.is_terminal();
-        let reward = if done {
-            self.state.rewards()[team]
-        } else {
-            0.0
-        };
-
-        Ok((
-            make_observation(&self.state, &self.played_by, &self.play_order, &self.bid_history, self.state.dealer),
-            reward,
-            done,
-            legal_actions_list(&self.state),
-        ))
-    }
-
-    /// Provide externally sampled worlds (remaining hands per seat, current
-    /// position — e.g. from the GPU playgen sidecar) to the current player's
-    /// IS-DD search. Consumed first by the next action_dede*() call; invalid
-    /// worlds are skipped. Each world is a list of 4 u32 CardSet bitmasks.
-    fn dede_inject_worlds(&mut self, worlds: Vec<Vec<u32>>) -> PyResult<()> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        let converted: Vec<[u32; 4]> = worlds
-            .into_iter()
-            .filter_map(|w| w.try_into().ok())
-            .collect();
-        let player = self.state.current_player() as usize;
-        let searches = self.dede_searches.as_mut().unwrap();
-        searches[player].set_injected_worlds(converted);
-        Ok(())
-    }
-
-    /// Get IS-DD (Dédé) action for current state. time_ms is the search budget in ms.
-    /// Must call dede_init() first and use dede_step() for all moves.
-    fn action_dede(&mut self, time_ms: u32) -> PyResult<u8> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        let player = self.state.current_player() as usize;
-        // Count mode (dede_determinizations > 0) solves a fixed number of worlds
-        // and ignores the time budget; otherwise time mode uses `time_ms`.
-        let count_mode = self.dede_determinizations > 0;
-        let config = IsDdConfig {
-            determinizations: if count_mode { self.dede_determinizations } else { 20 },
-            time_limit_ms: if count_mode { None } else { Some(time_ms) },
-            use_nn_beliefs: self.belief_net_path.is_some(),
-            // Solve the determinized worlds across the rayon global pool (shared
-            // and bounded, so concurrent games/rooms don't oversubscribe).
-            parallel: true,
-            cred_alpha: self.dede_cred_alpha,
-            ..Default::default()
-        };
-        let searches = self.dede_searches.as_mut().unwrap();
-        let action = searches[player].search(&self.state, &config, &mut self.rng);
-        Ok(action)
-    }
-
-    /// Get IS-DD (Dédé) action with search statistics.
-    /// Returns dict: {best_action, card_scores: [[card, avg_score]...], determinizations, elapsed_ms}
-    /// During bidding, returns bid_improved_v2() with minimal stats.
-    fn action_dede_with_stats<'py>(&mut self, py: Python<'py>, time_ms: u32) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new_bound(py);
-
-        if self.state.phase == Phase::Bidding {
-            let action = bid_eval::improved_v2_bid(&self.state);
-            dict.set_item("best_action", action)?;
-            dict.set_item("card_scores", Vec::<(u8, f32)>::new())?;
-            dict.set_item("determinizations", 0u32)?;
-            dict.set_item("elapsed_ms", 0.0f64)?;
-            return Ok(dict);
-        }
-
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        let player = self.state.current_player() as usize;
-        // Count mode (dede_determinizations > 0) solves a fixed number of worlds
-        // and ignores the time budget; otherwise time mode uses `time_ms`.
-        let count_mode = self.dede_determinizations > 0;
-        let config = IsDdConfig {
-            determinizations: if count_mode { self.dede_determinizations } else { 20 },
-            time_limit_ms: if count_mode { None } else { Some(time_ms) },
-            use_nn_beliefs: self.belief_net_path.is_some(),
-            // Solve the determinized worlds across the rayon global pool (shared
-            // and bounded, so concurrent games/rooms don't oversubscribe).
-            parallel: true,
-            cred_alpha: self.dede_cred_alpha,
-            ..Default::default()
-        };
-        let searches = self.dede_searches.as_mut().unwrap();
-        let start = Instant::now();
-        let result = searches[player].search_with_stats(&self.state, &config, &mut self.rng);
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-
-        dict.set_item("best_action", result.best_action)?;
-        dict.set_item("card_scores", result.card_scores)?;
-        dict.set_item("determinizations", result.determinizations)?;
-        dict.set_item("elapsed_ms", elapsed)?;
-        Ok(dict)
-    }
-
-    /// Get belief weights from IS-DD for a given observer.
-    /// Returns dict: {nn: [[f32; 32]; 4] | None, heuristic: [[f32; 32]; 4] | None}
-    /// Each is weights[player][card] probability distribution.
-    fn get_belief_weights<'py>(&mut self, py: Python<'py>, observer: u8) -> PyResult<Bound<'py, PyDict>> {
-        if !self.dede_initialized {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Call dede_init() first",
-            ));
-        }
-        if observer >= 4 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "observer must be 0-3",
-            ));
-        }
-        let searches = self.dede_searches.as_mut().unwrap();
-        let (nn, heuristic) = searches[observer as usize].get_belief_weights(&self.state, observer);
-
-        let dict = PyDict::new_bound(py);
-        match nn {
-            Some(w) => {
-                let nn_list: Vec<Vec<f32>> = w.iter().map(|row| row.to_vec()).collect();
-                dict.set_item("nn", nn_list)?;
-            }
-            None => {
-                dict.set_item("nn", py.None())?;
-            }
-        }
-        match heuristic {
-            Some(w) => {
-                let h_list: Vec<Vec<f32>> = w.iter().map(|row| row.to_vec()).collect();
-                dict.set_item("heuristic", h_list)?;
-            }
-            None => {
-                dict.set_item("heuristic", py.None())?;
-            }
-        }
-        Ok(dict)
-    }
-
-    /// Oracle DD: exact double-dummy solver. Returns optimal card for current player.
-    /// Only valid during play phase. No time budget needed (~7ms median).
     fn action_oracle_dd(&self) -> PyResult<u8> {
         if self.state.phase != Phase::Playing {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
@@ -1682,19 +1200,11 @@ impl Env {
             naive_search: None,
             smart_searches: None,
             smart_initialized: false,
-            dede_searches: None,
-            dede_initialized: false,
             played_by,
             play_order,
             bid_history,
             dmc_net: None,
             bid_net: None,
-            belief_net_path: None,
-            playgen_model: None,
-            dede_cred_alpha: 0.0,
-            dede_cred_bid_net_path: None,
-            dede_cred_play_net_path: None,
-            dede_determinizations: 0,
         })
     }
 
@@ -1744,8 +1254,362 @@ fn build_bid_obs(
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+//  Agent — the one way to make a bot decide
+// ══════════════════════════════════════════════════════════════════════
+
+/// A seated bot, built from a bot spec (the same TOML the arena reads).
+///
+/// The agent owns everything it needs to play: its models, its beliefs, its
+/// RNG, and — crucially — **its own source of determinized worlds**. Callers
+/// no longer sample playgen worlds and push them in; that job moved inside,
+/// which is what stopped the web and the arena from silently running different
+/// agents under the same name.
+///
+/// Lifecycle, per deal:
+///
+/// ```python
+/// agent = Agent(spec_toml, seat=1)
+/// agent.init_deal(env)
+/// while not env.is_terminal():
+///     if env.current_player() == agent.seat:
+///         d = agent.decide(env)          # {"action": …, "candidates": …, …}
+///         action = d["action"]
+///     else:
+///         action = human_move()
+///     for a in agents:                   # every agent sees every action…
+///         a.observe(env, action)         # …with env still *before* the move
+///     env.step(action)
+/// ```
+#[pyclass]
+struct Agent {
+    player: Box<dyn Player>,
+    ctx: MatchContext,
+    seat: u8,
+    label: String,
+}
+
+fn agent_err(e: colver_core::agent::AgentError) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(e.to_string())
+}
+
+#[pymethods]
+impl Agent {
+    /// Build from a bot spec written as TOML text.
+    #[new]
+    #[pyo3(signature = (spec, seat, seed=0))]
+    fn new(spec: &str, seat: u8, seed: u64) -> PyResult<Self> {
+        if seat >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err("seat must be 0-3"));
+        }
+        let mut parsed = AgentSpec::from_toml_str(spec).map_err(agent_err)?;
+        parsed.seed = seed;
+        let player = parsed.build(seat).map_err(agent_err)?;
+        let label = player.label().to_string();
+        Ok(Agent { player, ctx: MatchContext::new(0), seat, label })
+    }
+
+    /// Build from a bot spec file, e.g. `arena/bots/v6_isdd_75M_belief.toml`.
+    #[staticmethod]
+    #[pyo3(signature = (path, seat, seed=0))]
+    fn from_file(path: &str, seat: u8, seed: u64) -> PyResult<Self> {
+        let spec = std::fs::read_to_string(path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;
+        Agent::new(&spec, seat, seed)
+    }
+
+    #[getter]
+    fn seat(&self) -> u8 {
+        self.seat
+    }
+
+    #[getter]
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Retune the per-move time budget without rebuilding the agent (which
+    /// would discard its belief state mid-deal). No-op in count mode.
+    fn set_time_ms(&mut self, ms: u32) {
+        self.player.set_time_budget(ms);
+    }
+
+    /// Cumulative match score, which score-aware bidders condition on.
+    /// Leave at zero for single-deal play.
+    fn set_scores(&mut self, ns: i32, ew: i32) {
+        self.ctx.scores = [ns, ew];
+    }
+
+    /// Start a new deal. `env` must be the freshly dealt, pre-auction position.
+    fn init_deal(&mut self, env: PyRef<Env>) {
+        self.ctx.reset_deal(env.state.dealer);
+        self.player.init_deal(&env.state);
+    }
+
+    /// Observe an action. `env` must still hold the position **before** the
+    /// action is applied — call this on every agent, for every seat's move,
+    /// then `env.step(action)`.
+    fn observe(&mut self, env: PyRef<Env>, action: u8) {
+        let before = env.state;
+        let player = before.current_player();
+        self.player.observe(&before, player, action);
+        self.ctx.track(&before, action);
+    }
+
+    /// Decide at the current position.
+    ///
+    /// Returns `{action, source, candidates: [[action, score], …],
+    /// determinizations, worlds: {injected, playgen, belief, uniform},
+    /// elapsed_ms}`. `worlds` is what makes a degraded run visible: if the
+    /// playgen sidecar were substituted by uniform sampling, the counts would
+    /// say so instead of the agent quietly getting weaker.
+    fn decide<'py>(&mut self, py: Python<'py>, env: PyRef<Env>) -> PyResult<Bound<'py, PyDict>> {
+        let state = env.state;
+        drop(env);
+        // Searching can take seconds; let the web's event loop run meanwhile.
+        let decision = py
+            .allow_threads(|| self.player.decide(&state, &self.ctx))
+            .map_err(agent_err)?;
+
+        let dict = PyDict::new_bound(py);
+        dict.set_item("action", decision.action)?;
+        dict.set_item("source", decision.stats.source)?;
+        dict.set_item("candidates", decision.stats.candidates)?;
+        dict.set_item("determinizations", decision.stats.determinizations)?;
+        dict.set_item("elapsed_ms", decision.stats.elapsed_ms)?;
+        let worlds = PyDict::new_bound(py);
+        worlds.set_item("injected", decision.stats.worlds.injected)?;
+        worlds.set_item("playgen", decision.stats.worlds.playgen)?;
+        worlds.set_item("belief", decision.stats.worlds.belief)?;
+        worlds.set_item("uniform", decision.stats.worlds.uniform)?;
+        dict.set_item("worlds", worlds)?;
+        Ok(dict)
+    }
+
+    /// Convenience: just the action.
+    fn action(&mut self, py: Python<'_>, env: PyRef<Env>) -> PyResult<u8> {
+        let state = env.state;
+        drop(env);
+        py.allow_threads(|| self.player.decide(&state, &self.ctx))
+            .map(|d| d.action)
+            .map_err(agent_err)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Analyst — read-only introspection of the playgen world model
+// ══════════════════════════════════════════════════════════════════════
+
+/// What the playgen model *believes*, as opposed to what an agent *does*.
+///
+/// Kept separate from [`Agent`] on purpose: the analysis pages cannot change
+/// how a bot plays, and a bot carries no code it never runs. Same lifecycle:
+/// `init_deal`, then `observe` for every action, then query.
+#[pyclass]
+struct Analyst {
+    inner: PlaygenAnalyst,
+    rng: StdRng,
+}
+
+#[pymethods]
+impl Analyst {
+    #[new]
+    #[pyo3(signature = (model_path, seed=0))]
+    fn new(model_path: &str, seed: u64) -> PyResult<Self> {
+        let model = colver_core::agent::models::playgen_model(model_path).map_err(agent_err)?;
+        Ok(Analyst { inner: PlaygenAnalyst::new(model), rng: StdRng::seed_from_u64(seed) })
+    }
+
+    /// Rebuild the sampler state at a position by replaying the deal, so the
+    /// analysis pages can jump around without keeping a live object per view.
+    #[staticmethod]
+    #[pyo3(signature = (model_path, dealer, hands, actions, observer, seed=0))]
+    fn replay(
+        model_path: &str,
+        dealer: u8,
+        hands: Vec<Vec<u8>>,
+        actions: Vec<u8>,
+        observer: u8,
+        seed: u64,
+    ) -> PyResult<Self> {
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err("observer must be 0-3"));
+        }
+        let mut analyst = Analyst::new(model_path, seed)?;
+        let mut env = Env::deal_with_hands(dealer, hands)?;
+        analyst.inner.init_deal(&env.state, observer);
+        for action in actions {
+            let before = env.state;
+            analyst.inner.observe(&before, before.current_player(), action);
+            env.state.step(action);
+        }
+        Ok(analyst)
+    }
+
+    fn init_deal(&mut self, env: PyRef<Env>, observer: u8) -> PyResult<()> {
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err("observer must be 0-3"));
+        }
+        self.inner.init_deal(&env.state, observer);
+        Ok(())
+    }
+
+    fn observe(&mut self, env: PyRef<Env>, action: u8) {
+        let before = env.state;
+        let player = before.current_player();
+        self.inner.observe(&before, player, action);
+    }
+
+    /// Card-location marginals `weights[player][card]`, or `None` if the model
+    /// cannot sample here (notably mid-auction for v1 models).
+    #[pyo3(signature = (env, n_worlds=50, temperature=1.0))]
+    fn marginals(
+        &mut self,
+        py: Python<'_>,
+        env: PyRef<Env>,
+        n_worlds: usize,
+        temperature: f32,
+    ) -> Option<Vec<Vec<f32>>> {
+        let state = env.state;
+        drop(env);
+        py.allow_threads(|| self.inner.marginals(&state, n_worlds, temperature, &mut self.rng))
+            .map(|w| w.iter().map(|row| row.to_vec()).collect())
+    }
+
+    /// Masked-softmax bid probabilities (43) at the current auction point, or
+    /// `None` for models without a bid head.
+    #[pyo3(signature = (env, temperature=1.0))]
+    fn bid_policy(&mut self, env: PyRef<Env>, temperature: f32) -> Option<Vec<f32>> {
+        let state = env.state;
+        drop(env);
+        let logits = self.inner.bid_policy(&state)?;
+        Some(masked_softmax(&logits, state.legal_actions(), temperature))
+    }
+
+    /// Full deals sampled from a mid-auction position: the auction is finished
+    /// with the bid head, then the deal is played out to reveal the hands.
+    #[pyo3(signature = (env, n_worlds, temperature=1.0))]
+    fn auction_deals(
+        &mut self,
+        py: Python<'_>,
+        env: PyRef<Env>,
+        n_worlds: usize,
+        temperature: f32,
+    ) -> Option<Vec<Vec<Vec<u8>>>> {
+        let state = env.state;
+        drop(env);
+        let worlds = py.allow_threads(|| {
+            self.inner.auction_deals(&state, n_worlds, temperature, &mut self.rng)
+        });
+        if worlds.is_empty() {
+            return None;
+        }
+        Some(worlds.iter().map(|hands| hands.iter().map(|&h| mask_to_cards(h)).collect()).collect())
+    }
+}
+
+fn mask_to_cards(mask: u32) -> Vec<u8> {
+    (0..32u8).filter(|c| mask & (1 << c) != 0).collect()
+}
+
+/// Softmax over the legal actions only; illegal entries stay at 0.
+fn masked_softmax(logits: &[f32], legal: u64, temperature: f32) -> Vec<f32> {
+    let t = temperature.max(1e-3);
+    let n = logits.len();
+    let max_l = (0..n)
+        .filter(|&c| legal & (1u64 << c) != 0)
+        .map(|c| logits[c])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let mut probs = vec![0.0f32; n];
+    let mut total = 0.0f32;
+    for c in 0..n {
+        if legal & (1u64 << c) != 0 {
+            let p = ((logits[c] - max_l) / t).exp();
+            probs[c] = p;
+            total += p;
+        }
+    }
+    if total > 0.0 {
+        for p in probs.iter_mut() {
+            *p /= total;
+        }
+    }
+    probs
+}
+
+// ══════════════════════════════════════════════════════════════════════
+//  Beliefs — what the card-belief models think, for the analysis pages
+// ══════════════════════════════════════════════════════════════════════
+
+/// Card-location beliefs from one observer's seat: the neural belief net's
+/// soft prediction (combined with the hard constraints that are facts) and the
+/// heuristic `CardBeliefs` model on its own.
+///
+/// This is IS-DD's belief machinery exposed for display. It is deliberately
+/// separate from [`Agent`]: looking at what a model believes must never be
+/// able to change how a bot plays.
+#[pyclass]
+struct Beliefs {
+    search: IsDdSearch,
+    observer: u8,
+}
+
+#[pymethods]
+impl Beliefs {
+    /// Rebuild the belief state at a position by replaying the deal.
+    ///
+    /// Replaying (rather than holding a live object) keeps the analysis pages
+    /// stateless: they can jump to any action index and ask again. It is cheap
+    /// — belief updates involve no search.
+    #[staticmethod]
+    #[pyo3(signature = (dealer, hands, actions, observer, belief_model=None))]
+    fn replay(
+        dealer: u8,
+        hands: Vec<Vec<u8>>,
+        actions: Vec<u8>,
+        observer: u8,
+        belief_model: Option<&str>,
+    ) -> PyResult<Self> {
+        if observer >= 4 {
+            return Err(pyo3::exceptions::PyValueError::new_err("observer must be 0-3"));
+        }
+        let mut env = Env::deal_with_hands(dealer, hands)?;
+        let mut search = IsDdSearch::new();
+        if let Some(path) = belief_model {
+            search
+                .load_belief_net(path)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;
+        }
+        search.init_deal(&env.state, observer, false);
+        for action in actions {
+            let before = env.state;
+            search.record_action(&before, before.current_player(), action);
+            env.state.step(action);
+        }
+        Ok(Beliefs { search, observer })
+    }
+
+    /// `{nn: [[f32; 32]; 4] | None, heuristic: [[f32; 32]; 4] | None}` —
+    /// `weights[player][card]`. `nn` is `None` when no belief net was given.
+    fn weights<'py>(&mut self, py: Python<'py>, env: PyRef<Env>) -> PyResult<Bound<'py, PyDict>> {
+        let state = env.state;
+        drop(env);
+        let (nn, heuristic) = self.search.get_belief_weights(&state, self.observer);
+        let dict = PyDict::new_bound(py);
+        let to_py = |w: Option<[[f32; 32]; 4]>| -> Option<Vec<Vec<f32>>> {
+            w.map(|w| w.iter().map(|row| row.to_vec()).collect())
+        };
+        dict.set_item("nn", to_py(nn))?;
+        dict.set_item("heuristic", to_py(heuristic))?;
+        Ok(dict)
+    }
+}
+
 #[pymodule]
 fn _colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Env>()?;
+    m.add_class::<Agent>()?;
+    m.add_class::<Analyst>()?;
+    m.add_class::<Beliefs>()?;
     Ok(())
 }

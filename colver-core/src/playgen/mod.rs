@@ -10,6 +10,9 @@ pub mod tokens;
 #[cfg(feature = "rand")]
 pub mod infer;
 
+#[cfg(feature = "rand")]
+pub mod analysis;
+
 #[cfg(feature = "dmc_train")]
 pub mod model;
 

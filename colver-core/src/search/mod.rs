@@ -8,8 +8,4 @@ pub mod naive_ismcts;
 #[cfg(feature = "rand")]
 pub mod smart_ismcts;
 #[cfg(feature = "rand")]
-pub mod single_tree_ismcts;
-#[cfg(feature = "rand")]
 pub mod is_dd;
-#[cfg(feature = "rand")]
-pub mod elephant;

@@ -3,7 +3,6 @@ pub mod bid_obs;
 pub mod bid_net;
 pub mod maxi;
 #[cfg(feature = "rand")]
-pub mod bis_dd;
 #[cfg(feature = "rand")]
 pub mod dd_bid;
 #[cfg(feature = "rand")]

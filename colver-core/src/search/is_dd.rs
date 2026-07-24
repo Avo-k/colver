@@ -24,8 +24,7 @@ use crate::card_beliefs::CardBeliefs;
 use crate::determinize::{determinize_greedy, determinize_weighted};
 use crate::dmc_net::DmcNet;
 use crate::dmc_obs::{self, EnvTracking, OBS_DIM_TR};
-use crate::elephant::{blend_with_evidence, ElephantMemory};
-use crate::playgen::infer::{AuctionLogp, PlaygenModel, PlaygenSampler, WorldLogp};
+use crate::worlds::{World, WorldSource};
 use crate::solver::{new_tt_buffer, solve_with_scores};
 use crate::state::{GameState, Phase};
 
@@ -34,9 +33,9 @@ use crate::state::{GameState, Phase};
 /// **Hard constraints** (voids, trump ceiling, played cards) are facts, not beliefs:
 /// they are always applied unconditionally and not exposed as a flag.
 ///
-/// **Soft beliefs** (heuristic soft inference, NN beliefs, elephant memory) are all
-/// **off by default** — they introduce probabilistic adjustments that may help or hurt
-/// depending on opponents and play model.
+/// **Soft beliefs** (heuristic soft inference, NN beliefs) are **off by default** —
+/// they introduce probabilistic adjustments that may help or hurt depending on
+/// the opponents and the play model.
 pub struct IsDdConfig {
     /// Number of determinized worlds to sample (default 20).
     pub determinizations: u32,
@@ -50,36 +49,21 @@ pub struct IsDdConfig {
     /// If true and a BeliefNet is loaded, use NN soft beliefs (still combined with
     /// hard constraints, which are always applied). **Off by default.**
     pub use_nn_beliefs: bool,
-    /// If true, enable elephant memory (particle filter from past determinizations).
-    /// **Off by default.**
-    pub use_elephant_memory: bool,
-    /// Smoothing factor for elephant memory evidence blending (default 0.05).
-    /// Lower = stronger influence from particles; higher = more conservative.
-    pub elephant_smoothing: f32,
-    /// Penalty factor per dominant card not played (default 0.5).
-    /// Only used when elephant memory is enabled.
-    pub elephant_dominance_penalty: f32,
-    /// Whether to use soft dominance penalty in elephant memory (default true).
-    pub elephant_use_dominance: bool,
-    /// Decay factor for elephant memory particles (default 0.8).
-    /// 1.0 = no decay, 0.5 = aggressive decay of old particles.
-    pub elephant_decay: f32,
     /// Play dominance inference factor for CardBeliefs.
     /// When a player follows suit without playing the highest, reduce weight for
     /// higher unknown cards by this factor. 1.0 = off, 0.3 = aggressive. Default 1.0.
     pub dominance_factor: f32,
     /// If true (default), skip search when only 1 legal action or position is fully resolved.
     pub early_termination: bool,
-    /// Fraction of determinized worlds sampled from the playgen transformer
-    /// (requires a loaded playgen model). 0.0 = all worlds from
-    /// constraint-uniform sampling (default), 1.0 = all from playgen.
-    pub playgen_frac: f32,
-    /// Softmax temperature for playgen world sampling (default 1.0 = posterior).
-    pub playgen_temp: f32,
-    /// Ensemble pool: among NON-playgen worlds, fraction sampled with belief
-    /// weights (when available); the rest use constraint-uniform sampling for
-    /// coverage. Default 1.0 = previous behavior (all weighted when a belief
-    /// source is active).
+    /// How many worlds to request per [`WorldSource`] refill when running
+    /// under a time budget (in count mode the whole remaining budget is asked
+    /// for at once). One refill is one GPU round trip for the sidecar, so this
+    /// trades latency granularity against overhead. Default 128.
+    pub world_batch: usize,
+    /// Fallback pool: when no [`WorldSource`] is attached (or it runs dry),
+    /// the fraction of worlds drawn with belief weights rather than
+    /// constraint-uniform. Only has an effect when a belief source is active.
+    /// Default 1.0.
     pub belief_frac: f32,
     /// Credibility importance weighting of worlds in the DD aggregation. Each
     /// world's weight is the product of per-action rank factors — "would the
@@ -91,8 +75,8 @@ pub struct IsDdConfig {
     /// weighting. See [`IsDdSearch::credibility_weight`] for the mechanism.
     pub cred_alpha: f32,
     /// Solve the determinized worlds in parallel (rayon global pool) instead of
-    /// sequentially. World *generation* is always sequential (the playgen
-    /// sampler and RNG are stateful); only the embarrassingly-parallel DD
+    /// sequentially. World *generation* is always sequential (the world source
+    /// and RNG are stateful); only the embarrassingly-parallel DD
     /// solves are spread across threads, each with its own transposition table.
     /// Results are identical to the sequential path (DD is deterministic and the
     /// aggregation reduces in a fixed order). Requires the `parallel` cargo
@@ -110,15 +94,9 @@ impl Default for IsDdConfig {
             time_limit_ms: None,
             bid_function: BidFunction::ImprovedV2,
             use_nn_beliefs: false,
-            use_elephant_memory: false,
-            elephant_smoothing: 0.05,
-            elephant_dominance_penalty: 0.5,
-            elephant_use_dominance: true,
-            elephant_decay: 0.8,
             dominance_factor: 1.0,
             early_termination: true,
-            playgen_frac: 0.0,
-            playgen_temp: 1.0,
+            world_batch: 128,
             belief_frac: 1.0,
             cred_alpha: 0.0,
             parallel: false,
@@ -197,6 +175,48 @@ fn rank_factor(better: u32) -> f32 {
     }
 }
 
+/// Where a determinized world came from. The ensemble policy in
+/// [`IsDdSearch::generate_world`] tries these in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorldOrigin {
+    /// Supplied by the caller via [`IsDdSearch::set_injected_worlds`] (e.g. the
+    /// playgen GPU sidecar).
+    Injected,
+    /// Sampled in-process from the playgen transformer.
+    Playgen,
+    /// Belief-weighted determinization (NN or heuristic weights).
+    Belief,
+    /// Constraint-uniform determinization — the coverage floor.
+    Uniform,
+}
+
+/// How many solved worlds came from each source. Reported so a degraded run
+/// (e.g. a playgen sidecar that stopped answering) is visible in the stats
+/// instead of silently changing the agent's strength.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorldCounts {
+    pub injected: u32,
+    pub playgen: u32,
+    pub belief: u32,
+    pub uniform: u32,
+}
+
+impl WorldCounts {
+    #[inline]
+    fn record(&mut self, origin: WorldOrigin) {
+        match origin {
+            WorldOrigin::Injected => self.injected += 1,
+            WorldOrigin::Playgen => self.playgen += 1,
+            WorldOrigin::Belief => self.belief += 1,
+            WorldOrigin::Uniform => self.uniform += 1,
+        }
+    }
+
+    pub fn total(&self) -> u32 {
+        self.injected + self.playgen + self.belief + self.uniform
+    }
+}
+
 /// Per-card aggregated DD result.
 pub struct IsDdResult {
     /// Best card for the current player's team.
@@ -205,6 +225,8 @@ pub struct IsDdResult {
     pub card_scores: Vec<(u8, f32)>,
     /// Number of successful determinizations.
     pub determinizations: u32,
+    /// Provenance of those determinizations.
+    pub worlds: WorldCounts,
 }
 
 /// IS-DD search using belief-weighted determinization + exact DD solving.
@@ -216,8 +238,6 @@ pub struct IsDdSearch {
     beliefs: Option<CardBeliefs>,
     belief_net: Option<BeliefNet>,
     belief_tracking: Option<EnvTracking>,
-    elephant: Option<ElephantMemory>,
-    playgen: Option<PlaygenSampler>,
     /// Bid net used as an auction-credibility judge (see `cred_alpha`).
     cred_bid_net: Option<crate::bid_net::BidNet>,
     /// DMC net used as a play-credibility judge (see `cred_alpha`). Canonical
@@ -233,9 +253,11 @@ pub struct IsDdSearch {
     init_state: Option<GameState>,
     /// Cards played so far per seat (current trick included).
     played_by: [u32; 4],
-    /// Externally provided worlds (e.g. GPU sidecar), consumed first by the
-    /// next `search*` call. Remaining-hands format, current position.
-    injected_worlds: Vec<[u32; 4]>,
+    /// Worlds pulled from the [`WorldSource`] for the position currently
+    /// being searched, not yet solved. Refilled on demand and dropped when the
+    /// search ends, so a later search at another position cannot consume
+    /// worlds sampled for the previous one.
+    world_queue: Vec<World>,
     tt_buf: Vec<u64>,
 }
 
@@ -245,15 +267,13 @@ impl IsDdSearch {
             beliefs: None,
             belief_net: None,
             belief_tracking: None,
-            elephant: None,
-            playgen: None,
             cred_bid_net: None,
             cred_play_net: None,
             auction: Vec::new(),
             plays: Vec::new(),
             init_state: None,
             played_by: [0; 4],
-            injected_worlds: Vec::new(),
+            world_queue: Vec::new(),
             tt_buf: new_tt_buffer(),
         }
     }
@@ -276,28 +296,6 @@ impl IsDdSearch {
         }
         self.cred_play_net = Some(net);
         Ok(())
-    }
-
-    /// Attach a playgen world-sampler model (shared, read-only).
-    pub fn set_playgen_model(&mut self, model: std::sync::Arc<PlaygenModel>) {
-        self.playgen = Some(PlaygenSampler::new(model));
-    }
-
-    pub fn has_playgen(&self) -> bool {
-        self.playgen.is_some()
-    }
-
-    /// Provide externally sampled worlds (e.g. from the GPU sidecar) for the
-    /// next `search*` call. Consumed before any internal sampler; invalid
-    /// worlds (wrong counts or wrong observer hand) are skipped.
-    pub fn set_injected_worlds(&mut self, worlds: Vec<[u32; 4]>) {
-        self.injected_worlds = worlds;
-    }
-
-    /// Direct access to the playgen sampler (e.g. to read prefix tokens for
-    /// an external GPU forward backend).
-    pub fn playgen_sampler(&self) -> Option<&PlaygenSampler> {
-        self.playgen.as_ref()
     }
 
     /// Load a BeliefNet for NN-based beliefs.
@@ -324,24 +322,16 @@ impl IsDdSearch {
             self.belief_tracking = Some(tracking);
         }
 
-        // Reset playgen sampler for the new deal
-        if let Some(sampler) = &mut self.playgen {
-            sampler.init_deal(state, observer);
-        }
-
         // Credibility judge: remember the pre-auction state, reset the logs.
         self.auction.clear();
         self.plays.clear();
         self.init_state = Some(*state);
         self.played_by = [0; 4];
+        self.world_queue.clear();
 
-        // Reset elephant memory for new deal (re-initialized per config in search).
-        if let Some(ref mut elephant) = self.elephant {
-            elephant.clear();
-        }
     }
 
-    /// Initialize beliefs for a new deal, with elephant memory config.
+    /// Initialize beliefs for a new deal, applying the config's belief knobs.
     pub fn init_deal_with_config(
         &mut self,
         state: &GameState,
@@ -353,26 +343,15 @@ impl IsDdSearch {
         if let Some(ref mut beliefs) = self.beliefs {
             beliefs.dominance_factor = config.dominance_factor;
         }
-        if config.use_elephant_memory {
-            let mut elephant = ElephantMemory::new(observer);
-            elephant.dominance_penalty = config.elephant_dominance_penalty;
-            elephant.use_dominance = config.elephant_use_dominance;
-            elephant.decay = config.elephant_decay;
-            self.elephant = Some(elephant);
-        } else {
-            self.elephant = None;
-        }
     }
 
-    /// Record an action by any player, updating beliefs and elephant memory.
+    /// Record an action by any player, updating beliefs and the world source's
+    /// view of the history.
     ///
     /// `state_before` is the state BEFORE the action was applied.
     pub fn record_action(&mut self, state_before: &GameState, player: u8, action: u8) {
         if let Some(beliefs) = &mut self.beliefs {
             beliefs.record_action(state_before, player, action);
-        }
-        if let Some(sampler) = &mut self.playgen {
-            sampler.record_action(state_before, player, action);
         }
         if let Some(tracking) = &mut self.belief_tracking {
             tracking.track_action(state_before, action);
@@ -384,21 +363,12 @@ impl IsDdSearch {
             self.played_by[player as usize] |= 1u32 << action;
             self.plays.push((player, action));
         }
-        // Update elephant memory: filter particles based on observed play.
-        if state_before.phase == Phase::Playing {
-            if let Some(ref mut elephant) = self.elephant {
-                elephant.observe_play(player, action, state_before);
-            }
-        }
     }
 
     /// Reset beliefs (e.g., between deals).
     pub fn reset(&mut self) {
         self.beliefs = None;
         self.belief_tracking = None;
-        if let Some(ref mut elephant) = self.elephant {
-            elephant.clear();
-        }
     }
 
     /// Compute belief weights for determinization.
@@ -513,23 +483,6 @@ impl IsDdSearch {
             self.beliefs.as_ref().map(|b| b.normalized_weights())
         };
 
-        // Blend with elephant memory evidence if available.
-        if config.use_elephant_memory {
-            if let Some(ref elephant) = self.elephant {
-                if let Some(evidence) = elephant.compute_evidence(state) {
-                    if let Some(base) = base_weights {
-                        return Some(blend_with_evidence(
-                            &base,
-                            &evidence,
-                            state,
-                            observer,
-                            config.elephant_smoothing,
-                        ));
-                    }
-                }
-            }
-        }
-
         base_weights
     }
 
@@ -553,92 +506,6 @@ impl IsDdSearch {
         };
         let heuristic_weights = self.beliefs.as_ref().map(|b| b.normalized_weights());
         (nn_weights, heuristic_weights)
-    }
-
-    /// Monte-Carlo card-location marginals from the playgen world sampler.
-    ///
-    /// Samples up to `n_worlds` determinized worlds from the current position
-    /// (lockstep batches) and counts where each unseen card lands. Returns
-    /// `weights[player][card]` probabilities, or `None` if no playgen model is
-    /// attached or no world could be generated (e.g. during bidding, before
-    /// the contract fixes the canonical trump permutation).
-    pub fn playgen_marginals(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl Rng,
-    ) -> Option<[[f32; 32]; 4]> {
-        let sampler = self.playgen.as_mut()?;
-        const BATCH: usize = 16;
-        let mut counts = [[0u32; 32]; 4];
-        let mut total = 0u32;
-        while (total as usize) < n_worlds {
-            let want = BATCH.min(n_worlds - total as usize);
-            let worlds = sampler.generate_worlds_batch(state, want, temperature, rng);
-            if worlds.is_empty() {
-                break;
-            }
-            for hands in worlds {
-                for p in 0..4 {
-                    let mut h = hands[p];
-                    while h != 0 {
-                        counts[p][h.trailing_zeros() as usize] += 1;
-                        h &= h - 1;
-                    }
-                }
-                total += 1;
-            }
-        }
-        if total == 0 {
-            return None;
-        }
-        let mut weights = [[0f32; 32]; 4];
-        for p in 0..4 {
-            for c in 0..32 {
-                weights[p][c] = counts[p][c] as f32 / total as f32;
-            }
-        }
-        Some(weights)
-    }
-
-    /// Playgen bid-policy logits (43) at the current auction point
-    /// (v2 playgen models only; None otherwise).
-    pub fn playgen_bid_policy(&mut self, state: &GameState) -> Option<[f32; 43]> {
-        self.playgen.as_mut()?.bid_policy(state)
-    }
-
-    /// Sample full deals from a mid-auction position via the playgen model
-    /// (v2 only): auction completed with the bid head, deal played out to
-    /// reveal hands. Returns up to `n_worlds` hand assignments.
-    pub fn playgen_auction_deals(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl Rng,
-    ) -> Vec<[u32; 4]> {
-        match self.playgen.as_mut() {
-            Some(sampler) => sampler.generate_deals_from_auction(state, n_worlds, temperature, rng),
-            None => Vec::new(),
-        }
-    }
-
-    /// Scored variant of [`Self::playgen_auction_deals`]: each deal carries
-    /// the cumulative log-probability of its sampled continuation.
-    pub fn playgen_auction_deals_scored(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl Rng,
-    ) -> Vec<([u32; 4], AuctionLogp)> {
-        match self.playgen.as_mut() {
-            Some(sampler) => {
-                sampler.generate_deals_from_auction_scored(state, n_worlds, temperature, rng)
-            }
-            None => Vec::new(),
-        }
     }
 
     /// Credibility weight of a world: replay the observed history holding this
@@ -790,52 +657,7 @@ impl IsDdSearch {
             .collect()
     }
 
-    /// Sample play-phase worlds from the playgen model (batch lockstep).
-    pub fn playgen_worlds(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl Rng,
-    ) -> Vec<[u32; 4]> {
-        match self.playgen.as_mut() {
-            Some(sampler) => sampler.generate_worlds_batch(state, n_worlds, temperature, rng),
-            None => Vec::new(),
-        }
-    }
-
-    /// Scored variant of [`Self::playgen_worlds`]: each world carries the
-    /// cumulative log-probability of its sampled continuation (hidden actors).
-    pub fn playgen_worlds_scored(
-        &mut self,
-        state: &GameState,
-        n_worlds: usize,
-        temperature: f32,
-        rng: &mut impl Rng,
-    ) -> Vec<([u32; 4], WorldLogp)> {
-        match self.playgen.as_mut() {
-            Some(sampler) => {
-                sampler.generate_worlds_batch_scored(state, n_worlds, temperature, rng)
-            }
-            None => Vec::new(),
-        }
-    }
-
-    /// Get elephant memory stats: (surviving_particles, total_particles).
-    pub fn elephant_stats(&self) -> (usize, usize) {
-        match &self.elephant {
-            Some(e) => (e.surviving_count(), e.total_count()),
-            None => (0, 0),
-        }
-    }
-
-    /// Get elephant evidence weights (particle-derived card distributions).
-    /// Returns None if elephant memory is not active or has no surviving particles.
-    pub fn elephant_evidence(&self, state: &GameState) -> Option<[[f32; 32]; 4]> {
-        self.elephant.as_ref()?.compute_evidence(state)
-    }
-
-    /// Get base belief weights (heuristic CardBeliefs, without elephant blending).
+    /// Heuristic `CardBeliefs` weights, before any NN blending.
     pub fn base_belief_weights(&self) -> Option<[[f32; 32]; 4]> {
         self.beliefs.as_ref().map(|b| b.normalized_weights())
     }
@@ -892,6 +714,7 @@ impl IsDdSearch {
         Some(resolved)
     }
 
+    /// Best card, sampling worlds from beliefs / constraint-uniform only.
     pub fn search(
         &mut self,
         state: &GameState,
@@ -904,12 +727,49 @@ impl IsDdSearch {
         self.search_with_stats(state, config, rng).best_action
     }
 
+    /// Full result, sampling worlds from beliefs / constraint-uniform only.
+    ///
+    /// Infallible: without a [`WorldSource`] there is nothing that can fail.
+    /// Use [`search_with_source`](Self::search_with_source) to draw worlds from
+    /// a playgen sampler — that is the strong configuration, and the one
+    /// production uses.
     pub fn search_with_stats(
         &mut self,
         state: &GameState,
         config: &IsDdConfig,
         rng: &mut impl Rng,
     ) -> IsDdResult {
+        self.run_search(state, config, rng, None)
+            .expect("search without a world source cannot fail")
+    }
+
+    /// Full result, drawing determinized worlds from `source`.
+    ///
+    /// Worlds are pulled in batches and refilled on demand until the
+    /// determinization count or the time budget is exhausted. If the source
+    /// errors, the error propagates: a search that silently continued on
+    /// constraint-uniform worlds would be a measurably weaker agent wearing
+    /// the same name. A source that legitimately runs *dry* (returns an empty
+    /// batch without erroring, as happens in over-constrained endgames) is not
+    /// an error — the search falls back to its own sampling and reports the
+    /// mix in [`IsDdResult::worlds`].
+    pub fn search_with_source(
+        &mut self,
+        state: &GameState,
+        config: &IsDdConfig,
+        rng: &mut impl Rng,
+        source: &mut dyn WorldSource,
+    ) -> Result<IsDdResult, crate::agent::AgentError> {
+        self.run_search(state, config, rng, Some(source))
+    }
+
+    fn run_search(
+        &mut self,
+        state: &GameState,
+        config: &IsDdConfig,
+        rng: &mut impl Rng,
+        mut source: Option<&mut dyn WorldSource>,
+    ) -> Result<IsDdResult, crate::agent::AgentError> {
         debug_assert!(!state.is_terminal(), "Cannot search from terminal state");
 
         let observer = state.current_player();
@@ -921,23 +781,17 @@ impl IsDdSearch {
             let legal = state.legal_actions();
             if legal.count_ones() == 1 {
                 let card = legal.trailing_zeros() as u8;
-                return IsDdResult {
+                return Ok(IsDdResult {
                     best_action: card,
                     card_scores: vec![(card, 81.0)],
                     determinizations: 0,
-                };
+                    worlds: WorldCounts::default(),
+                });
             }
 
             // Resolved position: beliefs uniquely determine all card locations.
             // Single DD solve gives the exact answer — no determinization needed.
             if let Some(resolved) = self.try_resolve_position(state, observer) {
-                // Feed the resolved hands as a single particle for elephant memory.
-                if config.use_elephant_memory {
-                    if let Some(ref mut elephant) = self.elephant {
-                        elephant.add_particles(&[resolved.hands]);
-                    }
-                }
-
                 let scores = solve_with_scores(&resolved, Some(&mut self.tt_buf));
                 let mut card_scores = Vec::new();
                 let mut best_action = legal.trailing_zeros() as u8;
@@ -955,11 +809,14 @@ impl IsDdSearch {
                     }
                 }
 
-                return IsDdResult {
+                // The position is fully resolved by facts, not by sampling —
+                // count it as a world of its own kind rather than mislabeling it.
+                return Ok(IsDdResult {
                     best_action,
                     card_scores,
                     determinizations: 1,
-                };
+                    worlds: WorldCounts::default(),
+                });
             }
         }
 
@@ -967,10 +824,6 @@ impl IsDdSearch {
         // (weights are 1.0 unless credibility weighting is enabled).
         let mut score_sum = [0f64; 32];
         let mut weight_sum = [0f64; 32];
-
-        // Collect determinized hands for elephant memory.
-        let store_particles = config.use_elephant_memory && self.elephant.is_some();
-        let mut det_hands: Vec<[u32; 4]> = Vec::new();
 
         // Scale time budget by cards remaining
         let cards_left = card_count(state.hands[observer as usize]);
@@ -983,19 +836,18 @@ impl IsDdSearch {
 
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
+        let mut world_counts = WorldCounts::default();
 
-        // Playgen worlds are generated in lockstep batches (weights streamed
-        // once per token-step for the whole batch) and consumed from a queue
-        // that persists across chunks.
-        let mut playgen_queue: Vec<[u32; 4]> = Vec::new();
-        let mut playgen_dry = false;
+        // Once the source stops producing worlds we stop asking, so an
+        // over-constrained endgame costs one empty round trip, not one per world.
+        let mut source_dry = false;
 
         // The search runs in chunks: **generate** a batch of worlds sequentially
-        // (the playgen sampler, injected-world queue and RNG are all stateful),
-        // then **solve** the whole batch — in parallel when `config.parallel` is
-        // set, otherwise one by one reusing this search's TT. The chunk is one
-        // world in sequential mode (tightest deadline adherence, identical to the
-        // legacy per-world loop) and one worker-slot's worth in parallel mode.
+        // (the world queue and the RNG are stateful), then **solve** the whole
+        // batch — in parallel when `config.parallel` is set, otherwise one by one
+        // reusing this search's TT. The chunk is one world in sequential mode
+        // (tightest deadline adherence, identical to the legacy per-world loop)
+        // and one worker-slot's worth in parallel mode.
         let chunk_size = solve_chunk_size(config.parallel);
 
         loop {
@@ -1014,21 +866,35 @@ impl IsDdSearch {
                 chunk_size.min((config.determinizations - det_count) as usize)
             };
 
+            // --- Refill from the world source when the queue cannot cover the
+            // round. In count mode ask for the whole remaining budget (one round
+            // trip per move); under a deadline ask for `world_batch` at a time. ---
+            if let Some(src) = source.as_deref_mut() {
+                if !source_dry && self.world_queue.len() < remaining {
+                    let want = if deadline.is_some() {
+                        config.world_batch.max(remaining)
+                    } else {
+                        ((config.determinizations - det_count) as usize).max(remaining)
+                    };
+                    let batch = src.worlds(state, observer, want, rng)?;
+                    if batch.is_empty() {
+                        source_dry = true;
+                    } else {
+                        self.world_queue.extend(batch);
+                    }
+                }
+            }
+
             // --- Generate a chunk of worlds (sequential). ---
             let mut chunk: Vec<GameState> = Vec::with_capacity(remaining);
+            let mut chunk_origins: Vec<WorldOrigin> = Vec::with_capacity(remaining);
             let mut attempted = 0u32;
             for _ in 0..remaining {
                 attempted += 1;
-                if let Some(s) = self.generate_world(
-                    state,
-                    observer,
-                    &weights,
-                    config,
-                    &mut playgen_queue,
-                    &mut playgen_dry,
-                    rng,
-                ) {
+                if let Some((s, origin)) = self.generate_world(state, observer, &weights, config, rng)
+                {
                     chunk.push(s);
+                    chunk_origins.push(origin);
                 }
             }
             det_count += attempted;
@@ -1037,11 +903,6 @@ impl IsDdSearch {
                 // `det_count` still advances so we terminate, in time mode we
                 // retry until the deadline. Avoid touching the accumulators.
                 continue;
-            }
-
-            // Store hand assignments for elephant memory.
-            if store_particles {
-                det_hands.extend(chunk.iter().map(|s| s.hands));
             }
 
             // --- Credibility weights (sequential: the judge nets are stateful). ---
@@ -1066,18 +927,14 @@ impl IsDdSearch {
                 }
             }
             successful_dets += chunk.len() as u32;
-        }
-
-        // Injected worlds are one-shot: drop any leftover so a later search
-        // at another position cannot consume stale worlds.
-        self.injected_worlds.clear();
-
-        // Feed determinized hands into elephant memory.
-        if store_particles && !det_hands.is_empty() {
-            if let Some(ref mut elephant) = self.elephant {
-                elephant.add_particles(&det_hands);
+            for origin in &chunk_origins {
+                world_counts.record(*origin);
             }
         }
+
+        // Sourced worlds are position-specific: drop any leftover so the next
+        // search cannot consume worlds sampled for the previous position.
+        self.world_queue.clear();
 
         // Build result: pick best card based on aggregated scores
         let legal = state.legal_actions();
@@ -1114,88 +971,53 @@ impl IsDdSearch {
             best_action = legal.trailing_zeros() as u8;
         }
 
-        IsDdResult {
+        Ok(IsDdResult {
             best_action,
             card_scores,
             determinizations: successful_dets,
-        }
+            worlds: world_counts,
+        })
     }
 
-    /// Generate a single determinized world for the current position, following
-    /// the ensemble policy: **injected** worlds (e.g. GPU sidecar) first, then a
-    /// **playgen** world (probability `playgen_frac`, drawn from a persistent
-    /// lockstep batch), then a **belief-weighted** world (probability
-    /// `belief_frac` when a belief source is active), falling back to a
-    /// **constraint-uniform** world. Hard constraints (voids, trump ceiling,
-    /// played cards) are always honored by the determinizers. Returns `None`
-    /// when a determinizer fails (e.g. an over-constrained position); the caller
-    /// counts the attempt against the budget and moves on.
-    #[allow(clippy::too_many_arguments)]
+    /// Take one determinized world for the current position.
+    ///
+    /// Worlds already pulled from the [`WorldSource`] are consumed first; when
+    /// the queue is empty the search falls back to its own sampling — a
+    /// **belief-weighted** world with probability `belief_frac` when a belief
+    /// source is active, otherwise a **constraint-uniform** one. Hard
+    /// constraints (voids, trump ceiling, played cards) are honored by every
+    /// path. Returns `None` when a determinizer fails (an over-constrained
+    /// position); the caller counts the attempt against the budget and moves
+    /// on. The [`WorldOrigin`] says which branch produced the world so the
+    /// caller can report the mix.
     fn generate_world(
         &mut self,
         state: &GameState,
         observer: u8,
         weights: &Option<[[f32; 32]; 4]>,
         config: &IsDdConfig,
-        playgen_queue: &mut Vec<[u32; 4]>,
-        playgen_dry: &mut bool,
         rng: &mut impl Rng,
-    ) -> Option<GameState> {
-        // Externally injected worlds are consumed first (skip invalid ones).
-        loop {
-            match self.injected_worlds.pop() {
-                Some(hands) => {
-                    let ok = (0..4).all(|p| card_count(hands[p]) == card_count(state.hands[p]))
-                        && hands[observer as usize] == state.hands[observer as usize];
-                    if ok {
-                        let mut s = *state;
-                        s.hands = hands;
-                        return Some(s);
-                    }
-                }
-                None => break,
-            }
-        }
-
-        let use_playgen = config.playgen_frac > 0.0
-            && self.playgen.is_some()
-            && !*playgen_dry
-            && rng.gen::<f32>() < config.playgen_frac;
-
-        if use_playgen {
-            if playgen_queue.is_empty() {
-                let sampler = self.playgen.as_mut().unwrap();
-                *playgen_queue =
-                    sampler.generate_worlds_batch(state, PLAYGEN_BATCH, config.playgen_temp, rng);
-                if playgen_queue.is_empty() {
-                    // Repeated dead-ends or too-long sequence: stop trying.
-                    *playgen_dry = true;
-                }
-            }
-            return playgen_queue
-                .pop()
-                .map(|hands| {
-                    let mut s = *state;
-                    s.hands = hands;
-                    s
-                })
-                .or_else(|| determinize_greedy(state, observer, rng));
+    ) -> Option<(GameState, WorldOrigin)> {
+        // Worlds from the source are pre-validated by `retain_valid`.
+        if let Some(hands) = self.world_queue.pop() {
+            let mut s = *state;
+            s.hands = hands;
+            return Some((s, WorldOrigin::Injected));
         }
 
         if weights.is_some() && rng.gen::<f32>() < config.belief_frac {
             let w = weights.as_ref().unwrap();
-            return determinize_weighted(state, observer, w, rng)
-                .or_else(|| determinize_greedy(state, observer, rng));
+            return match determinize_weighted(state, observer, w, rng) {
+                Some(s) => Some((s, WorldOrigin::Belief)),
+                None => determinize_greedy(state, observer, rng)
+                    .map(|s| (s, WorldOrigin::Uniform)),
+            };
         }
 
         // Ensemble coverage floor: constraint-uniform world.
-        determinize_greedy(state, observer, rng)
+        determinize_greedy(state, observer, rng).map(|s| (s, WorldOrigin::Uniform))
     }
 }
-
-/// Playgen worlds are generated in lockstep batches (the transformer streams
-/// its weights once per token-step for the whole batch).
-const PLAYGEN_BATCH: usize = 16;
 
 /// Worlds solved per generate/solve round. Sequential mode uses one world per
 /// round (tightest deadline adherence, identical to the legacy per-world loop);

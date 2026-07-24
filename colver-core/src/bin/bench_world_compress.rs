@@ -26,6 +26,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use colver_core::bid_net::BidNet;
+use colver_core::playgen::analysis::PlaygenAnalyst;
 use colver_core::bid_obs::{
     self, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2, BID_OBS_DIM_SCORE_AWARE_V3,
 };
@@ -371,19 +372,21 @@ fn main() {
             }
 
             let mut search = IsDdSearch::new();
-            search.set_playgen_model(playgen.clone());
+            let mut analyst = PlaygenAnalyst::new(playgen.clone());
             search.init_deal(&state0, observer, false);
+            analyst.init_deal(&state0, observer);
             {
                 let mut s = state0;
                 for &(p, a) in &actions {
                     search.record_action(&s, p, a);
+                    analyst.observe(&s, p, a);
                     s.step(a);
                 }
             }
             #[cfg(feature = "dmc_train")]
             let scored = match &gpu {
                 Some(g) => {
-                    let sampler = search.playgen_sampler().unwrap();
+                    let sampler = analyst.sampler();
                     g.generate_deals_from_auction_scored(
                         &sampler.prefix_tokens(),
                         &state,
@@ -396,11 +399,11 @@ fn main() {
                     )
                     .expect("GPU generation")
                 }
-                None => search.playgen_auction_deals_scored(&state, n_worlds, temperature, &mut rng),
+                None => analyst.auction_deals_scored(&state, n_worlds, temperature, &mut rng),
             };
             #[cfg(not(feature = "dmc_train"))]
             let scored =
-                search.playgen_auction_deals_scored(&state, n_worlds, temperature, &mut rng);
+                analyst.auction_deals_scored(&state, n_worlds, temperature, &mut rng);
             if scored.len() < menu_k * 3 {
                 continue; // trop peu de mondes pour comparer proprement
             }
@@ -514,8 +517,9 @@ fn main() {
             let stop_plays = rng.gen_range(6..25usize);
 
             let mut search = IsDdSearch::new();
-            search.set_playgen_model(playgen.clone());
+            let mut analyst = PlaygenAnalyst::new(playgen.clone());
             search.init_deal(&state0, observer, false);
+            analyst.init_deal(&state0, observer);
 
             let mut state = state0;
             let mut tracking = EnvTracking::new();
@@ -540,6 +544,7 @@ fn main() {
                     Phase::Done => { ok = false; break; }
                 };
                 search.record_action(&state, p, a);
+                analyst.observe(&state, p, a);
                 tracking.track_action(&state, a);
                 if state.phase == Phase::Bidding {
                     bid_actions.push((p, a));
@@ -558,7 +563,7 @@ fn main() {
             }
 
             let played_by = tracking.played_by;
-            let scored = search.playgen_worlds_scored(&state, n_worlds, temperature, &mut rng);
+            let scored = analyst.play_worlds_scored(&state, n_worlds, temperature, &mut rng);
             if scored.len() < menu_k * 3 {
                 continue;
             }

@@ -8,9 +8,7 @@ license = "MIT"
 default = ["rand"]
 rand = ["dep:rand"]
 parallel = ["dep:rayon", "rand"]
-nn = ["rand"]
 dmc_train = ["rand", "dep:candle-core", "dep:candle-nn", "dep:clap"]
-tch_train = ["rand", "dep:tch", "dep:clap"]
 gpu_server = ["dmc_train", "dep:tiny_http", "dep:serde", "dep:serde_json"]
 
 [dependencies]
@@ -19,7 +17,6 @@ rayon = { version = "1.10", optional = true }
 candle-core = { version = "0.9", optional = true, features = ["cuda"] }
 candle-nn = { version = "0.9", optional = true }
 clap = { version = "4", optional = true, features = ["derive"] }
-tch = { version = "0.23", optional = true, features = ["download-libtorch"] }
 tiny_http = { version = "0.12", optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = { version = "1", optional = true }
@@ -30,15 +27,7 @@ rand = "0.8"
 # Binaries without required-features are auto-discovered from src/bin/
 # Only entries with required-features need explicit declaration.
 
-[[bin]]
-name = "generate_value_data"
-path = "src/bin/generate_value_data.rs"
-required-features = ["nn"]
 
-[[bin]]
-name = "nn_experiment"
-path = "src/bin/nn_experiment.rs"
-required-features = ["nn"]
 
 [[bin]]
 name = "train_dmc"
@@ -80,25 +69,13 @@ name = "enrich_pool"
 path = "src/bin/enrich_pool.rs"
 required-features = ["dmc_train"]
 
-[[bin]]
-name = "penalty_sweep"
-path = "src/bin/penalty_sweep.rs"
-required-features = ["dmc_train"]
 
 [[bin]]
 name = "train_belief_net"
 path = "src/bin/train_belief_net.rs"
 required-features = ["dmc_train"]
 
-[[bin]]
-name = "train_bid_supervised"
-path = "src/bin/train_bid_supervised.rs"
-required-features = ["dmc_train"]
 
-[[bin]]
-name = "train_bid_tch"
-path = "src/bin/train_bid_tch.rs"
-required-features = ["tch_train"]
 
 [[bin]]
 name = "retro_eval"
@@ -130,15 +107,8 @@ name = "gen_pool"
 path = "src/bin/gen_pool.rs"
 required-features = ["rand"]
 
-[[bin]]
-name = "bis_dd_diag"
-path = "src/bin/bis_dd_diag.rs"
-required-features = ["rand"]
 
-[[bin]]
-name = "bid_pool"
-path = "src/bin/bid_pool.rs"
-required-features = ["parallel"]
+
 
 [[bin]]
 name = "distill_play"

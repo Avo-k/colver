@@ -224,6 +224,44 @@ Hybrid (belief weighting + playgen_frac 0.3) vs pure belief at 1s:
 **52–48 (+126)** — statistically tied at n=100, at best a small plus. The
 time-budget podium stands: belief ≥ hybrid > playgen > uniform.
 
+## GPU sidecar (`playgen_gpu_server`, feature `gpu_server`)
+
+Sampling worlds on CPU costs ~50× what it costs on a GPU, so production runs the
+model as a **sidecar**: a small HTTP server on a machine with CUDA, which the
+agents call over the LAN. That is what makes 100%-playgen worlds affordable
+inside a per-move budget.
+
+```bash
+CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --features gpu_server
+./target/release/playgen_gpu_server --playgen models/playgen/playgen_v2_final.bin --port 8003
+curl -s http://localhost:8003/health
+```
+
+| endpoint | returns | used by |
+|----------|---------|---------|
+| `POST /play_worlds` | remaining hands per seat | **`worlds::SidecarWorldSource`** — the IS-DD agent |
+| `POST /auction_deals` | full 8-card deals, conditioned on the auction | web analysis pages |
+| `POST /beliefs` | card marginals `[4][32]` | web analysis pages |
+| `GET /health` | status + device | agent construction check |
+
+The request carries the *replayable deal* (dealer, initial hands, action prefix,
+observer); the server rebuilds the sampler by replay before sampling a batch. So
+the client holds no session and a restarted sidecar needs no coordination.
+
+**Clients.** The IS-DD agent talks to it directly from Rust
+([`worlds.rs`](../../colver-core/src/worlds.rs), ~60 lines of hand-rolled HTTP —
+`colver-core` deliberately has no HTTP dependency). Configure with
+`$COLVER_PLAYGEN_GPU_URL` or a `[worlds] url` in the bot spec. The Python client
+[`web/playgen_gpu.py`](../../python/colver/web/playgen_gpu.py) now only serves
+the **analysis** pages; it no longer feeds IS-DD.
+
+> **Keep the served model aligned with the released one.** Prod ran
+> `playgen_v2_half.bin` (an intermediate checkpoint) from 2026-07-23 to
+> 2026-07-24 while every benchmark used `playgen_v2_final.bin` — the site was
+> playing with a different world sampler than the one being measured. Both are
+> now on `playgen_v2_final.bin` (md5 `ebffd896…`, the v0.8.0 release asset).
+> Deployment details: `moxxi/CONTEXT.md` § *Sidecar playgen GPU*.
+
 ## Next steps
 - [ ] Playgen v2: 10M-game corpus (generating on moxxi), bigger model
       (d=384 L=6?), COLVGM01 merge tool for chunked corpora — better per-world

@@ -2,6 +2,13 @@
 
 Detailed documentation for each subsystem. See [CLAUDE.md](../CLAUDE.md) for overview.
 
+## Agents (`agent/`, `worlds.rs`, `game_loop.rs`) — start here
+
+Every caller that plays a game — the arena, the web, any script — builds
+`Box<dyn Player>` from an `AgentSpec` and drives it with `game_loop`. The
+strategy modules below are the *implementations* behind that trait; you rarely
+touch them directly. See **[agents.md](agents.md)**.
+
 ## MCTS Agent (`mcts.rs`, feature `rand`)
 
 Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node`s and `Edge`s in flat `Vec`s for cache-friendliness. `MctsSearch` is reusable across searches (arenas are cleared between calls). Default: 1000 iterations, `C = sqrt(2)`.
@@ -145,9 +152,21 @@ cargo run -p colver-core --bin belief_eval --release -- \
   --mode per_trick --games 100000
 ```
 
-## NN Value Function (feature `nn`) — parked
+## Removed subsystems
 
-MLP 278→256→256→1 replaces rollouts for MCTS leaf evaluation. Too slow (80μs/eval) — NN-guided IS-MCTS lost 35-65% vs rollout IS-MCTS. Code kept behind `nn` feature. The DMC Q-network approach supersedes this.
+- **NN value function** (`features.rs`, `value_net.rs`, feature `nn`) — MCTS with
+  a learned value function is the wrong architecture for a card game: each node
+  costs a network eval, so the tree stays tiny. A DouZero-style direct
+  Q-network (DMC) does the same job orders of magnitude faster. Removed
+  2026-07-24.
+- **BisDd** (`bis_dd.rs`) — a unified DD-based bid+play agent. Its bid-inference
+  heuristic rejected reality 72% of the time against NN bidders
+  ([belief/bis_dd.md](belief/bis_dd.md)); the bid belief net replaced it.
+- **Elephant memory** (`elephant.rs`) — particle filter over past
+  determinizations. Off by default everywhere, never won in the arena.
+- **Single-tree IS-MCTS** (`single_tree_ismcts.rs`) — superseded by IS-DD.
+
+All recoverable from git history.
 
 ## Python Layer (`colver-py/` → `python/colver/`)
 

@@ -4,33 +4,48 @@
 
 Realistic player based on the [DD solver](dd_solver.md). Samples N "determinized worlds" consistent with current beliefs about hidden cards, solves each with DD, and aggregates per-card scores.
 
-> **Naming:** `IsDdSearch` (the struct) is the unified search; "Smart IS-DD" in the arena/code refers to the same struct with a `BeliefNet` loaded.
+> **Naming:** `IsDdSearch` is the search. `IsDdPlayer` ([agents.md](../agents.md))
+> is the agent that wraps it and owns its world source — that is what the arena
+> and the web actually build. "Smart IS-DD" in old bot files and results means
+> the same search with a `BeliefNet` loaded.
 
 ## Algorithm
 
-There is **one** search entry point — `search_with_stats` (`search` is a thin
-wrapper that drops the stats). It runs a single pipeline, in chunks, until the
-determinization count or time budget is hit:
+Two entry points onto **one** pipeline:
+
+- `search_with_source(state, config, rng, &mut dyn WorldSource)` — the real one.
+  Worlds come from a [`WorldSource`](../agents.md), pulled in batches and
+  refilled on demand. Returns `Result`: if the source fails, the error
+  propagates rather than the search quietly continuing on weaker worlds.
+- `search_with_stats(state, config, rng)` — no source, so infallible: worlds are
+  sampled from beliefs / constraint-uniform only.
+
+Both run in chunks until the determinization count or the time budget is hit:
 
 ```
-1. GENERATE a chunk of determinized worlds        (sequential, stateful)
-     ├─ injected worlds first (e.g. GPU sidecar), then
-     ├─ playgen world  (prob. playgen_frac, from a lockstep batch), then
-     ├─ belief-weighted world (prob. belief_frac when a belief source is on), else
-     └─ constraint-uniform world  (determinize_greedy)
-2. WEIGHT each world by credibility               (sequential, cred_alpha)
+0. REFILL from the WorldSource when the queue can't cover the round
+     (count mode: ask for the whole remaining budget — one GPU round trip)
+1. TAKE a chunk of worlds                          (sequential, stateful)
+     ├─ from the source queue, else
+     ├─ belief-weighted (prob. belief_frac when a belief source is on), else
+     └─ constraint-uniform  (determinize_greedy)
+2. WEIGHT each world by credibility                (sequential, cred_alpha)
 3. SOLVE each world with DD                        (parallel or sequential)
 4. AGGREGATE Σ score·weight / Σ weight per card    (fixed order)
 → pick best card (max for NS, min for EW)
 ```
+
+`IsDdResult::worlds` reports how many solved worlds came from each branch, so a
+run that should have been 100% playgen and wasn't says so instead of just
+playing a few points per deal worse.
 
 DD returns **exact** NS points per legal card per world, so far fewer samples are
 needed than IS-MCTS (which uses noisy MCTS rollouts). 20 determinizations is
 usually enough.
 
 **Why generation and solving are split.** World *generation* is inherently
-sequential — the playgen sampler carries a KV-cache, the injected-world queue and
-the RNG are all stateful. DD *solving* is embarrassingly parallel: worlds are
+sequential — the world queue and the RNG are stateful, and the sidecar client
+speaks one request at a time. DD *solving* is embarrassingly parallel: worlds are
 independent and the transposition table is cleared at the start of every solve
 (`solver.rs::solve_reuse_tt`), so nothing is shared between worlds anyway. The
 pipeline therefore generates a chunk sequentially, then hands the whole chunk to
@@ -63,9 +78,8 @@ Adjustments to probabilities based on **inferences** (which may be wrong). All d
 |--------|------|--------------|
 | **Heuristic soft inference** | `use_soft_inference` | Applies dominance reasoning ("player X followed without playing the highest → downweight their higher unknowns") and optional bid signal interpretation in `CardBeliefs` |
 | **NN soft beliefs** | `use_nn_beliefs` | Loads a trained `BeliefNet` and uses its soft predictions for card locations. Hard constraints are still applied on top. |
-| **Elephant memory** | `use_elephant_memory` | Particle filter that accumulates determinizations as particles, filters them by observed plays, and blends with base beliefs. See [section below](#elephant-memory). |
 
-Multiple soft sources can be enabled simultaneously — e.g. `use_nn_beliefs=true` + `use_elephant_memory=true` gives NN soft + hard constraints + particle blend.
+Soft sources compose: `use_nn_beliefs = true` gives NN predictions *plus* the hard constraints, which are never optional.
 
 If all soft beliefs are off and no hard constraints zero out any unknown (early game), the determinizer falls back to uniform `determinize_greedy` over the remaining cards.
 
@@ -77,15 +91,13 @@ If all soft beliefs are off and no hard constraints zero out any unknown (early 
 | `time_limit_ms` | None | Time budget per move; **scaled by cards remaining**: `effective_ms = ms × cards_left / 8`. Lets early tricks have more time and endgame finish quickly. |
 | `use_soft_inference` | **false** | Soft heuristic from play (dominance, "ne pisse pas" weight adjustments). |
 | `use_nn_beliefs` | **false** | Use a loaded `BeliefNet` for soft predictions. |
-| `use_elephant_memory` | **false** | Particle filter from past determinizations. |
 | `early_termination` | true | Skip search when forced (1 legal move) or when beliefs uniquely determine all hidden cards (single DD solve = exact answer). Always on by default. |
 | `dominance_factor` | 1.0 | Used by `use_soft_inference`. When a player follows suit without playing the highest, downweight their higher unknown cards by this factor. 0.3 = aggressive, 1.0 = off (only relevant if soft inference is enabled) |
 | `bid_function` | `ImprovedV2` | Used during bidding phase (IS-DD only acts during play) |
-| `playgen_frac` | 0.0 | Fraction of worlds drawn from the playgen transformer (requires a loaded playgen model). 0 = none, 1 = all. |
-| `playgen_temp` | 1.0 | Softmax temperature for playgen sampling (1.0 = posterior). |
-| `belief_frac` | 1.0 | Among non-playgen worlds, fraction drawn belief-weighted (rest constraint-uniform for coverage). |
+| `world_batch` | 128 | Worlds requested per `WorldSource` refill under a time budget. In count mode the whole remaining budget is asked for at once. |
+| `belief_frac` | 1.0 | **Fallback only** — when no source is attached or it runs dry, the fraction of worlds drawn belief-weighted (rest constraint-uniform for coverage). |
 | `cred_alpha` | 0.0 | Credibility world-weighting exponent. See [Credibility weighting](#credibility-weighting). |
-| `parallel` | **false** | Solve worlds across the rayon global pool. See [Parallelism](#parallelism). |
+| `parallel` | **false** on `IsDdConfig`, **true** from an `AgentSpec` | Solve worlds across the rayon global pool. See [Parallelism](#parallelism). |
 
 > Hard constraints (voids, trump ceiling, played cards) and `early_termination` are **always on** — they're correct by construction, no flag needed.
 
@@ -102,31 +114,12 @@ Two cases skip the determinization loop entirely:
 
 These trigger more often than expected: late in a deal, voids accumulate and 4-5 cards become uniquely owned, so endgame becomes a single DD solve.
 
-## Elephant memory
+## Removed: elephant memory
 
-**Particle filter** for online belief refinement. Stores up to N "particles" (each = a `[u32; 4]` hand assignment) accumulated from past determinizations. After observing each card play, particles inconsistent with the play are filtered out.
-
-| Field | Default | Effect |
-|-------|---------|--------|
-| `use_elephant_memory` | false | Enable the particle filter |
-| `elephant_smoothing` | 0.05 | Blending factor when combining base beliefs with particle evidence. Lower = stronger particle influence |
-| `elephant_dominance_penalty` | 0.5 | Soft penalty per dominant card not played (a player who didn't play their best is unlikely to have it) |
-| `elephant_use_dominance` | true | Apply the dominance penalty to particle scoring |
-| `elephant_decay` | 0.8 | Decay factor for old particles (0.8 = particles lose 20% influence per turn). 1.0 = no decay |
-
-### Lifecycle
-
-1. **`init_deal_with_config()`** — reset particle pool for new deal
-2. **Each `search_with_stats()` call** — generated determinizations are added as new particles via `elephant.add_particles()`
-3. **`record_action()` after each play** — `elephant.observe_play()` filters surviving particles consistent with the observed card. If dominance penalty is on, particles where the player held a dominant card they didn't play get downweighted
-4. **Next search** — `compute_evidence()` aggregates surviving particle distributions, then `blend_with_evidence()` combines with base beliefs (NN or heuristic) using `elephant_smoothing`
-5. **Resolved position case** — when a single DD solve is enough, the resolved hands are fed back as a particle (re-seeds the pool with ground truth)
-
-Stats: `elephant_stats() → (surviving_particles, total_particles)` and `elephant_evidence(state) → Option<weights>`.
-
-### When to use
-
-Elephant memory is most useful **mid-to-late game** when belief uncertainty has narrowed and particles can converge. In early tricks the particle pool is sparse and noisy. It's **off by default** in production bots — primarily an experimental feature for belief studies.
+A particle filter that reused past determinizations as evidence. It was off by
+default in every production bot, never beat plain IS-DD in the arena, and kept
+five knobs alive in `IsDdConfig`. Removed 2026-07-24 — recover it from git
+history (`colver-core/src/search/elephant.rs`) if the idea is worth revisiting.
 
 ## Performance
 
@@ -166,7 +159,7 @@ Reference bots:
 use colver_core::is_dd::{IsDdSearch, IsDdConfig};
 
 let mut search = IsDdSearch::new();
-// optional: search.load_belief_net("models/belief_v3.bin")?;
+// optional: search.load_belief_net("models/belief_v4_fix_v2.bin")?;
 
 let config = IsDdConfig {
     determinizations: 20,
@@ -181,12 +174,17 @@ search.init_deal_with_config(&state, observer, &config);
 // Each turn (any player):
 search.record_action(&state_before, player, action);  // update beliefs
 
-// When it's our turn:
+// When it's our turn — with a world source (the real configuration):
+let result = search.search_with_source(&state, &config, &mut rng, &mut *source)?;
+// result.best_action, result.card_scores, result.determinizations, result.worlds
+
+// …or without one (beliefs / constraint-uniform only, infallible):
 let action = search.search(&state, &config, &mut rng);
-// Or with stats:
-let result = search.search_with_stats(&state, &config, &mut rng);
-// result.best_action, result.card_scores, result.determinizations
 ```
+
+Most callers should not do any of this by hand — build an
+[`IsDdPlayer`](../agents.md) from an `AgentSpec` and let it wire the world
+source, the belief net and the credibility judges.
 
 ## Parallelism
 

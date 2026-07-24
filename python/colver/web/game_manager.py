@@ -6,22 +6,9 @@ import time
 from collections import OrderedDict
 import colver
 
-from colver.web import playgen_gpu
 from colver.web import game_notation
-
-# IS-DD tuning (env-configurable so prod can be tuned without a code deploy).
-#   COLVER_ISDD_DETS: fixed determinization count. 0 = time mode (default,
-#     budget = the per-move delay); >0 = count mode (solve exactly N worlds).
-#   COLVER_ISDD_PLAYGEN_WORLDS: how many playgen worlds to fetch from the GPU
-#     sidecar and inject per move (consumed before any CPU-sampled world).
-_ISDD_DETS = int(os.environ.get("COLVER_ISDD_DETS", "0"))
-_ISDD_PLAYGEN_WORLDS = int(os.environ.get("COLVER_ISDD_PLAYGEN_WORLDS", "256"))
-
-
-def _configure_dede(env):
-    """Apply env-level IS-DD knobs to a freshly dede_init()'d env."""
-    if _ISDD_DETS > 0:
-        env.dede_set_determinizations(_ISDD_DETS)
+from colver.web import playgen_gpu
+from colver.web.agents import AGENT_NAMES, AgentTable, decision_stats
 
 
 # ---- Server-wide belief cache -------------------------------------------------
@@ -59,14 +46,12 @@ def _belief_cache_put(game_cfn, kind, idx, observer, value):
 def compute_game_cfn(dealer, initial_hands, action_ids) -> str:
     """Full-game CFN (auction + play) from a deal and a flat action-id list."""
     env = colver.Env.deal_with_hands(int(dealer), [list(h) for h in initial_hands])
-    env.dede_init()
-    _configure_dede(env)
     bids = []
     for a in action_ids:
         a = int(a)
         if int(env.phase()) == 0:
             bids.append(a)
-        env.dede_step(a)
+        env.step(a)
     return game_notation.to_full_cfn(env.to_cfn(), bids)
 
 
@@ -87,30 +72,6 @@ def _safe_playgen(fn, *args, **kwargs):
     except BaseException as e:  # noqa: BLE001 — includes pyo3 PanicException
         print(f"[belief] playgen call failed ({type(e).__name__}): {e}")
         return None
-
-
-def _inject_gpu_worlds(env, dealer, initial_hands, history, n_worlds=_ISDD_PLAYGEN_WORLDS):
-    """Fetch playgen worlds from the GPU sidecar and inject them into the
-    env's IS-DD search for the current player. Silent no-op (False) when the
-    sidecar is disabled or unreachable — IS-DD then samples as usual (CPU).
-
-    ``history``: list of {player, action} dicts (bid + play, in order).
-    ``initial_hands`` must be the full pre-auction deal (32 cards)."""
-    if not playgen_gpu.enabled():
-        return False
-    if initial_hands is None or sum(len(h) for h in initial_hands) != 32:
-        return False
-    actions = [(h["player"], h["action"]) for h in history]
-    worlds = playgen_gpu.play_worlds(
-        dealer, initial_hands, actions, int(env.current_player()), n_worlds=n_worlds
-    )
-    if not worlds:
-        return False
-    try:
-        env.dede_inject_worlds(worlds)
-        return True
-    except Exception:
-        return False
 
 
 class TrickTracker:
@@ -204,16 +165,18 @@ class PlaySession(TrickTracker):
         self._init_trick_tracking()
         self.env.reset()
         self.initial_hands = [list(h) for h in self.env.get_hands()]
-        self.uses_dede = any(t == "dede" for t in self.ai_types.values())
-        if belief_model_path and self.uses_dede:
-            self.env.load_belief_net(belief_model_path)
-        if self.uses_dede:
-            self.env.dede_init()
-            _configure_dede(self.env)
-        if dmc_model_path and any(t == "doudou" for t in self.ai_types.values()):
-            self.env.load_dmc_model(dmc_model_path)
         if bid_model_path:
             self.env.load_bid_model(bid_model_path)
+        # `ai_types` already names only the bot seats — in a salon room several
+        # seats are human, so filtering by `human_seat` here would drop a bot.
+        self.bots = AgentTable(
+            self.ai_types,
+            bid_model=bid_model_path,
+            play_model=dmc_model_path,
+            belief_model=belief_model_path,
+            time_ms=self.dede_time_ms,
+        )
+        self.bots.init_deal(self.env)
 
     def get_state(self, human_seat=2):
         phase = self.env.phase()
@@ -283,35 +246,25 @@ class PlaySession(TrickTracker):
             name = colver.Env.action_name(int(action), int(phase))
             self.bid_history.append({"player": int(player), "action": int(action), "name": name})
         self._check_trick_completion(action)
-        if self.uses_dede:
-            self.env.dede_step(action)
-        else:
-            self.env.step(action)
-        self._finalize_trick_completion()
+        self._apply(action)
         self._detect_belote(player, belote_before)
         return self.get_state()
 
+    def _apply(self, action):
+        """Show the move to every bot, then advance the game."""
+        self.bots.observe(self.env, action)
+        self.env.step(action)
+        self._finalize_trick_completion()
+
     def get_ai_action(self):
-        phase = self.env.phase()
         player = int(self.env.current_player())
-        ai_type = self.ai_types.get(player, "dede")
-        if phase == 0:
-            return int(self.env.bid_a_dd())
-        else:
-            if ai_type == "doudou" and self.env.has_dmc_model():
-                result = self.env.action_dmc_with_stats()
-                return int(result["best_action"])
-            elif ai_type == "dede":
-                _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
-                return int(self.env.action_dede(self.dede_time_ms))
-            elif ai_type == "oracle_dd":
-                return int(self.env.action_oracle_dd())
-            else:
-                # Default fallback to doudou
-                if self.env.has_dmc_model():
-                    result = self.env.action_dmc_with_stats()
-                    return int(result["best_action"])
-                return int(self.env.action_dede(self.dede_time_ms))
+        decision = self.bots.decide(self.env, player)
+        if decision is None:
+            # No bot seated here (or its models failed to load): fall back to
+            # the rule-based bidder / a legal card rather than stalling.
+            return int(self.env.bid_a_dd()) if self.env.phase() == 0 \
+                else int(self.env.action_heuristic_play())
+        return int(decision["action"])
 
     def play_ai_turn(self):
         player = self.env.current_player()
@@ -323,20 +276,11 @@ class PlaySession(TrickTracker):
         if phase == 0:
             self.bid_history.append({"player": int(player), "action": action, "name": name})
         self._check_trick_completion(action)
-        if self.uses_dede:
-            self.env.dede_step(action)
-        else:
-            self.env.step(action)
-        self._finalize_trick_completion()
+        self._apply(action)
         self._detect_belote(player, belote_before)
         return action, name, self.get_state()
 
 
-AGENT_NAMES = {
-    "dede": "Dédé (IS-DD)",
-    "doudou": "DouDou50",
-    "oracle_dd": "Oracle (DD)",
-}
 
 SEAT_NAMES = ["Nord", "Est", "Sud", "Ouest"]
 
@@ -372,21 +316,18 @@ class WatchSession(TrickTracker):
         # the session starts from a fresh deal (a CFN env may be mid-game).
         self.initial_hands = [list(h) for h in self.env.get_hands()]
 
-        # Load DMC model if any seat uses DouDou50
-        if dmc_model_path and any(a == "doudou" for a in agents.values()):
-            self.env.load_dmc_model(dmc_model_path)
-
-        # Load bid NN model (Bid à DD)
+        # Bid NN, kept on the Env for the auction Q-value panel.
         if bid_model_path:
             self.env.load_bid_model(bid_model_path)
 
-        # Initialize IS-DD if any seat uses Dédé
-        self.uses_dede = any(a == "dede" for a in agents.values())
-        if belief_model_path and self.uses_dede:
-            self.env.load_belief_net(belief_model_path)
-        if self.uses_dede:
-            self.env.dede_init()
-            _configure_dede(self.env)
+        self.bots = AgentTable(
+            agents,
+            bid_model=bid_model_path,
+            play_model=dmc_model_path,
+            belief_model=belief_model_path,
+            time_ms=self.dede_time_ms,
+        )
+        self.bots.init_deal(self.env)
 
         # Compute DD oracle scores at deal start (all hands visible in watch mode)
         try:
@@ -435,66 +376,29 @@ class WatchSession(TrickTracker):
         return state
 
     def compute_next_action(self):
-        """Compute next action with thinking stats. Returns move dict."""
+        """Compute the next action with the deciding bot's stats."""
         player = int(self.env.current_player())
         phase = int(self.env.phase())
-        agent_type = self.agents.get(player, "dede")
+        agent_type = self.bots.kind(player)
 
-        # Bidding phase: all agents use bid_a_dd (NN if loaded, else improved_v2)
-        if phase == 0:
-            action = int(self.env.bid_a_dd())
-            name = colver.Env.action_name(action, phase)
-            stats = {
-                "agent": agent_type,
-                "agent_label": AGENT_NAMES.get(agent_type, agent_type),
-            }
-            # Show NN Q-values if bid model is loaded
-            if self.env.has_bid_model():
-                nn_result = self.env.action_bid_nn()
-                stats["bid_nn"] = {
-                    "q_values": [[int(a), round(float(q), 3)] for a, q in nn_result["q_values"]],
-                    "best_action": int(nn_result["best_action"]),
-                }
-            return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
-
-        # Play phase: dispatch by agent type
-        stats = {"agent": agent_type, "agent_label": AGENT_NAMES.get(agent_type, agent_type)}
-
-        if agent_type == "dede":
-            gpu = _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
-            result = self.env.action_dede_with_stats(self.dede_time_ms)
-            action = int(result["best_action"])
-            stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
-            stats["determinizations"] = int(result["determinizations"])
-            stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
-            if gpu:
-                stats["worlds_source"] = "playgen-gpu"
-
-        elif agent_type == "oracle_dd":
-            t0 = time.monotonic()
-            action = int(self.env.action_oracle_dd())
-            stats["elapsed_ms"] = round((time.monotonic() - t0) * 1000, 1)
-
-        elif agent_type == "doudou" and self.env.has_dmc_model():
-            result = self.env.action_dmc_with_stats()
-            action = int(result["best_action"])
-            stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
-            stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
-
+        decision = self.bots.decide(self.env, player)
+        if decision is None:
+            # Seat has no working bot: keep the game moving with a rule player.
+            action = int(self.env.bid_a_dd()) if phase == 0 \
+                else int(self.env.action_heuristic_play())
+            stats = decision_stats(agent_type, None, error=self.bots.error(player))
         else:
-            # Fallback to doudou or dede
-            if self.env.has_dmc_model():
-                result = self.env.action_dmc_with_stats()
-                action = int(result["best_action"])
-                stats["q_values"] = [[int(a), round(float(q), 4)] for a, q in result["q_values"]]
-                stats["elapsed_ms"] = round(result["elapsed_ms"], 2)
-            else:
-                _inject_gpu_worlds(self.env, self.env.get_dealer(), self.initial_hands, self.history)
-                result = self.env.action_dede_with_stats(self.dede_time_ms)
-                action = int(result["best_action"])
-                stats["card_scores"] = [[int(a), round(float(s), 1)] for a, s in result["card_scores"]]
-                stats["determinizations"] = int(result["determinizations"])
-                stats["elapsed_ms"] = round(result["elapsed_ms"], 1)
+            action = int(decision["action"])
+            stats = decision_stats(agent_type, decision)
+
+        # During the auction, always show the bid net's Q-values, whichever
+        # bot is to speak — the panel is about the position, not the player.
+        if phase == 0 and self.env.has_bid_model():
+            nn_result = self.env.action_bid_nn()
+            stats["bid_nn"] = {
+                "q_values": [[int(a), round(float(q), 3)] for a, q in nn_result["q_values"]],
+                "best_action": int(nn_result["best_action"]),
+            }
 
         name = colver.Env.action_name(action, phase)
         return {"player": player, "action": action, "phase": phase, "name": name, "stats": stats}
@@ -516,10 +420,8 @@ class WatchSession(TrickTracker):
         self.history.append({"player": player, "action": action, "phase": phase, "name": name})
         self._check_trick_completion(action)
 
-        if self.uses_dede:
-            self.env.dede_step(action)
-        else:
-            self.env.step(action)
+        self.bots.observe(self.env, action)
+        self.env.step(action)
 
         self._finalize_trick_completion()
         self._detect_belote(player, belote_before)
@@ -639,8 +541,6 @@ class PlayProblemSession:
                 env.load_dmc_model(self.dmc_model_path)
             hands = [list(h) for h in env.get_hands()]
             bid_history = []
-            env.dede_init()
-            _configure_dede(env)
 
             # Bidding phase
             void = False
@@ -649,7 +549,7 @@ class PlayProblemSession:
                 action = int(env.bid_improved())
                 bid_history.append({"player": player, "action": action,
                                      "name": colver.Env.action_name(action, 0)})
-                env.dede_step(action)
+                env.step(action)
                 if env.is_terminal():
                     void = True
                     break
@@ -660,7 +560,7 @@ class PlayProblemSession:
             # Play phase: advance with heuristic until South's turn
             while env.phase() == 1 and not env.is_terminal() and int(env.current_player()) != 2:
                 action = int(env.action_heuristic_play())
-                env.dede_step(action)
+                env.step(action)
 
             if env.is_terminal() or int(env.current_player()) != 2:
                 continue
@@ -683,8 +583,26 @@ class PlayProblemSession:
             }
         raise RuntimeError("Could not generate play problem")
 
+    # Short budget: the panel compares IS-DD against the oracle on one card,
+    # it does not need production-strength search.
+    PROBE_TIME_MS = 100
+
+    def _isdd_probe(self) -> dict:
+        """Ask a fresh IS-DD agent about the current position.
+
+        Built per call and told the history is empty: the problem generator
+        advanced the game with a heuristic player, so there is no belief state
+        worth carrying, and a one-shot judgement is what the panel shows.
+        """
+        bots = AgentTable({2: "dede"}, time_ms=self.PROBE_TIME_MS)
+        bots.init_deal(self.env)
+        decision = bots.decide(self.env, int(self.env.current_player()))
+        if decision is None:
+            raise RuntimeError("IS-DD agent unavailable")
+        return decision
+
     def evaluate(self, player_action: int) -> dict:
-        """Evaluate player's card. IS-DD beliefs are warm from generate()."""
+        """Evaluate player's card against the oracle, DouDou and IS-DD."""
         env = self.env
         t0 = time.monotonic()
         oracle_action = int(env.action_oracle_dd())
@@ -694,7 +612,7 @@ class PlayProblemSession:
         if env.has_dmc_model():
             dmc_result = env.action_dmc_with_stats()
 
-        isdd_result = env.action_dede_with_stats(100)
+        isdd_result = self._isdd_probe()
 
         return {
             "player_action": player_action,
@@ -705,9 +623,9 @@ class PlayProblemSession:
             "dmc_action": int(dmc_result["best_action"]) if dmc_result else None,
             "dmc_action_name": colver.Env.action_name(int(dmc_result["best_action"]), 1) if dmc_result else None,
             "dmc_q_values": [[int(c), round(float(q), 4)] for c, q in dmc_result["q_values"]] if dmc_result else [],
-            "isdd_action": int(isdd_result["best_action"]),
-            "isdd_action_name": colver.Env.action_name(int(isdd_result["best_action"]), 1),
-            "isdd_card_scores": [[int(c), round(float(s), 1)] for c, s in isdd_result["card_scores"]],
+            "isdd_action": int(isdd_result["action"]),
+            "isdd_action_name": colver.Env.action_name(int(isdd_result["action"]), 1),
+            "isdd_card_scores": [[int(c), round(float(s), 1)] for c, s in isdd_result["candidates"]],
             "isdd_determinizations": int(isdd_result["determinizations"]),
             "isdd_elapsed_ms": round(isdd_result["elapsed_ms"], 1),
             "all_hands": self.hands,
@@ -752,29 +670,36 @@ class BeliefSession:
         env.reset()
         if self.bid_model_path:
             env.load_bid_model(self.bid_model_path)
-        if self.belief_model_path:
-            env.load_belief_net(self.belief_model_path)
-        env.dede_init()
-        _configure_dede(env)
+
+        bots = AgentTable(
+            {seat: "dede" for seat in range(4)},
+            bid_model=self.bid_model_path,
+            belief_model=self.belief_model_path,
+            time_ms=self.GEN_PLAY_TIME_MS,
+        )
+        bots.init_deal(env)
 
         self.initial_hands = [list(h) for h in env.get_hands()]
         self.dealer = int(env.get_dealer())
         self.all_actions = []
         self.action_idx = 0
 
-        # Play full game
         while not env.is_terminal():
             player = int(env.current_player())
             phase = int(env.phase())
             if phase == 0:
-                if env.has_bid_model():
-                    action = int(env.action_bid_nn()["best_action"])
-                else:
-                    action = int(env.bid_a_dd())
+                # The NN bidder, not the DD oracle: the oracle sees all four
+                # hands, so it produces degenerate optimal-bid-then-pass
+                # auctions with none of the signaling the page is about.
+                action = int(env.action_bid_nn()["best_action"]) if env.has_bid_model() \
+                    else int(env.bid_a_dd())
             else:
-                action = int(env.action_dede(self.GEN_PLAY_TIME_MS))
+                decision = bots.decide(env, player)
+                action = int(decision["action"]) if decision \
+                    else int(env.action_heuristic_play())
             self.all_actions.append((player, action, phase))
-            env.dede_step(action)
+            bots.observe(env, action)
+            env.step(action)
 
         return self._finalize()
 
@@ -793,12 +718,10 @@ class BeliefSession:
 
         # Replay to recover (player, action, phase) for each step.
         env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
-        env.dede_init()
-        _configure_dede(env)
         self.all_actions = []
         for a in action_ids:
             self.all_actions.append((int(env.current_player()), int(a), int(env.phase())))
-            env.dede_step(a)
+            env.step(a)
         if not env.is_terminal():
             raise ValueError("CFN ne décrit pas une partie complète")
         self.action_idx = 0
@@ -811,12 +734,6 @@ class BeliefSession:
         self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
         if self.bid_model_path:
             self.env.load_bid_model(self.bid_model_path)
-        if self.belief_model_path:
-            self.env.load_belief_net(self.belief_model_path)
-        if self.playgen_model_path:
-            self.env.load_playgen_model(self.playgen_model_path)
-        self.env.dede_init()
-        _configure_dede(self.env)
         self._sweep_env = None
         self.game_cfn = self._compute_game_cfn()
         return {
@@ -888,7 +805,7 @@ class BeliefSession:
         if self.action_idx >= len(self.all_actions):
             return self._get_state_info()
         player, action, phase = self.all_actions[self.action_idx]
-        self.env.dede_step(action)
+        self.env.step(action)
         self.action_idx += 1
         return self._get_state_info()
 
@@ -900,17 +817,11 @@ class BeliefSession:
             self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
             if self.bid_model_path:
                 self.env.load_bid_model(self.bid_model_path)
-            if self.belief_model_path:
-                self.env.load_belief_net(self.belief_model_path)
-            if self.playgen_model_path:
-                self.env.load_playgen_model(self.playgen_model_path)
-            self.env.dede_init()
-            _configure_dede(self.env)
             self.action_idx = 0
         # Replay up to target
         while self.action_idx < target:
             player, action, phase = self.all_actions[self.action_idx]
-            self.env.dede_step(action)
+            self.env.step(action)
             self.action_idx += 1
         return self._get_state_info()
 
@@ -933,6 +844,24 @@ class BeliefSession:
             if w is not None:
                 return w
         return None
+
+    def _analyst(self, idx: int, observer: int):
+        """A playgen analyst replayed to position `idx` from `observer`'s seat.
+
+        Rebuilt per query rather than kept live: the page jumps freely between
+        positions and observers, and a replay costs a few milliseconds against
+        the seconds a world sample takes.
+        """
+        if not self.playgen_model_path:
+            return None
+        actions = [a for _, a, _ in self.all_actions[:idx]]
+        try:
+            return colver.Analyst.replay(
+                self.playgen_model_path, self.dealer, self.initial_hands, actions, observer,
+            )
+        except Exception as e:  # noqa: BLE001 — playgen is best-effort here
+            print(f"[belief] analyst unavailable: {e}")
+            return None
 
     @staticmethod
     def _marginals_from_deals(deals):
@@ -963,9 +892,11 @@ class BeliefSession:
             m = self._marginals_from_deals(deals)
             if m is not None:
                 return m
+        analyst = self._analyst(idx, observer)
+        if analyst is None:
+            return None
         deals = _safe_playgen(
-            env.playgen_sample_auction_deals, observer,
-            self.PLAYGEN_WORLDS, self.PLAYGEN_TEMP,
+            analyst.auction_deals, env, self.PLAYGEN_WORLDS, self.PLAYGEN_TEMP,
         )
         return self._marginals_from_deals(deals)
 
@@ -978,9 +909,11 @@ class BeliefSession:
             return self._auction_marginals(idx, observer, env)
         w = self._playgen_marginals(idx, observer)
         if w is None:
+            analyst = self._analyst(idx, observer)
+            if analyst is None:
+                return None
             w = _safe_playgen(
-                env.get_playgen_beliefs, observer,
-                n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP,
+                analyst.marginals, env, self.PLAYGEN_WORLDS, self.PLAYGEN_TEMP,
             )
         return w
 
@@ -995,7 +928,11 @@ class BeliefSession:
         # NN + heuristic: cheap, but cache anyway so a shared game is instant.
         nnh = _belief_cache_get(self.game_cfn, "nn", idx, observer)
         if nnh is None:
-            result = self.env.get_belief_weights(observer)
+            actions = [a for _, a, _ in self.all_actions[:idx]]
+            beliefs = colver.Beliefs.replay(
+                self.dealer, self.initial_hands, actions, observer, self.belief_model_path,
+            )
+            result = beliefs.weights(self.env)
             nnh = {"nn": result["nn"], "heuristic": result["heuristic"]}
             _belief_cache_put(self.game_cfn, "nn", idx, observer, nnh)
         playgen = None
@@ -1028,15 +965,8 @@ class BeliefSession:
             self._sweep_env = None
             self._sweep_total = 0
             return 0
-        env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
-        if self.bid_model_path:
-            env.load_bid_model(self.bid_model_path)
-        if self.belief_model_path:
-            env.load_belief_net(self.belief_model_path)
-        env.load_playgen_model(self.playgen_model_path)
-        env.dede_init()
-        _configure_dede(env)
-        self._sweep_env = env
+        # A bare env: it only tracks the position, the analyst carries the model.
+        self._sweep_env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
         return self._sweep_total
 
     def precompute_step(self):
@@ -1058,7 +988,7 @@ class BeliefSession:
                 self._sweep_done += 1
                 computed = True
             _, action, _ = self.all_actions[self._sweep_i]
-            env.dede_step(action)
+            env.step(action)
             self._sweep_i += 1
             if computed:
                 return (self._sweep_done, self._sweep_total)

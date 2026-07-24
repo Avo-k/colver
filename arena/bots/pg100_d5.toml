@@ -9,6 +9,8 @@ score_aware = true
 method = "smart_is_dd"
 determinizations = 5
 time_ms = 0
-playgen_model = "models/playgen/playgen_final.bin"
-playgen_frac = 1.0
-playgen_temp = 1.0
+
+[worlds]
+source = "playgen"   # in-process CPU sampler
+model = "models/playgen/playgen_final.bin"
+temperature = 1.0

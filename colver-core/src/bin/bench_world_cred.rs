@@ -38,6 +38,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use colver_core::belief_net::BeliefNet;
+use colver_core::playgen::analysis::PlaygenAnalyst;
 use colver_core::belief_state::BeliefState;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::{
@@ -394,12 +395,14 @@ fn main() {
 
         for (pi, pos) in bid_pos.iter().enumerate() {
             let mut search = IsDdSearch::new();
-            search.set_playgen_model(playgen.clone());
+            let mut analyst = PlaygenAnalyst::new(playgen.clone());
             search.init_deal(&pos.state0, pos.observer, false);
+            analyst.init_deal(&pos.state0, pos.observer);
             {
                 let mut s = pos.state0;
                 for &(p, a) in &pos.actions {
                     search.record_action(&s, p, a);
+                    analyst.observe(&s, p, a);
                     s.step(a);
                 }
             }
@@ -409,7 +412,7 @@ fn main() {
             #[cfg(feature = "dmc_train")]
             let pg_worlds: Vec<[u32; 4]> = match &gpu {
                 Some(g) => {
-                    let sampler = search.playgen_sampler().unwrap();
+                    let sampler = analyst.sampler();
                     g.generate_deals_from_auction_scored(
                         &sampler.prefix_tokens(),
                         &pos.state,
@@ -425,10 +428,10 @@ fn main() {
                     .map(|(h, _)| h)
                     .collect()
                 }
-                None => search.playgen_auction_deals(&pos.state, worlds, temperature, &mut r0),
+                None => analyst.auction_deals(&pos.state, worlds, temperature, &mut r0),
             };
             #[cfg(not(feature = "dmc_train"))]
-            let pg_worlds = search.playgen_auction_deals(&pos.state, worlds, temperature, &mut r0);
+            let pg_worlds = analyst.auction_deals(&pos.state, worlds, temperature, &mut r0);
 
             // Sampler 2: bid belief net marginals → weighted determinize.
             let mut r1 = sub_rng(seed, 1, pi, 1);
@@ -491,13 +494,15 @@ fn main() {
         for (pi, pos) in play_pos.iter().enumerate() {
             // Search fed with the full history (playgen prefix + beliefs).
             let mut search = IsDdSearch::new();
-            search.set_playgen_model(playgen.clone());
+            let mut analyst = PlaygenAnalyst::new(playgen.clone());
             let _ = search.load_belief_net(&play_belief_path);
             search.init_deal(&pos.state0, pos.observer, false);
+            analyst.init_deal(&pos.state0, pos.observer);
             {
                 let mut s = pos.state0;
                 for &(p, a) in &pos.history {
                     search.record_action(&s, p, a);
+                    analyst.observe(&s, p, a);
                     s.step(a);
                 }
             }
@@ -511,7 +516,7 @@ fn main() {
             let pg_worlds: Vec<[u32; 4]> = match &gpu {
                 Some(g) => g
                     .generate_worlds_scored(
-                        search.playgen_sampler().unwrap(),
+                        analyst.sampler(),
                         &pos.state,
                         worlds,
                         temperature,
@@ -521,10 +526,10 @@ fn main() {
                     .into_iter()
                     .map(|(h, _)| h)
                     .collect(),
-                None => search.playgen_worlds(&pos.state, worlds, temperature, &mut r0),
+                None => analyst.play_worlds(&pos.state, worlds, temperature, &mut r0),
             };
             #[cfg(not(feature = "dmc_train"))]
-            let pg_worlds = search.playgen_worlds(&pos.state, worlds, temperature, &mut r0);
+            let pg_worlds = analyst.play_worlds(&pos.state, worlds, temperature, &mut r0);
             let bel_worlds =
                 search.sample_worlds(&pos.state, &cfg_belief, pos.observer, worlds, true, &mut r1);
             let un_worlds =

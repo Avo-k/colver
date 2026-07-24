@@ -5,6 +5,7 @@ Belote Contrée engine + RL training stack.
 ## Top-level
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — workspace layout, key subsystems, observation formats
+- [agents.md](agents.md) — **the `Player` / `WorldSource` layer**: how a bot is built and driven, and the bot-spec format
 - [RULES.md](RULES.md) — game rules summary
 - [BENCH.md](BENCH.md) — performance benchmarks
 - [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
@@ -30,4 +31,5 @@ Belote Contrée engine + RL training stack.
 | Triforge joint training | [play/experiments/triforge.md](play/experiments/triforge.md) |
 | Belief net + IS-DD | [belief/bis_dd.md](belief/bis_dd.md) |
 | Playgen world sampler (transformer) | [belief/playgen.md](belief/playgen.md) |
+| Building / running a bot | [agents.md](agents.md) |
 | Training commands | [training/overview.md](training/overview.md) |
