@@ -1,46 +1,54 @@
 /* ===== PLAYING CARDS (SVG) =====
-   La main est une grille de 8 emplacements FIXES, jamais un flux qui se
-   recompose. Deux conséquences voulues :
-     - la largeur de la main est la même au pli 1 et au pli 8, donc rien
-       autour d'elle ne bouge quand des cartes partent ;
-     - chaque carte garde son emplacement (cf. le slot posé par renderHand),
-       donc les cartes restantes ne glissent pas non plus.
-   Le pas est calculé en CSS à partir de la place réellement disponible :
-   c'est ce qui remplace l'ancienne mesure JS de --card-overlap. */
+   La main se recompose quand une carte part — pas de trous. Ce qui est figé,
+   c'est le CONTENEUR : sa largeur et sa hauteur sont dimensionnées pour une
+   main pleine de 8 cartes et ne dépendent jamais du nombre de cartes restantes.
+   Résultat : les cartes se regroupent et se recentrent naturellement, mais
+   rien AUTOUR de la main ne bouge — c'était ça, le « tout qui bouge ».
+
+   Le chevauchement se calcule en CSS à partir de la largeur disponible, ce qui
+   remplace l'ancienne mesure JS de --card-overlap (offsetWidth lu puis style
+   réécrit à chaque rendu = un reflow forcé par image). */
 .hand {
-    /* 7 colonnes au pas réduit + 1 colonne pleine = largeur totale exacte.
-       clamp() : le pas idéal (chevauchement nominal) sauf si la place manque,
-       et jamais en dessous d'un liseré visible. */
-    --card-step: clamp(
-        calc(var(--card-w) * 0.14),
-        calc((100% - var(--card-w)) / 7),
-        calc(var(--card-w) + var(--card-overlap))
-    );
-    display: grid;
-    grid-template-columns: repeat(7, var(--card-step)) var(--card-w);
-    grid-template-rows: var(--card-h);
+    /* Largeur d'une main pleine, plafonnée à la place offerte par le siège.
+       Les deux termes sont indépendants du nombre de cartes → largeur stable. */
+    width: min(100%, calc(var(--card-w) * 8 + var(--card-overlap) * 7));
+    height: var(--card-h);
+    margin-inline: auto;
+    display: flex;
     justify-content: center;
+    flex-wrap: nowrap;
 }
 
+/* Chevauchement calibré sur 8 cartes (constante), pas sur le nombre présent :
+   les cartes gardent donc le même écartement du pli 1 au pli 8. Le max()
+   garde un liseré visible si la place devient vraiment étroite. */
 .hand .card {
-    grid-column: var(--slot, auto);
-    grid-row: 1;
+    margin-left: max(
+        calc(var(--card-w) * -0.86),
+        calc((100% - var(--card-w) * 8) / 7)
+    );
 }
+.hand .card:first-child { margin-left: 0; }
 
-/* West/East: empilement vertical, même principe sur l'axe des rangées.
-   Pas de pourcentage ici : la hauteur du conteneur est indéfinie, une
-   rangée en % y retomberait en `auto` et la grille redeviendrait fluide. */
+/* West/East: empilement vertical, même principe sur l'axe vertical.
+   Pas de pourcentage ici : la hauteur du conteneur parent est indéfinie, un
+   pourcentage y retomberait en `auto` et la hauteur redeviendrait fluide. */
 .seat.west .hand,
 .seat.east .hand {
     --card-vstep: calc(var(--card-h) * 0.28);
-    grid-template-columns: var(--card-w);
-    grid-template-rows: repeat(7, var(--card-vstep)) var(--card-h);
-    align-content: center;
+    width: var(--card-w);
+    height: calc(var(--card-h) + 7 * var(--card-vstep));
+    flex-direction: column;
+    align-items: center;
 }
 .seat.west .hand .card,
 .seat.east .hand .card {
-    grid-column: 1;
-    grid-row: var(--slot, auto);
+    margin-left: 0;
+    margin-top: calc(var(--card-vstep) - var(--card-h));
+}
+.seat.west .hand .card:first-child,
+.seat.east .hand .card:first-child {
+    margin-top: 0;
 }
 
 .card {
@@ -176,8 +184,8 @@
 }
 
 /* ===== RESPONSIVE =====
-   Le pas horizontal s'adapte tout seul via clamp() — plus rien à corriger
-   ici pour la main du bas. Seul l'empilement vertical se resserre. */
+   Le chevauchement horizontal s'adapte tout seul — plus rien à corriger ici
+   pour la main du bas. Seul l'empilement vertical se resserre. */
 @media (max-width: 600px) {
     .seat.west .hand,
     .seat.east .hand {

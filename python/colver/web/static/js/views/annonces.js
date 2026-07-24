@@ -248,9 +248,7 @@ function updateAnnoncesDisplay() {
     document.getElementById('annonces-eval-btn').disabled = count !== 8;
 
     const handEl = document.getElementById('annonces-hand-display');
-    // anchor=false : ici la main se construit à la main, carte par carte —
-    // on veut qu'elle se recompacte, pas qu'elle garde des trous.
-    renderHand(handEl, Array.from(annoncesHand), false, null, null, -1, null, false);
+    renderHand(handEl, Array.from(annoncesHand));
     syncUrl();
 }
 
