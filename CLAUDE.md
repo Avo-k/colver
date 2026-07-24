@@ -218,7 +218,9 @@ Legacy keys (`is_dd`/`smart_is_dd`/`dmc_then_dd` method names, `playgen_model`, 
 
 ## Publishing & Deployment
 
-**PyPI:** push `v*` tag → CI builds manylinux/macOS/Windows wheels via maturin → publishes automatically (trusted publishing).
+**PyPI:** **bump `version` in `pyproject.toml` and commit it first**, then push the matching `v*` tag → CI builds manylinux/macOS/Windows wheels via maturin → publishes automatically (trusted publishing). Wheels are `abi3` (one per platform, Python 3.10+).
+
+Tagging without the bump is what broke v0.3.0, v0.3.1, v0.4.0, v0.5.0 and v0.8.0 — the build reused the previous version's filenames and PyPI rejected them with `400 File already exists`. The `check-version` job now blocks that in ~10s. `colver.__version__` derives from package metadata, so it never needs a manual bump.
 
 **Docker:** `docker build -t colver . && docker run -p 8000:8000 colver`. Cross-builds for ARM64.
 
