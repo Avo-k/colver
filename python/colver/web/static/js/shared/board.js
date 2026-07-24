@@ -9,6 +9,7 @@ import {
     animateTrickFlush
 } from './cards.js';
 import { updateCfnBox } from './cfn-box.js';
+import { renderBidEntries, renderTrickHistory } from './panels.js';
 
 // A move-history entry "completes a trick" if it's a play-phase move that
 // caused current_trick to reset (engine clears it after the 4th card) and
@@ -321,13 +322,7 @@ export class BoardRenderer {
             return;
         }
 
-        for (const bid of bidHistory) {
-            const el = document.createElement('span');
-            const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
-            el.className = `watch-bid-entry ${team}`;
-            el.innerHTML = `${SEAT_NAMES_FR[bid.player]} ${bidActionHtml(bid.action)}`;
-            container.appendChild(el);
-        }
+        renderBidEntries(container, bidHistory);
 
         this._updateBidOverlay(bidHistory, phase);
     }
@@ -345,57 +340,14 @@ export class BoardRenderer {
         }
 
         overlay.classList.remove('hidden');
-        entries.innerHTML = '';
-
-        for (const bid of bidHistory) {
-            const el = document.createElement('span');
-            const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
-            el.className = `watch-bid-entry ${team}`;
-            el.innerHTML = `${SEAT_NAMES_FR[bid.player]} ${bidActionHtml(bid.action)}`;
-            entries.appendChild(el);
-        }
+        renderBidEntries(entries, bidHistory);
     }
 
     renderTricksHistory(tricks) {
         const container = this.el('tricks-list');
         if (!container) return;
-        container.innerHTML = '';
+        renderTrickHistory(container, tricks);
         if (!tricks || tricks.length === 0) return;
-
-        for (let i = 0; i < tricks.length; i++) {
-            const t = tricks[i];
-            const row = document.createElement('div');
-            const winnerTeam = t.winner % 2 === 0 ? 'team-ns' : 'team-ew';
-            row.className = `trick-history-row ${winnerTeam}`;
-
-            const SEAT_L = ['N', 'E', 'S', 'O'];
-            const leadSeat = t.lead !== undefined ? t.lead : -1;
-
-            let orderedCards = '';
-            if (leadSeat >= 0) {
-                for (let j = 0; j < 4; j++) {
-                    const seat = (leadSeat + j) % 4;
-                    const c = t.cards[seat];
-                    if (c >= 0 && c < 32) {
-                        orderedCards += cardTextHtml(c) + ' ';
-                    }
-                }
-                orderedCards = orderedCards.trim();
-            } else {
-                orderedCards = t.cards.map(c => {
-                    if (c >= 0 && c < 32) return cardTextHtml(c);
-                    return '?';
-                }).join(' ');
-            }
-
-            const leadLabel = leadSeat >= 0 ? SEAT_L[leadSeat] : '?';
-            const winnerName = SEAT_NAMES_FR[t.winner];
-            row.innerHTML = `<span class="trick-num">#${i + 1}</span>` +
-                `<span class="trick-lead-label">${leadLabel}</span>` +
-                `<span class="trick-cards">${orderedCards}</span>` +
-                `<span class="trick-winner">${winnerName} +${t.points}</span>`;
-            container.appendChild(row);
-        }
 
         container.scrollTop = container.scrollHeight;
     }

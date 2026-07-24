@@ -30,6 +30,14 @@ const legacyHashMap = {
     '#docs':         '/about',
 };
 
+// Le tapis vert n'a de sens que sur les pages qui montrent un plateau. Sur les
+// pages de lecture et d'analyse, il nuisait à la lisibilité du texte et des
+// tableaux : elles passent sur un fond neutre.
+const FELT_ROUTES = new Set([
+    '/', '/jouer/humain', '/jouer/salon', '/jouer/ia',
+    '/analyse/rejouer', '/problemes/annonce', '/problemes/jeu',
+]);
+
 let currentView = null;
 let currentPath = null;
 const container = () => document.getElementById('app');
@@ -71,6 +79,10 @@ async function navigate() {
     }
     currentView = null;
     currentPath = path;
+    // Posée AVANT le chargement du module : navigate() a plusieurs retours
+    // anticipés (route inconnue, navigation concurrente pendant l'import) qui
+    // sautaient l'assignation. La poser tôt évite aussi un flash de fond.
+    document.body.dataset.surface = FELT_ROUTES.has(path) ? 'felt' : 'flat';
 
     const el = container();
     el.innerHTML = '';

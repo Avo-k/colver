@@ -14,6 +14,7 @@ import {
 } from './cards.js';
 import { setGameId as setBugReportGameId, openBugReport } from './bug-report.js';
 import { createSuitPicker } from './suits.js';
+import { renderBidEntries, renderTrickHistory } from './panels.js';
 
 export const MY_SEAT = 2; // South, always (server-side rotation guarantees it)
 
@@ -537,54 +538,14 @@ export class GameTable {
         const reviewEl = document.getElementById('play-review');
         reviewEl.classList.remove('hidden');
 
-        const bidContainer = document.getElementById('play-bid-entries');
-        bidContainer.innerHTML = '';
         const bids = this._serverBidHistory || this.bidHistory.map(b => ({ player: b.player, action: b.action }));
-        for (const bid of bids) {
-            const el = document.createElement('span');
-            const team = bid.player % 2 === 0 ? 'team-ns' : 'team-ew';
-            el.className = `watch-bid-entry ${team}`;
-            el.innerHTML = `${this.playerName(bid.player)} ${bidActionHtml(bid.action)}`;
-            bidContainer.appendChild(el);
-        }
+        renderBidEntries(document.getElementById('play-bid-entries'), bids, (s) => this.playerName(s));
 
-        const tricksContainer = document.getElementById('play-tricks-list');
-        tricksContainer.innerHTML = '';
-        const tricks = this._serverCompletedTricks || [];
-        for (let i = 0; i < tricks.length; i++) {
-            const t = tricks[i];
-            const row = document.createElement('div');
-            const winnerTeam = t.winner % 2 === 0 ? 'team-ns' : 'team-ew';
-            row.className = `trick-history-row ${winnerTeam}`;
-
-            const SEAT_L = ['N', 'E', 'S', 'O'];
-            const leadSeat = t.lead !== undefined && t.lead !== null ? t.lead : -1;
-
-            let orderedCards = '';
-            if (leadSeat >= 0) {
-                for (let j = 0; j < 4; j++) {
-                    const seat = (leadSeat + j) % 4;
-                    const c = t.cards[seat];
-                    if (c >= 0 && c < 32) {
-                        orderedCards += cardTextHtml(c) + ' ';
-                    }
-                }
-                orderedCards = orderedCards.trim();
-            } else {
-                orderedCards = t.cards.map(c => {
-                    if (c >= 0 && c < 32) return cardTextHtml(c);
-                    return '?';
-                }).join(' ');
-            }
-
-            const leadLabel = leadSeat >= 0 ? SEAT_L[leadSeat] : '?';
-            const winnerName = this.playerName(t.winner);
-            row.innerHTML = `<span class="trick-num">#${i + 1}</span>` +
-                `<span class="trick-lead-label">${leadLabel}</span>` +
-                `<span class="trick-cards">${orderedCards}</span>` +
-                `<span class="trick-winner">${winnerName} +${t.points}</span>`;
-            tricksContainer.appendChild(row);
-        }
+        renderTrickHistory(
+            document.getElementById('play-tricks-list'),
+            this._serverCompletedTricks || [],
+            (s) => this.playerName(s),
+        );
     }
 
     launchConfetti() {

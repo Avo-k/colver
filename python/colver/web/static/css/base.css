@@ -22,6 +22,9 @@
 /* ===== BODY ===== */
 body {
     font-family: var(--font-ui);
+    /* Le tapis reste le défaut (premier rendu avant que le routeur ne tranche),
+       mais les pages de lecture basculent sur un fond neutre — cf. FELT_ROUTES
+       dans router.js. */
     background: var(--c-felt);
     color: var(--c-text);
     font-size: var(--fs-md);
@@ -29,6 +32,10 @@ body {
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
+}
+
+body[data-surface="flat"] {
+    background: linear-gradient(180deg, var(--c-bg) 0%, var(--c-bg-deep) 100%);
 }
 
 /* ===== FORM ELEMENTS ===== */

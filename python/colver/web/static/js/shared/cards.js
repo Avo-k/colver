@@ -3,7 +3,7 @@
 import * as SFX from '../sounds.js';
 
 import {
-    SUIT_GLYPHS, SUIT_NAMES_EN, SUIT_DISPLAY_ORDER, SUIT_IS_RED,
+    SUIT_GLYPHS, SUIT_NAMES_EN, SUIT_NAMES_FR, SUIT_DISPLAY_ORDER, SUIT_IS_RED,
     suitHtml, suitClass,
 } from './suits.js';
 
@@ -101,7 +101,20 @@ export function cardToHtml(cardIdx, clickable = false, onClick = null, illegal =
 
     el.dataset.card = cardIdx;
     if (clickable && onClick) {
+        // Une carte jouable est un contrôle : atteignable au Tab, actionnable
+        // à Entrée ou Espace, et annoncée par un lecteur d'écran. Elle n'était
+        // qu'un <div> cliquable — le jeu au clavier était impossible.
+        el.tabIndex = 0;
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', `Jouer ${RANKS[cardRank(cardIdx)]} de ${SUIT_NAMES_FR[cardSuit(cardIdx)]}`);
         el.addEventListener('click', () => onClick(cardIdx));
+        el.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            e.preventDefault();
+            onClick(cardIdx);
+        });
+    } else if (illegal) {
+        el.setAttribute('aria-disabled', 'true');
     }
     return el;
 }

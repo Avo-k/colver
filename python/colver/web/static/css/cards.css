@@ -192,3 +192,11 @@
         --card-vstep: calc(var(--card-h) * 0.20);
     }
 }
+
+/* Carte focalisée au clavier : les cartes se chevauchent, sans z-index le
+   liseré de focus passerait sous la voisine. */
+.card:focus-visible {
+    z-index: 20;
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+}
