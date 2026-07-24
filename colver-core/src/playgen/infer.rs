@@ -770,6 +770,16 @@ impl GenState {
         }
         let trump = self.contract.trump;
         let lead_card = self.trick_cards[self.trick_lead as usize];
+        // Defensive: an inconsistent mid-generation trick state can leave the
+        // lead slot EMPTY while trick_count > 0. `card_suit_u8(EMPTY)` is 31,
+        // which would index SUIT_MASK (len 4) out of bounds and panic —
+        // surfacing through PyO3 as a BaseException that tears down the web
+        // WebSocket. Treat "no known lead" like the start of a trick: no
+        // suit-following restriction. The observer's final hand is fixed and
+        // validated downstream, so this cannot corrupt a sampled world.
+        if lead_card == card::EMPTY {
+            return hand;
+        }
         let lead_suit = card_suit_u8(lead_card);
         let in_lead = hand & SUIT_MASK[lead_suit as usize];
 
