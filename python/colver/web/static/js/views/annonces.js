@@ -13,6 +13,8 @@ const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
 const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
+// ♠ noir, ♥ rouge, ♦ rouge, ♣ noir — for coloring native <option> text.
+const SUIT_COLORS = ['#1a1a1a', '#d33', '#d33', '#1a1a1a'];
 function suitHtml(suitIdx) {
     return SUIT_EMOJI[suitIdx];
 }
@@ -35,7 +37,7 @@ const TEMPLATE = `
                 </div>
                 <div id="annonces-history-list"></div>
                 <div id="annonces-history-add">
-                    <select id="annonces-action-select"></select>
+                    <span id="annonces-action-select"></span>
                     <button id="annonces-history-add-btn">+ Ajouter</button>
                 </div>
             </div>
@@ -68,7 +70,7 @@ const TEMPLATE = `
             <span id="annonces-verdict-action"></span>
             <span class="verdict-alt">
                 <label for="annonces-alt-select" class="verdict-alt-label">Analyser une autre annonce :</label>
-                <select id="annonces-alt-select"></select>
+                <span id="annonces-alt-select"></span>
                 <button id="annonces-alt-btn" class="secondary-btn">Analyser</button>
                 <label class="annonces-sim-label">Simulations :
                     <input type="number" id="annonces-sim-count" value="200" min="1" max="1000" style="width:55px">
@@ -115,6 +117,8 @@ let annoncesHand = new Set();
 let annoncesHistory = [];
 let xgbResults = null; // cached XGB analysis results
 let forcedAction = null; // alternative bid being analysed (null = Bid V6's own choice)
+let actionSelector = null; // paired bid selector for the history-add row
+let altSelector = null;    // paired bid selector for "analyser une autre annonce"
 
 // Keep the URL in sync with the current hand/history, hand as two-char card
 // codes ("7S,KH,...") rather than raw indices.
@@ -160,30 +164,72 @@ function initAnnoncesGrid() {
     }
 }
 
-function populateBidActionSelect(select) {
-    select.innerHTML = '';
-    const addOpt = (value, text) => {
+// Build a paired bid selector (niveau + couleur) inside `container`.
+// Levels: Passe · 80…160 · Capot · Coinche · Surcoinche. The suit dropdown is
+// only relevant for a numeric value or Capot, and is disabled for the others.
+// Returns { read(): actionCode, set(actionCode): void }.
+function buildBidSelector(container) {
+    container.innerHTML = '';
+    container.classList.add('bid-selector');
+
+    const levelSel = document.createElement('select');
+    levelSel.className = 'bid-level-select';
+    const suitSel = document.createElement('select');
+    suitSel.className = 'bid-suit-select';
+
+    const addOpt = (sel, value, text, color) => {
         const opt = document.createElement('option');
         opt.value = value;
         opt.textContent = text;
-        select.appendChild(opt);
+        if (color) opt.style.color = color;
+        sel.appendChild(opt);
     };
-    addOpt(0, 'Passe');
-    for (let valIdx = 0; valIdx < 9; valIdx++) {
-        const value = 80 + valIdx * 10;
-        for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
-            addOpt(valIdx * 4 + suitIdx + 1, `${value} ${SUIT_SYMBOLS[suitIdx]}`);
-        }
-    }
-    for (let suitIdx = 0; suitIdx < 4; suitIdx++) {
-        addOpt(37 + suitIdx, `Capot ${SUIT_SYMBOLS[suitIdx]}`);
-    }
-    addOpt(41, 'Coinche');
-    addOpt(42, 'Surcoinche');
-}
 
-function initActionSelect() {
-    populateBidActionSelect(document.getElementById('annonces-action-select'));
+    addOpt(levelSel, 'pass', 'Passe');
+    for (let valIdx = 0; valIdx < 9; valIdx++) {
+        addOpt(levelSel, String(valIdx), String(80 + valIdx * 10));
+    }
+    addOpt(levelSel, 'capot', 'Capot');
+    addOpt(levelSel, 'coinche', 'Coinche');
+    addOpt(levelSel, 'surcoinche', 'Surcoinche');
+
+    for (const suit of SUIT_DISPLAY_ORDER) {
+        addOpt(suitSel, String(suit), SUIT_EMOJI[suit], SUIT_COLORS[suit]);
+    }
+
+    const isSpecial = (v) => v === 'pass' || v === 'coinche' || v === 'surcoinche';
+    const sync = () => { suitSel.disabled = isSpecial(levelSel.value); };
+    levelSel.addEventListener('change', sync);
+    sync();
+
+    container.appendChild(levelSel);
+    container.appendChild(suitSel);
+
+    return {
+        read() {
+            const lvl = levelSel.value;
+            if (lvl === 'pass') return 0;
+            if (lvl === 'coinche') return 41;
+            if (lvl === 'surcoinche') return 42;
+            const suit = parseInt(suitSel.value);
+            if (lvl === 'capot') return 37 + suit;
+            return parseInt(lvl) * 4 + suit + 1;
+        },
+        set(action) {
+            if (action === 0) { levelSel.value = 'pass'; }
+            else if (action === 41) { levelSel.value = 'coinche'; }
+            else if (action === 42) { levelSel.value = 'surcoinche'; }
+            else if (action >= 37 && action <= 40) {
+                levelSel.value = 'capot';
+                suitSel.value = String(action - 37);
+            } else if (action >= 1 && action <= 36) {
+                const a = action - 1;
+                levelSel.value = String(Math.floor(a / 4));
+                suitSel.value = String(a % 4);
+            }
+            sync();
+        },
+    };
 }
 
 function toggleAnnoncesCard(idx) {
@@ -371,7 +417,7 @@ function handleBidEvalResult(data) {
 
     document.getElementById('annonces-verdict').classList.remove('hidden');
     document.getElementById('annonces-verdict-action').innerHTML = bidActionHtml(bestAction);
-    document.getElementById('annonces-alt-select').value = String(bestAction);
+    if (altSelector) altSelector.set(bestAction);
 
     document.getElementById('annonces-results-header').innerHTML =
         `Bid V6 : ${bidActionHtml(bestAction)}`;
@@ -946,11 +992,11 @@ export function mount(container) {
     annoncesHistory = [];
 
     initAnnoncesGrid();
-    initActionSelect();
-    populateBidActionSelect(document.getElementById('annonces-alt-select'));
+    actionSelector = buildBidSelector(document.getElementById('annonces-action-select'));
+    altSelector = buildBidSelector(document.getElementById('annonces-alt-select'));
 
     document.getElementById('annonces-alt-btn').addEventListener('click', () => {
-        runAltAnalysis(parseInt(document.getElementById('annonces-alt-select').value));
+        runAltAnalysis(altSelector.read());
     });
 
     // Pre-fill from URL params (e.g. ?hand=7S,KH,... or legacy ?hand=0,1,2,...; &history=5,0,17)
@@ -974,9 +1020,7 @@ export function mount(container) {
 
     // Event handlers
     document.getElementById('annonces-history-add-btn').addEventListener('click', () => {
-        const select = document.getElementById('annonces-action-select');
-        const action = parseInt(select.value);
-        annoncesHistory.push(action);
+        annoncesHistory.push(actionSelector.read());
         renderAnnoncesHistory();
     });
 

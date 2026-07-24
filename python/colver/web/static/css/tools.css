@@ -530,10 +530,34 @@
     padding-top: 8px;
 }
 
-#annonces-history-add select {
+#annonces-history-add .bid-selector {
     flex: 1;
     min-width: 0;
+}
+
+/* Paired bid selector: niveau (value) + couleur (suit) */
+.bid-selector {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.bid-selector select {
     font-size: 0.82rem;
+    min-width: 0;
+}
+
+.bid-selector .bid-level-select {
+    flex: 1;
+}
+
+.bid-selector .bid-suit-select {
+    flex: 0 0 auto;
+    font-size: 1rem;
+}
+
+.bid-selector .bid-suit-select:disabled {
+    opacity: 0.35;
 }
 
 #annonces-eval-row {
