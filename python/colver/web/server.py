@@ -920,6 +920,7 @@ async def websocket_endpoint(ws: WebSocket):
                     "moves": moves,
                     "bid_history": [],
                     "completed_tricks": [],
+                    "game_cfn": replay_session.game_cfn,
                 })
 
             elif msg_type == "replay_step":

@@ -41,6 +41,19 @@ def _belief_cache_put(game_cfn, kind, idx, observer, value):
     _belief_cache.move_to_end(game_cfn)
 
 
+def compute_game_cfn(dealer, initial_hands, action_ids) -> str:
+    """Full-game CFN (auction + play) from a deal and a flat action-id list."""
+    env = colver.Env.deal_with_hands(int(dealer), [list(h) for h in initial_hands])
+    env.dede_init()
+    bids = []
+    for a in action_ids:
+        a = int(a)
+        if int(env.phase()) == 0:
+            bids.append(a)
+        env.dede_step(a)
+    return game_notation.to_full_cfn(env.to_cfn(), bids)
+
+
 def _safe_playgen(fn, *args, **kwargs):
     """Run a playgen inference call, swallowing Rust panics.
 
@@ -798,12 +811,8 @@ class BeliefSession:
 
     def _compute_game_cfn(self) -> str:
         """Full-game CFN (with auction) for the current game."""
-        env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
-        env.dede_init()
-        for _p, a, _ph in self.all_actions:
-            env.dede_step(a)
-        bids = [a for _p, a, ph in self.all_actions if ph == 0]
-        return game_notation.to_full_cfn(env.to_cfn(), bids)
+        return compute_game_cfn(
+            self.dealer, self.initial_hands, [a for _p, a, _ph in self.all_actions])
 
     def restore(self, dealer, initial_hands, actions) -> dict:
         """Rebuild a session from a deal the client already holds (no new deal).
@@ -1004,6 +1013,10 @@ class ReplaySession(TrickTracker):
         self.bid_history = []
         self._init_trick_tracking()
         self.env = colver.Env.deal_with_hands(game_data["dealer"], game_data["hands"])
+        # Full-game CFN (auction + play) — copy-pasteable into the belief page.
+        self.game_cfn = compute_game_cfn(
+            game_data["dealer"], game_data["hands"],
+            [e["action"] for e in self.actions])
 
     def get_state(self):
         """Full state with ALL hands visible (same as WatchSession)."""

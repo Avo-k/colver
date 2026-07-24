@@ -9,7 +9,7 @@ import {
     bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
-import { initCfnBox } from '../shared/cfn-box.js';
+import { initCfnBox, updateCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
 
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
@@ -389,6 +389,9 @@ function handleReplayLoaded(data) {
 
     document.getElementById('replay-main').classList.remove('hidden');
     replayBoard.renderHistoryEntry(-1);
+
+    // Full-game CFN (auction + play): click-to-copy, paste into the belief page.
+    updateCfnBox('replay-cfn', data.game_cfn);
 
     const header = replayBoard.el('stats-header');
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-agent">${data.game_id}</span>`;
