@@ -7,6 +7,25 @@ import colver
 from colver.web import playgen_gpu
 
 
+def _safe_playgen(fn, *args, **kwargs):
+    """Run a playgen inference call, swallowing Rust panics.
+
+    The pure-Rust playgen sampler can panic on some mid-play positions
+    (e.g. an index-out-of-bounds in `infer.rs`). PyO3 surfaces that as
+    `pyo3_runtime.PanicException`, which subclasses BaseException — so an
+    ordinary `except Exception` misses it and the panic tears down the whole
+    WebSocket coroutine (observed as a reconnect loop on the Croyances page).
+    Playgen is best-effort, so degrade to None on any failure instead.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 — includes pyo3 PanicException
+        print(f"[belief] playgen call failed ({type(e).__name__}): {e}")
+        return None
+
+
 def _inject_gpu_worlds(env, dealer, initial_hands, history, n_worlds=24):
     """Fetch playgen worlds from the GPU sidecar and inject them into the
     env's IS-DD search for the current player. Silent no-op (False) when the
@@ -847,7 +866,8 @@ class BeliefSession:
                 # None during bidding (contract unknown)
                 playgen = self._playgen_marginals(self.action_idx, observer)
                 if playgen is None:
-                    playgen = self.env.get_playgen_beliefs(
+                    playgen = _safe_playgen(
+                        self.env.get_playgen_beliefs,
                         observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
                     )
                 if playgen is not None:
@@ -904,7 +924,8 @@ class BeliefSession:
                 if key not in self.playgen_cache:
                     w = self._playgen_marginals(idx, self._sweep_observer)
                     if w is None:
-                        w = self._sweep_env.get_playgen_beliefs(
+                        w = _safe_playgen(
+                            self._sweep_env.get_playgen_beliefs,
                             self._sweep_observer,
                             n_worlds=self.PLAYGEN_WORLDS,
                             temperature=self.PLAYGEN_TEMP,
