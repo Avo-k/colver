@@ -1,28 +1,46 @@
-/* ===== PLAYING CARDS (SVG) ===== */
+/* ===== PLAYING CARDS (SVG) =====
+   La main est une grille de 8 emplacements FIXES, jamais un flux qui se
+   recompose. Deux conséquences voulues :
+     - la largeur de la main est la même au pli 1 et au pli 8, donc rien
+       autour d'elle ne bouge quand des cartes partent ;
+     - chaque carte garde son emplacement (cf. le slot posé par renderHand),
+       donc les cartes restantes ne glissent pas non plus.
+   Le pas est calculé en CSS à partir de la place réellement disponible :
+   c'est ce qui remplace l'ancienne mesure JS de --card-overlap. */
 .hand {
-    display: flex;
-    gap: 0;
+    /* 7 colonnes au pas réduit + 1 colonne pleine = largeur totale exacte.
+       clamp() : le pas idéal (chevauchement nominal) sauf si la place manque,
+       et jamais en dessous d'un liseré visible. */
+    --card-step: clamp(
+        calc(var(--card-w) * 0.14),
+        calc((100% - var(--card-w)) / 7),
+        calc(var(--card-w) + var(--card-overlap))
+    );
+    display: grid;
+    grid-template-columns: repeat(7, var(--card-step)) var(--card-w);
+    grid-template-rows: var(--card-h);
     justify-content: center;
-    flex-wrap: nowrap;
 }
 
-.hand .card { margin-left: var(--card-overlap); }
-.hand .card:first-child { margin-left: 0; }
+.hand .card {
+    grid-column: var(--slot, auto);
+    grid-row: 1;
+}
 
-/* West/East: vertical stacking */
+/* West/East: empilement vertical, même principe sur l'axe des rangées.
+   Pas de pourcentage ici : la hauteur du conteneur est indéfinie, une
+   rangée en % y retomberait en `auto` et la grille redeviendrait fluide. */
 .seat.west .hand,
 .seat.east .hand {
-    flex-direction: column;
-    flex-wrap: nowrap;
+    --card-vstep: calc(var(--card-h) * 0.28);
+    grid-template-columns: var(--card-w);
+    grid-template-rows: repeat(7, var(--card-vstep)) var(--card-h);
+    align-content: center;
 }
 .seat.west .hand .card,
 .seat.east .hand .card {
-    margin-left: 0;
-    margin-top: calc(var(--card-h) * -0.72);
-}
-.seat.west .hand .card:first-child,
-.seat.east .hand .card:first-child {
-    margin-top: 0;
+    grid-column: 1;
+    grid-row: var(--slot, auto);
 }
 
 .card {
@@ -157,10 +175,12 @@
     color: #fff8e1;
 }
 
-/* ===== RESPONSIVE ===== */
+/* ===== RESPONSIVE =====
+   Le pas horizontal s'adapte tout seul via clamp() — plus rien à corriger
+   ici pour la main du bas. Seul l'empilement vertical se resserre. */
 @media (max-width: 600px) {
-    .seat.west .hand .card,
-    .seat.east .hand .card {
-        margin-top: calc(var(--card-h) * -0.8);
+    .seat.west .hand,
+    .seat.east .hand {
+        --card-vstep: calc(var(--card-h) * 0.20);
     }
 }

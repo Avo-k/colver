@@ -21,11 +21,11 @@
 }
 
 /* Watch/Replay: looser E/W vertical stacking */
-#watch-main .seat.west .hand .card,
-#watch-main .seat.east .hand .card,
-#replay-main .seat.west .hand .card,
-#replay-main .seat.east .hand .card {
-    margin-top: calc(var(--card-h) * -0.7);
+#watch-main .seat.west .hand,
+#watch-main .seat.east .hand,
+#replay-main .seat.west .hand,
+#replay-main .seat.east .hand {
+    --card-vstep: calc(var(--card-h) * 0.30);
 }
 
 /* ===== REPLAY HISTORY SIDEBAR ===== */

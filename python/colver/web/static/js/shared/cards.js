@@ -116,7 +116,27 @@ export function faceDownCard() {
 const PLAIN_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
 const TRUMP_ORDER = [7, 6, 1, 0, 5, 4, 3, 2];
 
-export function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1, annotations = null) {
+// Emplacements de main, mémorisés par conteneur.
+//
+// Une carte jouée ne doit pas faire glisser les autres : chaque carte garde
+// l'emplacement qu'elle occupait dans la main complète. On recalcule la carte
+// -> slot uniquement quand la main n'est plus un sous-ensemble de la
+// précédente (nouvelle donne, main éditée) ou quand l'atout change, puisque
+// l'atout change l'ordre de tri.
+const _handSlots = new WeakMap();
+
+function slotsFor(container, sorted, trumpSuit) {
+    const prev = _handSlots.get(container);
+    if (prev && prev.trump === trumpSuit && sorted.every(c => prev.slots.has(c))) {
+        return prev.slots;
+    }
+    const slots = new Map();
+    sorted.forEach((c, i) => slots.set(c, i));
+    _handSlots.set(container, { trump: trumpSuit, slots });
+    return slots;
+}
+
+export function renderHand(container, cards, clickable = false, onClick = null, legalSet = null, trumpSuit = -1, annotations = null, anchor = true) {
     container.innerHTML = '';
     const sortKeys = suitSortKeys(cards);
     const sorted = [...cards].sort((a, b) => {
@@ -126,13 +146,16 @@ export function renderHand(container, cards, clickable = false, onClick = null, 
         const orderB = suitB === trumpSuit ? TRUMP_ORDER : PLAIN_ORDER;
         return orderA[cardRank(a)] - orderB[cardRank(b)];
     });
-    for (const c of sorted) {
+    const slots = anchor ? slotsFor(container, sorted, trumpSuit) : null;
+    sorted.forEach((c, i) => {
         const isLegal = !legalSet || legalSet.has(c);
         const cardClickable = clickable && isLegal;
         const illegal = clickable && !isLegal;
         const ann = annotations ? annotations.get(c) : null;
-        container.appendChild(cardToHtml(c, cardClickable, onClick, illegal, ann));
-    }
+        const el = cardToHtml(c, cardClickable, onClick, illegal, ann);
+        el.style.setProperty('--slot', (slots ? slots.get(c) : i) + 1);
+        container.appendChild(el);
+    });
 }
 
 // Shared hand ordering (suit alternation + rank order, trump-aware).
@@ -172,14 +195,22 @@ export function renderHandMini(container, cards, w = 34, trumpSuit = -1) {
     }
 }
 
+// Mains face cachée : les dos étant indiscernables, on les centre dans les 8
+// emplacements plutôt que de les ancrer à gauche — l'éventail se resserre
+// symétriquement et aucun déplacement n'est perceptible. Ce qui compte est
+// que la grille garde ses 8 colonnes : la largeur du conteneur ne bouge pas,
+// donc rien autour ne se décale.
 export function renderFaceDownHand(container, count) {
     const current = container.children.length;
     if (current === count && count > 0 && container.firstChild && container.firstChild.classList.contains('face-down')) {
         return;
     }
     container.innerHTML = '';
+    const start = Math.floor((8 - count) / 2);
     for (let i = 0; i < count; i++) {
-        container.appendChild(faceDownCard());
+        const el = faceDownCard();
+        el.style.setProperty('--slot', start + i + 1);
+        container.appendChild(el);
     }
 }
 
