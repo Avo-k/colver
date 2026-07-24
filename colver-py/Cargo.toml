@@ -10,6 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 colver-core = { path = "../colver-core", features = ["parallel"] }
-pyo3 = { version = "0.22", features = ["extension-module"] }
+# abi3-py310 => one wheel per platform covering Python 3.10+ (matches
+# requires-python in pyproject.toml), instead of a cp312-only wheel that
+# forced every other Python version to build the sdist from source.
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py310"] }
 numpy = "0.22"
 rand = "0.8"

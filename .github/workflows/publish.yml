@@ -9,8 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  check-version:
+    name: Check tag matches pyproject version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches pyproject.toml
+        run: |
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "Not a tag push (manual dispatch) — skipping version check."
+            exit 0
+          fi
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
+          echo "tag=$tag  pyproject=$pyproject"
+          if [ "$tag" != "$pyproject" ]; then
+            echo "::error::Tag v$tag does not match pyproject.toml version $pyproject. \
+          Bump the version in pyproject.toml, commit, then move the tag."
+            exit 1
+          fi
+
   build:
     name: Build wheel (${{ matrix.target }})
+    needs: check-version
     strategy:
       fail-fast: false
       matrix:
@@ -44,6 +65,7 @@ jobs:
 
   sdist:
     name: Build source distribution
+    needs: check-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,3 +92,7 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A retried or partially-completed run must not hard-fail on files
+          # PyPI already has — upload the rest instead.
+          skip-existing: true

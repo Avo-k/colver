@@ -1,6 +1,6 @@
 [project]
 name = "colver"
-version = "0.7.0"
+version = "0.9.0"
 description = "Fast Belote Contree game engine with AI agents"
 readme = "README.md"
 license = "MIT"
