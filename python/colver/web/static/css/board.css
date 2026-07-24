@@ -11,13 +11,13 @@
     background: rgba(0,0,0,0.35);
     border-radius: 6px;
     margin-bottom: 8px;
-    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    font-size: var(--fs-md);
 }
 
 #contract-display, #watch-contract-display, #replay-contract-display {
     color: var(--c-accent);
     font-weight: 600;
-    font-size: clamp(0.9rem, 1.1vw, 1.15rem);
+    font-size: var(--fs-lg);
 }
 
 .seats {
@@ -40,7 +40,7 @@
 .seat.east  { grid-area: east; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 
 .seat-label {
-    font-size: clamp(0.65rem, 0.75vw, 0.85rem);
+    font-size: var(--fs-sm);
     color: #8a8a7a;
     margin-bottom: 4px;
     text-transform: uppercase;
@@ -86,7 +86,7 @@
 }
 
 .last-trick-label {
-    font-size: clamp(0.6rem, 0.7vw, 0.75rem);
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     font-weight: 600;
@@ -181,7 +181,7 @@
     z-index: 30;
     text-align: center;
     padding: 6px 16px;
-    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    font-size: var(--fs-md);
     color: #c0b890;
     font-weight: 500;
     letter-spacing: 0.5px;
@@ -226,7 +226,7 @@
     gap: 20px;
     padding: 40px 32px;
     margin-bottom: 0;
-    font-size: clamp(1rem, 1.1vw, 1.15rem);
+    font-size: var(--fs-lg);
 }
 #play-intro {
     display: none;
@@ -240,14 +240,14 @@
     display: block;
 }
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config label {
-    font-size: clamp(0.95rem, 1.05vw, 1.1rem);
+    font-size: var(--fs-lg);
 }
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config select {
-    font-size: clamp(0.95rem, 1.05vw, 1.1rem);
+    font-size: var(--fs-lg);
     padding: 7px 10px;
 }
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config #start-game {
-    font-size: clamp(1.1rem, 1.3vw, 1.4rem);
+    font-size: var(--fs-xl);
     padding: 14px 36px;
     margin-top: 8px;
     border-radius: 6px;
@@ -259,7 +259,7 @@
     font-family: monospace;
     color: var(--c-accent);
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     letter-spacing: 2px;
     background: var(--c-accent-a10);
     border: 1px solid var(--c-accent-a30);
@@ -270,7 +270,7 @@
 /* ===== CFN BOX ===== */
 .cfn-box {
     font-family: monospace;
-    font-size: clamp(0.55rem, 0.7vw, 0.72rem);
+    font-size: var(--fs-2xs);
     color: #8a8a7a;
     background: rgba(0,0,0,0.2);
     border: 1px solid rgba(255,255,255,0.06);
@@ -300,7 +300,7 @@
     color: #888;
     border: 1px solid rgba(255,255,255,0.1);
     padding: 2px 8px;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     font-weight: 500;
     cursor: pointer;
     border-radius: 3px;
@@ -316,7 +316,7 @@
 .stats-replay-tag {
     display: inline-block;
     padding: 1px 8px;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     color: var(--c-accent);
     background: var(--c-accent-a15);

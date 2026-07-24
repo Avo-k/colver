@@ -9,7 +9,7 @@ const TEMPLATE = `
 <div id="pa-config">
     <span class="annonces-title">Probl\u00e8mes d'annonce</span>
     <button id="pa-generate-btn">Nouveau probl\u00e8me</button>
-    <span id="pa-loading" class="hidden" style="color:#888;font-size:.85rem">G\u00e9n\u00e9ration\u2026</span>
+    <span id="pa-loading" class="prob-loading hidden">G\u00e9n\u00e9ration\u2026</span>
 </div>
 <div id="pa-table" class="hidden">
     <div class="seats">
@@ -69,7 +69,7 @@ const TEMPLATE = `
             <div id="pa-heuristic-best" class="prob-best"></div>
         </div>
         <div class="prob-section hidden" id="pa-xgb-section">
-            <div class="prob-label">Facteurs cl\u00e9s <span style="font-size:0.7rem;color:#777">(XGBoost, pas le NN)</span></div>
+            <div class="prob-label">Facteurs cl\u00e9s <span class="prob-label-note">(XGBoost, pas le NN)</span></div>
             <div id="pa-xgb-boxes"></div>
         </div>
         <div class="prob-section">

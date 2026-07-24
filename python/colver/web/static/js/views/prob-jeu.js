@@ -8,15 +8,15 @@ const TEMPLATE = `
 <div id="pj-config">
     <span class="annonces-title">Probl\u00e8mes de jeu</span>
     <button id="pj-generate-btn">Nouveau probl\u00e8me</button>
-    <span id="pj-loading" class="hidden" style="color:#888;font-size:.85rem">G\u00e9n\u00e9ration\u2026</span>
+    <span id="pj-loading" class="prob-loading hidden">G\u00e9n\u00e9ration\u2026</span>
 </div>
 <div id="pj-main" class="hidden">
     <div id="pj-left">
         <div class="prob-box" id="pj-info-bar">
-            <span id="pj-contract-display" style="color:#d4af37;font-weight:600"></span>
+            <span id="pj-contract-display" class="pj-contract"></span>
             <span id="pj-score-ns">NS : 0</span>
             <span id="pj-score-ew">EO : 0</span>
-            <span id="pj-tricks-info" style="color:#888"></span>
+            <span id="pj-tricks-info" class="pj-tricks"></span>
         </div>
         <div class="prob-box">
             <div class="section-title">Ench\u00e8res</div>

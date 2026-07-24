@@ -23,7 +23,7 @@
     gap: 4px;
     flex-wrap: wrap;
     min-height: 24px;
-    font-size: clamp(0.75rem, 0.85vw, 0.95rem);
+    font-size: var(--fs-md);
 }
 
 .bid-entry {
@@ -59,7 +59,7 @@
 
 #bid-selectors select {
     padding: 6px 10px;
-    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    font-size: var(--fs-md);
 }
 
 #bid-special {
@@ -70,7 +70,7 @@
 
 .bid-btn {
     padding: 7px 14px;
-    font-size: clamp(0.8rem, 0.9vw, 0.95rem);
+    font-size: var(--fs-md);
     border-radius: 4px;
 }
 

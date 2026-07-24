@@ -16,7 +16,7 @@
 }
 
 .palette-suit-label {
-    font-size: 1.1rem;
+    font-size: var(--fs-lg);
     text-align: center;
     font-weight: 700;
     user-select: none;
@@ -109,18 +109,18 @@
 }
 #annonces-verdict .verdict-alt-label {
     color: #bbb;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 #annonces-alt-status {
     flex-basis: 100%;
     text-align: center;
     color: #bbb;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 #doudou-forced-label {
     color: var(--c-accent);
     font-weight: 400;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 .oracle-forced {
     outline: 2px solid var(--c-accent);
@@ -131,7 +131,7 @@
 /* Compact Sûr/Tendu columns inside the Moyennes table */
 .oracle-quant-table th.oracle-mini-col,
 .oracle-quant-table td.oracle-mini-col {
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     color: #999;
 }
 
@@ -144,7 +144,7 @@
     padding: 8px 10px;
     background: rgba(0, 0, 0, 0.18);
     border-radius: 8px;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
 }
 .synth-row {
     display: flex;
@@ -165,14 +165,14 @@
     align-items: center;
     gap: 6px;
     margin: 6px 0;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
 }
 .doudou-filter-btn {
     background: rgba(255, 255, 255, 0.06);
     border: 1px solid #444;
     border-radius: 6px;
     color: #bbb;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     padding: 2px 10px;
     cursor: pointer;
 }
@@ -184,10 +184,10 @@
 }
 #annonces-verdict .verdict-label {
     color: #bbb;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
 }
 #annonces-verdict-action {
-    font-size: 1.6rem;
+    font-size: var(--fs-xl);
     font-weight: 700;
     color: var(--c-accent);
 }
@@ -198,7 +198,7 @@
     background: none;
     border: none;
     color: #8ab4f8;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     cursor: pointer;
     padding: 4px 0;
     display: block;
@@ -269,7 +269,7 @@
 }
 
 .drop-zone-label {
-    font-size: clamp(0.7rem, 0.8vw, 0.85rem);
+    font-size: var(--fs-sm);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -349,7 +349,7 @@
     background: rgba(76, 175, 80, 0.15);
     border: 1px solid rgba(76, 175, 80, 0.4);
     border-radius: 6px;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     color: var(--c-success-txt);
 }
 
@@ -364,7 +364,7 @@
 #deal-builder-accordion summary {
     cursor: pointer;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     font-weight: 500;
     padding: 4px 0;
     user-select: none;
@@ -386,13 +386,13 @@
 }
 
 .annonces-title {
-    font-size: clamp(1rem, 1.2vw, 1.1rem);
+    font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--c-accent);
 }
 
 #annonces-count {
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     color: #aaa;
     font-family: monospace;
 }
@@ -408,7 +408,7 @@
 #annonces-loading {
     color: #aaa;
     font-style: italic;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     padding: 8px 0;
 }
 
@@ -427,7 +427,7 @@
 }
 
 #annonces-results-header {
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     font-weight: 700;
     color: var(--c-accent);
     margin-bottom: 8px;
@@ -437,7 +437,7 @@
 
 .annonces-error {
     color: var(--c-danger-txt);
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 
 /* Wider visit-name for bid action labels */
@@ -463,7 +463,7 @@
 }
 
 .annonces-subtitle {
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     color: #888;
     text-transform: uppercase;
@@ -482,14 +482,14 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     padding: 2px 0;
 }
 
 .ann-seat-badge {
     min-width: 20px;
     text-align: center;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     flex-shrink: 0;
     background: rgba(255,255,255,0.06);
@@ -512,7 +512,7 @@
     border: none;
     color: #555;
     cursor: pointer;
-    font-size: 1rem;
+    font-size: var(--fs-md);
     padding: 0 2px;
     line-height: 1;
     flex-shrink: 0;
@@ -543,7 +543,7 @@
 }
 
 .bid-selector select {
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     min-width: 0;
 }
 
@@ -566,7 +566,7 @@
 }
 
 .annonces-sim-label {
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     color: #bbb;
 }
 
@@ -576,7 +576,7 @@
     border: 1px solid #444;
     border-radius: 4px;
     padding: 4px 6px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 
 /* Results area: side-by-side panels */
@@ -602,7 +602,7 @@
 /* Oracle — variant labels (comparison A/B) */
 .oracle-variant-label {
     color: #777;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -614,7 +614,7 @@
 .oracle-worlds-badge {
     display: inline-block;
     color: #7fae7f;
-    font-size: 0.68rem;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     border: 1px solid #3c5a3c;
     border-radius: 10px;
@@ -631,43 +631,60 @@
     align-items: center;
 }
 .oracle-strip-header span {
-    color: #888;
-    font-size: 0.75rem;
-    font-weight: 600;
+    color: var(--c-text-muted);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
     text-align: center;
-    padding-bottom: 2px;
+    padding-bottom: var(--sp-1);
 }
-.oracle-strip-suit { font-size: 1.05rem; text-align: center; }
+.oracle-strip-suit { font-size: var(--fs-lg); text-align: center; }
 .oracle-strip-cell {
-    height: 18px;
-    border-radius: 3px;
+    height: 24px;
+    border-radius: var(--r-xs);
     background-clip: padding-box;
 }
 .oracle-strip-markers { min-height: 14px; margin-bottom: 2px; }
 .oracle-strip-markers span {
     color: #aaa;
-    font-size: 0.62rem;
+    font-size: var(--fs-2xs);
     text-align: center;
     white-space: nowrap;
 }
 
-/* Oracle — quantile table */
-.oracle-quant-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+/* Oracle — quantile table (même grammaire que le tableau DouDou) */
+.oracle-quant-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+}
 .oracle-quant-table th {
-    color: #888;
-    font-weight: 600;
-    padding: 4px 6px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--c-bg-deep);
+    color: var(--c-text-muted);
+    font-weight: var(--fw-semi);
+    font-size: var(--fs-xs);
+    padding: var(--sp-2);
     text-align: center;
+    white-space: nowrap;
 }
-.oracle-quant-sub { color: #666; font-size: 0.7rem; font-weight: 400; }
+.oracle-quant-sub {
+    display: block;
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-regular);
+}
 .oracle-quant-table td {
-    padding: 4px 6px;
+    padding: var(--sp-2);
     text-align: center;
-    border-bottom: 1px solid #222;
-    color: #ddd;
-    font-weight: 600;
+    border-bottom: 1px solid var(--c-border);
+    color: var(--c-text);
+    font-weight: var(--fw-semi);
 }
-.oracle-quant-table td:first-child { font-size: 1.05rem; }
+.oracle-quant-table tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
+.oracle-quant-table td:first-child { font-size: var(--fs-xl); padding-right: var(--sp-3); }
 
 /* Section titles with inline progress bars */
 #annonces-sim-header, #annonces-doudou-header {
@@ -676,11 +693,11 @@
     gap: 8px;
     margin-bottom: 4px;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 #doudou-stats-text {
     color: #777;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     white-space: nowrap;
 }
 .sim-progress {
@@ -709,46 +726,86 @@
 }
 .sim-progress-text {
     color: #666;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     white-space: nowrap;
 }
 
 /* DouDou table */
 .doudou-explainer {
     color: #777;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     line-height: 1.45;
     margin: 0 0 8px 0;
 }
 
-#doudou-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-#doudou-table th { color: #888; font-weight: 600; padding: 4px 6px; text-align: center; }
-#doudou-table td { padding: 4px 6px; text-align: center; border-bottom: 1px solid #222; vertical-align: middle; }
-#doudou-table td:first-child { font-size: 1.1rem; }
+/* Tableau DouDou — une seule taille de chiffre, des colonnes qui respirent,
+   et l'en-tête qui reste visible quand on fait défiler. Le conteneur scrolle
+   horizontalement plutôt que de comprimer le tableau. */
+#annonces-doudou-body { overflow-x: auto; }
 
-.doudou-empty { color: #333; }
-.doudou-high .doudou-pct { color: #82e0aa; }
+#doudou-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;   /* les colonnes de chiffres s'alignent */
+}
+#doudou-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--c-bg-deep);
+    color: var(--c-text-muted);
+    font-weight: var(--fw-semi);
+    font-size: var(--fs-xs);
+    padding: var(--sp-2) var(--sp-2);
+    text-align: center;
+    white-space: nowrap;
+}
+#doudou-table td {
+    padding: var(--sp-2) var(--sp-2);
+    text-align: center;
+    border-bottom: 1px solid var(--c-border);
+    vertical-align: middle;
+}
+#doudou-table tbody tr:hover td { background: rgba(255, 255, 255, 0.03); }
+#doudou-table td:first-child { font-size: var(--fs-xl); padding-right: var(--sp-3); }
+
+.doudou-empty { color: var(--c-text-dim); opacity: 0.35; }
+.doudou-high .doudou-pct { color: var(--c-success-txt); }
 .doudou-mid .doudou-pct { color: var(--c-accent); }
 .doudou-low .doudou-pct { color: var(--c-danger-txt); }
 
-.doudou-count {
-    display: block;
-    font-size: 0.7rem;
-    color: #666;
-    line-height: 1.1;
-}
+/* Fiabilité = opacité. Une cellule peu observée s'efface au lieu de rétrécir :
+   le rythme typographique du tableau reste constant. */
+.conf-lo  { opacity: 0.45; }
+.conf-mid { opacity: 0.75; }
+.conf-hi  { opacity: 1; }
 
 .doudou-pct {
     display: block;
-    font-weight: 700;
-    font-size: 0.85rem;
-    line-height: 1.2;
+    font-weight: var(--fw-bold);
+    font-size: var(--fs-lg);
+    line-height: var(--lh-tight);
+}
+.doudou-unit {
+    font-size: 0.62em;
+    font-weight: var(--fw-medium);
+    opacity: 0.6;
+    margin-left: 0.05em;
+}
+
+.doudou-count {
+    display: block;
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    line-height: 1.1;
+    margin-top: 1px;
 }
 
 .nn-explainer,
 .oracle-explainer {
     color: #777;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     line-height: 1.45;
     margin: 0 0 8px 0;
 }
@@ -760,7 +817,7 @@
 
 .dd-loader-text {
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     margin-bottom: 8px;
 }
 
@@ -768,7 +825,7 @@
 #annonces-sim-viewer summary {
     cursor: pointer;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     font-weight: 500;
     padding: 4px 0;
     user-select: none;
@@ -798,7 +855,7 @@
 .sim-deal-details summary {
     cursor: pointer;
     color: #999;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     font-weight: 500;
     padding: 3px 0;
     user-select: none;
@@ -829,7 +886,7 @@
 
 .sim-hand-label {
     text-align: left;
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     color: #888;
     flex-shrink: 0;
@@ -853,7 +910,7 @@
     gap: 8px;
     margin-bottom: 4px;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 
 #xgb-suit-select {
@@ -862,13 +919,13 @@
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px;
     padding: 2px 6px;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     cursor: pointer;
 }
 
 .xgb-explainer {
     color: #777;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     line-height: 1.4;
     margin: 0 0 8px 0;
     font-style: italic;
@@ -892,7 +949,7 @@
 .xgb-feat-name {
     width: 120px;
     flex-shrink: 0;
-    font-size: 0.73rem;
+    font-size: var(--fs-2xs);
     color: #bbb;
     text-align: right;
     overflow: hidden;
@@ -902,7 +959,7 @@
 
 .xgb-feat-val {
     color: #666;
-    font-size: 0.68rem;
+    font-size: var(--fs-2xs);
     margin-left: 3px;
 }
 
@@ -931,7 +988,7 @@
 .xgb-contrib {
     width: 52px;
     flex-shrink: 0;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     font-family: monospace;
     text-align: right;
     color: #999;
@@ -939,7 +996,7 @@
 
 #xgb-probability {
     margin-top: 8px;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     text-align: center;
 }
 
@@ -948,7 +1005,7 @@
 
 .xgb-empty {
     color: #555;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     text-align: center;
     padding: 12px;
 }
@@ -959,7 +1016,7 @@
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 4px;
     padding: 2px 6px;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     cursor: pointer;
 }
 
@@ -1057,12 +1114,12 @@
     gap: 6px;
     flex-wrap: wrap;
     min-height: 28px;
-    font-size: clamp(0.9rem, 1.1vw, 1.15rem);
+    font-size: var(--fs-lg);
 }
 
 #pa-bid-history-entries .bid-entry {
     padding: 4px 12px;
-    font-size: clamp(0.9rem, 1.05vw, 1.1rem);
+    font-size: var(--fs-lg);
 }
 
 .pa-bid-seat {
@@ -1098,7 +1155,7 @@
     color: var(--c-accent);
     border-radius: 4px;
     padding: 5px 12px;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     cursor: pointer;
     align-self: flex-start;
@@ -1109,7 +1166,7 @@
 }
 
 .pa-hint-content {
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     display: flex;
     flex-direction: column;
     gap: 3px;
@@ -1124,7 +1181,7 @@
     cursor: pointer;
     padding: 4px 8px;
     font-weight: 600;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     color: #ccc;
     user-select: none;
     list-style: none;
@@ -1134,7 +1191,7 @@
 }
 .pa-hint-box summary::before {
     content: '\u25b6';
-    font-size: 0.55rem;
+    font-size: var(--fs-2xs);
     color: #666;
     transition: transform 0.15s;
 }
@@ -1143,7 +1200,7 @@
 }
 .pa-hint-box summary::-webkit-details-marker { display: none; }
 .pa-hint-pct {
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     color: #888;
     font-weight: 400;
 }
@@ -1156,7 +1213,7 @@
 .pa-hint-empty {
     padding: 4px 8px 6px;
     color: #555;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
 }
 
 .pa-hint-row {
@@ -1168,7 +1225,7 @@
 .pa-hint-arrow {
     width: 14px;
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     flex-shrink: 0;
 }
 .pa-hint-pos .pa-hint-arrow { color: #82e0aa; }
@@ -1181,12 +1238,12 @@
 
 .pa-hint-val {
     color: #777;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     margin-left: 3px;
 }
 
 .pa-hint-strength {
-    font-size: 0.6rem;
+    font-size: var(--fs-2xs);
     letter-spacing: 1px;
     flex-shrink: 0;
 }
@@ -1239,7 +1296,7 @@
     background: none;
     border: none;
     color: #888;
-    font-size: 1.5rem;
+    font-size: var(--fs-xl);
     cursor: pointer;
     padding: 0 4px;
     line-height: 1;
@@ -1289,7 +1346,7 @@
 .prob-badge {
     padding: 6px 12px;
     border-radius: 6px;
-    font-size: .9rem;
+    font-size: var(--fs-sm);
     font-weight: 700;
     text-align: center;
 }
@@ -1312,14 +1369,14 @@
     gap: 4px;
 }
 .prob-label {
-    font-size: .7rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.5px;
     color: #666;
     font-weight: 600;
 }
 .prob-best {
-    font-size: .95rem;
+    font-size: var(--fs-md);
     font-weight: 700;
     color: var(--c-accent);
 }
@@ -1327,7 +1384,7 @@
     display: block;
     text-align: center;
     padding: 6px 12px;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     font-weight: 500;
     color: var(--c-accent);
     border: 1px solid var(--c-accent-a30);
@@ -1366,13 +1423,13 @@
     margin: 0 auto;
     padding: 16px 40px;
     line-height: 1.5;
-    font-size: clamp(0.85rem, 1vw, 0.95rem);
+    font-size: var(--fs-md);
     overflow-y: auto;
     max-height: 100%;
 }
 
 #docs-content h2 {
-    font-size: clamp(1.3rem, 1.8vw, 1.7rem);
+    font-size: var(--fs-2xl);
     color: var(--c-accent);
     margin-bottom: 6px;
     font-weight: 700;
@@ -1400,7 +1457,7 @@
 .docs-link a:hover { text-decoration: underline; }
 
 #docs-content h3 {
-    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    font-size: var(--fs-lg);
     color: #e0e0e0;
     margin: 16px 0 8px;
     padding-bottom: 4px;
@@ -1412,7 +1469,7 @@
 }
 
 .docs-section h4 {
-    font-size: clamp(0.9rem, 1vw, 1rem);
+    font-size: var(--fs-md);
     color: #e0d8c0;
     margin-bottom: 4px;
 }
@@ -1424,7 +1481,7 @@
 
 .docs-tag {
     display: inline-block;
-    font-size: 0.7em;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     padding: 1px 8px;
     border-radius: 10px;
@@ -1456,7 +1513,7 @@
     border-top: 1px solid rgba(255,255,255,0.08);
     text-align: center;
     color: #777;
-    font-size: clamp(0.8rem, 0.9vw, 0.9rem);
+    font-size: var(--fs-sm);
 }
 
 .docs-footer a {
@@ -1481,7 +1538,7 @@
 #belief-loading {
     color: #aaa;
     font-style: italic;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
 }
 
 #belief-main {
@@ -1512,7 +1569,7 @@
     border-radius: 4px;
     padding: 4px 10px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     line-height: 1;
 }
 .belief-nav-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
@@ -1528,7 +1585,7 @@
     gap: 16px;
     align-items: center;
     flex-wrap: wrap;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     color: #aaa;
 }
 
@@ -1549,7 +1606,7 @@
 }
 
 .belief-label {
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     color: #888;
     font-weight: 600;
     text-transform: uppercase;
@@ -1563,7 +1620,7 @@
     border-radius: 4px;
     padding: 3px 10px;
     cursor: pointer;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     transition: all 0.15s;
 }
@@ -1583,7 +1640,7 @@
 }
 
 #belief-precompute {
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     color: #888;
     white-space: nowrap;
     min-width: 90px;
@@ -1612,7 +1669,7 @@
     border-radius: 4px;
     padding: 2px 5px;
     cursor: pointer;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     line-height: 1.2;
     display: inline-flex;
     align-items: center;
@@ -1633,12 +1690,12 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    font-size: 0.62rem;
+    font-size: var(--fs-2xs);
 }
 
 .belief-hist-seat {
     font-weight: 700;
-    font-size: 0.6rem;
+    font-size: var(--fs-2xs);
     color: var(--seat-color, #888);
 }
 
@@ -1668,7 +1725,7 @@
 
 .belief-suit-label {
     width: 28px;
-    font-size: 1.3rem;
+    font-size: var(--fs-lg);
     text-align: center;
     padding-top: 4px;
     flex-shrink: 0;
@@ -1700,7 +1757,7 @@
 }
 
 .belief-tag {
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -1719,7 +1776,7 @@
 }
 
 .belief-bar-label {
-    font-size: 0.55rem;
+    font-size: var(--fs-2xs);
     color: #666;
     text-align: left;
     font-weight: 600;
@@ -1744,14 +1801,14 @@
 .belief-bar-seg:last-child { border-radius: 0 3px 3px 0; }
 
 .belief-truth-marker {
-    font-size: 0.6rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     text-align: center;
     line-height: 1;
 }
 
 .belief-no-data {
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     color: #444;
     text-align: center;
 }
@@ -1770,14 +1827,14 @@
     display: flex;
     gap: 14px;
     align-items: center;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     color: #aaa;
 }
 
 .belief-stat-label {
     font-weight: 700;
     color: var(--c-accent);
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
@@ -1802,7 +1859,7 @@
 }
 
 .aide-header h2 {
-    font-size: clamp(1.6rem, 2.5vw, 2.2rem);
+    font-size: var(--fs-3xl);
     color: var(--c-accent);
     font-weight: 800;
     letter-spacing: 3px;
@@ -1811,7 +1868,7 @@
 
 .aide-subtitle {
     color: #777;
-    font-size: clamp(0.85rem, 1vw, 1rem);
+    font-size: var(--fs-md);
     margin-top: 6px;
 }
 
@@ -1836,20 +1893,20 @@
 }
 
 .aide-section-head h3 {
-    font-size: clamp(1.15rem, 1.5vw, 1.4rem);
+    font-size: var(--fs-xl);
     color: #e0e0e0;
     font-weight: 700;
 }
 
 .aide-section-total {
-    font-size: clamp(0.8rem, 1vw, 0.95rem);
+    font-size: var(--fs-md);
     color: var(--c-accent);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
 }
 
 .aide-hint {
-    font-size: clamp(0.75rem, 0.85vw, 0.85rem);
+    font-size: var(--fs-sm);
     color: #666;
     margin-bottom: 14px;
 }
@@ -1878,13 +1935,13 @@
 }
 
 .aide-col-head h3 {
-    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    font-size: var(--fs-lg);
     color: #e0e0e0;
     font-weight: 700;
 }
 
 .aide-col-total {
-    font-size: clamp(0.75rem, 0.9vw, 0.9rem);
+    font-size: var(--fs-sm);
     color: var(--c-accent);
     font-weight: 700;
     font-variant-numeric: tabular-nums;
@@ -1939,7 +1996,7 @@
 }
 
 .aide-col-pts {
-    font-size: clamp(1rem, 1.4vw, 1.3rem);
+    font-size: var(--fs-lg);
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     line-height: 1;
@@ -1959,7 +2016,7 @@
 /* Totals */
 .aide-totals-section h3,
 .aide-scoring-section h3 {
-    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    font-size: var(--fs-lg);
     color: #e0e0e0;
     font-weight: 700;
     margin-bottom: 14px;
@@ -1988,7 +2045,7 @@
 }
 
 .aide-formula-label {
-    font-size: clamp(0.8rem, 1vw, 0.95rem);
+    font-size: var(--fs-md);
     font-weight: 700;
     color: #aaa;
     text-transform: uppercase;
@@ -2017,21 +2074,21 @@
 .aide-term-opt .aide-sub { color: #888; }
 
 .aide-num {
-    font-size: clamp(1.2rem, 1.8vw, 1.5rem);
+    font-size: var(--fs-xl);
     font-weight: 800;
     color: #e0e0e0;
     font-variant-numeric: tabular-nums;
 }
 
 .aide-sub {
-    font-size: clamp(0.6rem, 0.75vw, 0.72rem);
+    font-size: var(--fs-2xs);
     color: #888;
     margin-top: 2px;
     font-weight: 600;
 }
 
 .aide-op {
-    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    font-size: var(--fs-lg);
     color: #666;
     font-weight: 700;
     align-self: center;
@@ -2043,14 +2100,14 @@
     align-items: center;
     line-height: 1.1;
     margin-left: auto;
-    font-size: clamp(1.4rem, 2vw, 1.7rem);
+    font-size: var(--fs-2xl);
     font-weight: 800;
     color: var(--c-accent);
     font-variant-numeric: tabular-nums;
 }
 
 .aide-total-alt {
-    font-size: clamp(0.6rem, 0.75vw, 0.72rem);
+    font-size: var(--fs-2xs);
     color: #888;
     margin-top: 2px;
     font-weight: 600;
@@ -2070,7 +2127,7 @@
 }
 
 .aide-score-sublabel {
-    font-size: clamp(0.75rem, 0.9vw, 0.85rem);
+    font-size: var(--fs-sm);
     color: #888;
     font-weight: 600;
     text-transform: uppercase;
@@ -2099,7 +2156,7 @@
 }
 
 .aide-score-head {
-    font-size: clamp(0.85rem, 1vw, 0.95rem);
+    font-size: var(--fs-md);
     font-weight: 700;
     letter-spacing: 0.03em;
     padding-bottom: 6px;
@@ -2117,7 +2174,7 @@
 }
 
 .aide-score-team {
-    font-size: clamp(0.7rem, 0.8vw, 0.78rem);
+    font-size: var(--fs-2xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -2141,7 +2198,7 @@
 }
 
 .aide-score-val {
-    font-size: clamp(0.8rem, 0.95vw, 0.92rem);
+    font-size: var(--fs-sm);
     color: #ddd;
     flex: 1;
     min-width: 0;
@@ -2164,7 +2221,7 @@
 
 /* Bids */
 .aide-bids-section h3 {
-    font-size: clamp(1rem, 1.3vw, 1.2rem);
+    font-size: var(--fs-lg);
     color: #e0e0e0;
     font-weight: 700;
     margin-bottom: 12px;
@@ -2182,7 +2239,7 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 6px;
     padding: 6px 10px;
-    font-size: clamp(0.85rem, 1vw, 1rem);
+    font-size: var(--fs-md);
     font-weight: 700;
     color: #ccc;
     font-variant-numeric: tabular-nums;
@@ -2199,7 +2256,7 @@
     gap: 10px;
     align-items: center;
     flex-wrap: wrap;
-    font-size: clamp(0.8rem, 0.9vw, 0.9rem);
+    font-size: var(--fs-sm);
 }
 
 .aide-bid-tag {
@@ -2240,18 +2297,18 @@
         margin-bottom: 10px;
     }
     .aide-col-head h3 {
-        font-size: 0.95rem;
+        font-size: var(--fs-md);
         white-space: nowrap;
     }
     .aide-col-total {
-        font-size: 0.75rem;
+        font-size: var(--fs-2xs);
         white-space: nowrap;
     }
 
     /* Beliefs: narrower card columns */
     .belief-card-col { width: 40px; }
     .belief-card-img { width: 34px; }
-    .belief-suit-label { width: 20px; font-size: 1rem; }
+    .belief-suit-label { width: 20px; font-size: var(--fs-md); }
     .belief-cards-row { gap: 3px; }
 
     /* Problems: stack vertically */
@@ -2295,7 +2352,7 @@
 }
 
 .annonce-header h2 {
-    font-size: clamp(1.7rem, 2.8vw, 2.4rem);
+    font-size: var(--fs-3xl);
     color: var(--c-accent);
     font-weight: 800;
     letter-spacing: 2px;
@@ -2305,7 +2362,7 @@
 
 .annonce-subtitle {
     color: #888;
-    font-size: clamp(0.9rem, 1.1vw, 1.05rem);
+    font-size: var(--fs-md);
     margin: 0 0 10px;
 }
 
@@ -2316,7 +2373,7 @@
     border: 1px solid rgba(130, 224, 170, 0.3);
     border-radius: 16px;
     color: #82e0aa;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     font-weight: 600;
     margin: 0;
 }
@@ -2343,27 +2400,27 @@
     background: var(--c-accent);
     color: #1a1a1a;
     border-radius: 12px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     font-weight: 800;
     letter-spacing: 1.5px;
     text-transform: uppercase;
 }
 
 .annonce-section h3 {
-    font-size: clamp(1.1rem, 1.5vw, 1.35rem);
+    font-size: var(--fs-xl);
     color: #e0e0e0;
     font-weight: 700;
     margin: 4px 0 4px;
 }
 
 .annonce-hint {
-    font-size: clamp(0.85rem, 0.95vw, 0.95rem);
+    font-size: var(--fs-md);
     color: #888;
     margin: 0 0 18px;
 }
 
 .annonce-subhead {
-    font-size: clamp(0.95rem, 1.1vw, 1.05rem);
+    font-size: var(--fs-md);
     color: #ccc;
     font-weight: 600;
     margin: 0 0 10px;
@@ -2412,7 +2469,7 @@
 }
 
 .annonce-pts {
-    font-size: clamp(0.85rem, 1.2vw, 1.15rem);
+    font-size: var(--fs-lg);
     font-weight: 800;
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -2444,8 +2501,8 @@
     gap: 12px;
 }
 
-.annonce-bonus-label { color: #bbb; font-size: 0.9rem; font-weight: 500; }
-.annonce-bonus-val { font-weight: 800; font-size: 1rem; font-variant-numeric: tabular-nums; }
+.annonce-bonus-label { color: #bbb; font-size: var(--fs-sm); font-weight: 500; }
+.annonce-bonus-val { font-weight: 800; font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
 
 /* Corrections */
 .annonce-corrections {
@@ -2466,15 +2523,15 @@
     gap: 10px;
 }
 
-.annonce-correction-label { color: #aaa; font-size: 0.88rem; font-weight: 600; }
+.annonce-correction-label { color: #aaa; font-size: var(--fs-sm); font-weight: 600; }
 .annonce-correction-val {
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 800;
     font-variant-numeric: tabular-nums;
     min-width: 2.2em;
     text-align: center;
 }
-.annonce-correction-hint { color: #666; font-size: 0.8rem; font-style: italic; margin-left: auto; }
+.annonce-correction-hint { color: #666; font-size: var(--fs-xs); font-style: italic; margin-left: auto; }
 
 /* Example */
 .annonce-example-section { background: color-mix(in srgb, var(--c-accent) 4%, transparent); }
@@ -2500,7 +2557,7 @@
     padding: 6px 14px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 6px;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
 }
 
 .annonce-example-expr { color: #ccc; }
@@ -2513,12 +2570,12 @@
     margin-top: 4px;
     padding: 10px 14px;
 }
-.annonce-example-total .annonce-example-val { font-size: 1.3rem; }
+.annonce-example-total .annonce-example-val { font-size: var(--fs-lg); }
 
 .annonce-example-concl {
     margin-top: 14px;
     color: #bbb;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
     padding: 12px 14px;
     background: rgba(255, 255, 255, 0.02);
     border-left: 3px solid color-mix(in srgb, var(--c-accent) 50%, transparent);
@@ -2552,14 +2609,14 @@
 }
 
 .annonce-pos-num {
-    font-size: 2rem;
+    font-size: var(--fs-2xl);
     font-weight: 800;
     color: var(--c-accent);
     line-height: 1;
 }
 
 .annonce-pos-label {
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     color: #888;
     font-weight: 600;
     text-transform: uppercase;
@@ -2567,7 +2624,7 @@
 }
 
 .annonce-pos-rule {
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     color: #bbb;
     display: flex;
     flex-direction: column;
@@ -2579,7 +2636,7 @@
 .annonce-pos-threshold {
     color: #e0e0e0;
     font-weight: 700;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
 }
 
 .annonce-big {
@@ -2590,7 +2647,7 @@
 
 .annonce-pos-or {
     color: #555;
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     font-style: italic;
 }
 
@@ -2603,7 +2660,7 @@
     border-left: 3px solid var(--c-accent-a40);
     border-radius: 0 6px 6px 0;
     color: #bbb;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
 }
 
 .annonce-mono {
@@ -2641,7 +2698,7 @@
 }
 
 .annonce-response-head {
-    font-size: 1rem;
+    font-size: var(--fs-md);
     font-weight: 700;
     color: #e0e0e0;
     margin-bottom: 12px;
@@ -2650,12 +2707,12 @@
     gap: 10px;
 }
 
-.annonce-response-icon { font-size: 1.3rem; }
+.annonce-response-icon { font-size: var(--fs-lg); }
 
 .annonce-response-default {
     font-weight: 700;
     margin-bottom: 10px;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
 }
 
 .annonce-response-exception {
@@ -2663,7 +2720,7 @@
     background: rgba(239, 154, 154, 0.08);
     border-left: 3px solid rgba(239, 154, 154, 0.5);
     border-radius: 0 6px 6px 0;
-    font-size: 0.88rem;
+    font-size: var(--fs-sm);
     color: #ccc;
     margin-bottom: 10px;
     line-height: 1.5;
@@ -2675,20 +2732,20 @@
     background: rgba(239, 154, 154, 0.15);
     color: var(--c-danger-txt);
     border-radius: 4px;
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     letter-spacing: 0.5px;
     margin-right: 6px;
 }
 
 .annonce-response-tip {
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     color: #888;
     line-height: 1.5;
 }
 
 .annonce-mirror-rule {
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
     color: #ccc;
     margin-bottom: 12px;
     line-height: 1.5;
@@ -2708,14 +2765,14 @@
     padding: 8px 12px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 6px;
-    font-size: 0.88rem;
+    font-size: var(--fs-sm);
 }
 
 .annonce-mirror-cond { color: #bbb; }
 
 .annonce-mirror-act {
     font-weight: 700;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     padding: 3px 10px;
     border-radius: 4px;
     letter-spacing: 0.5px;
@@ -2744,7 +2801,7 @@
     border-radius: 8px;
     font-weight: 700;
     color: var(--c-accent);
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     text-align: center;
@@ -2759,7 +2816,7 @@
     padding: 8px 14px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 6px;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     color: #ccc;
     text-align: center;
 }
@@ -2772,7 +2829,7 @@
     background: rgba(255, 165, 0, 0.06);
     border: 1px solid rgba(255, 165, 0, 0.2);
     border-radius: 8px;
-    font-size: 0.88rem;
+    font-size: var(--fs-sm);
     color: #ddd;
     line-height: 1.5;
 }
@@ -2789,7 +2846,7 @@
 }
 
 .annonce-traps li {
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
     color: #bbb;
     line-height: 1.5;
 }
@@ -2800,7 +2857,7 @@
 .annonce-footer {
     text-align: center;
     padding: 16px 0;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     color: #555;
 }
 
@@ -2827,7 +2884,7 @@
     .annonce-level-head, .annonce-level-row {
         grid-template-columns: 0.8fr 1fr 1fr 1fr;
         padding: 8px 10px;
-        font-size: 0.8rem;
+        font-size: var(--fs-xs);
     }
     .annonce-mirror-row {
         flex-wrap: wrap;
@@ -2859,14 +2916,14 @@
 
 .compte-title {
     color: var(--c-accent);
-    font-size: 1.3rem;
+    font-size: var(--fs-lg);
     margin-bottom: 1rem;
     text-align: center;
 }
 
 .compte-subtitle {
     color: var(--c-accent);
-    font-size: 1rem;
+    font-size: var(--fs-md);
     margin-bottom: 0.75rem;
 }
 
@@ -2886,7 +2943,7 @@
     border: none;
     border-radius: 5px;
     color: #999;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
@@ -2904,7 +2961,7 @@
 
 .compte-label {
     color: #aaa;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-top: 6px;
@@ -2916,7 +2973,7 @@
     border-radius: 6px;
     padding: 10px 12px;
     color: #e0e0e0;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
 }
 .compte-input:focus {
     outline: none;
@@ -2925,7 +2982,7 @@
 
 .compte-error {
     color: var(--c-danger-txt);
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     padding: 4px 0;
 }
 
@@ -2937,7 +2994,7 @@
     background: var(--c-accent);
     color: #1a1a1a;
     font-weight: 700;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     cursor: pointer;
     transition: opacity 0.15s;
 }
@@ -2970,12 +3027,12 @@
 .compte-stat-val {
     color: #e0e0e0;
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
 }
 
 .compte-stat-label {
     color: #888;
-    font-size: 0.6rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -2987,7 +3044,7 @@
     max-height: 320px;
     overflow-y: auto;
 }
-.compte-games .history-row { font-size: 0.85rem; padding: 6px 8px; }
+.compte-games .history-row { font-size: var(--fs-sm); padding: 6px 8px; }
 .compte-games .history-empty a { color: var(--c-accent); }
 
 .nav-account {
@@ -3016,7 +3073,7 @@
 
 .salon-desc {
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     text-align: center;
 }
 
@@ -3066,7 +3123,7 @@
 .salon-seat.team-b .salon-seat-title { color: var(--c-danger-txt); }
 
 .salon-seat-title {
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
 }
@@ -3074,14 +3131,14 @@
 .salon-seat-name {
     color: #e0e0e0;
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
     margin: 4px 0 2px;
 }
 .salon-seat-free { color: #888; font-weight: 400; }
 
 .salon-seat-sub {
     color: #777;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     min-height: 0.8em;
 }
 
@@ -3095,7 +3152,7 @@
     border-radius: 8px;
     padding: 10px;
     color: #aaa;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 .salon-host-controls .compte-submit { margin-top: 0; }
 .salon-host-controls select {
@@ -3108,7 +3165,7 @@
 
 .salon-lobby-status {
     color: #999;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     text-align: center;
     min-height: 1.2em;
 }
@@ -3123,7 +3180,7 @@
     color: #e0e0e0;
     border-radius: 8px;
     padding: 10px 18px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     z-index: 200;
     transition: opacity 0.2s;
 }
@@ -3136,7 +3193,7 @@
     padding: 8px 10px;
 }
 
-.analysis-body { font-size: 0.75rem; }
+.analysis-body { font-size: var(--fs-2xs); }
 
 .an-loading { color: #777; font-style: italic; padding: 4px 0; }
 
@@ -3146,7 +3203,7 @@
 }
 .an-table th {
     color: #888;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     text-align: right;
     padding: 2px 4px;
@@ -3171,7 +3228,7 @@
     gap: 6px;
     flex-wrap: wrap;
 }
-.an-tag { font-weight: 800; font-size: 0.9rem; }
+.an-tag { font-weight: 800; font-size: var(--fs-sm); }
 .an-best .an-tag, .an-best { color: #81c784; }
 .an-good .an-tag, .an-good { color: #aed581; }
 .an-inacc { color: #ffd54f; }
@@ -3183,7 +3240,7 @@
 .an-alt .an-red, .an-red { color: var(--c-danger-txt); }
 
 /* Bid move annotations (model annonce) */
-.an-bid-q { color: #999; font-family: monospace; font-size: 0.75rem; margin-left: auto; }
+.an-bid-q { color: #999; font-family: monospace; font-size: var(--fs-2xs); margin-left: auto; }
 
 /* Deal-level DD scores per trump suit (static, shown for the whole game) */
 .an-dd-table {
@@ -3191,7 +3248,7 @@
     margin: 0 auto 8px;
 }
 .an-dd-table th {
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     font-weight: 600;
     padding: 1px 10px;
@@ -3204,13 +3261,13 @@
     padding: 1px 10px;
     color: #ccc;
     font-family: monospace;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
 }
 .an-dd-table td:first-child { font-family: inherit; }
 .an-bid-analyse-btn {
     margin-top: 6px;
     padding: 4px 10px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     background: color-mix(in srgb, var(--c-accent) 12%, transparent);
     color: var(--c-accent);
     border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -3227,11 +3284,11 @@
 .classement-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
 }
 .classement-table th {
     color: #888;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     text-align: left;
@@ -3251,14 +3308,14 @@
 .cl-human .cl-name { color: #e0e0e0; font-weight: 600; }
 .cl-me { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
 .cl-me .cl-name, .cl-me .cl-elo { color: var(--c-accent); }
-.cl-you { color: #997c22; font-size: 0.7rem; font-weight: 400; }
+.cl-you { color: #997c22; font-size: var(--fs-2xs); font-weight: 400; }
 .classement-table tr:first-child + tr .cl-rank { color: var(--c-accent); font-weight: 800; }
 
 .compte-elo { color: var(--c-accent); }
 
 .history-elo-delta {
     font-family: monospace;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     font-weight: 700;
     min-width: 2.6em;
     text-align: right;
@@ -3280,7 +3337,7 @@
 
 #replay-moves-list {
     overflow-y: auto;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -3301,7 +3358,7 @@
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.06);
     cursor: pointer;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     color: #bbb;
     white-space: nowrap;
 }
@@ -3318,7 +3375,7 @@
 .mv-num {
     color: #666;
     font-family: monospace;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     width: 1.2em;
     text-align: right;
     flex-shrink: 0;
@@ -3352,7 +3409,7 @@
 
 .mv-winner {
     margin-left: auto;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     font-family: monospace;
     color: #888;
     white-space: nowrap;
@@ -3364,14 +3421,14 @@
 .history-contract {
     font-weight: 700;
     color: var(--c-accent);
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     min-width: 3.6em;
 }
 .history-nocontract { color: #777; font-weight: 400; font-style: italic; }
 
 /* Sim viewer — per-deal world source chip */
 .sim-deal-src {
-    font-size: 0.62rem;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     color: #999;
     border: 1px solid #555;
@@ -3381,3 +3438,22 @@
     vertical-align: middle;
 }
 .sim-deal-src.pg { color: #7fae7f; border-color: #3c5a3c; }
+
+/* ===== PROBLÈMES — classes extraites des styles en dur des templates JS ===== */
+.prob-loading {
+    color: var(--c-text-muted);
+    font-size: var(--fs-sm);
+    font-style: italic;
+}
+.prob-label-note {
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    font-weight: var(--fw-regular);
+}
+.pj-contract {
+    color: var(--c-accent);
+    font-weight: var(--fw-semi);
+}
+.pj-tricks {
+    color: var(--c-text-muted);
+}

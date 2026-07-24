@@ -54,7 +54,7 @@
     border-radius: 4px;
     padding: 4px 6px;
     font-family: monospace;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     letter-spacing: 2px;
     text-transform: lowercase;
 }
@@ -65,7 +65,7 @@
 
 #replay-search-btn {
     padding: 4px 8px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
 }
 
 #replay-list {
@@ -84,7 +84,7 @@
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.15s;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
 }
 .history-row:hover {
     background: color-mix(in srgb, var(--c-accent) 12%, transparent);
@@ -95,12 +95,12 @@
     color: var(--c-accent);
     font-weight: 600;
     letter-spacing: 1px;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
 }
 
 .history-mode {
     color: #777;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     width: 12px;
     text-align: center;
@@ -111,20 +111,20 @@
     text-align: right;
     font-family: monospace;
     color: #999;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
 }
 .history-info.ns-won { color: var(--c-success-txt); }
 .history-info.ew-won { color: var(--c-danger-txt); }
 
 .history-date {
     color: #666;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     white-space: nowrap;
 }
 
 .history-empty {
     color: #555;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     text-align: center;
     padding: 12px 0;
 }
@@ -175,7 +175,7 @@
 
 #watch-transport button, #replay-transport button {
     padding: 6px 10px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     min-width: 36px;
 }
 
@@ -197,7 +197,7 @@
     align-items: center;
     flex-wrap: wrap;
     margin-bottom: 8px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 
 .stats-player {
@@ -216,7 +216,7 @@
 
 .stats-agent {
     color: #999;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
 }
 
 .stats-action {
@@ -226,26 +226,26 @@
 
 .stats-time {
     color: #888;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     margin-left: auto;
 }
 
 .stats-result {
     font-weight: 700;
     color: var(--c-accent);
-    font-size: 1rem;
+    font-size: var(--fs-md);
 }
 
 .stats-final {
     color: #bbb;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     text-align: center;
     padding: 4px;
 }
 
 .stats-placeholder {
     color: #666;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     text-align: center;
     padding: 12px;
 }
@@ -261,7 +261,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
 }
 
 .visit-name {
@@ -309,13 +309,13 @@
     text-align: right;
     font-family: monospace;
     color: #999;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     flex-shrink: 0;
 }
 
 .visit-total {
     text-align: right;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     color: #666;
     margin-top: 2px;
 }
@@ -331,13 +331,13 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
 }
 
 .eval-suit {
     width: 20px;
     text-align: center;
-    font-size: 1rem;
+    font-size: var(--fs-md);
 }
 
 .eval-bar-bg {
@@ -393,7 +393,7 @@
 }
 
 .bid-overlay-title {
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.5px;
     color: #999;
@@ -406,7 +406,7 @@
     gap: 4px;
     flex-wrap: wrap;
     min-height: 24px;
-    font-size: clamp(0.75rem, 0.85vw, 0.95rem);
+    font-size: var(--fs-md);
 }
 
 /* ===== BID & TRICKS HISTORY ===== */
@@ -427,7 +427,7 @@
 .watch-bid-entry {
     padding: 2px 8px;
     border-radius: 3px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     font-weight: 500;
 }
 .watch-bid-entry.team-ns {
@@ -449,7 +449,7 @@
     align-items: center;
     gap: 8px;
     padding: 2px 4px;
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     border-radius: 2px;
 }
 
@@ -470,7 +470,7 @@
     color: #999;
     width: 12px;
     font-weight: 600;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
 }
 
 .trick-cards {
@@ -496,7 +496,7 @@
 }
 
 .dd-title {
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.5px;
     color: var(--c-accent);
@@ -508,14 +508,14 @@
 .dd-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.8rem;
+    font-size: var(--fs-xs);
     font-family: monospace;
 }
 
 .dd-table th {
     color: #999;
     font-weight: 600;
-    font-size: 0.7rem;
+    font-size: var(--fs-2xs);
     text-align: center;
     padding: 1px 6px;
 }
@@ -527,7 +527,7 @@
 }
 
 .dd-table td:first-child {
-    font-size: 1rem;
+    font-size: var(--fs-md);
     width: 24px;
 }
 
@@ -549,7 +549,7 @@
 /* Incomplete game indicator */
 .stats-incomplete {
     color: var(--c-accent);
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     font-weight: 600;
     text-align: center;
     padding: 12px 8px;

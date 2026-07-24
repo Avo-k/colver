@@ -8,7 +8,7 @@
 }
 
 #score-page h2 {
-    font-size: clamp(1.4rem, 2.3vw, 1.9rem);
+    font-size: var(--fs-2xl);
     margin-bottom: 4px;
     font-weight: 600;
     letter-spacing: 0.5px;
@@ -16,7 +16,7 @@
 
 #score-page .score-subtitle {
     color: #aaa;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     margin-bottom: 22px;
 }
 
@@ -38,7 +38,7 @@
 }
 
 .score-setup .setup-label {
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.2px;
     color: #888;
@@ -58,7 +58,7 @@
     color: #e8e8e8;
     border-radius: 6px;
     padding: 12px 14px;
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     text-align: center;
 }
 
@@ -82,7 +82,7 @@
     border-radius: 6px;
     padding: 9px 16px;
     cursor: pointer;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
     font-weight: 500;
     transition: all 0.15s;
 }
@@ -103,7 +103,7 @@
     border: none;
     border-radius: 6px;
     padding: 14px;
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer;
 }
@@ -136,7 +136,7 @@
 }
 
 .score-team-name {
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     color: #e8e8e8;
     background: transparent;
@@ -153,7 +153,7 @@
 .score-team-block.lead .score-team-name { color: var(--c-accent); }
 
 .score-team-total {
-    font-size: clamp(2rem, 5vw, 3rem);
+    font-size: var(--fs-3xl);
     font-weight: 700;
     line-height: 1;
     font-variant-numeric: tabular-nums;
@@ -174,7 +174,7 @@
 .score-progress-bar.over { background: linear-gradient(90deg, var(--c-accent), #ff9800); }
 
 .score-max-label {
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     color: #777;
     display: flex;
     justify-content: space-between;
@@ -186,7 +186,7 @@
     color: #aaa;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     cursor: help;
 }
 .score-team-block.lead .score-winprob { color: var(--c-accent); }
@@ -203,7 +203,7 @@
     border: none;
     border-radius: 8px;
     padding: 16px;
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer;
 }
@@ -221,7 +221,7 @@
     border: 1px solid #555;
     border-radius: 6px;
     padding: 8px 14px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     cursor: pointer;
 }
 .score-actions .secondary-btn:hover { background: #4a4a4a; }
@@ -243,13 +243,13 @@
 .score-rounds table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
 }
 
 .score-rounds th {
     background: rgba(0, 0, 0, 0.4);
     color: #aaa;
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     font-weight: 600;
@@ -272,18 +272,18 @@
 .score-rounds .col-num { text-align: center; color: #777; font-weight: 600; }
 .score-rounds .col-contract { font-weight: 500; }
 .score-rounds .col-contract .mult-tag {
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     color: #ff9800;
     margin-left: 6px;
     font-weight: 600;
 }
 .score-rounds .col-contract .belote-tag {
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     color: var(--c-accent);
     margin-left: 6px;
 }
 .score-rounds .col-contract .chute-tag {
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     color: var(--c-danger);
     margin-left: 6px;
     font-weight: 600;
@@ -291,7 +291,7 @@
 
 .score-rounds .col-score { text-align: right; font-variant-numeric: tabular-nums; }
 .score-rounds .col-score .pts { font-weight: 600; }
-.score-rounds .col-score .cum { color: #888; font-size: 0.82rem; margin-left: 6px; }
+.score-rounds .col-score .cum { color: #888; font-size: var(--fs-xs); margin-left: 6px; }
 
 .score-rounds .row-actions {
     display: inline-flex;
@@ -307,7 +307,7 @@
     color: #aaa;
     padding: 3px 8px;
     border-radius: 4px;
-    font-size: 0.72rem;
+    font-size: var(--fs-2xs);
     cursor: pointer;
 }
 .score-rounds .row-actions .delete:hover { background: rgba(239, 83, 80, 0.15); border-color: var(--c-danger); color: var(--c-danger); }
@@ -332,7 +332,7 @@
     flex-wrap: wrap;
 }
 .score-finished .winner-text {
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 600;
 }
 .score-finished .winner-text .winner-name { color: var(--c-accent); }
@@ -363,7 +363,7 @@
 }
 
 .score-modal h3 {
-    font-size: 1.1rem;
+    font-size: var(--fs-lg);
     margin-bottom: 18px;
     color: var(--c-accent);
     font-weight: 600;
@@ -382,7 +382,7 @@
 }
 
 .score-form .field-label {
-    font-size: 0.74rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.2px;
     color: #999;
@@ -399,11 +399,11 @@
     flex: 1 1 auto;
     min-width: 56px;
     padding: 10px 12px;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
 }
 
 .score-form .btn-row .btn-pill.suit {
-    font-size: 1.4rem;
+    font-size: var(--fs-xl);
     padding: 8px 14px;
     line-height: 1;
 }
@@ -412,7 +412,7 @@
 
 .score-form .btn-row.team-row .btn-pill {
     padding: 12px 14px;
-    font-size: 1rem;
+    font-size: var(--fs-md);
     flex: 1;
 }
 
@@ -428,7 +428,7 @@
     color: #e8e8e8;
     border-radius: 6px;
     padding: 12px 14px;
-    font-size: 1.3rem;
+    font-size: var(--fs-lg);
     text-align: center;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
@@ -440,7 +440,7 @@
     border-radius: 6px;
     width: 44px;
     cursor: pointer;
-    font-size: 1.1rem;
+    font-size: var(--fs-lg);
     font-weight: 600;
 }
 .score-form .pts-input-row .pts-step:hover { background: #3a3a3a; }
@@ -450,13 +450,13 @@
     border-left: 3px solid var(--c-accent);
     border-radius: 4px;
     padding: 10px 14px;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 .score-form .preview-status {
-    font-size: 0.75rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1px;
     font-weight: 600;
@@ -479,7 +479,7 @@
 .score-form .form-actions button {
     padding: 11px 22px;
     border-radius: 6px;
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
     font-weight: 600;
     cursor: pointer;
 }
@@ -510,11 +510,11 @@
     accent-color: var(--c-accent);
 }
 .score-form .toggle-row .toggle-label {
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
     flex: 1;
 }
 .score-form .toggle-row .toggle-hint {
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     color: #888;
 }
 
@@ -533,12 +533,12 @@
     align-items: center;
     gap: 14px;
     flex-wrap: wrap;
-    font-size: 0.92rem;
+    font-size: var(--fs-sm);
     user-select: none;
 }
 .score-winprob-panel summary::-webkit-details-marker { display: none; }
 .winprob-summary-label {
-    font-size: 0.74rem;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 1.2px;
     color: #999;
@@ -554,7 +554,7 @@
 .winprob-toggle-hint {
     margin-left: auto;
     color: #888;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
 }
 .score-winprob-panel[open] .winprob-toggle-hint::after {
     content: ' (ouvert)';
@@ -581,11 +581,11 @@
 }
 .winprob-formula .formula-line {
     font-family: 'Cambria Math', 'Latin Modern Math', Georgia, serif;
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     color: #e8e8e8;
 }
 .winprob-formula .formula-where {
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     color: #999;
     font-style: italic;
 }
@@ -601,7 +601,7 @@
 .winprob-numerics > div {
     display: flex;
     justify-content: space-between;
-    font-size: 0.86rem;
+    font-size: var(--fs-sm);
     font-variant-numeric: tabular-nums;
 }
 .winprob-numerics .lbl {
@@ -614,7 +614,7 @@
 }
 
 .winprob-credits {
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     color: #888;
     line-height: 1.4;
 }
@@ -622,7 +622,7 @@
     background: rgba(0, 0, 0, 0.3);
     padding: 1px 5px;
     border-radius: 3px;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     color: #c8b569;
 }
 
@@ -632,7 +632,7 @@
     color: #ffb84d;
     border-radius: 6px;
     padding: 8px 12px;
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     line-height: 1.45;
 }
 
@@ -642,7 +642,7 @@
 }
 
 .score-history h3 {
-    font-size: 0.95rem;
+    font-size: var(--fs-md);
     color: #aaa;
     margin-bottom: 10px;
     font-weight: 600;
@@ -653,7 +653,7 @@
 .score-history-empty {
     color: #666;
     font-style: italic;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
     padding: 12px 0;
 }
 
@@ -672,7 +672,7 @@
     grid-template-columns: 1fr auto auto;
     align-items: center;
     gap: 14px;
-    font-size: 0.9rem;
+    font-size: var(--fs-sm);
 }
 
 .score-history-item .h-teams {
@@ -691,11 +691,11 @@
 .score-history-item .h-scores {
     color: #aaa;
     font-variant-numeric: tabular-nums;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 .score-history-item .h-date {
     color: #666;
-    font-size: 0.78rem;
+    font-size: var(--fs-2xs);
     white-space: nowrap;
 }
 .score-history-item .h-delete {
@@ -705,7 +705,7 @@
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 4px;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
 }
 .score-history-item .h-delete:hover { color: var(--c-danger); border-color: #5a3a3a; }
 
@@ -715,14 +715,14 @@
     .score-setup .team-inputs { grid-template-columns: 1fr; }
     .score-setup .team-inputs .vs-sep { display: none; }
     .score-header { grid-template-columns: 1fr 1fr; padding: 12px; gap: 8px 12px; }
-    .score-team-total { font-size: 1.7rem; }
-    .score-rounds table { font-size: 0.82rem; }
+    .score-team-total { font-size: var(--fs-2xl); }
+    .score-rounds table { font-size: var(--fs-xs); }
     .score-rounds th, .score-rounds td { padding: 8px 7px; }
     .score-rounds th.col-num, .score-rounds td.col-num { display: none; }
     .score-rounds .row-actions { opacity: 1; }
     .score-modal-content { padding: 18px 16px; }
-    .score-form .pts-input-row input { font-size: 1.15rem; }
-    .score-form .btn-row .btn-pill { padding: 9px 8px; font-size: 0.86rem; }
+    .score-form .pts-input-row input { font-size: var(--fs-lg); }
+    .score-form .btn-row .btn-pill { padding: 9px 8px; font-size: var(--fs-sm); }
     .score-history-item { grid-template-columns: 1fr; gap: 4px; }
-    .score-history-item .h-date { font-size: 0.72rem; }
+    .score-history-item .h-date { font-size: var(--fs-2xs); }
 }

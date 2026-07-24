@@ -82,7 +82,7 @@ const TEMPLATE = `
                     </div>
                     <span id="doudou-stats-text"></span>
                 </div>
-                <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre combien de fois ce contrat est ench\u00e9ri et le taux de r\u00e9ussite. La taille du chiffre refl\u00e8te la fiabilit\u00e9\u00a0: plus il y a d\u2019observations, plus le score est lisible. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
+                <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre le taux de r\u00e9ussite et, en dessous, le nombre de donnes observ\u00e9es. Les cellules peu observ\u00e9es sont estomp\u00e9es\u00a0: leur chiffre est moins fiable. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
                 <div id="annonces-doudou-body"></div>
             </div>
             <div class="annonces-result-panel" id="annonces-oracle-panel">
@@ -661,9 +661,15 @@ function wilsonLower(successes, n) {
 }
 
 // Font-size scale: ranges from 0.65rem (1 obs) to 0.85rem (≥20 obs).
-function pctFontSize(count) {
-    const t = Math.min(count, 20) / 20;          // 0 → 1
-    return (0.65 + t * 0.20).toFixed(2);          // rem
+// Fiabilité d'une cellule, portée par la TEINTE et non par la taille.
+// Auparavant chaque cellule recevait sa propre font-size (0.65 → 0.85rem) :
+// un tableau où chaque chiffre a un corps différent est illisible, et les
+// cellules peu observées finissaient sous le seuil de lecture. L'opacité dit
+// la même chose sans toucher au rythme typographique.
+function confidenceClass(count) {
+    if (count < 5) return 'conf-lo';
+    if (count < 20) return 'conf-mid';
+    return 'conf-hi';
 }
 
 const DOUDOU_TEAM_LABELS = { all: 'Tous', ns: 'NS', ew: 'EW' };
@@ -779,8 +785,9 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
                 if (wlb >= 60) cls = 'doudou-high';
                 else if (wlb >= 30) cls = 'doudou-mid';
                 else cls = 'doudou-low';
-                const fs = pctFontSize(count);
-                html += `<td class="${cls}"><span class="doudou-count">${count}</span><span class="doudou-pct" style="font-size:${fs}rem">${pct}</span></td>`;
+                html += `<td class="${cls} ${confidenceClass(count)}" title="${count} donnes observées, ${achieved} réussies">` +
+                    `<span class="doudou-pct">${pct}<span class="doudou-unit">%</span></span>` +
+                    `<span class="doudou-count">${count}</span></td>`;
             }
         }
         html += '</tr>';

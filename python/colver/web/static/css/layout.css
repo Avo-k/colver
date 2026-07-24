@@ -10,7 +10,7 @@ header {
 }
 
 .header-logo {
-    font-size: clamp(1.1rem, 1.5vw, 1.6rem);
+    font-size: var(--fs-xl);
     letter-spacing: 5px;
     color: var(--c-accent);
     font-weight: 700;
@@ -30,7 +30,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     color: #aaa;
     padding: 8px 14px;
     cursor: default;
-    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    font-size: var(--fs-md);
     border-bottom: 2px solid transparent;
     transition: all 0.2s;
     user-select: none;
@@ -67,7 +67,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     color: #bbb;
     padding: 8px 16px;
     text-decoration: none;
-    font-size: clamp(0.82rem, 0.95vw, 0.95rem);
+    font-size: var(--fs-md);
     transition: all 0.15s;
     white-space: nowrap;
 }
@@ -84,7 +84,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     color: #aaa;
     padding: 8px 14px;
     text-decoration: none;
-    font-size: clamp(0.85rem, 1vw, 1.05rem);
+    font-size: var(--fs-md);
     border-bottom: 2px solid transparent;
     transition: all 0.2s;
 }
@@ -99,7 +99,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     background: transparent;
     border: 1px solid rgba(255,255,255,0.15);
     color: #aaa;
-    font-size: 1rem;
+    font-size: var(--fs-md);
     padding: 2px 6px;
     cursor: pointer;
     border-radius: 3px;
@@ -113,7 +113,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     background: transparent;
     border: none;
     color: #aaa;
-    font-size: 1.5rem;
+    font-size: var(--fs-xl);
     padding: 4px 8px;
     cursor: pointer;
     line-height: 1;
@@ -124,7 +124,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     background: transparent;
     border: none;
     color: #aaa;
-    font-size: 1.1rem;
+    font-size: var(--fs-lg);
     padding: 4px 8px;
     cursor: pointer;
     transition: opacity 0.2s;
@@ -161,7 +161,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 
 .config-separator {
     color: #555;
-    font-size: 1.2rem;
+    font-size: var(--fs-lg);
     user-select: none;
 }
 
@@ -172,7 +172,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     border-radius: 4px;
     padding: 5px 8px;
     font-family: monospace;
-    font-size: clamp(0.7rem, 0.8vw, 0.85rem);
+    font-size: var(--fs-sm);
     width: clamp(200px, 30vw, 450px);
 }
 #cfn-input::placeholder {
@@ -219,7 +219,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 .fan-3 { transform: rotate(18deg) translateX(-8px); }
 
 .landing-title {
-    font-size: clamp(1.8rem, 3vw, 2.6rem);
+    font-size: var(--fs-3xl);
     font-weight: 800;
     letter-spacing: 6px;
     color: var(--c-accent);
@@ -227,7 +227,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 }
 
 .landing-subtitle {
-    font-size: clamp(0.85rem, 1.1vw, 1.05rem);
+    font-size: var(--fs-md);
     color: #8a8a7a;
     letter-spacing: 0.5px;
 }
@@ -259,17 +259,17 @@ nav { display: flex; gap: 4px; align-items: center; }
 }
 
 .mode-icon {
-    font-size: 1.8rem;
+    font-size: var(--fs-2xl);
 }
 
 .mode-title {
-    font-size: 1.05rem;
+    font-size: var(--fs-md);
     font-weight: 700;
     color: #e0e0e0;
 }
 
 .mode-desc {
-    font-size: 0.82rem;
+    font-size: var(--fs-xs);
     color: #999;
     line-height: 1.45;
 }
@@ -277,7 +277,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 .mode-tag {
     display: inline-block;
     align-self: flex-start;
-    font-size: 0.65rem;
+    font-size: var(--fs-2xs);
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
@@ -295,7 +295,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 .landing-about-link {
     color: #777;
     text-decoration: none;
-    font-size: 0.85rem;
+    font-size: var(--fs-sm);
     transition: color 0.2s;
 }
 .landing-about-link:hover { color: var(--c-accent); }
@@ -351,16 +351,16 @@ nav { display: flex; gap: 4px; align-items: center; }
     }
     .nav-item {
         padding: 12px 24px;
-        font-size: 1rem;
+        font-size: var(--fs-md);
     }
     .nav-link {
         padding: 12px 24px;
-        font-size: 1rem;
+        font-size: var(--fs-md);
         border-bottom: none;
     }
     .sound-toggle {
         padding: 12px 24px;
-        font-size: 1.2rem;
+        font-size: var(--fs-lg);
         margin-left: 0;
         text-align: left;
     }
