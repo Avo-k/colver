@@ -49,7 +49,7 @@
 #replay-search-input {
     width: 70px;
     background: #1a1a1a;
-    color: #d4af37;
+    color: var(--c-accent);
     border: 1px solid #444;
     border-radius: 4px;
     padding: 4px 6px;
@@ -87,12 +87,12 @@
     font-size: 0.75rem;
 }
 .history-row:hover {
-    background: rgba(212, 175, 55, 0.12);
+    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 
 .history-id {
     font-family: monospace;
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
     letter-spacing: 1px;
     font-size: 0.8rem;
@@ -113,8 +113,8 @@
     color: #999;
     font-size: 0.7rem;
 }
-.history-info.ns-won { color: #a5d6a7; }
-.history-info.ew-won { color: #ef9a9a; }
+.history-info.ns-won { color: var(--c-success-txt); }
+.history-info.ew-won { color: var(--c-danger-txt); }
 
 .history-date {
     color: #666;
@@ -206,12 +206,12 @@
     border-radius: 3px;
 }
 .stats-player.team-ns {
-    background: rgba(76, 175, 80, 0.3);
-    color: #a5d6a7;
+    background: var(--c-team-ns-a35);
+    color: var(--c-team-ns);
 }
 .stats-player.team-ew {
-    background: rgba(229, 115, 115, 0.25);
-    color: #ef9a9a;
+    background: var(--c-team-ew-a35);
+    color: var(--c-team-ew);
 }
 
 .stats-agent {
@@ -220,7 +220,7 @@
 }
 
 .stats-action {
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
 }
 
@@ -232,7 +232,7 @@
 
 .stats-result {
     font-weight: 700;
-    color: #d4af37;
+    color: var(--c-accent);
     font-size: 1rem;
 }
 
@@ -282,17 +282,17 @@
 
 .visit-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #2e7d32, #4caf50);
+    background: linear-gradient(90deg, #2e7d32, var(--c-success));
     border-radius: 2px;
     transition: width 0.2s;
 }
 
 .visit-row.best .visit-bar-fill {
-    background: linear-gradient(90deg, #b8860b, #d4af37);
+    background: linear-gradient(90deg, #b8860b, var(--c-accent));
 }
 
 .visit-row.best .visit-name {
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 700;
 }
 
@@ -301,7 +301,7 @@
 }
 
 .visit-row.best .q-fill {
-    background: linear-gradient(90deg, #b8860b, #d4af37);
+    background: linear-gradient(90deg, #b8860b, var(--c-accent));
 }
 
 .visit-count {
@@ -350,17 +350,17 @@
 
 .eval-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #2e7d32, #4caf50);
+    background: linear-gradient(90deg, #2e7d32, var(--c-success));
     border-radius: 2px;
     transition: width 0.2s;
 }
 
 .eval-row.best .eval-bar-fill {
-    background: linear-gradient(90deg, #b8860b, #d4af37);
+    background: linear-gradient(90deg, #b8860b, var(--c-accent));
 }
 
 .eval-row.best .eval-suit {
-    color: #d4af37;
+    color: var(--c-accent);
 }
 
 .eval-score {
@@ -371,7 +371,7 @@
 }
 
 .eval-row.best .eval-score {
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 700;
 }
 
@@ -431,12 +431,12 @@
     font-weight: 500;
 }
 .watch-bid-entry.team-ns {
-    background: rgba(76, 175, 80, 0.2);
-    color: #a5d6a7;
+    background: var(--c-team-ns-a15);
+    color: var(--c-team-ns);
 }
 .watch-bid-entry.team-ew {
-    background: rgba(229, 115, 115, 0.15);
-    color: #ef9a9a;
+    background: var(--c-team-ew-a15);
+    color: var(--c-team-ew);
 }
 
 #watch-tricks-list, #replay-tricks-list {
@@ -454,10 +454,10 @@
 }
 
 .trick-history-row.team-ns {
-    background: rgba(76, 175, 80, 0.08);
+    background: color-mix(in srgb, var(--c-team-ns) 10%, transparent);
 }
 .trick-history-row.team-ew {
-    background: rgba(229, 115, 115, 0.08);
+    background: color-mix(in srgb, var(--c-team-ew) 10%, transparent);
 }
 
 .trick-num {
@@ -484,13 +484,13 @@
     white-space: nowrap;
 }
 
-.trick-history-row.team-ns .trick-winner { color: #a5d6a7; }
-.trick-history-row.team-ew .trick-winner { color: #ef9a9a; }
+.trick-history-row.team-ns .trick-winner { color: var(--c-team-ns); }
+.trick-history-row.team-ew .trick-winner { color: var(--c-team-ew); }
 
 /* ===== DD ORACLE BOX ===== */
 .dd-oracle-box {
     background: rgba(0,0,0,0.4);
-    border: 1px solid rgba(212,175,55,0.3);
+    border: 1px solid var(--c-accent-a30);
     border-radius: 6px;
     padding: 6px 10px;
 }
@@ -499,7 +499,7 @@
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
     margin-bottom: 4px;
     text-align: center;
@@ -532,7 +532,7 @@
 }
 
 .dd-table td.red {
-    color: #ef5350;
+    color: var(--c-danger);
 }
 
 /* ===== REPLAY MAIN ===== */
@@ -548,7 +548,7 @@
 
 /* Incomplete game indicator */
 .stats-incomplete {
-    color: #d4af37;
+    color: var(--c-accent);
     font-size: 0.9rem;
     font-weight: 600;
     text-align: center;

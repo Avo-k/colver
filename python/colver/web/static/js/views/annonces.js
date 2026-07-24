@@ -2,22 +2,16 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, renderHand, renderHandMini, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, renderHand, renderHandMini, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
+import { suitHtml, createSuitPicker } from '../shared/suits.js';
+import { SEAT_COLOR_VARS } from '../shared/seats.js';
 import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
-const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['Nord', 'Est', 'Sud', 'Ouest'];
-const SEAT_COLORS = ['#82cfff', '#82e0aa', '#d4af37', '#f0b429'];
 const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
-const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
-// ♠ noir, ♥ rouge, ♦ rouge, ♣ noir — for coloring native <option> text.
-const SUIT_COLORS = ['#1a1a1a', '#d33', '#d33', '#1a1a1a'];
-function suitHtml(suitIdx) {
-    return SUIT_EMOJI[suitIdx];
-}
 
 const TEMPLATE = `
 <div id="annonces-top-row">
@@ -174,8 +168,10 @@ function buildBidSelector(container) {
 
     const levelSel = document.createElement('select');
     levelSel.className = 'bid-level-select';
-    const suitSel = document.createElement('select');
-    suitSel.className = 'bid-suit-select';
+    // Segmented control : les <option> ne portent pas de couleur de façon
+    // portable, d'où les emoji qu'on utilisait ici. Plus besoin.
+    const suitSel = createSuitPicker({ value: 0, name: 'atout' });
+    suitSel.classList.add('bid-suit-select');
 
     const addOpt = (sel, value, text, color) => {
         const opt = document.createElement('option');
@@ -192,10 +188,6 @@ function buildBidSelector(container) {
     addOpt(levelSel, 'capot', 'Capot');
     addOpt(levelSel, 'coinche', 'Coinche');
     addOpt(levelSel, 'surcoinche', 'Surcoinche');
-
-    for (const suit of SUIT_DISPLAY_ORDER) {
-        addOpt(suitSel, String(suit), SUIT_EMOJI[suit], SUIT_COLORS[suit]);
-    }
 
     const isSpecial = (v) => v === 'pass' || v === 'coinche' || v === 'surcoinche';
     const sync = () => { suitSel.disabled = isSpecial(levelSel.value); };
@@ -273,7 +265,7 @@ function renderAnnoncesHistory() {
         const badge = document.createElement('span');
         badge.className = 'ann-seat-badge';
         badge.textContent = SEAT_NAMES[seat];
-        badge.style.color = SEAT_COLORS[seat];
+        badge.style.color = SEAT_COLOR_VARS[seat];
 
         const actionSpan = document.createElement('span');
         actionSpan.className = 'ann-action-name';
@@ -299,7 +291,7 @@ function renderAnnoncesHistory() {
     const yourBadge = document.createElement('span');
     yourBadge.className = 'ann-seat-badge';
     yourBadge.textContent = 'Sud';
-    yourBadge.style.color = SEAT_COLORS[2];
+    yourBadge.style.color = SEAT_COLOR_VARS[2];
     const yourLabel = document.createElement('span');
     yourLabel.className = 'ann-action-name';
     yourLabel.textContent = 'Votre tour';
@@ -377,7 +369,7 @@ function populateXgbSuitSelect(results) {
         const r = results[i];
         const opt = document.createElement('option');
         opt.value = i;
-        opt.innerHTML = `${SUIT_SYMBOLS[r.suit]} (${(r.probability * 100).toFixed(0)}%)`;
+        opt.innerHTML = `${SUITS[r.suit]} (${(r.probability * 100).toFixed(0)}%)`;
         select.appendChild(opt);
     }
     select.value = '0';
@@ -520,7 +512,7 @@ function renderOracleStrips(successCounts, completed) {
         html += `<div class="oracle-strip-row"><span class="oracle-strip-suit">${suitHtml(suit)}</span>`;
         for (let t = 0; t < pcts.length; t++) {
             html += `<span class="oracle-strip-cell" style="background:${oraclePctColor(pcts[t])}"` +
-                    ` title="${THRESHOLD_LABELS[t]}${SUIT_SYMBOLS[suit]} : ${pcts[t]} %"></span>`;
+                    ` title="${THRESHOLD_LABELS[t]}${SUITS[suit]} : ${pcts[t]} %"></span>`;
         }
         html += '</div><div class="oracle-strip-markers"><span></span>';
         const markers = THRESHOLDS.map(() => []);

@@ -2,16 +2,27 @@
 
 import * as SFX from '../sounds.js';
 
+import {
+    SUIT_GLYPHS, SUIT_NAMES_EN, SUIT_DISPLAY_ORDER, SUIT_IS_RED,
+    suitHtml, suitClass,
+} from './suits.js';
+
 export const RANKS = ['7', '8', '9', 'V', 'D', 'R', '10', 'A'];
-export const SUITS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 export const PLAIN_POINTS = [0, 0, 0, 2, 3, 4, 10, 11];
 export const TRUMP_POINTS = [0, 0, 14, 20, 3, 4, 10, 11];
-export const SUIT_NAMES_EN = ['spades', 'hearts', 'diamonds', 'clubs'];
 export const RANK_NAMES_EN = ['7', '8', '9', 'jack', 'queen', 'king', '10', 'ace'];
 export const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 
-// Display order: ♠ ♥ ♣ ♦ (alternating black-red)
-export const SUIT_DISPLAY_ORDER = [0, 1, 3, 2];
+// Ré-exports : les vues importent historiquement ces symboles depuis cards.js.
+// `SUITS` est le glyphe NU — réservé au texte pur (alt, title, textContent).
+// Pour tout rendu HTML, passer par suitHtml() ou cardTextHtml().
+export const SUITS = SUIT_GLYPHS;
+export { SUIT_NAMES_EN, SUIT_DISPLAY_ORDER, SUIT_IS_RED, suitHtml, suitClass };
+
+/** « A♥ » avec le symbole coloré — pour les listes de plis, historiques, etc. */
+export function cardTextHtml(cardIdx) {
+    return `${RANKS[cardRank(cardIdx)]}${suitHtml(cardSuit(cardIdx))}`;
+}
 
 // Build per-hand suit sort keys that maximize color alternation.
 // With all 4 suits: ♠ ♥ ♣ ♦. With fewer, reorders to avoid adjacent same-color.
@@ -216,19 +227,21 @@ export function renderLastTrick(container, trick, trickWinner, trickPoints, huma
     container.appendChild(grid);
 }
 
+/** Contrat en HTML (symbole coloré). */
 export function contractStr(contract) {
     if (!contract || Object.keys(contract).length === 0) return '';
     const val = contract.value;
-    const suit = SUITS[contract.trump];
     const team = contract.team === 0 ? 'NS' : 'EO';
     const coinche = contract.coinche === 1 ? ' x' : contract.coinche === 2 ? ' xx' : '';
-    return `${val}${suit} par ${team}${coinche}`;
+    return `${val}${suitHtml(contract.trump)} par ${team}${coinche}`;
 }
 
-const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
-
-function suitSpan(suitIdx) {
-    return SUIT_EMOJI[suitIdx];
+/** Contrat en texte pur (title, alt, textContent). */
+export function contractText(contract) {
+    if (!contract || Object.keys(contract).length === 0) return '';
+    const team = contract.team === 0 ? 'NS' : 'EO';
+    const coinche = contract.coinche === 1 ? ' x' : contract.coinche === 2 ? ' xx' : '';
+    return `${contract.value}${SUITS[contract.trump]} par ${team}${coinche}`;
 }
 
 export function bidActionHtml(action) {
@@ -242,10 +255,10 @@ export function bidActionHtml(action) {
             valIdx = Math.floor(idx / 4);
             suitIdx = idx % 4;
             const values = [80,90,100,110,120,130,140,150,160];
-            return `${values[valIdx]} ${suitSpan(suitIdx)}`;
+            return `${values[valIdx]} ${suitHtml(suitIdx)}`;
         } else {
             suitIdx = action - 37;
-            return `Capot ${suitSpan(suitIdx)}`;
+            return `Capot ${suitHtml(suitIdx)}`;
         }
     }
     return `?${action}`;

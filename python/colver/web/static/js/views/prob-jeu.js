@@ -100,7 +100,7 @@ function handleProblemReady(data) {
     pjLegalActions = data.legal_actions;
     pjLocked = false;
 
-    document.getElementById('pj-contract-display').textContent = contractStr(data.contract);
+    document.getElementById('pj-contract-display').innerHTML = contractStr(data.contract);
     document.getElementById('pj-score-ns').textContent = `NS : ${data.points[0]} (${data.tricks_won[0]}P)`;
     document.getElementById('pj-score-ew').textContent = `EO : ${data.points[1]} (${data.tricks_won[1]}P)`;
     const trickNum = data.tricks_won[0] + data.tricks_won[1] + 1;

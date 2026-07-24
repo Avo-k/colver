@@ -3,18 +3,14 @@
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
+import { suitHtml } from '../shared/suits.js';
+import { SEAT_COLOR_VARS } from '../shared/seats.js';
 
-const SUIT_SYMBOLS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
-const SEAT_COLORS = ['#5b9ff5', '#e06080', '#d4af37', '#8c6fe6'];
 
 // Display order within a suit: A 10 R D V 9 8 7
 const DISPLAY_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
 
-const SUIT_EMOJI = ['♠️', '♥️', '♦️', '♣️'];
-function suitHtml(suitIdx) {
-    return SUIT_EMOJI[suitIdx];
-}
 
 function actionHtml(action, phase) {
     if (phase === 0) {
@@ -241,7 +237,7 @@ function renderHistory() {
         const item = document.createElement('button');
         item.className = 'belief-hist-item';
         item.dataset.idx = String(i + 1); // position AFTER this action
-        item.style.setProperty('--seat-color', SEAT_COLORS[player]);
+        item.style.setProperty('--seat-color', SEAT_COLOR_VARS[player]);
         item.title = `${SEAT_NAMES[player]} : ${actionHtml(action, phase).replace(/<[^>]*>/g, '')}`;
 
         if (phase === 0) {
@@ -333,8 +329,7 @@ function renderGrid() {
 
         const suitLabel = document.createElement('div');
         suitLabel.className = 'belief-suit-label';
-        const cls = (suit === 1 || suit === 2) ? 'suit-red' : 'suit-black';
-        suitLabel.innerHTML = `<span class="${cls}">${SUIT_SYMBOLS[suit]}</span>`;
+        suitLabel.innerHTML = suitHtml(suit);
         suitDiv.appendChild(suitLabel);
 
         const cardsRow = document.createElement('div');
@@ -425,7 +420,7 @@ function createBeliefBar(weights, cardIdx, observer, groundTruth, label) {
         const segEl = document.createElement('div');
         segEl.className = 'belief-bar-seg';
         segEl.style.width = pct + '%';
-        segEl.style.backgroundColor = SEAT_COLORS[seg.abs];
+        segEl.style.backgroundColor = SEAT_COLOR_VARS[seg.abs];
         segEl.title = `${SEAT_NAMES[seg.abs]}: ${(seg.prob * 100).toFixed(1)}%`;
         barInner.appendChild(segEl);
     }
@@ -436,7 +431,7 @@ function createBeliefBar(weights, cardIdx, observer, groundTruth, label) {
     if (truthHolder >= 0) {
         const marker = document.createElement('div');
         marker.className = 'belief-truth-marker';
-        marker.style.color = SEAT_COLORS[truthHolder];
+        marker.style.color = SEAT_COLOR_VARS[truthHolder];
         marker.title = `Vraie position: ${SEAT_NAMES[truthHolder]}`;
         marker.textContent = SEAT_NAMES[truthHolder];
         bar.appendChild(marker);

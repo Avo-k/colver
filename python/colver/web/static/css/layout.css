@@ -3,19 +3,20 @@ header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 24px;
+    height: var(--header-h);      /* imposée, pas subie : cf. tokens.css */
+    padding: 0 var(--sp-6);
     background: rgba(0,0,0,0.4);
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    border-bottom: 1px solid var(--c-border);
 }
 
 .header-logo {
     font-size: clamp(1.1rem, 1.5vw, 1.6rem);
     letter-spacing: 5px;
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 700;
     text-decoration: none;
 }
-.header-logo:hover { color: #e5c349; }
+.header-logo:hover { color: var(--c-accent-bright); }
 
 /* ===== NAVIGATION ===== */
 nav { display: flex; gap: 4px; align-items: center; }
@@ -39,7 +40,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     color: #fff;
 }
 .nav-group.active .nav-label {
-    border-bottom-color: #d4af37;
+    border-bottom-color: var(--c-accent);
 }
 
 .nav-dropdown {
@@ -72,10 +73,10 @@ nav { display: flex; gap: 4px; align-items: center; }
 }
 .nav-item:hover {
     color: #fff;
-    background: rgba(212, 175, 55, 0.12);
+    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 .nav-item.active {
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
 }
 
@@ -90,7 +91,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 .nav-link:hover { color: #fff; }
 .nav-link.active {
     color: #fff;
-    border-bottom-color: #d4af37;
+    border-bottom-color: var(--c-accent);
 }
 
 .config-toggle-btn {
@@ -105,7 +106,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     line-height: 1;
     min-height: auto;
 }
-.config-toggle-btn:hover { color: #d4af37; border-color: rgba(212,175,55,0.4); background: transparent; }
+.config-toggle-btn:hover { color: var(--c-accent); border-color: var(--c-accent-a40); background: transparent; }
 
 .nav-toggle {
     display: none;
@@ -136,9 +137,9 @@ nav { display: flex; gap: 4px; align-items: center; }
 /* ===== MAIN CONTAINER ===== */
 #app {
     padding: clamp(8px, 1vw, 16px);
-    max-width: 1800px;
+    max-width: var(--content-max);
     margin: 0 auto;
-    height: calc(100vh - 46px);
+    height: calc(100dvh - var(--header-h));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -166,7 +167,7 @@ nav { display: flex; gap: 4px; align-items: center; }
 
 #cfn-input {
     background: #1a1a1a;
-    color: #d4af37;
+    color: var(--c-accent);
     border: 1px solid #444;
     border-radius: 4px;
     padding: 5px 8px;
@@ -178,7 +179,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     color: #555;
     font-family: 'Segoe UI', system-ui, sans-serif;
 }
-#cfn-input:focus { outline: 1px solid #d4af37; border-color: #d4af37; }
+#cfn-input:focus { outline: 1px solid var(--c-accent); border-color: var(--c-accent); }
 
 /* ===== LANDING PAGE ===== */
 .landing {
@@ -221,7 +222,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     font-size: clamp(1.8rem, 3vw, 2.6rem);
     font-weight: 800;
     letter-spacing: 6px;
-    color: #d4af37;
+    color: var(--c-accent);
     text-transform: uppercase;
 }
 
@@ -251,8 +252,8 @@ nav { display: flex; gap: 4px; align-items: center; }
     gap: 8px;
 }
 .mode-card:hover {
-    background: rgba(212, 175, 55, 0.08);
-    border-color: rgba(212, 175, 55, 0.3);
+    background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+    border-color: var(--c-accent-a30);
     transform: translateY(-2px);
     box-shadow: 0 6px 20px rgba(0,0,0,0.3);
 }
@@ -282,9 +283,9 @@ nav { display: flex; gap: 4px; align-items: center; }
     letter-spacing: 1px;
     padding: 2px 8px;
     border-radius: 10px;
-    background: rgba(212, 175, 55, 0.12);
-    color: #d4af37;
-    border: 1px solid rgba(212, 175, 55, 0.25);
+    background: color-mix(in srgb, var(--c-accent) 12%, transparent);
+    color: var(--c-accent);
+    border: 1px solid color-mix(in srgb, var(--c-accent) 25%, transparent);
 }
 
 .landing-footer {
@@ -297,7 +298,7 @@ nav { display: flex; gap: 4px; align-items: center; }
     font-size: 0.85rem;
     transition: color 0.2s;
 }
-.landing-about-link:hover { color: #d4af37; }
+.landing-about-link:hover { color: var(--c-accent); }
 
 /* Collapse config when game is active (all screen sizes) */
 #app:has(#play-table:not(.hidden)) #play-config,
@@ -368,11 +369,11 @@ nav { display: flex; gap: 4px; align-items: center; }
     #app {
         overflow-y: auto;
         height: auto;
-        min-height: calc(100vh - 46px);
+        min-height: calc(100dvh - var(--header-h));
     }
     /* Keep play table within viewport on mobile */
     #app:has(#play-table:not(.hidden)) {
-        height: calc(100vh - 61px);
+        height: calc(100dvh - var(--header-h));
         min-height: 0;
         overflow: hidden;
     }

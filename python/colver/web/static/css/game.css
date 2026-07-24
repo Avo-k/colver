@@ -29,9 +29,9 @@
     text-transform: uppercase;
     margin-bottom: 12px;
 }
-.result-title.victory { color: #4caf50; text-shadow: 0 0 20px rgba(76, 175, 80, 0.4); }
-.result-title.defeat  { color: #ef5350; text-shadow: 0 0 20px rgba(239, 83, 80, 0.3); }
-.result-title.draw    { color: #d4af37; text-shadow: 0 0 20px rgba(212, 175, 55, 0.3); }
+.result-title.victory { color: var(--c-success); text-shadow: 0 0 20px rgba(76, 175, 80, 0.4); }
+.result-title.defeat  { color: var(--c-danger); text-shadow: 0 0 20px rgba(239, 83, 80, 0.3); }
+.result-title.draw    { color: var(--c-accent); text-shadow: 0 0 20px var(--c-accent-a30); }
 
 .result-contract {
     font-size: clamp(0.85rem, 1vw, 1rem);
@@ -48,13 +48,13 @@
     margin-bottom: 20px;
 }
 
-.result-scores .team-ns { color: #a5d6a7; }
-.result-scores .team-ew { color: #ef9a9a; }
+.result-scores .team-ns { color: var(--c-team-ns); }
+.result-scores .team-ew { color: var(--c-team-ew); }
 
 .belote-note {
     font-size: 0.8em;
     font-weight: 400;
-    color: #d4af37;
+    color: var(--c-accent);
 }
 
 .result-buttons {
@@ -115,12 +115,12 @@
 }
 
 .stats-contract-result.contract-made {
-    color: #a5d6a7;
+    color: var(--c-success-txt);
     background: rgba(76, 175, 80, 0.15);
 }
 
 .stats-contract-result.contract-failed {
-    color: #ef9a9a;
+    color: var(--c-danger-txt);
     background: rgba(229, 115, 115, 0.15);
 }
 
@@ -135,7 +135,7 @@
     text-align: center;
     font-size: 0.9rem;
     font-weight: 700;
-    color: #d4af37;
+    color: var(--c-accent);
     padding: 4px 0 2px;
     border-top: 1px solid rgba(255,255,255,0.1);
     margin-top: 4px;
@@ -151,12 +151,12 @@
 }
 
 .result-contract-detail.contract-made {
-    color: #a5d6a7;
+    color: var(--c-success-txt);
     background: rgba(76, 175, 80, 0.15);
 }
 
 .result-contract-detail.contract-failed {
-    color: #ef9a9a;
+    color: var(--c-danger-txt);
     background: rgba(229, 115, 115, 0.15);
 }
 
@@ -169,7 +169,7 @@
 .result-final-scores {
     font-size: 0.95rem;
     font-weight: 700;
-    color: #d4af37;
+    color: var(--c-accent);
     padding: 4px 0 2px;
     border-top: 1px solid rgba(255,255,255,0.15);
     margin-top: 4px;

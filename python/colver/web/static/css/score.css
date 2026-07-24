@@ -91,14 +91,14 @@
 .btn-pill:hover { background: #3a3a3a; border-color: #666; }
 .score-setup .max-btn.active,
 .btn-pill.active {
-    background: #d4af37;
+    background: var(--c-accent);
     color: #1a1a1a;
-    border-color: #d4af37;
+    border-color: var(--c-accent);
     font-weight: 600;
 }
 
 .score-setup .start-btn {
-    background: #d4af37;
+    background: var(--c-accent);
     color: #1a1a1a;
     border: none;
     border-radius: 6px;
@@ -148,9 +148,9 @@
     transition: border-color 0.15s;
 }
 .score-team-name:hover { border-color: #555; }
-.score-team-name:focus { outline: none; border: 1px dashed #d4af37; }
+.score-team-name:focus { outline: none; border: 1px dashed var(--c-accent); }
 
-.score-team-block.lead .score-team-name { color: #d4af37; }
+.score-team-block.lead .score-team-name { color: var(--c-accent); }
 
 .score-team-total {
     font-size: clamp(2rem, 5vw, 3rem);
@@ -167,11 +167,11 @@
 }
 .score-progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, #4caf50, #d4af37);
+    background: linear-gradient(90deg, var(--c-success), var(--c-accent));
     border-radius: 3px;
     transition: width 0.3s;
 }
-.score-progress-bar.over { background: linear-gradient(90deg, #d4af37, #ff9800); }
+.score-progress-bar.over { background: linear-gradient(90deg, var(--c-accent), #ff9800); }
 
 .score-max-label {
     font-size: 0.75rem;
@@ -189,7 +189,7 @@
     font-size: 0.82rem;
     cursor: help;
 }
-.score-team-block.lead .score-winprob { color: #d4af37; }
+.score-team-block.lead .score-winprob { color: var(--c-accent); }
 
 .score-add-row {
     display: flex;
@@ -198,7 +198,7 @@
 
 .score-add-btn {
     flex: 1;
-    background: #d4af37;
+    background: var(--c-accent);
     color: #1a1a1a;
     border: none;
     border-radius: 8px;
@@ -207,7 +207,7 @@
     font-weight: 600;
     cursor: pointer;
 }
-.score-add-btn:hover { background: #e5c349; }
+.score-add-btn:hover { background: var(--c-accent-bright); }
 
 .score-actions {
     display: flex;
@@ -227,7 +227,7 @@
 .score-actions .secondary-btn:hover { background: #4a4a4a; }
 .score-actions .danger-btn {
     background: transparent;
-    color: #ef5350;
+    color: var(--c-danger);
     border: 1px solid #5a3a3a;
 }
 .score-actions .danger-btn:hover { background: rgba(239, 83, 80, 0.1); }
@@ -267,7 +267,7 @@
 }
 .score-rounds tr:last-child td { border-bottom: none; }
 .score-rounds tr.round-row { cursor: pointer; transition: background 0.1s; }
-.score-rounds tr.round-row:hover { background: rgba(212, 175, 55, 0.06); }
+.score-rounds tr.round-row:hover { background: color-mix(in srgb, var(--c-accent) 6%, transparent); }
 
 .score-rounds .col-num { text-align: center; color: #777; font-weight: 600; }
 .score-rounds .col-contract { font-weight: 500; }
@@ -279,12 +279,12 @@
 }
 .score-rounds .col-contract .belote-tag {
     font-size: 0.72rem;
-    color: #d4af37;
+    color: var(--c-accent);
     margin-left: 6px;
 }
 .score-rounds .col-contract .chute-tag {
     font-size: 0.72rem;
-    color: #ef5350;
+    color: var(--c-danger);
     margin-left: 6px;
     font-weight: 600;
 }
@@ -310,7 +310,7 @@
     font-size: 0.72rem;
     cursor: pointer;
 }
-.score-rounds .row-actions .delete:hover { background: rgba(239, 83, 80, 0.15); border-color: #ef5350; color: #ef5350; }
+.score-rounds .row-actions .delete:hover { background: rgba(239, 83, 80, 0.15); border-color: var(--c-danger); color: var(--c-danger); }
 
 .score-rounds-empty {
     padding: 32px 20px;
@@ -321,8 +321,8 @@
 
 /* ===== Game over banner ===== */
 .score-finished {
-    background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(76, 175, 80, 0.15));
-    border: 1px solid #d4af37;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--c-accent) 18%, transparent), rgba(76, 175, 80, 0.15));
+    border: 1px solid var(--c-accent);
     border-radius: 10px;
     padding: 16px 18px;
     display: flex;
@@ -335,7 +335,7 @@
     font-size: 1.05rem;
     font-weight: 600;
 }
-.score-finished .winner-text .winner-name { color: #d4af37; }
+.score-finished .winner-text .winner-name { color: var(--c-accent); }
 
 /* ===== Round form modal ===== */
 .score-modal {
@@ -352,7 +352,7 @@
 
 .score-modal-content {
     background: #1f2419;
-    border: 1px solid rgba(212, 175, 55, 0.35);
+    border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
     border-radius: 14px;
     padding: 22px 24px;
     width: 100%;
@@ -365,7 +365,7 @@
 .score-modal h3 {
     font-size: 1.1rem;
     margin-bottom: 18px;
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
 }
 
@@ -447,7 +447,7 @@
 
 .score-form .preview {
     background: rgba(0, 0, 0, 0.3);
-    border-left: 3px solid #d4af37;
+    border-left: 3px solid var(--c-accent);
     border-radius: 4px;
     padding: 10px 14px;
     font-size: 0.95rem;
@@ -461,8 +461,8 @@
     letter-spacing: 1px;
     font-weight: 600;
 }
-.score-form .preview-status.reussi { color: #4caf50; }
-.score-form .preview-status.chute { color: #ef5350; }
+.score-form .preview-status.reussi { color: var(--c-success); }
+.score-form .preview-status.chute { color: var(--c-danger); }
 .score-form .preview-scores {
     display: flex;
     gap: 14px;
@@ -490,7 +490,7 @@
 }
 .score-form .form-actions .cancel-btn:hover { background: #2a2a2a; }
 .score-form .form-actions .submit-btn {
-    background: #d4af37;
+    background: var(--c-accent);
     color: #1a1a1a;
     border: none;
 }
@@ -507,7 +507,7 @@
 .score-form .toggle-row input[type="checkbox"] {
     width: 18px;
     height: 18px;
-    accent-color: #d4af37;
+    accent-color: var(--c-accent);
 }
 .score-form .toggle-row .toggle-label {
     font-size: 0.92rem;
@@ -576,7 +576,7 @@
     background: rgba(0, 0, 0, 0.3);
     padding: 10px 12px;
     border-radius: 6px;
-    border-left: 3px solid #d4af37;
+    border-left: 3px solid var(--c-accent);
     margin-top: 12px;
 }
 .winprob-formula .formula-line {
@@ -686,7 +686,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.score-history-item .h-team.winner { color: #d4af37; font-weight: 600; }
+.score-history-item .h-team.winner { color: var(--c-accent); font-weight: 600; }
 .score-history-item .h-vs { color: #555; }
 .score-history-item .h-scores {
     color: #aaa;
@@ -707,7 +707,7 @@
     border-radius: 4px;
     font-size: 0.85rem;
 }
-.score-history-item .h-delete:hover { color: #ef5350; border-color: #5a3a3a; }
+.score-history-item .h-delete:hover { color: var(--c-danger); border-color: #5a3a3a; }
 
 /* ===== Mobile ===== */
 @media (max-width: 600px) {

@@ -2,15 +2,13 @@
 
 import * as SFX from '../sounds.js';
 import {
-    RANKS, SUITS, SEAT_NAMES_FR, cardRank, cardSuit,
+    SEAT_NAMES_FR, cardTextHtml, suitHtml,
     renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     animateTrickFlush
 } from './cards.js';
 import { updateCfnBox } from './cfn-box.js';
-
-const SUIT_LABELS = ['\u2660', '\u2665', '\u2666', '\u2663'];
 
 // A move-history entry "completes a trick" if it's a play-phase move that
 // caused current_trick to reset (engine clears it after the 4th card) and
@@ -271,7 +269,7 @@ export class BoardRenderer {
     renderState(state) {
         this.el('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
         this.el('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
-        this.el('contract-display').textContent = contractStr(state.contract);
+        this.el('contract-display').innerHTML = contractStr(state.contract);
         updateCfnBox(`${this.prefix}-cfn`, state.cfn);
 
         if (state.belote) {
@@ -379,13 +377,13 @@ export class BoardRenderer {
                     const seat = (leadSeat + j) % 4;
                     const c = t.cards[seat];
                     if (c >= 0 && c < 32) {
-                        orderedCards += `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]} `;
+                        orderedCards += cardTextHtml(c) + ' ';
                     }
                 }
                 orderedCards = orderedCards.trim();
             } else {
                 orderedCards = t.cards.map(c => {
-                    if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
+                    if (c >= 0 && c < 32) return cardTextHtml(c);
                     return '?';
                 }).join(' ');
             }
@@ -444,7 +442,7 @@ export class BoardRenderer {
             const contractTeamName = teamNames[sd.contract_team];
             const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
             const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
-            bodyHtml += `<div class="stats-contract-result ${contractClass}">${sd.contract_value}${SUIT_LABELS[state.contract.trump]} par ${contractTeamName} — ${contractResult}</div>`;
+            bodyHtml += `<div class="stats-contract-result ${contractClass}">${sd.contract_value}${suitHtml(state.contract.trump)} par ${contractTeamName} — ${contractResult}</div>`;
             bodyHtml += `<div class="stats-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
             if (sd.belote[0] > 0 || sd.belote[1] > 0) {
                 const parts = [];

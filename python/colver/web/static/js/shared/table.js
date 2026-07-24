@@ -5,8 +5,7 @@
 
 import * as SFX from '../sounds.js';
 import {
-    RANKS, SUITS, SEAT_NAMES_FR,
-    cardSuit, cardRank, cardToHtml,
+    SEAT_NAMES_FR, cardTextHtml, cardToHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
     contractStr, actionName, encodeBidAction, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
@@ -14,6 +13,7 @@ import {
     detectTrickCompletion, animateTrickFlush
 } from './cards.js';
 import { setGameId as setBugReportGameId, openBugReport } from './bug-report.js';
+import { createSuitPicker } from './suits.js';
 
 export const MY_SEAT = 2; // South, always (server-side rotation guarantees it)
 
@@ -70,12 +70,7 @@ export const TABLE_TEMPLATE = `
                         <option value="160">160</option>
                         <option value="250">Capot</option>
                     </select>
-                    <select id="bid-suit">
-                        <option value="0">♠ Pique</option>
-                        <option value="1">♥ Coeur</option>
-                        <option value="2">♦ Carreau</option>
-                        <option value="3">♣ Trefle</option>
-                    </select>
+                    <span id="bid-suit-mount"></span>
                     <button id="bid-submit" class="bid-btn bid-action">Annoncer</button>
                 </div>
                 <div id="bid-special">
@@ -134,6 +129,16 @@ export class GameTable {
     /** Call after the TABLE_TEMPLATE is in the DOM. */
     bind() {
         document.getElementById('play-report-btn').addEventListener('click', openBugReport);
+
+        // Choix de l'atout : segmented control plutôt qu'un <select>, dont les
+        // <option> ne peuvent pas porter de couleur de façon portable. Le
+        // picker expose `.value` comme un select, le reste du code est inchangé.
+        const mount = document.getElementById('bid-suit-mount');
+        if (mount) {
+            const picker = createSuitPicker({ value: 0, name: 'atout' });
+            picker.id = 'bid-suit';
+            mount.replaceWith(picker);
+        }
     }
 
     show() {
@@ -229,7 +234,7 @@ export class GameTable {
 
         document.getElementById('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
         document.getElementById('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
-        document.getElementById('contract-display').textContent = contractStr(state.contract);
+        document.getElementById('contract-display').innerHTML = contractStr(state.contract);
 
         if (state.belote) {
             renderBeloteBadge('score-ns', state.belote[0]);
@@ -571,13 +576,13 @@ export class GameTable {
                     const seat = (leadSeat + j) % 4;
                     const c = t.cards[seat];
                     if (c >= 0 && c < 32) {
-                        orderedCards += `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]} `;
+                        orderedCards += cardTextHtml(c) + ' ';
                     }
                 }
                 orderedCards = orderedCards.trim();
             } else {
                 orderedCards = t.cards.map(c => {
-                    if (c >= 0 && c < 32) return `${RANKS[cardRank(c)]}${SUITS[cardSuit(c)]}`;
+                    if (c >= 0 && c < 32) return cardTextHtml(c);
                     return '?';
                 }).join(' ');
             }

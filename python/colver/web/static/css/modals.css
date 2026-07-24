@@ -11,7 +11,7 @@
 
 .modal-content {
     background: #1e3a1a;
-    border: 1px solid rgba(212, 175, 55, 0.3);
+    border: 1px solid var(--c-accent-a30);
     border-radius: 8px;
     padding: 20px;
     width: 360px;
@@ -28,7 +28,7 @@
 .report-game-label {
     font-family: monospace;
     font-size: 0.8rem;
-    color: #d4af37;
+    color: var(--c-accent);
     margin-bottom: 10px;
 }
 
@@ -43,7 +43,7 @@
     font-size: 0.85rem;
     resize: vertical;
 }
-#report-message:focus { outline: 1px solid #d4af37; border-color: #d4af37; }
+#report-message:focus { outline: 1px solid var(--c-accent); border-color: var(--c-accent); }
 
 .modal-buttons {
     display: flex;
@@ -63,13 +63,13 @@
 }
 .modal-btn.cancel:hover { background: #5a5a5a; }
 .modal-btn.submit {
-    background: #d4af37;
+    background: var(--c-accent);
     color: #1a1a1a;
 }
 
 #report-status {
     font-size: 0.8rem;
-    color: #a5d6a7;
+    color: var(--c-success-txt);
     margin-top: 6px;
     text-align: center;
     min-height: 18px;

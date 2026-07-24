@@ -2,6 +2,7 @@
 
 import { send, onMessage, offMessage } from '../ws.js';
 import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidActionHtml, cardCode } from '../shared/cards.js';
+import { createSuitPicker, suitHtml } from '../shared/suits.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const TEMPLATE = `
@@ -33,10 +34,7 @@ const TEMPLATE = `
                             <option value="140">140</option><option value="150">150</option>
                             <option value="160">160</option><option value="250">Capot</option>
                         </select>
-                        <select id="pa-bid-suit">
-                            <option value="0">\u2660</option><option value="1">\u2665</option>
-                            <option value="2">\u2666</option><option value="3">\u2663</option>
-                        </select>
+                        <span id="pa-bid-suit-mount"></span>
                         <button id="pa-bid-submit" class="bid-btn bid-action">Annoncer</button>
                     </div>
                     <div id="pa-bid-special">
@@ -97,7 +95,6 @@ let paHand = [];
 let paBidHistory = [];
 let paHintData = null;
 
-const SUIT_EMOJI = ['\u2660\uFE0F', '\u2665\uFE0F', '\u2666\uFE0F', '\u2663\uFE0F'];
 const TOP_N_HINT = 5;
 
 async function prepareHint(hand, bidHistory, qValues) {
@@ -159,7 +156,7 @@ function revealHint() {
     // Suit boxes — open if probability > 0%
     for (const box of suitBoxes) {
         const open = box.probability >= 0.05 ? ' open' : '';
-        html += `<details class="pa-hint-box"${open}><summary>${SUIT_EMOJI[box.suit]}</summary>`;
+        html += `<details class="pa-hint-box"${open}><summary>${suitHtml(box.suit)}</summary>`;
         if (box.entries.length > 0) {
             html += '<div class="pa-hint-rows">';
             for (const [feat, val] of box.entries) {
@@ -257,7 +254,7 @@ function renderXgbBox(result, open) {
         .filter(([, v]) => Math.abs(v) > 0.001)
         .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
         .slice(0, TOP_N_HINT);
-    let html = `<details class="pa-hint-box"${open ? ' open' : ''}><summary>${SUIT_EMOJI[result.suit]} <span class="pa-hint-pct">${pct}%</span></summary>`;
+    let html = `<details class="pa-hint-box"${open ? ' open' : ''}><summary>${suitHtml(result.suit)} <span class="pa-hint-pct">${pct}%</span></summary>`;
     if (entries.length > 0) {
         html += '<div class="pa-hint-rows">';
         for (const [feat, val] of entries) {
@@ -378,6 +375,13 @@ export function mount(container) {
     container.innerHTML = TEMPLATE;
     paLegalActions = [];
     paLocked = false;
+
+    const suitMount = document.getElementById('pa-bid-suit-mount');
+    if (suitMount) {
+        const picker = createSuitPicker({ value: 0, name: 'atout' });
+        picker.id = 'pa-bid-suit';
+        suitMount.replaceWith(picker);
+    }
 
     document.getElementById('pa-hint-btn').addEventListener('click', revealHint);
 

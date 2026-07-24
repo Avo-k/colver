@@ -15,7 +15,7 @@
 }
 
 #contract-display, #watch-contract-display, #replay-contract-display {
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
     font-size: clamp(0.9rem, 1.1vw, 1.15rem);
 }
@@ -49,8 +49,8 @@
 }
 
 .seat-label.active-player {
-    color: #d4af37;
-    text-shadow: 0 0 6px rgba(212, 175, 55, 0.5);
+    color: var(--c-accent);
+    text-shadow: 0 0 6px color-mix(in srgb, var(--c-accent) 50%, transparent);
 }
 
 #trick-area, #watch-trick-area, #replay-trick-area {
@@ -94,8 +94,8 @@
     text-align: center;
     color: #8a8a7a;
 }
-.last-trick-label.team-partner { color: #a5d6a7; }
-.last-trick-label.team-opponent { color: #ef9a9a; }
+.last-trick-label.team-partner { color: var(--c-team-ns); }
+.last-trick-label.team-opponent { color: var(--c-team-ew); }
 
 .last-trick-grid {
     --lt-card-w: calc(var(--card-w) * 0.55);
@@ -257,12 +257,12 @@
 /* ===== GAME ID TAG ===== */
 .game-id-tag {
     font-family: monospace;
-    color: #d4af37;
+    color: var(--c-accent);
     font-weight: 600;
     font-size: 0.8rem;
     letter-spacing: 2px;
-    background: rgba(212, 175, 55, 0.1);
-    border: 1px solid rgba(212, 175, 55, 0.3);
+    background: var(--c-accent-a10);
+    border: 1px solid var(--c-accent-a30);
     border-radius: 10px;
     padding: 1px 10px;
 }
@@ -286,11 +286,11 @@
     user-select: all;
 }
 .cfn-box:hover {
-    color: #d4af37;
-    border-color: rgba(212, 175, 55, 0.3);
+    color: var(--c-accent);
+    border-color: var(--c-accent-a30);
 }
 .cfn-box.copied {
-    color: #a5d6a7;
+    color: var(--c-success-txt);
     border-color: rgba(76, 175, 80, 0.4);
 }
 
@@ -307,7 +307,7 @@
     transition: all 0.2s;
 }
 .report-btn:hover {
-    color: #ef9a9a;
+    color: var(--c-danger-txt);
     border-color: rgba(229, 115, 115, 0.4);
     background: rgba(229, 115, 115, 0.1);
 }
@@ -318,9 +318,9 @@
     padding: 1px 8px;
     font-size: 0.7rem;
     font-weight: 700;
-    color: #d4af37;
-    background: rgba(212, 175, 55, 0.15);
-    border: 1px solid rgba(212, 175, 55, 0.4);
+    color: var(--c-accent);
+    background: var(--c-accent-a15);
+    border: 1px solid var(--c-accent-a40);
     border-radius: 10px;
     letter-spacing: 1px;
 }
