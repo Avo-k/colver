@@ -639,6 +639,15 @@ async def websocket_endpoint(ws: WebSocket):
     play_move_delay = 2.0
     sim_task = None  # background task for annonces_sim / annonces_doudou
     belief_precompute_task = None  # background playgen precompute sweep
+    # Starlette WebSockets are NOT safe for concurrent sends: a background task
+    # (e.g. the playgen precompute sweep) sending at the same time as the main
+    # handler corrupts the ASGI state and raises RuntimeError, killing the
+    # socket. Serialize every send through this lock.
+    send_lock = asyncio.Lock()
+
+    async def wsend(payload):
+        async with send_lock:
+            await ws.send_json(payload)
 
     async def _cancel_sim_task():
         nonlocal sim_task
@@ -665,20 +674,20 @@ async def websocket_endpoint(ws: WebSocket):
         loop = asyncio.get_event_loop()
         try:
             total = await loop.run_in_executor(None, session.precompute_start, observer)
-            await ws.send_json({"type": "belief_precompute", "observer": observer,
-                                "done": 0, "total": total})
+            await wsend({"type": "belief_precompute", "observer": observer,
+                         "done": 0, "total": total})
             while True:
                 r = await loop.run_in_executor(None, session.precompute_step)
                 if r is None:
                     break
                 done, total = r
-                await ws.send_json({"type": "belief_precompute", "observer": observer,
-                                    "done": done, "total": total})
+                await wsend({"type": "belief_precompute", "observer": observer,
+                             "done": done, "total": total})
         except asyncio.CancelledError:
             raise
         except Exception as e:
             try:
-                await ws.send_json({"type": "error", "msg": f"Pré-calcul playgen : {e}"})
+                await wsend({"type": "error", "msg": f"Pré-calcul playgen : {e}"})
             except Exception:
                 pass
 
@@ -1164,13 +1173,13 @@ async def websocket_endpoint(ws: WebSocket):
                 )
                 try:
                     result = await loop.run_in_executor(None, belief_session.generate)
-                    await ws.send_json({"type": "belief_generated", **result})
+                    await wsend({"type": "belief_generated", **result})
                     # Warm the playgen cache in the background for the default observer
                     if PLAYGEN_MODEL_PATH:
                         belief_precompute_task = asyncio.create_task(
                             _belief_precompute_loop(belief_session, 0))
                 except Exception as e:
-                    await ws.send_json({"type": "error", "msg": f"Génération échouée : {e}"})
+                    await wsend({"type": "error", "msg": f"Génération échouée : {e}"})
 
             elif msg_type == "belief_restore":
                 # WS reconnected: rebuild the (per-connection) session from the
@@ -1189,18 +1198,18 @@ async def websocket_endpoint(ws: WebSocket):
                     target = int(data.get("target", 0))
                     result = await loop.run_in_executor(
                         None, belief_session.step_to, target)
-                    await ws.send_json({"type": "belief_state", **result})
+                    await wsend({"type": "belief_state", **result})
                     if PLAYGEN_MODEL_PATH:
                         observer = int(data.get("observer", 0))
                         belief_precompute_task = asyncio.create_task(
                             _belief_precompute_loop(belief_session, observer))
                 except Exception as e:
                     belief_session = None
-                    await ws.send_json({"type": "error", "msg": f"Restauration échouée : {e}"})
+                    await wsend({"type": "error", "msg": f"Restauration échouée : {e}"})
 
             elif msg_type == "belief_precompute":
                 if belief_session is None:
-                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    await wsend({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 if PLAYGEN_MODEL_PATH:
                     observer = int(data.get("observer", 0))
@@ -1210,35 +1219,35 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "belief_step":
                 if belief_session is None:
-                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    await wsend({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 result = belief_session.step_forward()
-                await ws.send_json({"type": "belief_state", **result})
+                await wsend({"type": "belief_state", **result})
 
             elif msg_type == "belief_step_to":
                 if belief_session is None:
-                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    await wsend({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 target = int(data.get("target", 0))
                 loop = asyncio.get_event_loop()
                 try:
                     result = await loop.run_in_executor(None, belief_session.step_to, target)
-                    await ws.send_json({"type": "belief_state", **result})
+                    await wsend({"type": "belief_state", **result})
                 except Exception as e:
-                    await ws.send_json({"type": "error", "msg": f"Erreur step_to : {e}"})
+                    await wsend({"type": "error", "msg": f"Erreur step_to : {e}"})
 
             elif msg_type == "belief_get_weights":
                 if belief_session is None:
-                    await ws.send_json({"type": "error", "msg": "Pas de session croyances"})
+                    await wsend({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 observer = int(data.get("observer", 0))
                 with_playgen = bool(data.get("playgen", False))
                 loop = asyncio.get_event_loop()
                 try:
                     result = await loop.run_in_executor(None, belief_session.get_beliefs, observer, with_playgen)
-                    await ws.send_json({"type": "belief_weights", **result})
+                    await wsend({"type": "belief_weights", **result})
                 except Exception as e:
-                    await ws.send_json({"type": "error", "msg": f"Erreur croyances : {e}"})
+                    await wsend({"type": "error", "msg": f"Erreur croyances : {e}"})
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})
