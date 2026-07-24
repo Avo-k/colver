@@ -19,78 +19,104 @@ header {
 .header-logo:hover { color: var(--c-accent-bright); }
 
 /* ===== NAVIGATION ===== */
-nav { display: flex; gap: 4px; align-items: center; }
-
-.nav-group {
-    position: relative;
+nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 1;
+    margin-left: var(--sp-6);
 }
+.nav-main, .nav-end { display: flex; align-items: center; gap: var(--sp-1); }
+
+.nav-group { position: relative; }
 
 .nav-label {
-    display: inline-block;
-    color: #aaa;
-    padding: 8px 14px;
-    cursor: default;
-    font-size: var(--fs-md);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    background: transparent;
+    border: none;
     border-bottom: 2px solid transparent;
-    transition: all 0.2s;
+    color: var(--c-text-muted);
+    padding: var(--sp-2) var(--sp-3);
+    font-family: inherit;
+    font-size: var(--fs-md);
+    font-weight: var(--fw-regular);
+    cursor: pointer;
+    transition: color var(--t-base) var(--ease);
     user-select: none;
 }
+.nav-label:hover { background: transparent; color: var(--c-text); }
+.nav-caret { font-size: 0.7em; opacity: 0.6; }
+
 .nav-group:hover .nav-label,
-.nav-group.active .nav-label {
-    color: #fff;
-}
-.nav-group.active .nav-label {
-    border-bottom-color: var(--c-accent);
-}
+.nav-group:focus-within .nav-label,
+.nav-group.active .nav-label { color: var(--c-text); }
+.nav-group.active .nav-label { border-bottom-color: var(--c-accent); }
 
 .nav-dropdown {
     display: none;
     position: absolute;
     top: 100%;
     left: 0;
-    min-width: 160px;
-    background: rgba(15, 15, 15, 0.95);
+    min-width: 190px;
+    background: rgba(15, 15, 15, 0.96);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-    padding: 4px 0;
+    border: 1px solid var(--c-border-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--sh-3);
+    padding: var(--sp-1) 0;
     z-index: 100;
 }
-.nav-group:hover .nav-dropdown {
-    display: block;
+/* focus-within : le menu s'ouvre aussi au clavier, pas seulement au survol.
+   Avec un <span> non focusable, ces destinations étaient inatteignables au Tab. */
+.nav-group:hover .nav-dropdown,
+.nav-group:focus-within .nav-dropdown { display: block; }
+
+.nav-dropdown--right { left: auto; right: 0; }
+
+/* Intertitre dans un menu (« S'entraîner ») */
+.nav-section {
+    padding: var(--sp-3) var(--sp-4) var(--sp-1);
+    margin-top: var(--sp-1);
+    border-top: 1px solid var(--c-border);
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
 }
 
 .nav-item {
     display: block;
-    color: #bbb;
-    padding: 8px 16px;
+    color: var(--c-text-muted);
+    padding: var(--sp-2) var(--sp-4);
     text-decoration: none;
-    font-size: var(--fs-md);
-    transition: all 0.15s;
+    font-size: var(--fs-sm);
+    transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
     white-space: nowrap;
 }
 .nav-item:hover {
-    color: #fff;
+    color: var(--c-text);
     background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 .nav-item.active {
     color: var(--c-accent);
-    font-weight: 600;
+    font-weight: var(--fw-semi);
 }
 
 .nav-link {
-    color: #aaa;
-    padding: 8px 14px;
+    color: var(--c-text-muted);
+    padding: var(--sp-2) var(--sp-3);
     text-decoration: none;
     font-size: var(--fs-md);
     border-bottom: 2px solid transparent;
-    transition: all 0.2s;
+    transition: color var(--t-base) var(--ease);
 }
-.nav-link:hover { color: #fff; }
+.nav-link:hover { color: var(--c-text); }
 .nav-link.active {
-    color: #fff;
+    color: var(--c-text);
     border-bottom-color: var(--c-accent);
 }
 
@@ -317,28 +343,64 @@ nav { display: flex; gap: 4px; align-items: center; }
         grid-template-columns: 1fr;
     }
 
-    /* Hamburger nav */
+    /* Panneau de navigation plein écran. Les titres de groupes restent
+       visibles (ils étaient masqués : tout arrivait à plat, sans hiérarchie)
+       et le panneau défile si le contenu dépasse. */
     .nav-toggle { display: block; }
+    header { position: relative; }
     nav {
         display: none;
         position: absolute;
         top: 100%;
         left: 0;
         right: 0;
+        margin-left: 0;
+        max-height: calc(100dvh - var(--header-h));
+        overflow-y: auto;
+        overscroll-behavior: contain;
         background: rgba(15, 15, 15, 0.97);
         backdrop-filter: blur(10px);
         -webkit-backdrop-filter: blur(10px);
         flex-direction: column;
-        padding: 8px 0;
+        align-items: stretch;
+        padding: var(--sp-2) 0 var(--sp-4);
         z-index: 200;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        border-bottom: 1px solid var(--c-border-strong);
+        box-shadow: var(--sh-3);
     }
     nav.nav-open { display: flex; }
-    header { position: relative; }
+    .nav-main, .nav-end {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+    }
+    .nav-end {
+        margin-top: var(--sp-2);
+        padding-top: var(--sp-2);
+        border-top: 1px solid var(--c-border);
+    }
     .nav-group { position: static; }
-    .nav-label { display: none; }
-    .nav-dropdown {
+
+    /* Le libellé de groupe devient un intertitre, pas un bouton de menu */
+    .nav-label {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: var(--sp-3) var(--sp-6) var(--sp-1);
+        color: var(--c-text-dim);
+        font-size: var(--fs-2xs);
+        font-weight: var(--fw-semi);
+        text-transform: uppercase;
+        letter-spacing: var(--tracking-caps);
+        border-bottom: none;
+        cursor: default;
+    }
+    .nav-group.active .nav-label { color: var(--c-accent); border-bottom: none; }
+    .nav-caret { display: none; }
+
+    .nav-dropdown,
+    .nav-group:hover .nav-dropdown,
+    .nav-group:focus-within .nav-dropdown {
         display: flex;
         flex-direction: column;
         position: static;
@@ -348,18 +410,23 @@ nav { display: flex; gap: 4px; align-items: center; }
         box-shadow: none;
         padding: 0;
         border-radius: 0;
+        min-width: 0;
+    }
+    .nav-section {
+        padding: var(--sp-3) var(--sp-6) var(--sp-1);
+        margin-top: 0;
     }
     .nav-item {
-        padding: 12px 24px;
+        padding: var(--sp-3) var(--sp-6);
         font-size: var(--fs-md);
     }
     .nav-link {
-        padding: 12px 24px;
+        padding: var(--sp-3) var(--sp-6);
         font-size: var(--fs-md);
         border-bottom: none;
     }
     .sound-toggle {
-        padding: 12px 24px;
+        padding: var(--sp-3) var(--sp-6);
         font-size: var(--fs-lg);
         margin-left: 0;
         text-align: left;

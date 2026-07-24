@@ -15,14 +15,22 @@ initBugReportModal();
 const navToggle = document.getElementById('nav-toggle');
 const nav = document.querySelector('nav');
 if (navToggle && nav) {
-    navToggle.addEventListener('click', () => {
-        nav.classList.toggle('nav-open');
-    });
+    const setOpen = (open) => {
+        nav.classList.toggle('nav-open', open);
+        navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    navToggle.addEventListener('click', () => setOpen(!nav.classList.contains('nav-open')));
     // Close nav when a link is clicked
     nav.addEventListener('click', (e) => {
-        if (e.target.matches('.nav-item, .nav-link')) {
-            nav.classList.remove('nav-open');
-        }
+        if (e.target.closest('.nav-item, .nav-link')) setOpen(false);
+    });
+    // Échap ferme le panneau, et referme aussi un menu déroulant ouvert au
+    // clavier (il reste ouvert tant que le focus est dedans).
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (nav.classList.contains('nav-open')) setOpen(false);
+        const focused = document.activeElement;
+        if (focused && nav.contains(focused)) focused.blur();
     });
 }
 
@@ -48,7 +56,8 @@ if (soundBtn) {
         const base = document.querySelector('base')?.getAttribute('href') || '/';
         const resp = await fetch(`${base}api/me`);
         const me = resp.ok ? await resp.json() : { user: null };
-        if (me.user) accountLink.textContent = me.user.username;
+        // Ne remplacer que le libellé : le bouton contient aussi le chevron.
+        if (me.user) accountLink.childNodes[0].nodeValue = me.user.username;
     } catch { /* stay on the default "Compte" label */ }
 })();
 
