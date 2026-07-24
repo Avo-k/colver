@@ -186,7 +186,7 @@
 /* ===== RESPONSIVE =====
    Le chevauchement horizontal s'adapte tout seul — plus rien à corriger ici
    pour la main du bas. Seul l'empilement vertical se resserre. */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     .seat.west .hand,
     .seat.east .hand {
         --card-vstep: calc(var(--card-h) * 0.20);

@@ -579,12 +579,24 @@
     font-size: var(--fs-sm);
 }
 
-/* Results area: side-by-side panels */
+/* Results area: side-by-side panels.
+   Container query plutôt que media query : ces deux panneaux vivent dans
+   #annonces-right, dont la largeur dépend de l'état du layout autant que du
+   viewport. Ils doivent réagir à LEUR boîte — un écran large avec la colonne
+   de gauche dépliée leur laisse la même place qu'une tablette. */
+#annonces-right { container: annonces-right / inline-size; }
+
 #annonces-results-area {
     display: flex;
     gap: 12px;
     align-items: flex-start;
     margin-top: 16px;
+}
+
+@container annonces-right (max-width: 620px) {
+    #annonces-results-area { flex-direction: column; }
+    #annonces-doudou-panel,
+    #annonces-oracle-panel { width: 100%; }
 }
 
 /* Width 0 + min-width 100%: don't let the panel's content widen the left
@@ -1030,16 +1042,13 @@
 }
 
 /* Responsive: stack top-row on narrow screens */
-@media (max-width: 800px) {
+@media (max-width: 1024px) {
     #annonces-top-row {
         flex-direction: column;
         overflow-y: auto;
     }
     #annonces-right {
         overflow-y: visible;
-    }
-    #annonces-results-area {
-        flex-direction: column;
     }
     #annonces-left {
         overflow-y: visible;
@@ -2285,7 +2294,7 @@
 }
 
 /* ===== RESPONSIVE ===== */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     /* Aide */
     #aide-content { padding: 16px 10px; }
     .aide-section { padding: 14px 12px; border-radius: 10px; }
@@ -2494,7 +2503,9 @@
 /* Bonuses */
 .annonce-bonus-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    /* auto-fit : le nombre de colonnes suit la place disponible, il n'y a plus
+       de palier à maintenir en parallèle. */
+    grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
     gap: 12px;
     margin-top: 22px;
 }
@@ -2596,7 +2607,7 @@
 /* Position grid */
 .annonce-pos-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
     gap: 12px;
 }
 
@@ -2685,7 +2696,7 @@
 /* Responses */
 .annonce-response-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
     gap: 14px;
 }
 
@@ -2879,12 +2890,9 @@
 .annonce-footer a:hover { color: var(--c-accent); border-color: var(--c-accent); }
 
 /* Responsive */
-@media (max-width: 700px) {
+@media (max-width: 640px) {
     #annonce-content { padding: 16px 10px; }
     .annonce-section { padding: 20px 14px; border-radius: 10px; }
-    .annonce-pos-grid { grid-template-columns: repeat(2, 1fr); }
-    .annonce-response-grid { grid-template-columns: 1fr; }
-    .annonce-bonus-grid { grid-template-columns: 1fr; }
     .annonce-example-step {
         grid-template-columns: 1fr auto;
         gap: 8px;
@@ -3018,7 +3026,7 @@
 
 .compte-stats {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(130px, 100%), 1fr));
     gap: 8px;
     margin-bottom: 1rem;
 }
@@ -3058,10 +3066,6 @@
 
 .nav-account {
     color: var(--c-accent);
-}
-
-@media (max-width: 600px) {
-    .compte-stats { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ===== SALON (multiplayer rooms) ===== */

@@ -710,7 +710,7 @@
 .score-history-item .h-delete:hover { color: var(--c-danger); border-color: #5a3a3a; }
 
 /* ===== Mobile ===== */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     #score-page { padding: 12px 10px 60px; }
     .score-setup .team-inputs { grid-template-columns: 1fr; }
     .score-setup .team-inputs .vs-sep { display: none; }

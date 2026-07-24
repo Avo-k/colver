@@ -561,11 +561,11 @@
 .visit-row.prob-player-pick .visit-bar-fill { background: linear-gradient(90deg,#1a5276,#5dade2); }
 
 /* ===== RESPONSIVE ===== */
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
     #replay-history { display: none; }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     #watch-main, #replay-main {
         flex-direction: column;
         height: auto;

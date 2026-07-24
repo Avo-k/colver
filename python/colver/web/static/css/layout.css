@@ -336,13 +336,11 @@ nav {
     display: flex;
 }
 
-/* ===== RESPONSIVE ===== */
-@media (max-width: 600px) {
-    #app { padding: 8px; }
-    .landing-grid {
-        grid-template-columns: 1fr;
-    }
-
+/* ===== RESPONSIVE — navigation =====
+   Palier plus haut que le reste : la barre déployée réclame ~725px.
+   En dessous, le tiroir — y compris sur tablette et petite fenêtre
+   de portable, où une barre compressée serait illisible. */
+@media (max-width: 1024px) {
     /* Panneau de navigation plein écran. Les titres de groupes restent
        visibles (ils étaient masqués : tout arrivait à plat, sans hiérarchie)
        et le panneau défile si le contenu dépasse. */
@@ -430,6 +428,14 @@ nav {
         font-size: var(--fs-lg);
         margin-left: 0;
         text-align: left;
+    }
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 640px) {
+    #app { padding: 8px; }
+    .landing-grid {
+        grid-template-columns: 1fr;
     }
 
     /* Main container: allow scrolling on mobile */

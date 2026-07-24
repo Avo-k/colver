@@ -191,7 +191,7 @@
 #play-status:empty { display: none; }
 
 /* ===== RESPONSIVE ===== */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     #play-table {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr;

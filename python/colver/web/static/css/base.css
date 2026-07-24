@@ -83,7 +83,7 @@ button:disabled { background: #4a4d53; color: var(--c-text-dim); cursor: default
 }
 
 /* ===== RESPONSIVE ===== */
-@media (max-width: 600px) {
+@media (max-width: 640px) {
     body {
         overflow: auto;
         height: auto;
