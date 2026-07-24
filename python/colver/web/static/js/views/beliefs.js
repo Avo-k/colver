@@ -40,6 +40,7 @@ function actionHtml(action, phase) {
 let totalActions = 0;
 let numBidActions = 0;
 let allActions = null; // [{player, action, phase}] — full game history
+let gameCfn = null; // full-game CFN (auction + play), for copy/share
 let precompute = null; // {observer, done, total} — playgen cache warming progress
 let currentIdx = 0;
 let currentState = null;
@@ -56,7 +57,9 @@ let loading = false;
 
 const TEMPLATE = `
 <div id="belief-config">
-    <button id="belief-generate-btn" class="primary-btn">Nouvelle partie</button>
+    <button id="belief-generate-btn" class="primary-btn">Nouvelle partie aléatoire</button>
+    <button id="belief-import-btn" class="belief-nav-btn" title="Coller le CFN d'une partie">Importer une partie custom</button>
+    <button id="belief-copy-btn" class="belief-nav-btn" title="Copier le CFN de cette partie" style="display:none">Copier le CFN</button>
     <span id="belief-loading"></span>
 </div>
 <div id="belief-main" class="hidden">
@@ -117,6 +120,9 @@ function onGenerated(data) {
     totalActions = data.total_actions;
     numBidActions = data.num_bid_actions;
     allActions = data.actions || null;
+    gameCfn = data.game_cfn || null;
+    const copyBtn = document.getElementById('belief-copy-btn');
+    if (copyBtn) copyBtn.style.display = gameCfn ? '' : 'none';
     precompute = null;
     renderHistory();
     renderPrecompute();
@@ -547,6 +553,25 @@ function onGenerateClick() {
     send({ type: 'belief_generate' });
 }
 
+function onImportClick() {
+    const cfn = prompt('Coller le CFN de la partie à analyser :');
+    if (!cfn || !cfn.trim()) return;
+    setLoading('Import en cours...');
+    send({ type: 'belief_import', cfn: cfn.trim() });
+}
+
+async function onCopyClick() {
+    if (!gameCfn) return;
+    const btn = document.getElementById('belief-copy-btn');
+    try {
+        await navigator.clipboard.writeText(gameCfn);
+        if (btn) { const t = btn.textContent; btn.textContent = 'CFN copié ✓'; setTimeout(() => { btn.textContent = t; }, 1500); }
+    } catch (e) {
+        // Clipboard blocked (e.g. non-HTTPS) — fall back to a prompt for manual copy.
+        prompt('Copier le CFN :', gameCfn);
+    }
+}
+
 function onPrevClick() { if (currentIdx > 0) stepTo(currentIdx - 1); }
 function onNextClick() { if (currentIdx < totalActions) stepTo(currentIdx + 1); }
 function onStartClick() { stepTo(0); }
@@ -625,12 +650,14 @@ export function mount(container) {
     // Reset state
     totalActions = 0; currentIdx = 0; currentState = null;
     currentLastAction = null; initialHands = null;
-    allActions = null; precompute = null;
+    allActions = null; gameCfn = null; precompute = null;
     nnWeights = null; heuristicWeights = null; playgenWeights = null; groundTruth = null;
     observer = 0; viewMode = 'nn'; loading = false;
 
     // Wire events
     document.getElementById('belief-generate-btn').addEventListener('click', onGenerateClick);
+    document.getElementById('belief-import-btn').addEventListener('click', onImportClick);
+    document.getElementById('belief-copy-btn').addEventListener('click', onCopyClick);
     document.getElementById('belief-prev-btn').addEventListener('click', onPrevClick);
     document.getElementById('belief-next-btn').addEventListener('click', onNextClick);
     document.getElementById('belief-start-btn').addEventListener('click', onStartClick);

@@ -2,9 +2,43 @@
 
 import random
 import time
+from collections import OrderedDict
 import colver
 
 from colver.web import playgen_gpu
+from colver.web import game_notation
+
+
+# ---- Server-wide belief cache -------------------------------------------------
+# Belief weights (NN + playgen) depend only on the game + position + observer, so
+# they can be shared across connections/refreshes. Keyed by the full-game CFN
+# (which now includes the auction, so `action_idx` is stable across viewers of
+# the same game). LRU-capped by number of games; entries are small.
+_BELIEF_CACHE_MAX_GAMES = 50
+_belief_cache = OrderedDict()  # game_cfn -> {(kind, action_idx, observer): value}
+
+
+def _belief_cache_get(game_cfn, kind, idx, observer):
+    if game_cfn is None:
+        return None
+    g = _belief_cache.get(game_cfn)
+    if g is None:
+        return None
+    _belief_cache.move_to_end(game_cfn)
+    return g.get((kind, idx, observer))
+
+
+def _belief_cache_put(game_cfn, kind, idx, observer, value):
+    if game_cfn is None or value is None:
+        return
+    g = _belief_cache.get(game_cfn)
+    if g is None:
+        g = {}
+        _belief_cache[game_cfn] = g
+        while len(_belief_cache) > _BELIEF_CACHE_MAX_GAMES:
+            _belief_cache.popitem(last=False)
+    g[(kind, idx, observer)] = value
+    _belief_cache.move_to_end(game_cfn)
 
 
 def _safe_playgen(fn, *args, **kwargs):
@@ -661,8 +695,9 @@ class BeliefSession:
         self.all_actions = []  # list of (player, action, phase)
         self.action_idx = 0
         self.dealer = 0
-        # Playgen MC marginals are expensive (~1s/position): cache per (action_idx, observer)
-        self.playgen_cache = {}
+        self.num_bid_actions = 0
+        # Full-game CFN (with auction) — identity for the shared belief cache.
+        self.game_cfn = None
         # Precompute sweep state (dedicated env, advanced by precompute_step)
         self._sweep_env = None
         self._sweep_observer = 0
@@ -708,10 +743,37 @@ class BeliefSession:
             self.all_actions.append((player, action, phase))
             env.dede_step(action)
 
-        # Count bid actions
-        num_bid_actions = sum(1 for _, _, p in self.all_actions if p == 0)
+        return self._finalize()
 
-        # Now reset env for stepping
+    def import_cfn(self, cfn: str) -> dict:
+        """Rebuild a session from a full-game CFN (auction + play).
+
+        Accepts the extended 4-section CFN (with auction) or a plain 3-section
+        core CFN. The engine's `from_cfn` reconstructs the deal + play order;
+        the auction section supplies the bid actions."""
+        core, bid_actions = game_notation.parse_full_cfn(cfn)
+        src = colver.Env.from_cfn(core)
+        self.dealer = int(src.get_dealer())
+        self.initial_hands = [list(h) for h in src.get_initial_hands()]
+        play_actions = [int(a) for a in src.get_play_order()]
+        action_ids = [int(a) for a in bid_actions] + play_actions
+
+        # Replay to recover (player, action, phase) for each step.
+        env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+        env.dede_init()
+        self.all_actions = []
+        for a in action_ids:
+            self.all_actions.append((int(env.current_player()), int(a), int(env.phase())))
+            env.dede_step(a)
+        if not env.is_terminal():
+            raise ValueError("CFN ne décrit pas une partie complète")
+        self.action_idx = 0
+        return self._finalize()
+
+    def _finalize(self) -> dict:
+        """Set up the stepping env, compute the game CFN, return the payload.
+        Shared by generate() and import_cfn()."""
+        self.num_bid_actions = sum(1 for _, _, p in self.all_actions if p == 0)
         self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
         if self.bid_model_path:
             self.env.load_bid_model(self.bid_model_path)
@@ -720,20 +782,28 @@ class BeliefSession:
         if self.playgen_model_path:
             self.env.load_playgen_model(self.playgen_model_path)
         self.env.dede_init()
-
-        self.playgen_cache = {}
         self._sweep_env = None
-
+        self.game_cfn = self._compute_game_cfn()
         return {
             "initial_hands": self.initial_hands,
             "dealer": self.dealer,
             "total_actions": len(self.all_actions),
-            "num_bid_actions": num_bid_actions,
+            "num_bid_actions": self.num_bid_actions,
+            "game_cfn": self.game_cfn,
             "actions": [
                 {"player": p, "action": a, "phase": ph}
                 for p, a, ph in self.all_actions
             ],
         }
+
+    def _compute_game_cfn(self) -> str:
+        """Full-game CFN (with auction) for the current game."""
+        env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
+        env.dede_init()
+        for _p, a, _ph in self.all_actions:
+            env.dede_step(a)
+        bids = [a for _p, a, ph in self.all_actions if ph == 0]
+        return game_notation.to_full_cfn(env.to_cfn(), bids)
 
     def restore(self, dealer, initial_hands, actions) -> dict:
         """Rebuild a session from a deal the client already holds (no new deal).
@@ -748,30 +818,7 @@ class BeliefSession:
             (int(a["player"]), int(a["action"]), int(a["phase"])) for a in actions
         ]
         self.action_idx = 0
-
-        self.env = colver.Env.deal_with_hands(self.dealer, self.initial_hands)
-        if self.bid_model_path:
-            self.env.load_bid_model(self.bid_model_path)
-        if self.belief_model_path:
-            self.env.load_belief_net(self.belief_model_path)
-        if self.playgen_model_path:
-            self.env.load_playgen_model(self.playgen_model_path)
-        self.env.dede_init()
-
-        self.playgen_cache = {}
-        self._sweep_env = None
-
-        num_bid_actions = sum(1 for _, _, p in self.all_actions if p == 0)
-        return {
-            "initial_hands": self.initial_hands,
-            "dealer": self.dealer,
-            "total_actions": len(self.all_actions),
-            "num_bid_actions": num_bid_actions,
-            "actions": [
-                {"player": p, "action": a, "phase": ph}
-                for p, a, ph in self.all_actions
-            ],
-        }
+        return self._finalize()
 
     def _get_state_info(self) -> dict:
         """Get current state info for the client."""
@@ -862,26 +909,30 @@ class BeliefSession:
         when the client displays them (with_playgen=True) and cached per
         (position, observer) — the precompute sweep fills the same cache.
         """
-        result = self.env.get_belief_weights(observer)
+        idx = self.action_idx
+        # NN + heuristic: cheap, but cache anyway so a shared game is instant.
+        nnh = _belief_cache_get(self.game_cfn, "nn", idx, observer)
+        if nnh is None:
+            result = self.env.get_belief_weights(observer)
+            nnh = {"nn": result["nn"], "heuristic": result["heuristic"]}
+            _belief_cache_put(self.game_cfn, "nn", idx, observer, nnh)
         playgen = None
         if with_playgen and self.playgen_model_path:
-            key = (self.action_idx, observer)
-            playgen = self.playgen_cache.get(key)
+            playgen = _belief_cache_get(self.game_cfn, "playgen", idx, observer)
             if playgen is None:
                 # GPU sidecar (200 worlds) → CPU fallback (30 worlds);
                 # None during bidding (contract unknown)
-                playgen = self._playgen_marginals(self.action_idx, observer)
+                playgen = self._playgen_marginals(idx, observer)
                 if playgen is None:
                     playgen = _safe_playgen(
                         self.env.get_playgen_beliefs,
                         observer, n_worlds=self.PLAYGEN_WORLDS, temperature=self.PLAYGEN_TEMP
                     )
-                if playgen is not None:
-                    self.playgen_cache[key] = playgen
+                _belief_cache_put(self.game_cfn, "playgen", idx, observer, playgen)
         return {
             "observer": observer,
-            "nn": result["nn"],
-            "heuristic": result["heuristic"],
+            "nn": nnh["nn"],
+            "heuristic": nnh["heuristic"],
             "playgen": playgen,
             "ground_truth": self.initial_hands,
         }
@@ -926,18 +977,17 @@ class BeliefSession:
             self._sweep_i += 1
             idx = self._sweep_i
             if int(self._sweep_env.phase()) == 1 and not self._sweep_env.is_terminal():
-                key = (idx, self._sweep_observer)
-                if key not in self.playgen_cache:
-                    w = self._playgen_marginals(idx, self._sweep_observer)
+                obs = self._sweep_observer
+                if _belief_cache_get(self.game_cfn, "playgen", idx, obs) is None:
+                    w = self._playgen_marginals(idx, obs)
                     if w is None:
                         w = _safe_playgen(
                             self._sweep_env.get_playgen_beliefs,
-                            self._sweep_observer,
+                            obs,
                             n_worlds=self.PLAYGEN_WORLDS,
                             temperature=self.PLAYGEN_TEMP,
                         )
-                    if w is not None:
-                        self.playgen_cache[key] = w
+                    _belief_cache_put(self.game_cfn, "playgen", idx, obs, w)
                 self._sweep_done += 1
                 return (self._sweep_done, self._sweep_total)
         self._sweep_env = None

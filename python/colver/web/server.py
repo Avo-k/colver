@@ -1181,6 +1181,27 @@ async def websocket_endpoint(ws: WebSocket):
                 except Exception as e:
                     await wsend({"type": "error", "msg": f"Génération échouée : {e}"})
 
+            elif msg_type == "belief_import":
+                # Load a specific game from a pasted full-game CFN (auction + play).
+                await _cancel_belief_precompute()
+                loop = asyncio.get_event_loop()
+                cfn = str(data.get("cfn", "")).strip()
+                belief_session = BeliefSession(
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                    bid_model_path=BID_MODEL_PATH,
+                    belief_model_path=BELIEF_MODEL_PATH,
+                    playgen_model_path=PLAYGEN_MODEL_PATH,
+                )
+                try:
+                    result = await loop.run_in_executor(None, belief_session.import_cfn, cfn)
+                    await wsend({"type": "belief_generated", **result})
+                    if PLAYGEN_MODEL_PATH:
+                        belief_precompute_task = asyncio.create_task(
+                            _belief_precompute_loop(belief_session, 0))
+                except Exception as e:
+                    belief_session = None
+                    await wsend({"type": "error", "msg": f"CFN invalide : {e}"})
+
             elif msg_type == "belief_restore":
                 # WS reconnected: rebuild the (per-connection) session from the
                 # deal the client still holds, then jump to its last position.

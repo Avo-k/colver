@@ -599,6 +599,19 @@ impl Env {
             .collect()
     }
 
+    /// Initial (pre-play) hands: current hand plus every card the seat has
+    /// already played. After `from_cfn` this reconstructs the full deal.
+    fn get_initial_hands(&self) -> Vec<Vec<u8>> {
+        (0..4)
+            .map(|s| card::CardIter(self.state.hands[s] | self.played_by[s]).collect())
+            .collect()
+    }
+
+    /// Play actions (card indices) in the order they were played.
+    fn get_play_order(&self) -> Vec<u8> {
+        self.play_order.clone()
+    }
+
     /// Get contract info as a dict. Empty if no contract yet.
     fn get_contract(&self) -> HashMap<String, i32> {
         let c = &self.state.contract;
