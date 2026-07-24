@@ -670,14 +670,21 @@ class BeliefSession:
         self._sweep_done = 0
         self._sweep_total = 0
 
+    # IS-DD time budget per play move when generating the demo game.
+    GEN_PLAY_TIME_MS = 50
+
     def generate(self) -> dict:
-        """Play a full game with DMC + NN bid, store all actions."""
+        """Play a full game (NN bidder for the auction, IS-DD for the play),
+        store all actions.
+
+        The auction uses the NN bidder rather than the DD oracle: it is orders
+        of magnitude faster and produces realistic signaling auctions (the DD
+        oracle sees all hands, so it yields degenerate optimal-bid-then-pass
+        auctions). The play uses IS-DD (belief-aware via the NN belief net)."""
         env = colver.Env()
         env.reset()
         if self.bid_model_path:
             env.load_bid_model(self.bid_model_path)
-        if self.dmc_model_path:
-            env.load_dmc_model(self.dmc_model_path)
         if self.belief_model_path:
             env.load_belief_net(self.belief_model_path)
         env.dede_init()
@@ -692,13 +699,12 @@ class BeliefSession:
             player = int(env.current_player())
             phase = int(env.phase())
             if phase == 0:
-                action = int(env.bid_a_dd())
-            else:
-                if env.has_dmc_model():
-                    result = env.action_dmc_with_stats()
-                    action = int(result["best_action"])
+                if env.has_bid_model():
+                    action = int(env.action_bid_nn()["best_action"])
                 else:
-                    action = int(env.action_dede(50))
+                    action = int(env.bid_a_dd())
+            else:
+                action = int(env.action_dede(self.GEN_PLAY_TIME_MS))
             self.all_actions.append((player, action, phase))
             env.dede_step(action)
 
