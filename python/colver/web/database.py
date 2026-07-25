@@ -106,6 +106,17 @@ MIGRATIONS = [
         PRIMARY KEY (game_id, kind, ref)
     );
     """,
+    # v6 — cached per-card "what would the reference bots have played"
+    # Kept out of `analysis`: that one is DD solves only, this one also runs a
+    # full IS-DD search per card. Separate rows so a slow review never
+    # invalidates (or blocks) the fast oracle annotations.
+    """
+    CREATE TABLE agent_review (
+        game_id     TEXT PRIMARY KEY REFERENCES games(id),
+        created_at  TEXT NOT NULL,
+        data        TEXT NOT NULL
+    );
+    """,
 ]
 
 
@@ -356,6 +367,22 @@ async def save_analysis(game_id, data_json):
     db = await get_db()
     await db.execute(
         "INSERT OR REPLACE INTO analysis (game_id, created_at, data) VALUES (?, ?, ?)",
+        (game_id, _now(), data_json),
+    )
+    await db.commit()
+
+
+async def get_agent_review(game_id):
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT data FROM agent_review WHERE game_id = ?", (game_id,))
+    return json.loads(rows[0][0]) if rows else None
+
+
+async def save_agent_review(game_id, data_json):
+    db = await get_db()
+    await db.execute(
+        "INSERT OR REPLACE INTO agent_review (game_id, created_at, data) VALUES (?, ?, ?)",
         (game_id, _now(), data_json),
     )
     await db.commit()

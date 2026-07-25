@@ -3252,6 +3252,39 @@
 .an-alt { color: #bbb; margin-left: auto; }
 .an-alt .an-red, .an-red { color: var(--c-danger-txt); }
 
+/* "Qui aurait joué quoi" — the three reference bots, under the played card */
+.an-bots {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+}
+.an-bots-loading { color: #777; font-style: italic; font-size: var(--fs-2xs); }
+.an-bot {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 3px 4px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid transparent;
+}
+.an-bot-name {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #888;
+}
+/* The card keeps its suit colour; agreement with what was actually played is
+   carried by the frame, so the two signals never fight over the same ink. */
+.an-bot-card { font-size: var(--fs-sm); font-weight: 700; color: #ddd; }
+.an-bot-same {
+    border-color: color-mix(in srgb, #81c784 45%, transparent);
+    background: color-mix(in srgb, #81c784 12%, rgba(0, 0, 0, 0.25));
+}
+.an-bot-same .an-bot-name { color: #81c784; }
+
 /* Bid move annotations (model annonce) */
 .an-bid-q { color: #999; font-family: monospace; font-size: var(--fs-2xs); margin-left: auto; }
 

@@ -159,6 +159,14 @@ FastAPI + WebSocket + vanilla JS. Modes: Play (solo), Salon (multiplayer rooms),
 
 **Annonces page** (`views/annonces.js`): BidNet Q-values + Oracle DD table + DouDou simulation table. Oracle shows raw success % per suit×threshold. DouDou table uses Wilson score lower bound (z=1.645) for color thresholds (green/gold/red) and scales font size by observation count (0.65rem at 1 obs → 0.85rem at 20+) so small-sample cells appear visually less prominent than well-sampled ones.
 
+**Rejouer page** (`views/replay.js`): two independent analysis passes, each cached in its own table and fetched separately so the slow one never blocks the fast one.
+- `analysis.py` → `analysis` table, `/api/games/{id}/analysis`: DD cost of every card + bid review. A few seconds per game.
+- `agent_review.py` → `agent_review` table: what **DouDou50 / Oracle / Dédé (IS-DD)** would have played at every non-forced card, whoever actually played it. ~7-10s per deal at the `COLVER_REVIEW_ISDD_MS` (default 500) per-card IS-DD budget; one game at a time (module semaphore) so replay loads don't pile searches onto the playgen sidecar. **IS-DD is seat-bound** — four instances are built, one per seat, all shown every action, and the one whose seat is to play is the one asked. Asking a single instance would hand it information that seat never had.
+  - `agent_review.stream()` is an async generator yielding `("start", total)`, `("move", entry)` per card **in play order**, `("done", blob)`. Each step runs in `asyncio.to_thread` (the Rust search releases the GIL), so the event loop stays free — measured WS round-trip during a review: <45ms. Abandoning the generator unwinds the lock and semaphore and caches nothing partial.
+  - WS: client sends `replay_agents`, server streams `agent_review_{start,move,done,error}` from a cancellable task (`_agent_review_loop`), cancelled by the next `replay_load`/`replay_agents` or on disconnect. Sends in the replay branch go through `wsend` (the send lock) since the review task sends concurrently.
+  - `/api/games/{id}/agents` is the same computation drained to completion, for non-WS callers.
+  - Frontend refreshes via `refreshMoveStats()` (stats panel only) — **not** `renderHistoryEntry`, which carries navigation state (pending trick flush, forward/backward) that a mid-playback repaint would trample.
+
 **Mobile (≤600px):** Play view hides N/E/W seats, shows only trick area + South hand. South hand spans full viewport width with dynamically computed card overlap (JS in `play.js` sets `--card-overlap` based on card count and available width). Card sizes use CSS custom properties (`--card-w`) — note `#play-table` overrides `:root` values, so mobile overrides must target `#play-table` specifically. Header is 61px on mobile (not 46px as on desktop).
 
 ## Arena: Bot Comparison Framework

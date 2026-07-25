@@ -173,6 +173,20 @@ async def api_game_analysis(game_id: str):
     return JSONResponse(result)
 
 
+@app.get("/api/games/{game_id}/agents")
+async def api_game_agent_review(game_id: str):
+    """What DouDou50 / Oracle / IS-DD would have played at every card."""
+    import colver.web.agent_review as agent_review
+    result, err = await agent_review.get_or_compute(
+        game_id,
+        play_model=DMC_MODEL_PATH if doudou_available else None,
+        belief_model=BELIEF_MODEL_PATH,
+    )
+    if err:
+        return JSONResponse({"error": err}, status_code=404)
+    return JSONResponse(result)
+
+
 @app.post("/api/games/{game_id}/report")
 async def api_bug_report(game_id: str, request: Request):
     body = await request.json()
@@ -642,6 +656,7 @@ async def websocket_endpoint(ws: WebSocket):
     play_move_delay = 2.0
     sim_task = None  # background task for annonces_sim / annonces_doudou
     belief_precompute_task = None  # background playgen precompute sweep
+    agent_review_task = None  # background per-card bot review, streamed
     # Starlette WebSockets are NOT safe for concurrent sends: a background task
     # (e.g. the playgen precompute sweep) sending at the same time as the main
     # handler corrupts the ASGI state and raises RuntimeError, killing the
@@ -661,6 +676,52 @@ async def websocket_endpoint(ws: WebSocket):
             except asyncio.CancelledError:
                 pass
         sim_task = None
+
+    async def _cancel_agent_review():
+        nonlocal agent_review_task
+        if agent_review_task and not agent_review_task.done():
+            agent_review_task.cancel()
+            try:
+                await agent_review_task
+            except asyncio.CancelledError:
+                pass
+        agent_review_task = None
+
+    async def _agent_review_loop(game_id):
+        """Stream the bots' choices card by card, in play order.
+
+        Runs as its own task so the ~9s of IS-DD search never sits between the
+        client and the next message it sends: loading another game cancels this
+        rather than queueing behind it.
+        """
+        import colver.web.agent_review as agent_review
+        gen = agent_review.stream(
+            game_id,
+            play_model=DMC_MODEL_PATH if doudou_available else None,
+            belief_model=BELIEF_MODEL_PATH,
+        )
+        try:
+            async for kind, payload in gen:
+                msg = {"type": f"agent_review_{kind}", "game_id": game_id}
+                if kind == "start":
+                    msg["total"] = payload
+                elif kind == "move":
+                    msg["move"] = payload
+                elif kind == "done":
+                    msg.update(payload)
+                else:  # error
+                    msg["msg"] = payload
+                await wsend(msg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            try:
+                await wsend({"type": "agent_review_error",
+                             "game_id": game_id, "msg": str(e)})
+            except Exception:
+                pass
+        finally:
+            await gen.aclose()
 
     async def _cancel_belief_precompute():
         nonlocal belief_precompute_task
@@ -887,9 +948,12 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "replay_load":
                 game_id = data.get("game_id", "").strip().lower()
+                # A review of the game being left has no reader left; stop it
+                # before it can interleave sends with the new game's messages.
+                await _cancel_agent_review()
                 game_data = await db.get_game(game_id)
                 if not game_data:
-                    await ws.send_json({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
+                    await wsend({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
                     continue
                 replay_session = ReplaySession(game_data)
                 watch_session = None
@@ -915,7 +979,7 @@ async def websocket_endpoint(ws: WebSocket):
                     moves.append(entry)
                     if finished:
                         break
-                await ws.send_json({
+                await wsend({
                     "type": "replay_loaded",
                     "state": initial_state,
                     "game_id": game_id,
@@ -928,9 +992,16 @@ async def websocket_endpoint(ws: WebSocket):
                     "game_cfn": replay_session.game_cfn,
                 })
 
+            elif msg_type == "replay_agents":
+                await _cancel_agent_review()
+                review_id = data.get("game_id", "").strip().lower()
+                if review_id:
+                    agent_review_task = asyncio.create_task(
+                        _agent_review_loop(review_id))
+
             elif msg_type == "replay_step":
                 if replay_session is None:
-                    await ws.send_json({"type": "error", "msg": "No replay session"})
+                    await wsend({"type": "error", "msg": "No replay session"})
                     continue
                 move, state, tricks, finished = replay_session.step()
                 replay_msg = {
@@ -945,7 +1016,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if replay_session._belote_event:
                     replay_msg["belote_event"] = replay_session._belote_event
                     replay_msg["belote_player"] = replay_session._belote_player
-                await ws.send_json(replay_msg)
+                await wsend(replay_msg)
 
             elif msg_type == "save_custom_deal":
                 hands = data["hands"]
@@ -1282,6 +1353,8 @@ async def websocket_endpoint(ws: WebSocket):
             sim_task.cancel()
         if belief_precompute_task and not belief_precompute_task.done():
             belief_precompute_task.cancel()
+        if agent_review_task and not agent_review_task.done():
+            agent_review_task.cancel()
     finally:
         await rooms.handle_disconnect(ws)
 

@@ -102,6 +102,18 @@ let _analysisSummary = null;
 let _bidsByIdx = null;       // action_idx -> bid analysis (model annonce)
 let _oracleBids = null;      // deal-level DD contracts {suits, best}
 let _initialHands = null;    // all 4 hands at deal start (replay = full info)
+let _agentsByIdx = null;     // action_idx -> {doudou, oracle, isdd} card choices
+let _agentsPending = false;  // the review is still being computed server-side
+let _agentsDone = 0;         // cards reviewed so far (streamed, in play order)
+let _agentsTotal = 0;        // cards the review will cover
+let _currentGameId = null;   // guards late answers from a previously-open game
+
+// The three reference bots, in the order they are shown under a played card.
+const REVIEW_BOTS = [
+    { key: 'doudou', label: 'DouDou50', title: 'Réseau Q direct, sans recherche' },
+    { key: 'oracle', label: 'Oracle',   title: 'Solveur double-dummy — voit les 4 mains' },
+    { key: 'isdd',   label: 'Dédé',     title: 'IS-DD : mondes playgen résolus en double-dummy' },
+];
 
 const CATEGORY_UI = {
     parfait:     { tag: '✓',  cls: 'an-best',   label: 'Meilleur coup' },
@@ -133,6 +145,35 @@ function openBidAnalysis(idx) {
     let url = `/analyse/annonces?hand=${hand.map(cardCode).join(',')}`;
     if (history.length) url += `&history=${history.join(',')}`;
     navigateTo(url);
+}
+
+// ===== "Qui aurait joué quoi" (the three reference bots) =====
+
+// One row of chips: what each bot would have played at this exact position,
+// whoever actually played it. A chip is green when the bot agrees with the
+// card that was played, grey otherwise.
+function botsHtml(idx, played) {
+    const entry = _agentsByIdx && _agentsByIdx[idx];
+    if (!entry) {
+        // Cards are reviewed in play order, so an absent entry on a pending
+        // review just means the search has not reached this one yet.
+        if (!_agentsPending) return '';
+        const progress = _agentsTotal ? ` ${_agentsDone}/${_agentsTotal}` : '';
+        return `<div class="an-bots an-bots-loading">Analyse des bots…${progress}</div>`;
+    }
+    if (entry.forced) return '';
+
+    const chips = REVIEW_BOTS.map(bot => {
+        const card = entry[bot.key];
+        if (card === null || card === undefined) return '';
+        const same = card === played;
+        return `<span class="an-bot ${same ? 'an-bot-same' : 'an-bot-diff'}" ` +
+            `title="${bot.title}">` +
+            `<span class="an-bot-name">${bot.label}</span>` +
+            `<span class="an-bot-card">${cardLabel(card)}</span></span>`;
+    }).filter(Boolean).join('');
+
+    return chips ? `<div class="an-bots">${chips}</div>` : '';
 }
 
 // ===== Move stats (current move annotation) =====
@@ -177,23 +218,27 @@ function replayRenderMoveStats(move, state) {
         return;
     }
 
+    if (move.phase !== 1) return;
+
+    const idx = replayBoard.historyIndex;
     // Oracle annotation for this move (history entry i == action index i)
-    const an = _analysisByIdx && _analysisByIdx[replayBoard.historyIndex];
-    if (an && move.phase === 1) {
+    const an = _analysisByIdx && _analysisByIdx[idx];
+    let html = '';
+    if (an) {
         if (an.forced) {
-            body.innerHTML = `<div class="an-move an-forced">Carte forcée</div>`;
+            html = `<div class="an-move an-forced">Carte forcée</div>`;
         } else {
             const ui = CATEGORY_UI[an.category] || CATEGORY_UI.bon;
-            let html = `<div class="an-move ${ui.cls}">` +
+            html = `<div class="an-move ${ui.cls}">` +
                 `<span class="an-tag">${ui.tag}</span> ${ui.label}`;
             if (an.cost > 0) {
                 html += ` <span class="an-cost">−${an.cost} pts</span>` +
                     `<span class="an-alt">Oracle : ${cardLabel(an.best)}</span>`;
             }
             html += '</div>';
-            body.innerHTML = html;
         }
     }
+    body.innerHTML = html + botsHtml(idx, move.action);
 }
 
 // ===== Navigable moves list =====
@@ -207,6 +252,17 @@ function jumpTo(i) {
     replayBoard.renderHistoryEntry(i);
 }
 
+// Garder le coup courant en vue en ne bougeant QUE l'ascenseur de la liste.
+// scrollIntoView() remonte tous les conteneurs défilants : sur mobile, où la
+// liste s'affiche en entier dans la page, il faisait sauter la page sur la
+// liste à chaque coup — le tapis disparaissait de l'écran.
+function scrollIntoList(list, el) {
+    const lr = list.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    if (er.top < lr.top) list.scrollTop -= lr.top - er.top;
+    else if (er.bottom > lr.bottom) list.scrollTop += er.bottom - lr.bottom;
+}
+
 function updateMovesHighlight() {
     const list = document.getElementById('replay-moves-list');
     if (!list || !replayBoard) return;
@@ -218,7 +274,7 @@ function updateMovesHighlight() {
         el.classList.toggle('mv-current', isCurrent);
         if (isCurrent) current = el;
     });
-    if (current) current.scrollIntoView({ block: 'nearest' });
+    if (current) scrollIntoList(list, current);
 }
 
 function buildMovesList() {
@@ -370,10 +426,69 @@ async function loadAnalysis(gameId) {
     }
 }
 
+// ===== Bot review (streamed over the WebSocket) =====
+
+// Re-render only the annotation panel. Going through renderHistoryEntry would
+// redraw the board, and it carries navigation state (flush pending, forward vs
+// backward) that a mid-playback refresh would trample.
+function refreshMoveStats() {
+    if (!replayBoard || !replayBoard.active) return;
+    const data = replayBoard.moveHistory[replayBoard.historyIndex];
+    if (!data || !data.move || data.finished) return;
+    replayRenderMoveStats(data.move, data.state);
+}
+
+// The review is ~9s of IS-DD search on first load and cached server-side
+// afterwards. It streams card by card in play order, so the opening lead is
+// annotated while the endgame is still being searched.
+function requestAgentReview(gameId) {
+    _agentsByIdx = null;
+    _agentsPending = true;
+    _agentsDone = 0;
+    _agentsTotal = 0;
+    send({ type: 'replay_agents', game_id: gameId });
+}
+
+function handleAgentReviewStart(data) {
+    if (data.game_id !== _currentGameId) return;
+    _agentsByIdx = {};
+    _agentsPending = true;
+    _agentsDone = 0;
+    _agentsTotal = data.total || 0;
+    refreshMoveStats();
+}
+
+function handleAgentReviewMove(data) {
+    if (data.game_id !== _currentGameId || !data.move) return;
+    if (_agentsByIdx === null) _agentsByIdx = {};
+    _agentsByIdx[data.move.idx] = data.move;
+    _agentsDone++;
+    // Repaint when this is the card on screen, or while the panel is still
+    // showing the progress counter for a card that has not landed yet.
+    const shown = _agentsByIdx[replayBoard ? replayBoard.historyIndex : -1];
+    if (!shown || shown === data.move) refreshMoveStats();
+}
+
+function handleAgentReviewDone(data) {
+    if (data.game_id !== _currentGameId) return;
+    const byIdx = {};
+    for (const m of data.moves || []) byIdx[m.idx] = m;
+    _agentsByIdx = byIdx;
+    _agentsPending = false;
+    refreshMoveStats();
+}
+
+function handleAgentReviewError(data) {
+    if (data.game_id !== _currentGameId) return;
+    _agentsPending = false;
+    refreshMoveStats();
+}
+
 // ===== Load / history =====
 
 function handleReplayLoaded(data) {
     replayTotalActions = data.total_actions || 0;
+    _currentGameId = data.game_id;
     setActionIdx(0);
     setReplayGameId(data.game_id);
     // Replay states expose all 4 hands; deal-start hands feed the annonces link
@@ -398,6 +513,7 @@ function handleReplayLoaded(data) {
 
     buildMovesList();
     loadAnalysis(data.game_id);
+    requestAgentReview(data.game_id);
 }
 
 function setReplayGameId(id) {
@@ -540,6 +656,10 @@ export function mount(container) {
 
     // Register WS handlers
     onMessage('replay_loaded', handleReplayLoaded);
+    onMessage('agent_review_start', handleAgentReviewStart);
+    onMessage('agent_review_move', handleAgentReviewMove);
+    onMessage('agent_review_done', handleAgentReviewDone);
+    onMessage('agent_review_error', handleAgentReviewError);
 
     // Load history; if pending load from another view, use that
     if (_pendingLoadId) {
@@ -553,6 +673,10 @@ export function mount(container) {
 
 export function unmount() {
     offMessage('replay_loaded', handleReplayLoaded);
+    offMessage('agent_review_start', handleAgentReviewStart);
+    offMessage('agent_review_move', handleAgentReviewMove);
+    offMessage('agent_review_done', handleAgentReviewDone);
+    offMessage('agent_review_error', handleAgentReviewError);
 
     if (replayBoard) {
         replayBoard.stopAutoPlay();
@@ -565,4 +689,9 @@ export function unmount() {
     _bidsByIdx = null;
     _oracleBids = null;
     _initialHands = null;
+    _agentsByIdx = null;
+    _agentsPending = false;
+    _agentsDone = 0;
+    _agentsTotal = 0;
+    _currentGameId = null;
 }
