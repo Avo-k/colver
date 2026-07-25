@@ -254,6 +254,18 @@
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 640px) {
+    /* Ouest et Est sont masqués (base.css) : sans ça leurs deux colonnes
+       restaient dans la grille et le pli comme les mains Nord/Sud étaient
+       comprimés dans le tiers central. Vaut pour tous les tapis — jouer,
+       rejoué, direct, problèmes. */
+    .seats {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "north"
+            "trick"
+            "south";
+    }
+
     #play-table {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr;

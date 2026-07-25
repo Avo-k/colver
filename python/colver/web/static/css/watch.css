@@ -561,22 +561,163 @@
 .visit-row.prob-player-pick .visit-bar-fill { background: linear-gradient(90deg,#1a5276,#5dade2); }
 
 /* ===== RESPONSIVE ===== */
+
+/* ===== Historique : la colonne devient un bandeau =====
+   Une colonne de 200px ne tient plus à côté du tapis et du panneau d'analyse.
+   Elle était donc purement masquée — et avec elle le seul moyen de choisir une
+   partie ou d'en charger une par son ID. Elle passe à plat : une bande pleine
+   largeur au-dessus du tapis, ~52px de haut, qui défile latéralement. */
 @media (max-width: 1024px) {
-    #replay-history { display: none; }
+    #replay-history {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        width: auto;
+        overflow: visible;
+        padding: 6px 8px;
+        /* Comme sur #replay-list plus bas : sans `min-width: 0` la taille
+           minimale automatique d'un élément l'étire à son contenu. */
+        min-width: 0;
+    }
+    #replay-history-title { display: none; }
+    #replay-search { flex-shrink: 0; }
+    #replay-list {
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 6px;
+        scrollbar-width: none;
+        /* Sans ça la bande prend la largeur cumulée de toutes les parties :
+           un élément flex ne descend pas sous son contenu minimum par défaut,
+           et l'`overflow-x` ne se déclenche jamais. */
+        min-width: 0;
+    }
+    #replay-list::-webkit-scrollbar { display: none; }
+    .history-row {
+        flex-shrink: 0;
+        gap: 5px;
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .history-info { flex: none; }
 }
 
-@media (max-width: 640px) {
+/* Bandeau de score : cinq blocs à caser. Aux deux paliers où la colonne se
+   resserre — le téléphone, et la tablette où l'analyse reprend ses 320px — le
+   contrat se coupait en deux lignes en plein milieu (« 110♦ par / NS x »).
+   Entre les deux le tapis est empilé sur toute la largeur : rien à serrer. */
+@media (max-width: 640px), (min-width: 901px) and (max-width: 1024px) {
+    #watch-score-bar, #replay-score-bar {
+        gap: 4px;
+        padding: 4px 6px;
+        font-size: var(--fs-2xs);
+        /* `white-space` sur les blocs, `wrap` sur la barre : chaque bloc reste
+           entier — c'est « 110♦ par NS x » coupé en son milieu qu'on veut
+           éviter — mais la barre garde le droit de passer à deux lignes sur les
+           écrans de 360px, où tout tenir sur une seule rognait le « Bug ». */
+        white-space: nowrap;
+        flex-wrap: wrap;
+    }
+    #watch-contract-display, #replay-contract-display { font-size: var(--fs-xs); }
+    #watch-score-bar .game-id-tag,
+    #replay-score-bar .game-id-tag { padding: 1px 5px; letter-spacing: 1px; }
+    #watch-score-bar .report-btn,
+    #replay-report-btn { flex-shrink: 0; }
+}
+
+/* Grand tablette : le bandeau prend sa propre ligne au-dessus du couple
+   tapis / analyse. En grille et non en `flex-wrap` — ici la page ne défile pas
+   (#app est à hauteur fixe, `overflow: hidden`) et une deuxième ligne flex se
+   dimensionne sur son contenu sans jamais rétrécir : le bas du tapis passait
+   sous la découpe. `minmax(0, 1fr)` donne à la deuxième rangée exactement la
+   hauteur restante. */
+@media (min-width: 901px) and (max-width: 1024px) {
+    #replay-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        grid-template-rows: auto minmax(0, 1fr);
+    }
+    #replay-history { grid-column: 1 / -1; grid-row: 1; }
+    #replay-left  { grid-column: 1; grid-row: 2; }
+    #replay-right { grid-column: 2; grid-row: 2; }
+}
+
+/* ===== Empilé et défilant =====
+   Le palier va jusqu'à 900px et non 640 : en dessous, un panneau d'analyse de
+   320px ne laisse plus au tapis qu'une colonne du milieu de 200 à 280px, où
+   les huit cartes d'une main se réduisent à des tranches et où le panneau
+   « dernier pli » recouvre la main du Nord. Empilé, le tapis reprend toute la
+   largeur — c'est la place qui manquait, pas la hauteur, puisque la page se
+   met à défiler. */
+@media (max-width: 900px) {
+    /* Ces deux pages passent en hauteur libre : au-delà de 640px, #app est
+       figé à la hauteur de l'écran et découpe ce qui dépasse (layout.css). */
+    #app:has(#replay-main), #app:has(#watch-main) {
+        height: auto;
+        min-height: calc(100dvh - var(--header-h));
+        overflow-y: auto;
+    }
+
+    /* Un seul ascenseur, celui de la page (#app). Les conteneurs intermédiaires
+       défilaient chacun pour leur compte : le panneau droit était enfermé dans
+       40vh, et #replay-moves-list — dernier enfant flex d'une colonne déjà
+       pleine — était écrasé à zéro pixel. D'où l'écran « tout coupé ». */
     #watch-main, #replay-main {
         flex-direction: column;
         height: auto;
-        overflow-y: auto;
+        flex: none;
+        overflow: visible;
+        /* Le tapis tient toute la largeur : les cartes suivent, du téléphone
+           à la tablette, au lieu de rester calibrées pour 390px. */
+        --card-w: clamp(48px, 11vw, 88px);
+    }
+    #watch-left, #replay-left,
+    #watch-right, #replay-right {
+        flex: none;
+        overflow: visible;
     }
     #watch-right, #replay-right {
         width: 100%;
-        max-height: 40vh;
-        overflow-y: auto;
+    }
+    #replay-moves, #replay-moves-list {
+        flex: none;
+        overflow: visible;
     }
     #watch-transport button, #replay-transport button {
         min-height: 40px;
+    }
+    /* Transport collant : on lit l'analyse et la liste des coups sans perdre
+       les boutons de navigation, qui sinon défilaient hors de l'écran. */
+    #watch-transport, #replay-transport {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: rgba(14, 14, 14, 0.94);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+    }
+
+    /* Le CFN reste : c'est une fonction, pas une décoration — on le touche pour
+       le copier et le coller dans Croyances. Simplement plus discret. */
+    #watch-cfn, #replay-cfn {
+        font-size: 0.6875rem;
+        padding: 1px 6px;
+        margin-bottom: 2px;
+    }
+
+    /* Le « dernier pli » sort du flottant : collé en haut à droite il
+       recouvrait la main du Nord. Il reprend sa place dans le flux, sous le
+       tapis et centré, à une taille réduite — visible sans rien masquer. */
+    #replay-last-trick {
+        position: static;
+        align-self: center;
+        margin-top: 6px;
+    }
+    #replay-last-trick .last-trick-grid {
+        --lt-card-w: calc(var(--card-w) * 0.42);
+        --lt-card-h: calc(var(--card-h) * 0.42);
+    }
+    #replay-last-trick .card {
+        width: calc(var(--card-w) * 0.42);
+        height: calc(var(--card-h) * 0.42);
     }
 }

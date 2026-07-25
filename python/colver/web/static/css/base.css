@@ -100,16 +100,12 @@ button:disabled { background: #4a4d53; color: var(--c-text-dim); cursor: default
         --card-w: 48px;
         --palette-w: 36px;
     }
-    .seats {
-        grid-template-columns: 1fr;
-        grid-template-areas:
-            "north"
-            "trick"
-            "south";
-    }
     /* Pas la place pour trois mains complètes. En mode « jouer » elles ne
        disparaissent pas pour autant : board.css les repositionne en liseré
-       le long des bords. */
+       le long des bords. Le passage de la grille en colonne unique vit dans
+       board.css : il y est chargé APRÈS la règle `.seats` à trois colonnes,
+       sans quoi il perdait la cascade et les colonnes latérales — vides —
+       continuaient de manger les deux tiers de la largeur. */
     .seat.west, .seat.east { display: none !important; }
     #play-table .seat.north { display: none !important; }
     #play-table .seats {
