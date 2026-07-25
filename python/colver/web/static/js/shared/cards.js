@@ -347,7 +347,9 @@ export function detectTrickCompletion(prefix, newTrick) {
     return null;
 }
 
-export function animateTrickFlush(prefix, onComplete, winner) {
+export const TRICK_FLUSH_DURATION = 1600;
+
+export function animateTrickFlush(prefix, onComplete, winner, durationMs) {
     let trickAreaId, lastTrickId, handPrefix;
     if (prefix === 'trick') {
         trickAreaId = 'trick-area';
@@ -441,7 +443,7 @@ export function animateTrickFlush(prefix, onComplete, winner) {
         lastTrickEl.innerHTML = '';
     }
 
-    const duration = 1600;
+    const duration = durationMs || TRICK_FLUSH_DURATION;
     let finished = 0;
     const totalAnims = faceClones.length * 2;
     const rotations = ['-3deg', '4deg', '-2deg', '5deg'];

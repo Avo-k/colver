@@ -6,10 +6,13 @@ import {
     renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
-    animateTrickFlush
+    animateTrickFlush, TRICK_FLUSH_DURATION
 } from './cards.js';
 import { updateCfnBox } from './cfn-box.js';
 import { renderBidEntries, renderTrickHistory } from './panels.js';
+
+// Cadence de la lecture automatique, en ms par coup.
+const AUTOPLAY_DELAY = 1000;
 
 // A move-history entry "completes a trick" if it's a play-phase move that
 // caused current_trick to reset (engine clears it after the 4th card) and
@@ -30,6 +33,11 @@ export class BoardRenderer {
         this.renderMoveStats = opts.renderMoveStats || (() => {});
         this.renderCardAnnotations = opts.renderCardAnnotations || (() => {});
         this.onRequestStep = opts.onRequestStep || (() => {});
+        // Durée du ramassage de pli. En rejoué on peut aller vite : la
+        // navigation est libre (avant/arrière), rien ne justifie d'attendre.
+        this.flushDuration = opts.flushDuration || TRICK_FLUSH_DURATION;
+        // Pause sur la frame « 4 cartes sur la table » avant le ramassage.
+        this.flushHoldDelay = opts.flushHoldDelay ?? AUTOPLAY_DELAY;
 
         this.moveHistory = [];
         this.historyIndex = -1;
@@ -179,7 +187,7 @@ export class BoardRenderer {
             if (skipAnimation) {
                 continueAfterFlush();
             } else {
-                animateTrickFlush(this.trickPrefix, continueAfterFlush, flushData.state.last_trick_winner);
+                animateTrickFlush(this.trickPrefix, continueAfterFlush, flushData.state.last_trick_winner, this.flushDuration);
             }
             return;
         }
@@ -436,7 +444,8 @@ export class BoardRenderer {
             return;
         }
 
-        const delay = this.autoPlayMode === 'end' ? 0 : 1000;
+        const delay = this.autoPlayMode === 'end' ? 0
+            : (this._pendingFlushData ? this.flushHoldDelay : AUTOPLAY_DELAY);
         this.autoPlayTimer = setTimeout(() => {
             if (!this.autoPlayMode) return;
             if (_animatingTrick === this.trickPrefix) {
@@ -453,7 +462,8 @@ export class BoardRenderer {
             return;
         }
 
-        const delay = this.autoPlayMode === 'end' ? 0 : 1000;
+        const delay = this.autoPlayMode === 'end' ? 0
+            : (this._pendingFlushData ? this.flushHoldDelay : AUTOPLAY_DELAY);
         this.autoPlayTimer = setTimeout(() => {
             if (!this.autoPlayMode) return;
             if (_animatingTrick === this.trickPrefix) {

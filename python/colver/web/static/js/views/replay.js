@@ -510,6 +510,10 @@ export function mount(container) {
         renderMoveStats: replayRenderMoveStats,
         renderCardAnnotations: () => updateMovesHighlight(),
         onRequestStep: () => {},
+        // Rejoué : ramassage de pli 3× plus rapide, et pause écourtée sur la
+        // frame « 4 cartes sur la table ».
+        flushDuration: 533,
+        flushHoldDelay: 333,
     });
 
     replayBoard.bindTransport();
