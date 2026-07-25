@@ -5,7 +5,7 @@
 
 import * as SFX from '../sounds.js';
 import {
-    SEAT_NAMES_FR, cardTextHtml, cardToHtml,
+    SEAT_NAMES_FR, cardTextHtml, cardToHtml, suitHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
     contractStr, actionName, encodeBidAction, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
@@ -21,12 +21,19 @@ export const MY_SEAT = 2; // South, always (server-side rotation guarantees it)
 export const TABLE_TEMPLATE = `
 <div id="play-table" class="table hidden">
     <div id="score-bar">
-        <span id="score-ns">NS : 0</span>
-        <span id="play-game-id" class="game-id-tag hidden"></span>
-        <span id="contract-display"></span>
-        <span id="score-ew">EO : 0</span>
-        <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
-        <button id="play-config-toggle" class="config-toggle-btn" title="Options">⚙</button>
+        <div class="score-team team-ns" id="score-ns">
+            <span class="score-team-label">NS</span>
+            <span class="score-team-pts">0</span>
+        </div>
+        <div id="contract-display"></div>
+        <div class="score-side">
+            <div class="score-team team-ew" id="score-ew">
+                <span class="score-team-label">EO</span>
+                <span class="score-team-pts">0</span>
+            </div>
+            <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
+            <button id="play-config-toggle" class="config-toggle-btn" title="Options">⚙</button>
+        </div>
     </div>
     <div class="seats">
         <div class="seat north" id="seat-north">
@@ -170,18 +177,14 @@ export class GameTable {
         }
     }
 
+    // Le code de partie n'est plus affiché pendant le jeu : c'était du texte
+    // technique de plus dans un bandeau déjà chargé, et le bouton « Bug »
+    // transporte l'identifiant tout seul.
     setGameId(id) {
         this.gameId = id;
         setBugReportGameId(id);
-        const el = document.getElementById('play-game-id');
-        if (id) {
-            el.textContent = id;
-            el.classList.remove('hidden');
-            document.getElementById('play-report-btn').classList.remove('hidden');
-        } else {
-            el.classList.add('hidden');
-            document.getElementById('play-report-btn').classList.add('hidden');
-        }
+        document.getElementById('play-report-btn')
+            .classList.toggle('hidden', !id);
     }
 
     // ===== WS-ish message ingestion =====
@@ -227,15 +230,36 @@ export class GameTable {
 
     // ===== Core rendering =====
 
+    /**
+     * Bandeau de score : deux colonnes « camp au-dessus, points en dessous »
+     * encadrant le contrat. Le nombre de plis ramassés n'y figure plus — écrit
+     * « (8P) » il se lisait comme du code, et l'information est déjà donnée par
+     * les cartes restantes puis par le récapitulatif de fin de partie.
+     */
+    renderScoreBar(state) {
+        document.querySelector('#score-ns .score-team-pts').textContent = state.points[0];
+        document.querySelector('#score-ew .score-team-pts').textContent = state.points[1];
+
+        const c = state.contract;
+        const el = document.getElementById('contract-display');
+        if (c && Object.keys(c).length > 0) {
+            const team = c.team === 0 ? 'NS' : 'EO';
+            const coinche = c.coinche === 1 ? ' x' : c.coinche === 2 ? ' xx' : '';
+            el.innerHTML =
+                `<span class="contract-val">${c.value}${suitHtml(c.trump)}${coinche}</span>` +
+                `<span class="contract-by">par ${team}</span>`;
+        } else {
+            el.innerHTML = '';
+        }
+    }
+
     renderState(state) {
         if (_animatingTrick === 'trick') {
             this._pendingPlayState = state;
             return;
         }
 
-        document.getElementById('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
-        document.getElementById('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
-        document.getElementById('contract-display').innerHTML = contractStr(state.contract);
+        this.renderScoreBar(state);
 
         if (state.belote) {
             renderBeloteBadge('score-ns', state.belote[0]);
@@ -494,9 +518,11 @@ export class GameTable {
             `<button class="${b.className}" data-result-btn="${i}">${b.label}</button>`
         ).join('');
 
+        // Le rappel du contrat n'apparaît que faute de détail de score : le
+        // bandeau « 140♠ par NS — Reussi » le redit déjà, en mieux.
         resultEl.innerHTML =
             `<div class="result-title ${titleClass}">${titleText}</div>` +
-            (contract ? `<div class="result-contract">${contract}</div>` : '') +
+            (contract && !sd ? `<div class="result-contract">${contract}</div>` : '') +
             `<div class="result-scores">${scoresHtml}</div>` +
             (buttonsHtml ? `<div class="result-buttons">${buttonsHtml}</div>` : '');
 

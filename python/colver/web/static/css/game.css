@@ -174,3 +174,24 @@
     border-top: 1px solid rgba(255,255,255,0.15);
     margin-top: 4px;
 }
+
+/* ===== FIN DE PARTIE SUR TÉLÉPHONE =====
+   Le panneau doit tenir dans la zone de jeu que board.css lui réserve : on
+   resserre les marges, on borne la largeur à l'écran et on garde les deux
+   boutons sur une seule ligne (empilés, ils débordaient par le bas). */
+@media (max-width: 640px) {
+    #game-result {
+        padding: 16px 14px;
+        min-width: min(320px, calc(100vw - 32px));
+        max-width: calc(100vw - 24px);
+    }
+    .result-title { font-size: var(--fs-xl); margin-bottom: 8px; }
+    .result-contract { margin-bottom: 10px; }
+    .result-scores { font-size: var(--fs-md); gap: 4px; margin-bottom: 14px; }
+    .result-buttons { flex-wrap: nowrap; }
+    .result-restart, .result-analyse {
+        padding: 9px 12px;
+        font-size: var(--fs-sm);
+        white-space: nowrap;
+    }
+}

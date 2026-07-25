@@ -450,6 +450,14 @@ nav {
         min-height: 0;
         overflow: hidden;
     }
+    /* Sauf en fin de partie : le panneau de résultat a besoin de sa hauteur
+       pleine et le récapitulatif s'installe dessous — on rend la page
+       défilante, plus rien n'a besoin de tenir dans un écran figé. */
+    #app:has(#play-table:not(.hidden)):has(#game-result:not(.hidden)) {
+        height: auto;
+        min-height: calc(100dvh - var(--header-h));
+        overflow-y: auto;
+    }
 
     /* Config bars: compact on mobile */
     #play-config, #watch-config {
