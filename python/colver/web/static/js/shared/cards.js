@@ -169,7 +169,9 @@ export function sortHand(cards, trumpSuit = -1) {
 export function miniCardIndex(cardIdx, w = 34) {
     const suit = cardSuit(cardIdx), rank = cardRank(cardIdx);
     const el = document.createElement('div');
-    let cls = 'mini-card-index';
+    // Face claire : `on-light` bascule le glyphe sur les variantes sombres des
+    // tokens — c'est le seul endroit de l'app où ♠/♣ se rendent en vrai noir.
+    let cls = 'mini-card-index on-light';
     if (suit === 1 || suit === 2) cls += ' red';
     if (RANKS[rank].length > 1) cls += ' ten';
     el.className = cls;
@@ -177,7 +179,7 @@ export function miniCardIndex(cardIdx, w = 34) {
     el.style.height = Math.round(w * 1.4) + 'px';
     el.style.fontSize = w + 'px';
     el.dataset.card = cardIdx;
-    el.innerHTML = `<span class="mc-corner"><span class="mc-rank">${RANKS[rank]}</span><span class="mc-suit">${SUITS[suit]}</span></span>`;
+    el.innerHTML = `<span class="mc-corner"><span class="mc-rank">${RANKS[rank]}</span>${suitHtml(suit, 'mc-suit')}</span>`;
     return el;
 }
 

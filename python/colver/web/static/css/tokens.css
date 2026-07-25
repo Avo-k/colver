@@ -172,9 +172,15 @@
 .suit--red   { color: var(--c-suit-red); }
 .suit--black { color: var(--c-suit-black); }
 
-/* Sur une surface claire (face de carte, tableau sur fond blanc) */
-.on-light .suit--red,   .suit--red.on-light   { color: var(--c-suit-red-on-light); }
-.on-light .suit--black, .suit--black.on-light { color: var(--c-suit-black-on-light); }
+/* Sur une surface claire — face de carte, mini-carte, bouton or, tableau sur
+   fond blanc — le « noir » redevient noir. Porter `.on-light` sur la surface
+   claire (ou sur le glyphe lui-même) est le SEUL mécanisme : une surface
+   claire qui écrit ses couleurs en dur se désynchronise des tokens.
+   Les alias historiques `.suit-red` / `.suit-black` (base.css) suivent. */
+.on-light .suit--red,   .suit--red.on-light,
+.on-light .suit-red,    .suit-red.on-light   { color: var(--c-suit-red-on-light); }
+.on-light .suit--black, .suit--black.on-light,
+.on-light .suit-black,  .suit-black.on-light { color: var(--c-suit-black-on-light); }
 
 /* ---------- Appartenance d'équipe ---------- */
 .team-ns { color: var(--c-team-ns); }
