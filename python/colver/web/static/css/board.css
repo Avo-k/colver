@@ -201,6 +201,71 @@
     #play-table #score-bar { grid-column: 1; grid-row: 1; }
     #play-table .cfn-box { display: none; }
     #play-table .seats { grid-column: 1; grid-row: 2; min-height: 0; }
+
+    /* ===== Les trois autres joueurs, en liseré de bord =====
+       Les masquer complètement privait le joueur de tout repère : plus de nom,
+       plus de « à qui le tour », plus de « il lui reste deux cartes ». On les
+       sort donc de la grille (position absolue : le pli et le panneau
+       d'annonce gardent toute la largeur) et on les colle aux bords, décalés
+       de façon à ne laisser dépasser qu'une languette de dos de cartes.
+       C'est `.seats { overflow: hidden }` qui fait la découpe.
+       z-index 0 + pointer-events none : ce sont des repères, ils passent sous
+       le panneau d'annonce (z-index 35) et n'interceptent aucun tap. */
+    #play-table .seat.north,
+    #play-table .seat.west,
+    #play-table .seat.east {
+        --peek-x: 20px;   /* largeur de carte visible sur les côtés */
+        --peek-y: 26px;   /* hauteur de carte visible en haut */
+        display: flex !important;
+        position: absolute;
+        z-index: 0;
+        pointer-events: none;
+    }
+    /* En salon le libellé est un pseudo de longueur libre : il est tronqué,
+       jamais élargi — sinon il pousserait le liseré hors du bord. */
+    #play-table .seat.north .seat-label,
+    #play-table .seat.west .seat-label,
+    #play-table .seat.east .seat-label {
+        margin-bottom: 2px;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Nord : les cartes pendent du bord haut, le nom passe dessous.
+       Largeur fixée par le siège et non par le libellé — sans ça un pseudo
+       court écrasait la rangée de cartes à sa propre largeur. */
+    #play-table .seat.north {
+        top: calc(var(--peek-y) - var(--card-h));
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100%;
+        flex-direction: column-reverse;
+        align-items: flex-start;
+    }
+    /* Nom calé à gauche et non centré : le panneau « dernier pli » occupe le
+       coin haut-droit dès le deuxième pli et le recouvrait. */
+    #play-table .seat.north .seat-label { margin: 2px 0 0; max-width: 55vw; }
+
+    /* Ouest / Est : le nom reste dans l'écran, seule la main déborde. */
+    #play-table .seat.west,
+    #play-table .seat.east {
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    #play-table .seat.west  { left: 0; align-items: flex-start; }
+    #play-table .seat.east  { right: 0; align-items: flex-end; }
+    #play-table .seat.west .seat-label,
+    #play-table .seat.east .seat-label { max-width: 30vw; }
+    #play-table .seat.west .hand {
+        margin-left: calc(var(--peek-x) - var(--card-w));
+        margin-right: 0;
+    }
+    #play-table .seat.east .hand {
+        margin-right: calc(var(--peek-x) - var(--card-w));
+        margin-left: 0;
+    }
     /* South hand: span full screen width, cards overlap dynamically */
     #play-table .seat.south .hand {
         width: calc(100vw - 16px);

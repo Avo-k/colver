@@ -107,8 +107,10 @@ button:disabled { background: #4a4d53; color: var(--c-text-dim); cursor: default
             "trick"
             "south";
     }
+    /* Pas la place pour trois mains complètes. En mode « jouer » elles ne
+       disparaissent pas pour autant : board.css les repositionne en liseré
+       le long des bords. */
     .seat.west, .seat.east { display: none !important; }
-    /* In play mode, hide North's face-down cards to save space */
     #play-table .seat.north { display: none !important; }
     #play-table .seats {
         grid-template-areas:
