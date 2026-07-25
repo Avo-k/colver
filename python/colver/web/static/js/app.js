@@ -22,7 +22,14 @@ if (navToggle && nav) {
     navToggle.addEventListener('click', () => setOpen(!nav.classList.contains('nav-open')));
     // Close nav when a link is clicked
     nav.addEventListener('click', (e) => {
-        if (e.target.closest('.nav-item, .nav-link')) setOpen(false);
+        const link = e.target.closest('.nav-item, .nav-link');
+        if (!link) return;
+        setOpen(false);
+        // Un lien cliqué garde le focus, donc `.nav-group:focus-within` maintient
+        // le menu déroulant ouvert même une fois la souris partie. On relâche le
+        // focus pour rendre la main au survol — sauf si l'activation vient du
+        // clavier (detail === 0), où garder le focus est le comportement attendu.
+        if (e.detail > 0) link.blur();
     });
     // Échap ferme le panneau, et referme aussi un menu déroulant ouvert au
     // clavier (il reste ouvert tant que le focus est dedans).
