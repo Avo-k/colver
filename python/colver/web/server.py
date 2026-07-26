@@ -351,7 +351,14 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
     import random as _random
 
     hand = data.get("hand", [])
+    # Les deux tableaux ne tirent plus le même nombre de donnes : un solve
+    # double-dummy coûte ~50× une donne jouée. Le pool de mondes est commun —
+    # l'Oracle résout les `oracle_sims` premiers, Dédé les joue tous — pour que
+    # les deux tableaux parlent bien du même échantillon.
     num_sims = max(1, min(1000, int(data.get("num_sims", 50))))
+    oracle_sims = max(1, min(1000, int(data.get("oracle_sims", num_sims))))
+    doudou_sims = max(1, min(2000, int(data.get("doudou_sims", num_sims))))
+    world_total = max(oracle_sims, doudou_sims)
     prior_actions_raw = data.get("prior_actions", None)
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
 
@@ -359,6 +366,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         await ws.send_json({"type": "annonces_sim_update", "error": "8 cartes requises"})
         return
 
+    gen_task = None  # génération de mondes en cours, à annuler en sortie
     try:
         loop = asyncio.get_event_loop()
         remaining = list(set(range(32)) - set(hand))
@@ -411,14 +419,14 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         all_hands = []
         all_sources = []
         if playgen_env is None:
-            for _ in range(num_sims):
+            for _ in range(world_total):
                 all_hands.append(_uniform_hands())
                 all_sources.append("uniform")
 
         # GPU sidecar: one batched call is far cheaper than chunked CPU calls
         # (shared prefill), so generate everything in a single chunk.
         _gpu = _playgen_gpu.enabled()
-        PLAYGEN_CHUNK = num_sims if _gpu else 8
+        PLAYGEN_CHUNK = world_total if _gpu else 8
 
         def _gen_chunk(n):
             if _gpu:
@@ -452,34 +460,37 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             return {"ns_sums": oracle_ns_sums, "ns_medians": medians,
                     "best_counts": oracle_best_counts}
 
-        window = min(_DD_EXECUTOR._max_workers, num_sims)
+        window = min(_DD_EXECUTOR._max_workers, oracle_sims)
         completed = 0
         next_i = 0
         pending = set()
-        gen_task = None
         gen_requested = 0
         if playgen_env is not None:
-            gen_requested = min(PLAYGEN_CHUNK, num_sims)
+            gen_requested = min(PLAYGEN_CHUNK, world_total)
             gen_task = loop.run_in_executor(None, _gen_chunk, gen_requested)
+
+        def _uniform_topup():
+            nonlocal worlds_source
+            while len(all_hands) < world_total:
+                all_hands.append(_uniform_hands())
+                all_sources.append("uniform")
+                worlds_source = "mixte"
+
         try:
-            while completed < num_sims:
+            while completed < oracle_sims:
                 if gen_task is not None and gen_task.done():
                     chunk = gen_task.result()
                     all_hands.extend(chunk)
                     all_sources.extend(["playgen"] * len(chunk))
-                    if gen_requested < num_sims:
-                        n = min(PLAYGEN_CHUNK, num_sims - gen_requested)
+                    if chunk and gen_requested < world_total:
+                        n = min(PLAYGEN_CHUNK, world_total - gen_requested)
                         gen_requested += n
                         gen_task = loop.run_in_executor(None, _gen_chunk, n)
                     else:
                         gen_task = None
-                        # Shortfall (failed generations) → uniform top-up.
-                        while len(all_hands) < num_sims:
-                            all_hands.append(_uniform_hands())
-                            all_sources.append("uniform")
-                            worlds_source = "mixte"
+                        _uniform_topup()  # génération épuisée ou en échec
 
-                while next_i < min(num_sims, len(all_hands)) and len(pending) < window:
+                while next_i < min(oracle_sims, len(all_hands)) and len(pending) < window:
                     fut = loop.run_in_executor(
                         _DD_EXECUTOR, _run_dd_sim_with_hands, all_hands[next_i], dealer)
                     fut.world_index = next_i
@@ -514,7 +525,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
 
                 await ws.send_json({
                     "type": "annonces_sim_update",
-                    "completed": completed, "total": num_sims,
+                    "completed": completed, "total": oracle_sims,
                     "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
                     "success_counts": success_counts,
                     "oracle_synth": _oracle_synth(),
@@ -524,12 +535,10 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         finally:
             for fut in pending:
                 fut.cancel()
-            if gen_task is not None:
-                gen_task.cancel()
 
         await ws.send_json({
             "type": "annonces_sim_done",
-            "completed": num_sims, "total": num_sims,
+            "completed": completed, "total": oracle_sims,
             "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
             "success_counts": success_counts,
             "oracle_synth": _oracle_synth(),
@@ -541,11 +550,28 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
 
         # Phase 2: Dédé (NN bid + DMC play) — slow
         if BID_MODEL_PATH and DMC_MODEL_PATH:
+            # L'Oracle s'arrête avant la fin de la génération quand il tire
+            # moins de donnes ; on draine le reste du pool avant de jouer.
+            while len(all_hands) < world_total:
+                if gen_task is None:
+                    if gen_requested >= world_total:
+                        break
+                    n = min(PLAYGEN_CHUNK, world_total - gen_requested)
+                    gen_requested += n
+                    gen_task = loop.run_in_executor(None, _gen_chunk, n)
+                chunk = await gen_task
+                gen_task = None
+                all_hands.extend(chunk)
+                all_sources.extend(["playgen"] * len(chunk))
+                if not chunk:
+                    break  # génération en échec : on complète en uniforme
+            _uniform_topup()
+
             doudou_cells = _doudou_new_cells()
             doudou_stats = _doudou_new_stats()
             doudou_start = _time.monotonic()
 
-            for i in range(num_sims):
+            for i in range(doudou_sims):
                 dd = await loop.run_in_executor(
                     None, _run_doudou_sim_with_hands, all_hands[i],
                     BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions)
@@ -554,7 +580,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
 
                 await ws.send_json({
                     "type": "annonces_doudou_update",
-                    "completed": i + 1, "total": num_sims,
+                    "completed": i + 1, "total": doudou_sims,
                     "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
                     "doudou_cells": doudou_cells,
                     "doudou_stats": doudou_stats,
@@ -562,7 +588,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
 
             await ws.send_json({
                 "type": "annonces_doudou_done",
-                "completed": num_sims, "total": num_sims,
+                "completed": doudou_sims, "total": doudou_sims,
                 "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
                 "doudou_cells": doudou_cells,
                 "doudou_stats": doudou_stats,
@@ -575,6 +601,9 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             await ws.send_json({"type": "annonces_sim_update", "error": str(e)})
         except Exception:
             pass
+    finally:
+        if gen_task is not None:
+            gen_task.cancel()
 
 
 async def _run_annonces_doudou(ws: WebSocket, data: dict):

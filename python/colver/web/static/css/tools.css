@@ -633,20 +633,6 @@
     flex-wrap: wrap;
 }
 
-.annonces-sim-label {
-    font-size: var(--fs-sm);
-    color: #bbb;
-}
-
-#annonces-sim-count {
-    background: #1a1a2e;
-    color: #eee;
-    border: 1px solid #444;
-    border-radius: 4px;
-    padding: 4px 6px;
-    font-size: var(--fs-sm);
-}
-
 /* Results area: side-by-side panels.
    Container query plutôt que media query : ces deux panneaux vivent dans
    #annonces-right, dont la largeur dépend de l'état du layout autant que du

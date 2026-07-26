@@ -14,6 +14,12 @@ const SEAT_NAMES = ['Nord', 'Est', 'Sud', 'Ouest'];
 // /analyse/annonces), donc l'ancre passe par ?s= et non par un fragment.
 const docLink = (section) =>
     `<a class="doc-link" href="/about?s=${section}" title="Comment ça marche ?">?</a>`;
+// Nombre de donnes tir\u00e9es par tableau. Le Jeu r\u00e9el en demande beaucoup plus :
+// une donne jou\u00e9e est bien plus rapide qu'un solve double-dummy, et son
+// r\u00e9sultat est binaire (r\u00e9ussi/chut\u00e9) donc plus bruit\u00e9 \u00e0 \u00e9chantillon \u00e9gal.
+const ORACLE_SIMS = 200;
+const REAL_SIMS = 1000;
+
 const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
@@ -71,9 +77,6 @@ const TEMPLATE = `
                 <label for="annonces-alt-select" class="verdict-alt-label">Analyser une autre annonce :</label>
                 <span id="annonces-alt-select"></span>
                 <button id="annonces-alt-btn" class="secondary-btn">Analyser</button>
-                <label class="annonces-sim-label">Simulations :
-                    <input type="number" id="annonces-sim-count" value="500" min="1" max="1000" style="width:55px">
-                </label>
             </span>
             <span id="annonces-alt-status" class="hidden"></span>
         </div>
@@ -717,13 +720,11 @@ function renderDoudouHeadline(stats) {
     // Les donnes passées ne rapportent rien : `decided` est le bon diviseur
     // pour une moyenne par donne, pas `pts_n` qui les exclut.
     const diff = Math.round((stats.pts_ns_sum - stats.pts_ew_sum) / decided);
-    const diffTxt = `${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts par donne`;
 
-    const parts = [diffTxt];
-    if (stats.deal_draws > 0) {
-        parts.push(`${Math.round(stats.deal_draws / decided * 100)}% de donnes nulles`);
-    }
-    parts.push(`${decided} donne${decided > 1 ? 's' : ''} simulée${decided > 1 ? 's' : ''}`);
+    // Une seule ligne, rien de plus : le nombre de donnes est déjà sur la barre
+    // de progression juste au-dessus, et le taux de donnes passées dans la
+    // synthèse juste en dessous.
+    const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts`;
 
     const after = forcedAction !== null
         ? `après ${bidChipHtml(forcedAction)}` : 'sur cette main';
@@ -732,7 +733,7 @@ function renderDoudouHeadline(stats) {
         `<span class="dh-pct">${pct}<span class="dh-unit">%</span></span>` +
         '<span class="dh-text">' +
         `<span class="dh-main">Nord-Sud gagne la donne ${after}</span>` +
-        `<span class="dh-sub">${parts.join(' · ')}</span>` +
+        `<span class="dh-sub">${sub}</span>` +
         '</span></div>';
 }
 
@@ -910,12 +911,11 @@ function runAltAnalysis(action) {
     highlightOracleCell(action);
     resetDoudouPanel();
 
-    const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 500));
     send({
         type: 'annonces_doudou',
         hand: Array.from(annoncesHand),
         prior_actions: annoncesHistory,
-        num_sims: numSims,
+        num_sims: REAL_SIMS,
         forced_action: action,
     });
 }
@@ -974,7 +974,7 @@ function hideResults() {
     document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
 }
 
-function resetPanels(numSims) {
+function resetPanels() {
     document.getElementById('annonces-results-area').classList.remove('hidden');
     document.getElementById('annonces-nn-panel').classList.remove('hidden');
     document.getElementById('annonces-verdict').classList.add('hidden');
@@ -987,19 +987,19 @@ function resetPanels(numSims) {
     document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
     const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
-    renderOracleTable(emptyCountsSeed, 0, numSims, null);
+    renderOracleTable(emptyCountsSeed, 0, ORACLE_SIMS, null);
     // Reset alternative-annonce state and DouDou panel (shown, empty state)
     forcedAction = null;
     document.getElementById('annonces-alt-status').classList.add('hidden');
     resetDoudouPanel();
 }
 
-async function evalLocal(hand, numSims) {
+async function evalLocal(hand) {
     try {
         await wasmBridge.ensureReady();
     } catch (err) {
         console.warn('[annonces] WASM init failed, falling back to server:', err);
-        evalServer(hand, numSims);
+        evalServer(hand);
         return;
     }
 
@@ -1012,7 +1012,7 @@ async function evalLocal(hand, numSims) {
     }
 
     // 2. Oracle via Worker (streaming)
-    wasmBridge.runOracleSim(hand, numSims,
+    wasmBridge.runOracleSim(hand, ORACLE_SIMS,
         (data) => {
             renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
         },
@@ -1030,12 +1030,13 @@ async function evalLocal(hand, numSims) {
     );
 
     // 3. DouDou via WebSocket (server-side, needs DMC model)
-    send({ type: 'annonces_doudou', hand, prior_actions: annoncesHistory, num_sims: numSims });
+    send({ type: 'annonces_doudou', hand, prior_actions: annoncesHistory, num_sims: REAL_SIMS });
 }
 
-function evalServer(hand, numSims) {
+function evalServer(hand) {
     send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
-    send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory, num_sims: numSims });
+    send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory,
+           oracle_sims: ORACLE_SIMS, doudou_sims: REAL_SIMS });
 }
 
 export function mount(container) {
@@ -1101,16 +1102,15 @@ export function mount(container) {
 
     document.getElementById('annonces-eval-btn').addEventListener('click', () => {
         const hand = Array.from(annoncesHand);
-        const numSims = Math.max(1, Math.min(1000, parseInt(document.getElementById('annonces-sim-count').value) || 500));
 
         // Cancel any previous simulation before starting a new one
         wasmBridge.cancelOracle();
 
-        resetPanels(numSims);
+        resetPanels();
 
         // Local WASM by default (BidNet + Oracle); falls back to the server
         // if WASM init fails. DouDou always runs server-side (10MB DMC model).
-        evalLocal(hand, numSims);
+        evalLocal(hand);
     });
 
     // XGB suit dropdown
