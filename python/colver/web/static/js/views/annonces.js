@@ -9,6 +9,11 @@ import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
 const SEAT_NAMES = ['Nord', 'Est', 'Sud', 'Ouest'];
+
+// Lien vers la doc. Le routeur redirige tout hash connu (#annonces →
+// /analyse/annonces), donc l'ancre passe par ?s= et non par un fragment.
+const docLink = (section) =>
+    `<a class="doc-link" href="/about?s=${section}" title="Comment ça marche ?">?</a>`;
 const THRESHOLDS = [80, 90, 100, 110, 120, 130, 140, 150, 160, 162];
 const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', '160', 'Cap'];
 
@@ -38,14 +43,14 @@ const TEMPLATE = `
         </div>
         <div class="annonces-result-panel hidden" id="annonces-nn-panel">
             <div id="annonces-results-header" class="section-title"></div>
-            <p class="nn-explainer">R\u00e9seau de neurones entra\u00een\u00e9 par renforcement sur des millions de parties en jeu parfait (double-dummy).</p>
             <div id="annonces-results-body"></div>
             <div class="hidden" id="annonces-xgb-panel">
                 <div id="annonces-xgb-header" class="section-title">
                     <span>Facteurs cl\u00e9s</span>
                     <select id="xgb-suit-select"></select>
+                    ${docLink('annonces')}
                 </div>
-                <p class="xgb-explainer">Mod\u00e8le XGBoost distill\u00e9 du NN \u2014 il <em>approxime</em> les d\u00e9cisions du r\u00e9seau \u00e0 l\u2019aide de caract\u00e9ristiques interpr\u00e9tables. Ces contributions ne proviennent <strong>pas</strong> du r\u00e9seau de neurones.</p>
+                <p class="xgb-explainer">Approximation des d\u00e9cisions du r\u00e9seau, pas le r\u00e9seau lui-m\u00eame.</p>
                 <div id="xgb-waterfall"></div>
                 <div id="xgb-probability"></div>
             </div>
@@ -75,7 +80,8 @@ const TEMPLATE = `
         <div id="annonces-results-area" class="hidden">
             <div class="annonces-result-panel hidden" id="annonces-doudou-panel">
                 <div id="annonces-doudou-header" class="section-title">
-                    <span>DouDou50<span id="doudou-forced-label"></span></span>
+                    <span>Jeu réel<span id="doudou-forced-label"></span></span>
+                    ${docLink('jeu-reel')}
                     <div id="doudou-progress" class="sim-progress hidden">
                         <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
                         <span class="sim-progress-text"></span>
@@ -83,18 +89,17 @@ const TEMPLATE = `
                     <span id="doudou-stats-text"></span>
                 </div>
                 <div id="doudou-headline"></div>
-                <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre le taux de r\u00e9ussite et, en dessous, le nombre de donnes observ\u00e9es. Les cellules peu observ\u00e9es sont estomp\u00e9es\u00a0: leur chiffre est moins fiable. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
                 <div id="annonces-doudou-body"></div>
             </div>
             <div class="annonces-result-panel" id="annonces-oracle-panel">
                 <div id="annonces-sim-header" class="section-title">
-                    <span>Oracle</span>
+                    <span>Jeu parfait</span>
+                    ${docLink('jeu-parfait')}
                     <div id="oracle-progress" class="sim-progress hidden">
                         <div class="sim-progress-bar"><div class="sim-progress-fill"></div></div>
                         <span class="sim-progress-text"></span>
                     </div>
                 </div>
-                <p class="oracle-explainer">Des mains adverses al\u00e9atoires sont g\u00e9n\u00e9r\u00e9es et r\u00e9solues en jeu parfait (double-dummy). Chaque cellule indique le % de mondes o\u00f9 le contrat est r\u00e9alisable. C\u2019est un plafond th\u00e9orique\u00a0: en partie r\u00e9elle, le taux de r\u00e9ussite sera plus bas, mais cela permet de jauger le potentiel de la main.</p>
                 <div id="annonces-sim-body"></div>
             </div>
         </div>
@@ -413,7 +418,7 @@ function handleBidEvalResult(data) {
     if (altSelector) altSelector.set(bestAction);
 
     document.getElementById('annonces-results-header').innerHTML =
-        `Bid V6 : ${bidChipHtml(bestAction)}`;
+        `Bid V6 : ${bidChipHtml(bestAction)} ${docLink('annonces')}`;
 
     let html = '<div class="visit-bars ann-qvalues-scroll ann-collapsed" id="ann-qvalues">';
     qValues.forEach(([action, q], i) => {
@@ -955,7 +960,7 @@ function handleDoudouDone(data) {
     if (forcedAction !== null) {
         const statusEl = document.getElementById('annonces-alt-status');
         statusEl.classList.remove('hidden');
-        statusEl.innerHTML = `DouDou50 simulé avec annonce forcée : ${bidChipHtml(forcedAction)}`;
+        statusEl.innerHTML = `Jeu réel simulé avec annonce forcée : ${bidChipHtml(forcedAction)}`;
     }
 }
 

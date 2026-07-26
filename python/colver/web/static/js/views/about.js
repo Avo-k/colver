@@ -115,20 +115,66 @@ const TEMPLATE = `
         </p>
     </div>
 
-    <div class="docs-section">
+    <div class="docs-section" id="doc-annonces">
         <h4>Annonces</h4>
         <p>
             Composez une main de 8 cartes en cliquant sur la palette, choisissez votre position dans le tour d'ench\u00e8res
             (combien de passes ont pr\u00e9c\u00e9d\u00e9 votre tour), puis cliquez \u00ab \u00c9valuer \u00bb pour voir ce que
             <em>Bid V6 IS-DD</em> annoncerait \u2014 avec les Q-values du r\u00e9seau de neurones pour chaque action possible.
+            Ce r\u00e9seau a \u00e9t\u00e9 entra\u00een\u00e9 par renforcement sur des millions de donnes.
         </p>
         <p>
-            Le tableau <strong>Oracle</strong> g\u00e9n\u00e8re des mains adverses al\u00e9atoires et r\u00e9sout chaque donne en jeu parfait (double-dummy).
-            Chaque cellule indique le pourcentage de mondes o\u00f9 le contrat est r\u00e9alisable \u2014 un plafond th\u00e9orique.
+            <strong>Facteurs cl\u00e9s</strong> d\u00e9compose la d\u00e9cision en caract\u00e9ristiques lisibles (longueur d'atout,
+            cartes \u00e0 points, coupes\u2026) \u00e0 l'aide d'un mod\u00e8le XGBoost distill\u00e9 du r\u00e9seau. Il <em>approxime</em>
+            le r\u00e9seau : ces contributions ne sortent <strong>pas</strong> du r\u00e9seau lui-m\u00eame et peuvent diverger
+            de sa vraie d\u00e9cision.
         </p>
         <p>
-            Le tableau <strong>D\u00e9d\u00e9</strong> joue les m\u00eames distributions en partie compl\u00e8te via le r\u00e9seau de neurones
-            (ench\u00e8res NN + jeu DMC).
+            Deux tableaux \u00e9valuent ensuite la main sur des centaines de distributions tir\u00e9es au hasard \u2014
+            vos 8 cartes sont fix\u00e9es, les 24 autres sont redistribu\u00e9es \u00e0 chaque simulation. Ils r\u00e9pondent
+            \u00e0 deux questions diff\u00e9rentes\u00a0: <em>ce contrat est-il tenable\u00a0?</em> et <em>que se passe-t-il vraiment\u00a0?</em>
+        </p>
+        <p>
+            Le s\u00e9lecteur <strong>Simulations</strong> fixe le nombre de donnes tir\u00e9es. Plus il est \u00e9lev\u00e9,
+            plus les chiffres sont stables \u2014 et plus le calcul est long. \u00ab\u00a0Analyser une autre annonce\u00a0\u00bb
+            relance le <em>Jeu r\u00e9el</em> en for\u00e7ant votre annonce\u00a0: le reste de l'ench\u00e8re et tout le jeu
+            restent pilot\u00e9s par les r\u00e9seaux, ce qui permet de comparer deux annonces sur un pied d'\u00e9galit\u00e9.
+        </p>
+    </div>
+
+    <div class="docs-section" id="doc-jeu-parfait">
+        <h4>Jeu parfait <span class="docs-tag subtle">Annonces</span></h4>
+        <p>
+            Chaque distribution tir\u00e9e est r\u00e9solue par l'<em>Oracle</em>, le solveur double-dummy\u00a0:
+            il voit les 4 mains et calcule le r\u00e9sultat exact si tout le monde jouait parfaitement.
+            Chaque cellule indique le pourcentage de donnes o\u00f9 le contrat est <strong>r\u00e9alisable</strong>.
+        </p>
+        <p>
+            C'est un <strong>plafond th\u00e9orique</strong>, pas une pr\u00e9diction\u00a0: personne ne voit le jeu adverse
+            \u00e0 une vraie table, donc le taux de r\u00e9ussite r\u00e9el sera toujours plus bas. Le tableau sert
+            \u00e0 jauger le potentiel brut de la main, et ne d\u00e9pend pas de ce que vous annoncez.
+        </p>
+    </div>
+
+    <div class="docs-section" id="doc-jeu-reel">
+        <h4>Jeu r\u00e9el <span class="docs-tag subtle">Annonces</span></h4>
+        <p>
+            Les m\u00eames distributions, mais jou\u00e9es pour de bon\u00a0: l'ench\u00e8re compl\u00e8te est men\u00e9e par le r\u00e9seau
+            d'annonces aux 4 places, puis les 8 plis sont jou\u00e9s par <em>DouDou50</em>. Aucun de ces joueurs
+            ne voit les cartes des autres \u2014 ils se trompent, sous-annoncent, chutent. C'est donc
+            ce qui arrive <em>vraiment</em> avec cette main, et non ce qui serait possible.
+        </p>
+        <p>
+            Le chiffre en haut est le principal\u00a0: la part des donnes o\u00f9 <strong>Nord-Sud marque plus
+            qu'Est-Ouest</strong>, accompagn\u00e9e de l'\u00e9cart de points moyen par donne. Les donnes pass\u00e9es
+            (personne ne prend) comptent comme nulles.
+        </p>
+        <p>
+            Le tableau d\u00e9taille, par couleur et par palier, le taux de contrats <strong>r\u00e9ussis</strong>,
+            avec dessous le nombre de donnes observ\u00e9es. Les cellules peu observ\u00e9es sont estomp\u00e9es\u00a0:
+            leur chiffre est moins fiable. La couleur ne suit pas le pourcentage brut mais la borne
+            basse d'un intervalle de confiance (Wilson) \u2014 une cellule \u00e0 100\u00a0% sur 2 donnes reste prudente.
+            Le filtre <strong>Contrats pris par</strong> s\u00e9pare vos contrats de ceux de l'adversaire.
         </p>
     </div>
 
@@ -177,6 +223,16 @@ const TEMPLATE = `
 
 export function mount(container) {
     container.innerHTML = TEMPLATE;
+
+    // ?s=<section> : ancre venue d'un lien « ? » dans l'interface. Un vrai
+    // fragment (#jeu-reel) serait avalé par le routeur, qui traite tout hash
+    // comme une URL héritée.
+    const target = new URLSearchParams(location.search).get('s');
+    if (!target) return;
+    const el = container.querySelector(`#doc-${CSS.escape(target)}`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center' });
+    el.classList.add('docs-section--target');
 }
 
 export function unmount() {}

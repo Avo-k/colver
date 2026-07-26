@@ -135,6 +135,24 @@
     color: #999;
 }
 
+/* Lien « ? » vers la section correspondante du À propos */
+.doc-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    border: 1px solid #555;
+    color: #888;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    flex-shrink: 0;
+}
+.doc-link:hover { border-color: var(--c-accent); color: var(--c-accent); }
+
 /* Chiffre-phare DouDou50 : issue de la donne pour Nord-Sud */
 .doudou-headline {
     display: flex;
@@ -793,12 +811,6 @@
 }
 
 /* DouDou table */
-.doudou-explainer {
-    color: #777;
-    font-size: var(--fs-2xs);
-    line-height: 1.45;
-    margin: 0 0 8px 0;
-}
 
 /* Tableau DouDou — une seule taille de chiffre, des colonnes qui respirent,
    et l'en-tête qui reste visible quand on fait défiler. Le conteneur scrolle
@@ -871,14 +883,6 @@
     color: var(--c-text-dim);
     line-height: 1.1;
     margin-top: 1px;
-}
-
-.nn-explainer,
-.oracle-explainer {
-    color: #777;
-    font-size: var(--fs-2xs);
-    line-height: 1.45;
-    margin: 0 0 8px 0;
 }
 
 .dd-loader {
@@ -1001,8 +1005,6 @@
     margin: 0 0 8px 0;
     font-style: italic;
 }
-.xgb-explainer em { font-style: normal; text-decoration: underline; }
-.xgb-explainer strong { color: #c9a44a; font-weight: 600; }
 
 .xgb-waterfall-chart {
     display: flex;
@@ -1545,6 +1547,15 @@
 .docs-section p {
     color: #aaa;
     margin: 0;
+}
+
+.docs-section p + p { margin-top: 6px; }
+
+/* Section pointée par ?s= : un liseré discret, sans animation qui saute */
+.docs-section--target {
+    border-left: 2px solid var(--c-accent);
+    padding-left: 10px;
+    margin-left: -12px;
 }
 
 .docs-tag {
