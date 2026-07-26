@@ -2,8 +2,7 @@
 // The whole game is preloaded at replay_load, so navigation (buttons,
 // arrows, clicking any move in the "Coups" list) is instant and local.
 
-import { send, onMessage, offMessage } from '../ws.js';
-import { navigateTo } from '../router.js';
+import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import {
     SEAT_NAMES_FR, SUITS, cardCode, cardChipHtml,
     bidChipHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
@@ -107,6 +106,7 @@ let _agentsByIdx = null;     // action_idx -> {doudou, oracle, isdd} card choice
 let _agentsPending = false;  // the review is still being computed server-side
 let _agentsDone = 0;         // cards reviewed so far (streamed, in play order)
 let _agentsTotal = 0;        // cards the review will cover
+let _pendingJumpIdx = null;  // coup demandé par l'URL, appliqué au chargement
 let _currentGameId = null;   // guards late answers from a previously-open game
 
 // The three reference bots, in the order they are shown under a played card.
@@ -128,14 +128,15 @@ function pct(p) {
     return `${(p * 100).toFixed(p >= 0.1 ? 0 : 1)} %`;
 }
 
-// Navigate to the annonces analysis page pre-filled with the acting player's
-// hand and the auction history up to (not including) this bid.
-function openBidAnalysis(idx) {
-    if (!replayBoard || !_initialHands) return;
+// URL de la page annonces pré-remplie avec la main du siège qui parle et
+// l'enchère jusqu'à ce coup (exclu). `from`/`i` portent le chemin du retour.
+// Retourne null si le coup n'est pas une annonce analysable.
+function bidAnalysisUrl(idx) {
+    if (!replayBoard || !_initialHands) return null;
     const data = replayBoard.moveHistory[idx];
-    if (!data || !data.move || data.move.phase !== 0) return;
+    if (!data || !data.move || data.move.phase !== 0) return null;
     const hand = _initialHands[data.move.player];
-    if (!hand || hand.length !== 8) return;
+    if (!hand || hand.length !== 8) return null;
     const history = [];
     for (let i = 0; i < idx; i++) {
         const m = replayBoard.moveHistory[i].move;
@@ -143,7 +144,16 @@ function openBidAnalysis(idx) {
     }
     let url = `/analyse/annonces?hand=${hand.map(cardCode).join(',')}`;
     if (history.length) url += `&history=${history.join(',')}`;
-    navigateTo(url);
+    if (_currentGameId) url += `&from=${encodeURIComponent(_currentGameId)}&i=${idx}`;
+    return url;
+}
+
+// URL de la page jeu de la carte pour ce coup, ou null si on n'a pas le CFN.
+function cardAnalysisUrl(idx) {
+    if (!_gameCfn) return null;
+    let url = `/analyse/jeu?cfn=${encodeURIComponent(_gameCfn)}&i=${idx}`;
+    if (_currentGameId) url += `&from=${encodeURIComponent(_currentGameId)}`;
+    return url;
 }
 
 // ===== "Qui aurait joué quoi" (the three reference bots) =====
@@ -223,10 +233,14 @@ function replayRenderMoveStats(move, state) {
                     ? ` · joué ${pct(bid.playgen_p_played)}` : '') +
                 `</span></div>`;
         }
-        html += `<button class="an-bid-analyse-btn" id="replay-bid-analyse-btn">Analyser cette annonce →</button>`;
+        // Une vraie ancre, pas un bouton : le routeur laisse passer Ctrl+clic et
+        // clic-milieu, donc l'utilisateur choisit onglet courant ou nouvel
+        // onglet clic par clic, sans qu'on ait à trancher pour lui.
+        const bidUrl = bidAnalysisUrl(idx);
+        if (bidUrl) {
+            html += `<a class="an-bid-analyse-btn" href="${bidUrl}">Analyser cette annonce →</a>`;
+        }
         body.innerHTML = html;
-        const btn = document.getElementById('replay-bid-analyse-btn');
-        if (btn) btn.addEventListener('click', () => openBidAnalysis(idx));
         return;
     }
 
@@ -253,15 +267,11 @@ function replayRenderMoveStats(move, state) {
     // Le pendant du lien des annonces, pour une carte : la page /analyse/jeu
     // repart du CFN complet et de l'index, donc rien à recalculer ici. Inutile
     // sur une carte forcée — il n'y a pas de décision à peser.
-    if (_gameCfn && !(an && an.forced)) {
-        html += `<button class="an-bid-analyse-btn" id="replay-card-analyse-btn">Analyser cette carte →</button>`;
+    const cardUrl = (an && an.forced) ? null : cardAnalysisUrl(idx);
+    if (cardUrl) {
+        html += `<a class="an-bid-analyse-btn" href="${cardUrl}">Analyser cette carte →</a>`;
     }
     body.innerHTML = html + botsHtml(idx, move.action);
-    const cardBtn = document.getElementById('replay-card-analyse-btn');
-    if (cardBtn) {
-        cardBtn.addEventListener('click', () => navigateTo(
-            `/analyse/jeu?cfn=${encodeURIComponent(_gameCfn)}&i=${idx}`));
-    }
 }
 
 // ===== Navigable moves list =====
@@ -286,11 +296,25 @@ function scrollIntoList(list, el) {
     else if (er.bottom > lr.bottom) list.scrollTop += er.bottom - lr.bottom;
 }
 
+// L'URL dit toujours quelle partie et quel coup sont à l'écran, pour qu'un
+// Retour depuis une page d'analyse retombe exactement ici — et pour qu'un coup
+// précis se partage. `replaceState` et non `pushState` : sinon chaque coup
+// parcouru créerait une entrée d'historique et le Retour du navigateur
+// remonterait la partie coup par coup au lieu de quitter la page.
+function syncReplayUrl() {
+    if (!_currentGameId) return;
+    const idx = replayBoard ? replayBoard.historyIndex : -1;
+    const q = new URLSearchParams({ game: _currentGameId });
+    if (idx >= 0) q.set('i', String(idx));
+    history.replaceState(null, '', `${window.location.pathname}?${q}`);
+}
+
 function updateMovesHighlight() {
     const list = document.getElementById('replay-moves-list');
     if (!list || !replayBoard) return;
     const idx = replayBoard.historyIndex;
     setActionIdx(idx + 1);
+    syncReplayUrl();
     let current = null;
     list.querySelectorAll('[data-idx]').forEach(el => {
         const isCurrent = parseInt(el.dataset.idx) === idx;
@@ -542,6 +566,17 @@ function handleReplayLoaded(data) {
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-agent">${data.game_id}</span>`;
 
     buildMovesList();
+
+    // Coup demandé par l'URL. `buildMovesList` doit être passé avant, sinon
+    // le surlignage de la liste n'a rien à surligner. Borné à la partie : un
+    // index hérité d'une autre partie ne doit pas laisser la vue vide.
+    if (_pendingJumpIdx !== null) {
+        const target = Math.min(_pendingJumpIdx, replayBoard.moveHistory.length - 1);
+        _pendingJumpIdx = null;
+        if (target >= 0) jumpTo(target);
+    }
+    syncReplayUrl();
+
     loadAnalysis(data.game_id);
     requestAgentReview(data.game_id);
 }
@@ -559,8 +594,20 @@ function setReplayGameId(id) {
     }
 }
 
+// `send()` jette silencieusement quand le socket n'est pas encore OPEN. Au
+// chargement à froid — lien partagé, signet, F5 — la vue se monte et demande la
+// partie avant l'ouverture, et la page restait vide sans rien dire. La demande
+// est donc mémorisée et rejouée à l'ouverture. C'était une course, gagnée en
+// navigation SPA (socket déjà ouverte) et perdue à froid, d'où l'intermittence.
+let _wantedGameId = null;
+
 function loadReplay(gameId) {
+    _wantedGameId = gameId;
     send({ type: 'replay_load', game_id: gameId });
+}
+
+function flushPendingLoad() {
+    if (_wantedGameId && !_currentGameId) loadReplay(_wantedGameId);
 }
 
 async function loadGameHistory(autoLoadFirst = false) {
@@ -685,23 +732,36 @@ export function mount(container) {
     document.getElementById('replay-report-btn').addEventListener('click', openBugReport);
 
     // Register WS handlers
+    onOpen(flushPendingLoad);
     onMessage('replay_loaded', handleReplayLoaded);
     onMessage('agent_review_start', handleAgentReviewStart);
     onMessage('agent_review_move', handleAgentReviewMove);
     onMessage('agent_review_done', handleAgentReviewDone);
     onMessage('agent_review_error', handleAgentReviewError);
 
+    // Partie et coup demandés par l'URL — c'est ce que produit un Retour depuis
+    // une page d'analyse, ou un lien partagé. Le coup est mis de côté : il ne
+    // peut être appliqué qu'une fois la partie chargée (`handleReplayLoaded`).
+    const params = new URLSearchParams(window.location.search);
+    const urlGame = (params.get('game') || '').trim().toLowerCase();
+    const urlIdx = parseInt(params.get('i'), 10);
+    _pendingJumpIdx = Number.isFinite(urlIdx) ? urlIdx : null;
+
     // Load history; if pending load from another view, use that
     if (_pendingLoadId) {
         loadGameHistory(false);
         loadReplay(_pendingLoadId);
         _pendingLoadId = null;
+    } else if (urlGame) {
+        loadGameHistory(false);
+        loadReplay(urlGame);
     } else {
         loadGameHistory(true);
     }
 }
 
 export function unmount() {
+    offOpen(flushPendingLoad);
     offMessage('replay_loaded', handleReplayLoaded);
     offMessage('agent_review_start', handleAgentReviewStart);
     offMessage('agent_review_move', handleAgentReviewMove);
@@ -724,4 +784,7 @@ export function unmount() {
     _agentsDone = 0;
     _agentsTotal = 0;
     _currentGameId = null;
+    _wantedGameId = null;
+    _pendingJumpIdx = null;
+    _gameCfn = null;
 }

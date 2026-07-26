@@ -19,6 +19,7 @@ import {
     contractChipHtml, bidChipHtml,
 } from '../shared/cards.js';
 import { SEAT_COLOR_VARS } from '../shared/seats.js';
+import { renderBackLink } from '../shared/analyse-back.js';
 
 const docLink = (section) =>
     `<a class="doc-link" href="/about?s=${section}" title="Comment ça marche ?">?</a>`;
@@ -32,6 +33,7 @@ const AVIS = [
 
 const TEMPLATE = `
 <div id="aj-wrap">
+    <a id="aj-back" class="analyse-back hidden" href="#"></a>
     <div id="aj-import" class="prob-box">
         <div class="annonces-title">Analyse du jeu de la carte</div>
         <div class="aj-import-row">
@@ -116,11 +118,17 @@ let worldsSource = null;
 // vient d'un lien de Rejouer ou d'un signet) la vue se monte avant l'ouverture,
 // et sans ce relais la page restait vide sans rien dire.
 let pending = null;
+// Partie d'où l'on vient, quand on arrive depuis Rejouer. Conservée à travers
+// les réécritures d'URL — cf. syncUrl.
+let backGame = null;
 
 function currentReq() { return `aj-${reqId}`; }
 
 function syncUrl(cfn, idx) {
     const q = new URLSearchParams({ cfn, i: String(idx) });
+    // Partie d'origine : ne décrit pas la position, mais l'effacer priverait
+    // l'URL de son chemin de retour au premier changement de coup.
+    if (backGame) q.set('from', backGame);
     history.replaceState(null, '', `${window.location.pathname}?${q}`);
 }
 
@@ -456,7 +464,7 @@ export function mount(container) {
     container.innerHTML = TEMPLATE;
     reqId = 0;
     position = null; truth = null; opinions = null; rows = null;
-    progress = null; worldsSource = null; pending = null;
+    progress = null; worldsSource = null; pending = null; backGame = null;
 
     onOpen(flushPending);
     onMessage('card_analysis_position', onPosition);
@@ -478,6 +486,13 @@ export function mount(container) {
     const params = new URLSearchParams(window.location.search);
     const cfn = params.get('cfn');
     const idx = parseInt(params.get('i'), 10);
+
+    // Retour explicite vers la partie. Ne dépend pas de l'historique du
+    // navigateur, donc marche aussi sur un lien partagé ou un signet — là où le
+    // bouton Retour ramènerait ailleurs, voire hors du site.
+    backGame = params.get('from');
+    renderBackLink('aj-back', backGame, params.get('i'));
+
     if (cfn) {
         document.getElementById('aj-cfn').value = cfn;
         document.getElementById('aj-idx').value = Number.isFinite(idx) ? String(idx) : '0';
@@ -495,4 +510,5 @@ export function unmount() {
     offMessage('card_analysis_error', onError);
     reqId += 1;  // les messages en vol deviennent périmés
     position = null; truth = null; opinions = null; rows = null; pending = null;
+    backGame = null;
 }

@@ -137,6 +137,14 @@ export function init() {
         const href = link.getAttribute('href');
         // Only handle local paths (not external links, ws://, etc.)
         if (!href || href.startsWith('http') || href.startsWith('//')) return;
+        // Laisser le navigateur faire son travail quand l'utilisateur demande
+        // explicitement autre chose qu'une navigation en place : Ctrl/⌘+clic et
+        // clic-milieu ouvrent un onglet, Maj+clic une fenêtre, Alt+clic
+        // télécharge, `target` désigne une autre cible. Sans ces gardes, un
+        // pushState avalait la demande et TOUS les liens de l'app étaient
+        // condamnés à l'onglet courant.
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        if (link.target && link.target !== '_self') return;
         e.preventDefault();
         navigateTo(href);
     });

@@ -5,6 +5,7 @@ import { send, onMessage, offMessage } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, renderHand, renderHandMini, actionName, bidChipHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
 import { suitHtml, createSuitPicker } from '../shared/suits.js';
 import { SEAT_COLOR_VARS } from '../shared/seats.js';
+import { renderBackLink } from '../shared/analyse-back.js';
 import * as wasmBridge from '../wasm-bridge.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -25,6 +26,7 @@ const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', 
 
 
 const TEMPLATE = `
+<a id="annonces-back" class="analyse-back hidden" href="#"></a>
 <div id="annonces-top-row">
     <aside id="annonces-saved">
         <div id="annonces-saved-head">
@@ -164,6 +166,10 @@ function currentForced() {
     return t ? t.forced : null;
 }
 
+// Partie d'origine, quand on arrive depuis Rejouer. Conservée telle quelle à
+// travers les réécritures d'URL — cf. syncUrl.
+let backParams = {};
+
 // Keep the URL in sync with the current hand/history, hand as two-char card
 // codes ("7S,KH,...") rather than raw indices.
 function syncUrl() {
@@ -173,6 +179,13 @@ function syncUrl() {
     }
     if (annoncesHistory.length > 0) {
         parts.push('history=' + annoncesHistory.join(','));
+    }
+    // `from`/`i` désignent la partie d'où l'on vient : ils ne décrivent pas la
+    // main, mais les effacer à la première carte cliquée rendrait l'URL non
+    // rechargeable et non partageable avec son chemin de retour.
+    for (const key of ['from', 'i']) {
+        const v = backParams[key];
+        if (v) parts.push(`${key}=${encodeURIComponent(v)}`);
     }
     history.replaceState(null, '', window.location.pathname + (parts.length ? '?' + parts.join('&') : ''));
 }
@@ -1492,6 +1505,9 @@ export function mount(container) {
     const params = new URLSearchParams(window.location.search);
     const handParam = params.get('hand');
     const histParam = params.get('history');
+    // Retour vers la partie d'où l'on vient, quand on arrive depuis Rejouer.
+    backParams = { from: params.get('from'), i: params.get('i') };
+    renderBackLink('annonces-back', backParams.from, backParams.i);
     if (handParam) {
         annoncesHand = new Set(handParam.split(',').map(parseCardToken).filter(n => n >= 0 && n < 32));
     }
@@ -1581,5 +1597,6 @@ export function unmount() {
     tabs = [];
     activeTabId = null;
     v6BestAction = null;
+    backParams = {};
     oracleState = null;
 }

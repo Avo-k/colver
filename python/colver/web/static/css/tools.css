@@ -3595,7 +3595,11 @@
     font-size: var(--fs-xs);
 }
 .an-dd-table td:first-child { font-family: inherit; }
+/* Rendu en <a> et non en <button>, pour que Ctrl+clic ouvre un onglet : d'où
+   `display` et `text-decoration`, qu'un bouton fournissait gratuitement. */
 .an-bid-analyse-btn {
+    display: inline-block;
+    text-decoration: none;
     margin-top: 6px;
     padding: 4px 10px;
     font-size: var(--fs-2xs);
@@ -4022,4 +4026,25 @@
 @media (max-width: 800px) {
     #aj-position-grid { grid-template-columns: 1fr; }
     #aj-wrap { padding: var(--sp-2); }
+}
+
+/* Lien « ← Retour à la partie » des pages d'analyse. Discret : c'est un chemin
+   de sortie, pas l'action principale de la page. */
+.analyse-back {
+    display: inline-block;
+    /* `#aj-wrap` est un flex en colonne : sans ça, l'ancre est étirée sur toute
+       la largeur et le liseré fait une barre au lieu d'un bouton. */
+    align-self: flex-start;
+    margin: var(--sp-2) 0 0 var(--sp-3);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--fs-xs);
+    color: var(--c-text-muted);
+    text-decoration: none;
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-sm);
+}
+.analyse-back:hover {
+    color: var(--c-text);
+    border-color: var(--c-border-strong);
+    background: var(--c-surface-1);
 }
