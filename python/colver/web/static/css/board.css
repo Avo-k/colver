@@ -400,9 +400,11 @@
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config label {
     font-size: var(--fs-lg);
 }
-#app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config select {
+#app:has(#play-config):not(:has(#play-table:not(.hidden))) .mode-btn {
+    padding: var(--sp-3) var(--sp-5);
+}
+#app:has(#play-config):not(:has(#play-table:not(.hidden))) .mode-btn-label {
     font-size: var(--fs-lg);
-    padding: 7px 10px;
 }
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config #start-game {
     font-size: var(--fs-xl);

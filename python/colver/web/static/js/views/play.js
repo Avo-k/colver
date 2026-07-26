@@ -6,51 +6,53 @@ import { navigateTo } from '../router.js';
 
 // ===== Template =====
 
+const MODE_KEY = 'colver_play_mode';
+const MODES = {
+    standard: { label: 'Standard', bot: 'Dédé', hint: '≈ 40 s la donne' },
+    rapide: { label: 'Rapide', bot: 'DouDou50', hint: '≈ 15 s la donne' },
+};
+
 const TEMPLATE = `
 <div id="play-config">
     <p id="play-intro">Jouez à la Belote Contrée contre l'IA.</p>
-    <label>Adversaires :
-        <select id="opponent-ai">
-            <option value="dede">Dédé (IS-DD)</option>
-            <option value="doudou">DouDou50</option>
-            <option value="oracle_dd">Oracle (DD)</option>
-        </select>
-    </label>
-    <label>Partenaire :
-        <select id="partner-ai">
-            <option value="dede">Dédé (IS-DD)</option>
-            <option value="doudou">DouDou50</option>
-            <option value="oracle_dd">Oracle (DD)</option>
-        </select>
-    </label>
-    <label>Pause :
-        <input type="range" id="move-delay" min="1" max="8" value="2" step="1" style="width:80px">
-        <span id="move-delay-val">2s</span>
-    </label>
+    <div id="mode-choice" class="mode-choice">
+        ${Object.entries(MODES).map(([key, m]) => `
+        <button type="button" class="mode-btn" data-mode="${key}">
+            <span class="mode-btn-label">${m.label}</span>
+            <span class="mode-btn-sub">${m.bot} · ${m.hint}</span>
+        </button>`).join('')}
+    </div>
+    <p id="mode-note" class="mode-note hidden"></p>
     <button id="start-game">Nouvelle Partie</button>
 </div>
 ` + TABLE_TEMPLATE;
 
 let table = null;
+// The mode picks the tempo *and* the bot: a fast tempo only makes sense behind
+// a bot that answers instantly, so the two are one choice. Server-side truth
+// lives in python/colver/web/pacing.py.
+let currentMode = 'standard';
 
-function getMoveDelay() {
-    return parseInt(document.getElementById('move-delay').value);
+function setMode(mode) {
+    currentMode = Object.hasOwn(MODES, mode) ? mode : 'standard';
+    localStorage.setItem(MODE_KEY, currentMode);
+    for (const btn of document.querySelectorAll('#mode-choice .mode-btn')) {
+        btn.classList.toggle('mode-btn-active', btn.dataset.mode === currentMode);
+    }
 }
 
 // ===== WS message handlers (stored for offMessage) =====
 
 function handleGameState(data) {
     table.handleGameState(data);
-    // Disable DouDou options if not available on server
-    if (data.doudou_available === false) {
-        for (const selId of ['opponent-ai', 'partner-ai']) {
-            const opt = document.querySelector(`#${selId} option[value="doudou"]`);
-            if (opt) {
-                opt.disabled = true;
-                opt.textContent = 'DouDou50 (non dispo)';
-            }
-            const sel = document.getElementById(selId);
-            if (sel.value === 'doudou') sel.value = 'smart';
+    // The server resolves the mode: say so when it could not seat the bot the
+    // mode advertises, instead of silently playing a different opponent.
+    const note = document.getElementById('mode-note');
+    if (note && data.mode) {
+        note.classList.toggle('hidden', !data.mode_degraded);
+        if (data.mode_degraded) {
+            note.textContent = 'DouDou50 est indisponible sur le serveur : '
+                + 'Dédé prend sa place, avec un budget de réflexion réduit.';
         }
     }
 }
@@ -72,7 +74,7 @@ export function mount(container) {
 
     table = new GameTable({
         sendMove: (action) => send({
-            type: 'play', action, human_seat: MY_SEAT, move_delay: getMoveDelay(),
+            type: 'play', action, human_seat: MY_SEAT,
         }),
         localEchoBids: true,
         resultButtons: [
@@ -92,21 +94,19 @@ export function mount(container) {
     });
     table.bind();
 
-    document.getElementById('move-delay').addEventListener('input', (e) => {
-        document.getElementById('move-delay-val').textContent = `${e.target.value}s`;
-    });
+    for (const btn of document.querySelectorAll('#mode-choice .mode-btn')) {
+        btn.addEventListener('click', () => setMode(btn.dataset.mode));
+    }
+    setMode(localStorage.getItem(MODE_KEY));
 
     document.getElementById('play-config-toggle').addEventListener('click', () => {
         document.getElementById('play-config').classList.toggle('config-shown');
     });
 
     document.getElementById('start-game').addEventListener('click', () => {
-        const opponentAi = document.getElementById('opponent-ai').value;
-        const partnerAi = document.getElementById('partner-ai').value;
         table.reset();
         send({
-            type: 'start_game', opponent_ai: opponentAi, partner_ai: partnerAi,
-            human_seat: MY_SEAT, move_delay: getMoveDelay(),
+            type: 'start_game', mode: currentMode, human_seat: MY_SEAT,
         });
         table.show();
         document.getElementById('play-status').textContent = 'Lancement de la partie...';

@@ -1,0 +1,103 @@
+"""Bot pacing modes — how fast the table plays, and which bot sits at it.
+
+Two bundles, `standard` and `rapide`. Each pairs a bot with a display tempo,
+and the pairing is not cosmetic: an IS-DD search costs real wall-clock per
+move, so a fast tempo is only honest behind a bot that answers instantly.
+Dédé gets the slow tempo (its thinking hides inside the pause), DouDou50 gets
+the fast one (~1 ms of inference, so the pause is pure display).
+
+All four seats always run the same bot — a table where the partner is weaker
+than the opponents tells you nothing about how well you played.
+
+Card and trick pauses decay linearly across the 8 tricks: late tricks carry
+fewer real decisions, so they need less time to read. `standard` keeps a floor
+so that even at trick 8 a human can still see who cut and who took it.
+"""
+
+import asyncio
+
+MODES = {
+    "standard": {
+        "bot": "dede",
+        "think_ms": 1200,
+        "card": (1.4, 0.9),    # (trick 1, trick 8)
+        "trick": (1.6, 1.2),
+        "bid": 0.9,
+    },
+    "rapide": {
+        "bot": "doudou",
+        # Only consulted on the degraded path below: DouDou50 ignores it.
+        "think_ms": 400,
+        "card": (0.6, 0.25),
+        "trick": (0.5, 0.3),
+        "bid": 0.35,
+    },
+}
+
+DEFAULT_MODE = "standard"
+
+_LAST_TRICK = 7  # 0-based index of the 8th trick
+
+
+def normalize(mode):
+    """Coerce anything a client sent into a known mode name."""
+    return mode if mode in MODES else DEFAULT_MODE
+
+
+def resolve(mode, doudou_available=True):
+    """Mode name -> (bot type, IS-DD budget in ms, degraded flag).
+
+    `degraded` is True when the mode's bot is unavailable and we fell back to
+    Dédé on a short budget. The caller is expected to say so rather than
+    silently seat a different bot than the one advertised.
+    """
+    mode = normalize(mode)
+    spec = MODES[mode]
+    bot = spec["bot"]
+    if bot == "doudou" and not doudou_available:
+        return "dede", spec["think_ms"], True
+    return bot, spec["think_ms"], False
+
+
+def _taper(bounds, trick_idx):
+    start, floor = bounds
+    t = max(0, min(_LAST_TRICK, int(trick_idx)))
+    return floor + (start - floor) * (1 - t / _LAST_TRICK)
+
+
+def bid_delay(mode):
+    """Pause after an auction action."""
+    return MODES[normalize(mode)]["bid"]
+
+
+def card_delay(mode, trick_idx):
+    """Pause after a card that does not complete the trick."""
+    return _taper(MODES[normalize(mode)]["card"], trick_idx)
+
+
+def trick_delay(mode, trick_idx):
+    """Hold of a completed trick, before the four cards are swept away."""
+    return _taper(MODES[normalize(mode)]["trick"], trick_idx)
+
+
+def move_delay(mode, phase, tricks_completed):
+    """Pause for a non-trick-completing action, from the surrounding state.
+
+    `phase` / `tricks_completed` come straight off the env (0 = bidding).
+    """
+    if int(phase) == 0:
+        return bid_delay(mode)
+    return card_delay(mode, tricks_completed)
+
+
+async def hold(target, elapsed=0.0):
+    """Sleep whatever is left of `target` after `elapsed` seconds already spent.
+
+    Bot thinking counts *toward* the pause instead of adding to it, so the
+    tempo a player sees is the same whichever bot is seated — otherwise Dédé's
+    1.2 s of search would stack on top of every pause and the standard mode
+    would run at nearly twice its advertised pace.
+    """
+    rest = target - elapsed
+    if rest > 0:
+        await asyncio.sleep(rest)

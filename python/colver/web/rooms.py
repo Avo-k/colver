@@ -12,13 +12,14 @@ only at broadcast time.
 
 import asyncio
 import random
+import time
 
 import colver.web.database as db
+import colver.web.pacing as pacing
 from colver.web.game_manager import PlaySession, only_pass_is_legal
 
 ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
-BOT_TYPES = ("dede", "doudou", "oracle_dd")
 
 ROOMS = {}        # code -> Room
 USER_ROOM = {}    # user_id -> code
@@ -99,13 +100,28 @@ class Room:
         self.members = {}             # user_id -> {"username": str, "ws": ws|None}
         self.seats = [None] * 4       # physical seat -> user_id | None
         self.status = "lobby"         # lobby | playing | finished
-        self.bot_type = "dede"
-        self.move_delay = 2.0
+        # One host-chosen mode bundles the tempo and the bot the empty seats
+        # run; see pacing.py.
+        self.mode = pacing.DEFAULT_MODE
         self.session = None
         self.game_id = None
         self.task = None
         self.action_queue = asyncio.Queue()
         self.waiting_for = None       # physical seat awaited, or None
+
+    # ----- mode -----
+
+    def _resolved_mode(self):
+        """(bot, IS-DD budget, degraded) for the room's mode.
+
+        `models["dmc"]` is already None when DouDou50's weights are missing, so
+        that doubles as the availability check.
+        """
+        return pacing.resolve(self.mode, self.models.get("dmc") is not None)
+
+    @property
+    def bot_type(self):
+        return self._resolved_mode()[0]
 
     # ----- membership -----
 
@@ -142,8 +158,9 @@ class Room:
             "seats": seats,
             "you_seat": self.seat_of(for_user_id),
             "is_host": for_user_id == self.host_id,
+            "mode": self.mode,
             "bot_type": self.bot_type,
-            "move_delay": self.move_delay,
+            "mode_degraded": self._resolved_mode()[2],
             "members": [self.username(uid) for uid in self.members],
             "game_id": self.game_id,
         }
@@ -243,17 +260,18 @@ class Room:
 
     async def start(self):
         humans = [uid for uid in self.seats if uid is not None]
-        ai_types = {i: self.bot_type for i, uid in enumerate(self.seats) if uid is None}
+        bot, think_ms, _degraded = self._resolved_mode()
+        ai_types = {i: bot for i, uid in enumerate(self.seats) if uid is None}
         first_human_seat = next(i for i, uid in enumerate(self.seats) if uid is not None)
 
         loop = asyncio.get_event_loop()
         self.session = await loop.run_in_executor(None, lambda: PlaySession(
             ai_types=ai_types,
             human_seat=first_human_seat,
-            dmc_model_path=self.models.get("dmc") if "doudou" in ai_types.values() else None,
+            dmc_model_path=self.models.get("dmc") if bot == "doudou" else None,
             bid_model_path=self.models.get("bid"),
             belief_model_path=self.models.get("belief"),
-            dede_time_ms=int(self.move_delay * 1000),
+            dede_time_ms=think_ms,
         ))
 
         agents_map = {}
@@ -286,11 +304,18 @@ class Room:
                 p = int(session.env.current_player())
                 if self.seats[p] is None or only_pass_is_legal(session.env):
                     # Bot turn — or a human seat with nothing to decide, its
-                    # only legal bid being pass. Pacing pause, then compute off
-                    # the event loop.
-                    await asyncio.sleep(self.move_delay)
+                    # only legal bid being pass. Compute off the event loop
+                    # first, then hold the position for whatever is left of the
+                    # mode's target: the search is spent inside the pause, not
+                    # added to it. The position on screen is unchanged either
+                    # way, so this only removes dead time.
+                    target = pacing.move_delay(
+                        self.mode, session.env.phase(),
+                        sum(session.env.get_tricks_won()))
+                    t0 = time.monotonic()
                     action, _name, _state = await loop.run_in_executor(
                         None, session.play_ai_turn)
+                    await pacing.hold(target, time.monotonic() - t0)
                 else:
                     # Human turn: wait for a valid action from that seat
                     self.waiting_for = p
@@ -361,7 +386,10 @@ class Room:
         if session.trick_just_completed:
             session.trick_just_completed = False
             await self.broadcast_game_state(snapshot=True)
-            await asyncio.sleep(self.move_delay)
+            # tricks_won is post-increment, so the trick just completed is one
+            # below the count.
+            await asyncio.sleep(
+                pacing.trick_delay(self.mode, sum(session.env.get_tricks_won()) - 1))
             await self.broadcast_game_state()
         else:
             await self.broadcast_game_state()
@@ -501,10 +529,8 @@ async def handle_message(user, ws, data, models):
             await room.broadcast_lobby()
     elif msg_type == "room_config":
         if user["id"] == room.host_id and room.status != "playing":
-            if data.get("bot_type") in BOT_TYPES:
-                room.bot_type = data["bot_type"]
-            if "move_delay" in data:
-                room.move_delay = max(1.0, min(8.0, float(data["move_delay"])))
+            if data.get("mode") in pacing.MODES:
+                room.mode = data["mode"]
             await room.broadcast_lobby()
     elif msg_type == "room_start":
         if user["id"] != room.host_id:

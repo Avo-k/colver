@@ -125,7 +125,7 @@ class AgentTable:
             agent.init_deal(env)
 
     def set_time_ms(self, ms):
-        """Retune the per-move budget (the UI speed slider) without rebuilding."""
+        """Retune the per-move budget without rebuilding (the Regarder page)."""
         for agent in self.agents.values():
             agent.set_time_ms(int(ms))
 

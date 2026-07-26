@@ -7,6 +7,12 @@ import { navigateTo } from '../router.js';
 const base = () => document.querySelector('base')?.getAttribute('href') || '/';
 
 const BOT_LABELS = { dede: 'Dédé', doudou: 'DouDou', oracle_dd: 'Oracle' };
+// Same bundles as the solo view and pacing.py: one host choice sets both the
+// tempo and which bot fills the empty seats.
+const MODES = {
+    standard: { label: 'Standard', bot: 'Dédé', hint: '≈ 40 s la donne' },
+    rapide: { label: 'Rapide', bot: 'DouDou50', hint: '≈ 15 s la donne' },
+};
 const SEAT_TITLES = ['Nord', 'Est', 'Sud', 'Ouest'];
 
 const TEMPLATE = `
@@ -34,17 +40,14 @@ const TEMPLATE = `
         <p class="salon-desc">Partagez ce code pour inviter d'autres joueurs.</p>
         <div class="salon-seats" id="salon-seats"></div>
         <div id="salon-host-controls" class="salon-host-controls hidden">
-            <label>Bots :
-                <select id="salon-bot-type">
-                    <option value="dede">Dédé (IS-DD)</option>
-                    <option value="doudou">DouDou50</option>
-                    <option value="oracle_dd">Oracle (DD)</option>
-                </select>
-            </label>
-            <label>Pause :
-                <input type="range" id="salon-move-delay" min="1" max="8" value="2" step="1" style="width:80px">
-                <span id="salon-move-delay-val">2s</span>
-            </label>
+            <div id="salon-mode-choice" class="mode-choice">
+                ${Object.entries(MODES).map(([key, m]) => `
+                <button type="button" class="mode-btn" data-mode="${key}">
+                    <span class="mode-btn-label">${m.label}</span>
+                    <span class="mode-btn-sub">${m.bot} · ${m.hint}</span>
+                </button>`).join('')}
+            </div>
+            <p id="salon-mode-note" class="mode-note hidden"></p>
             <button id="salon-start" class="compte-submit">Lancer la partie</button>
         </div>
         <div id="salon-lobby-status" class="salon-lobby-status"></div>
@@ -113,9 +116,15 @@ function renderLobby(data) {
     const hostControls = document.getElementById('salon-host-controls');
     hostControls.classList.toggle('hidden', !data.is_host);
     if (data.is_host) {
-        document.getElementById('salon-bot-type').value = data.bot_type;
-        document.getElementById('salon-move-delay').value = data.move_delay;
-        document.getElementById('salon-move-delay-val').textContent = `${data.move_delay}s`;
+        for (const btn of document.querySelectorAll('#salon-mode-choice .mode-btn')) {
+            btn.classList.toggle('mode-btn-active', btn.dataset.mode === data.mode);
+        }
+        const note = document.getElementById('salon-mode-note');
+        note.classList.toggle('hidden', !data.mode_degraded);
+        if (data.mode_degraded) {
+            note.textContent = 'DouDou50 est indisponible sur le serveur : '
+                + 'Dédé prend sa place, avec un budget de réflexion réduit.';
+        }
     }
 
     const statusEl = document.getElementById('salon-lobby-status');
@@ -237,13 +246,11 @@ export async function mount(container) {
     document.getElementById('salon-start').addEventListener('click', () => {
         send({ type: 'room_start' });
     });
-    document.getElementById('salon-bot-type').addEventListener('change', (e) => {
-        send({ type: 'room_config', bot_type: e.target.value });
-    });
-    document.getElementById('salon-move-delay').addEventListener('input', (e) => {
-        document.getElementById('salon-move-delay-val').textContent = `${e.target.value}s`;
-        send({ type: 'room_config', move_delay: parseFloat(e.target.value) });
-    });
+    for (const btn of document.querySelectorAll('#salon-mode-choice .mode-btn')) {
+        btn.addEventListener('click', () => {
+            send({ type: 'room_config', mode: btn.dataset.mode });
+        });
+    }
 
     onMessage('room_state', handleRoomState);
     onMessage('room_none', handleRoomNone);
