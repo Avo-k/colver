@@ -266,6 +266,9 @@ def _doudou_new_stats():
         "opp_overbid": 0,                   # deals where E/W bid over South's bid
         "ns_value_sum": 0,                  # for avg NS contract value
         "pts_ns_sum": 0.0, "pts_ew_sum": 0.0, "pts_n": 0,
+        # Issue de la donne, tous contrats confondus (donne passée = nulle).
+        # Dénominateur = wins_ns + wins_ew + draws = nombre de sims terminées.
+        "deal_wins_ns": 0, "deal_wins_ew": 0, "deal_draws": 0,
     }
 
 
@@ -273,6 +276,7 @@ def _doudou_accumulate(cells, stats, dd):
     """Fold one Dédé sim result into the aggregates."""
     if dd["void"]:
         stats["voids"] += 1
+        stats["deal_draws"] += 1  # personne ne marque : la donne est nulle
         return
     suit, value, team, achieved = dd["trump"], dd["value"], dd["team"], dd["achieved"]
     col = 9 if value == 250 else (value - 80) // 10
@@ -302,6 +306,12 @@ def _doudou_accumulate(cells, stats, dd):
         stats["pts_ns_sum"] += scores[0]
         stats["pts_ew_sum"] += scores[1]
         stats["pts_n"] += 1
+        if scores[0] > scores[1]:
+            stats["deal_wins_ns"] += 1
+        elif scores[1] > scores[0]:
+            stats["deal_wins_ew"] += 1
+        else:
+            stats["deal_draws"] += 1
 
     auction = dd.get("auction") or []
     taker_seat = None

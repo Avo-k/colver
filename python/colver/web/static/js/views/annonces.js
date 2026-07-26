@@ -82,6 +82,7 @@ const TEMPLATE = `
                     </div>
                     <span id="doudou-stats-text"></span>
                 </div>
+                <div id="doudou-headline"></div>
                 <p class="doudou-explainer">Distributions al\u00e9atoires jou\u00e9es en partie compl\u00e8te par le r\u00e9seau de neurones (ench\u00e8res NN + jeu DMC). Chaque cellule montre le taux de r\u00e9ussite et, en dessous, le nombre de donnes observ\u00e9es. Les cellules peu observ\u00e9es sont estomp\u00e9es\u00a0: leur chiffre est moins fiable. La couleur est d\u00e9termin\u00e9e par un intervalle de confiance (Wilson).</p>
                 <div id="annonces-doudou-body"></div>
             </div>
@@ -697,6 +698,39 @@ function doudouCellCounts(cell, filter) {
     return [cell[0] + cell[2], cell[1] + cell[3]];
 }
 
+// Chiffre-phare : part des donnes où Nord-Sud marque plus que l'adversaire.
+// Le dénominateur inclut les donnes passées (comptées nulles), sinon le taux
+// serait calculé sur un sous-ensemble différent de celui du reste du panneau.
+function renderDoudouHeadline(stats) {
+    if (!stats || stats.deal_wins_ns === undefined) return '';
+    const decided = stats.deal_wins_ns + stats.deal_wins_ew + stats.deal_draws;
+    if (!decided) return '';
+
+    const pct = Math.round(stats.deal_wins_ns / decided * 100);
+    const cls = pct >= 55 ? 'dh-good' : pct <= 45 ? 'dh-bad' : 'dh-even';
+
+    // Les donnes passées ne rapportent rien : `decided` est le bon diviseur
+    // pour une moyenne par donne, pas `pts_n` qui les exclut.
+    const diff = Math.round((stats.pts_ns_sum - stats.pts_ew_sum) / decided);
+    const diffTxt = `${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts par donne`;
+
+    const parts = [diffTxt];
+    if (stats.deal_draws > 0) {
+        parts.push(`${Math.round(stats.deal_draws / decided * 100)}% de donnes nulles`);
+    }
+    parts.push(`${decided} donne${decided > 1 ? 's' : ''} simulée${decided > 1 ? 's' : ''}`);
+
+    const after = forcedAction !== null
+        ? `après ${bidChipHtml(forcedAction)}` : 'sur cette main';
+
+    return `<div class="doudou-headline ${cls}">` +
+        `<span class="dh-pct">${pct}<span class="dh-unit">%</span></span>` +
+        '<span class="dh-text">' +
+        `<span class="dh-main">Nord-Sud gagne la donne ${after}</span>` +
+        `<span class="dh-sub">${parts.join(' · ')}</span>` +
+        '</span></div>';
+}
+
 // Consolidated auction/outcome synthesis over all sims.
 function renderDoudouSynth(stats, completed) {
     const contracts = stats.ns_contracts + stats.ew_contracts;
@@ -761,6 +795,8 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     document.getElementById('doudou-stats-text').textContent = '';
 
     const body = document.getElementById('annonces-doudou-body');
+
+    document.getElementById('doudou-headline').innerHTML = renderDoudouHeadline(doudouStats);
 
     let html = renderDoudouSynth(doudouStats, completed);
 
@@ -841,6 +877,7 @@ function resetDoudouPanel() {
     const panel = document.getElementById('annonces-doudou-panel');
     panel.classList.remove('hidden');
     document.getElementById('annonces-doudou-body').innerHTML = '';
+    document.getElementById('doudou-headline').innerHTML = '';
     document.getElementById('doudou-stats-text').textContent = '';
     const dp = document.getElementById('doudou-progress');
     dp.classList.add('hidden');
