@@ -11,6 +11,22 @@ from colver.web import playgen_gpu
 from colver.web.agents import AGENT_NAMES, AgentTable, decision_stats
 
 
+BID_PASS = 0
+
+
+def only_pass_is_legal(env) -> bool:
+    """Passing is the current player's only legal bid — nothing to decide.
+
+    Rare, but real: once the opponents have coinched our bid and our partner
+    has declined the surcoinche, we cannot surcoinche our own team and the
+    coinche has frozen the contract, so pass is all that is left. Same over a
+    partner's capot, which nobody can outbid. The server plays these itself
+    rather than asking a human to click a single available button.
+    """
+    return (env.phase() == 0 and not env.is_terminal()
+            and list(env.legal_actions()) == [BID_PASS])
+
+
 # ---- Server-wide belief cache -------------------------------------------------
 # Belief weights (NN + playgen) depend only on the game + position + observer, so
 # they can be shared across connections/refreshes. Keyed by the full-game CFN
@@ -258,6 +274,9 @@ class PlaySession(TrickTracker):
 
     def get_ai_action(self):
         player = int(self.env.current_player())
+        if only_pass_is_legal(self.env):
+            # Forced pass: no search worth running, for a bot or a human seat.
+            return BID_PASS
         decision = self.bots.decide(self.env, player)
         if decision is None:
             # No bot seated here (or its models failed to load): fall back to
@@ -460,7 +479,8 @@ class BidProblemSession:
             south_turns = []  # indices into actions where South is to act
             while env.phase() == 0:
                 player = int(env.current_player())
-                if player == 2:
+                # A forced pass is no problem to pose — skip it as a cut point.
+                if player == 2 and not only_pass_is_legal(env):
                     south_turns.append(len(actions))
                 if use_nn:
                     action = int(env.action_bid_nn()["best_action"])

@@ -14,7 +14,7 @@ import asyncio
 import random
 
 import colver.web.database as db
-from colver.web.game_manager import PlaySession
+from colver.web.game_manager import PlaySession, only_pass_is_legal
 
 ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
@@ -284,8 +284,10 @@ class Room:
             await self.broadcast_game_state()
             while not session.env.is_terminal():
                 p = int(session.env.current_player())
-                if self.seats[p] is None:
-                    # Bot turn: pacing pause, then compute off the event loop
+                if self.seats[p] is None or only_pass_is_legal(session.env):
+                    # Bot turn — or a human seat with nothing to decide, its
+                    # only legal bid being pass. Pacing pause, then compute off
+                    # the event loop.
                     await asyncio.sleep(self.move_delay)
                     action, _name, _state = await loop.run_in_executor(
                         None, session.play_ai_turn)

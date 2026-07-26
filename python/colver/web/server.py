@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal
 from colver.web import playgen_gpu as _playgen_gpu
 import colver.web.database as db
 import colver.web.elo as elo
@@ -1377,8 +1377,15 @@ async def _complete_game(game_id, session):
 
 
 async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
-    """Auto-play AI turns until human's turn or game over."""
-    while not session.env.is_terminal() and session.env.current_player() != human_seat:
+    """Auto-play AI turns until human's turn or game over.
+
+    A forced pass on the human's seat counts as an AI turn: when passing is the
+    only legal bid there is nothing to decide, so the server plays it instead of
+    waiting for a click on the single available button.
+    """
+    while not session.env.is_terminal() and (
+            session.env.current_player() != human_seat
+            or only_pass_is_legal(session.env)):
         action, name, state = session.play_ai_turn()
         player = session.history[-1]["player"]
         ai_msg = {
@@ -1387,6 +1394,9 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             "action": action,
             "name": name,
         }
+        if player == human_seat:
+            # Our own seat, played for us — the client's local echo never fired.
+            ai_msg["auto"] = True
         if session._belote_event:
             ai_msg["belote_event"] = session._belote_event
             ai_msg["belote_player"] = session._belote_player

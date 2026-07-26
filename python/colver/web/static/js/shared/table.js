@@ -213,9 +213,10 @@ export class GameTable {
 
     handleMove(data) {
         if (data.player !== undefined) {
-            // In multi the server echoes our own move too — we appended locally
-            // only when localEchoBids is on, so skip the duplicate then.
-            const isOwnEcho = this.localEchoBids && data.player === MY_SEAT;
+            // In multi the server echoes our own move too, and in solo it
+            // echoes a pass it played for us (`auto`) — neither was echoed
+            // locally, so only a bid we actually clicked is a duplicate.
+            const isOwnEcho = this.localEchoBids && data.player === MY_SEAT && !data.auto;
             if (!isOwnEcho) {
                 const name = actionName(data.action, 0);
                 this.bidHistory.push({ player: data.player, action: data.action, name });
@@ -276,6 +277,10 @@ export class GameTable {
         const isMyTurn = state.current_player === MY_SEAT && !state.is_terminal;
         const isPlayPhase = state.phase === 1;
         const isBidPhase = state.phase === 0;
+        // Pass as our sole legal bid: nothing to decide, the server plays it.
+        const forcedPass = isMyTurn && isBidPhase
+            && state.legal_actions && state.legal_actions.length === 1
+            && state.legal_actions[0] === 0;
 
         const legalSet = (isMyTurn && isPlayPhase) ? new Set(state.legal_actions) : null;
         const trumpSuit = (state.contract && state.contract.trump !== undefined) ? state.contract.trump : -1;
@@ -337,7 +342,10 @@ export class GameTable {
             bidHistoryPanel.classList.add('hidden');
             this.renderBidHistory();
             const bidControls = document.getElementById('bid-controls');
-            if (isMyTurn) {
+            // Forced pass (our side coinched then partner declined the
+            // surcoinche, or partner's capot): the server passes for us, so
+            // don't put up a panel whose only button is "Passer".
+            if (isMyTurn && !forcedPass) {
                 bidControls.classList.remove('hidden');
                 this.showBidControls(state.legal_actions, state);
             } else {
@@ -354,6 +362,9 @@ export class GameTable {
             this.showGameResult(state);
             this.showEndOfGameReview(state);
             document.getElementById('play-status').textContent = '';
+        } else if (forcedPass) {
+            document.getElementById('play-status').textContent =
+                'Vous ne pouvez que passer — passe automatique';
         } else if (isMyTurn) {
             document.getElementById('play-status').textContent = isBidPhase ? '' : 'A vous de jouer';
             SFX.yourTurn();
