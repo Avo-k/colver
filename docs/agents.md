@@ -107,7 +107,7 @@ The same TOML the arena reads, and what the PyO3 `Agent` takes:
 
 ```toml
 [bid]
-strategy = "nn"        # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn
+strategy = "nn"        # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn|playgen
 model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 hidden = 512
 penalty = 0.0          # discount on high bids (counters DD-trained optimism)

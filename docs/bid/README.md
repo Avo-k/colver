@@ -18,6 +18,12 @@ Dueling DQN, hidden size auto-detected from the weight file (tries 256, 512,
 
 ## Strategies
 
+**`playgen`** — playgen v2's own 43-way auction head used directly as a bidder
+(`strategy = "playgen"`, `model = models/playgen/playgen_v2_final.bin`). A behaviour
+clone of v6, not score-aware, yet within ~1-3 pp of it: 48.2% h2h over 3000 matches,
+61.6% vs `nn_v2_dmc50` where v6 scores 65.0%. See
+[experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md).
+
 Deterministic and learned bidders. Implementation: [colver-core/src/bid/bid_eval/](../../colver-core/src/bid/bid_eval/).
 
 - [strategies/guide_encheres.md](strategies/guide_encheres.md) — high-level guide to bidding strategies

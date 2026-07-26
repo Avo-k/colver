@@ -238,3 +238,88 @@ fn sample_softmax(candidates: &[(u8, f32)], temperature: f32, rng: &mut StdRng) 
     }
     candidates.last().unwrap().0
 }
+
+/// Playgen's own auction head used directly as a bidder.
+///
+/// The v2 world sampler carries a 43-way bid head, trained by next-token prediction
+/// on games whose auctions came from bid v6. It is therefore a behaviour clone of v6
+/// rather than an independent strategy, and it is *not* score-aware: the corpus was
+/// generated on standalone deals at 0-0, so nothing in the prefix tells it the match
+/// score. What it measures is how much auction structure the transformer captured
+/// while learning to sample worlds.
+///
+/// It needs the whole visible prefix, so it tracks the deal from the start through
+/// `init_deal` / `observe` exactly as the world source does.
+pub struct PlaygenBidPolicy {
+    model: Arc<crate::playgen::infer::PlaygenModel>,
+    sampler: Option<crate::playgen::infer::PlaygenSampler>,
+    seat: u8,
+    temperature: f32,
+    rng: StdRng,
+    /// Fallback when the sampler cannot answer (over-long auction, non-v2 model).
+    fallback: BidFunction,
+}
+
+impl PlaygenBidPolicy {
+    pub fn new(
+        model: Arc<crate::playgen::infer::PlaygenModel>,
+        seat: u8,
+        temperature: f32,
+        seed: u64,
+    ) -> Self {
+        PlaygenBidPolicy {
+            model,
+            sampler: None,
+            seat,
+            temperature,
+            rng: StdRng::seed_from_u64(seed),
+            fallback: BidFunction::ImprovedV2,
+        }
+    }
+}
+
+impl BidPolicy for PlaygenBidPolicy {
+    fn init_deal(&mut self, state: &GameState) {
+        let mut s = crate::playgen::infer::PlaygenSampler::new(self.model.clone());
+        s.init_deal(state, self.seat);
+        self.sampler = Some(s);
+    }
+
+    fn observe(&mut self, state_before: &GameState, player: u8, action: u8) {
+        if let Some(s) = self.sampler.as_mut() {
+            s.record_action(state_before, player, action);
+        }
+    }
+
+    fn decide(&mut self, state: &GameState, _ctx: &MatchContext) -> Result<Decision, AgentError> {
+        let legal = state.legal_actions();
+        let logits = self.sampler.as_mut().and_then(|s| s.bid_policy(state));
+        let Some(logits) = logits else {
+            return Ok(Decision::bare(self.fallback.bid(state), "playgen_bid_fallback"));
+        };
+
+        let action = if self.temperature > 0.0 {
+            Some(crate::playgen::infer::sample_bid_masked(
+                &logits,
+                legal,
+                self.temperature,
+                &mut self.rng,
+            ))
+        } else {
+            let mut best = 0u8;
+            let mut bv = f32::NEG_INFINITY;
+            for a in 0..crate::bid_obs::BID_MASK_DIM {
+                if legal & (1u64 << a) != 0 && logits[a] > bv {
+                    bv = logits[a];
+                    best = a as u8;
+                }
+            }
+            Some(best)
+        };
+
+        match action {
+            Some(a) if legal & (1u64 << a) != 0 => Ok(Decision::bare(a, "playgen_bid")),
+            _ => Ok(Decision::bare(self.fallback.bid(state), "playgen_bid_fallback")),
+        }
+    }
+}

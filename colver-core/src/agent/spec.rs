@@ -9,7 +9,7 @@
 //!
 //! ```toml
 //! [bid]
-//! strategy = "nn"                 # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn
+//! strategy = "nn"                 # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn|playgen
 //! model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 //!
 //! [play]
@@ -305,12 +305,24 @@ impl AgentSpec {
     /// Instantiate this spec for one seat.
     pub fn build(&self, seat: u8) -> Result<Box<dyn Player>, AgentError> {
         let seed = self.seed ^ ((seat as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-        let bid = self.build_bid(seed)?;
+        let bid = self.build_bid(seat, seed)?;
         let play = self.build_play(seat, seed)?;
         Ok(Box::new(ComposedPlayer::new(self.label(), seat, bid, play)))
     }
 
-    fn build_bid(&self, seed: u64) -> Result<Box<dyn BidPolicy>, AgentError> {
+    fn build_bid(&self, seat: u8, seed: u64) -> Result<Box<dyn BidPolicy>, AgentError> {
+        if self.bid.strategy == "playgen" {
+            let path = self.bid.model.as_deref().ok_or_else(|| {
+                AgentError::Config("bid strategy 'playgen' requires a model path".into())
+            })?;
+            let model = models::playgen_model(path)?;
+            return Ok(Box::new(super::bid::PlaygenBidPolicy::new(
+                model,
+                seat,
+                self.bid.temperature,
+                seed,
+            )));
+        }
         if self.bid.strategy == "nn" {
             let path = self.bid.model.as_deref().ok_or_else(|| {
                 AgentError::Config("bid strategy 'nn' requires a model path".into())

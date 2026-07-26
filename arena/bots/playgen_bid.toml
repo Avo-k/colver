@@ -1,0 +1,12 @@
+# Playgen's own 43-way auction head used directly as a bidder.
+# A behaviour clone of bid v6 (the corpus it learned from), and not score-aware —
+# the corpus was generated on standalone deals at 0-0. Play side identical to
+# v6_isdd_75M so the arena delta is purely the bidder.
+[bid]
+strategy = "playgen"
+model = "models/playgen/playgen_v2_final.bin"
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true
