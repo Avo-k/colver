@@ -131,6 +131,21 @@ path = "src/bin/replay_dmc_vs_isdd.rs"
 required-features = ["parallel"]
 
 [[bin]]
+name = "bench_enrich_isdd"
+path = "src/bin/bench_enrich_isdd.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "bench_label_variance"
+path = "src/bin/bench_label_variance.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "bench_bid_label_cond"
+path = "src/bin/bench_bid_label_cond.rs"
+required-features = ["parallel"]
+
+[[bin]]
 name = "bench_solve_window"
 path = "src/bin/bench_solve_window.rs"
 required-features = ["parallel"]
@@ -139,3 +154,28 @@ required-features = ["parallel"]
 name = "bench_tt_size"
 path = "src/bin/bench_tt_size.rs"
 required-features = ["parallel"]
+
+[[bin]]
+name = "bench_suit_prefilter"
+path = "src/bin/bench_suit_prefilter.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "bench_world_richness"
+path = "src/bin/bench_world_richness.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "gen_bid_labels"
+path = "src/bin/gen_bid_labels.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "train_bid_distill"
+path = "src/bin/train_bid_distill.rs"
+required-features = ["dmc_train"]
+
+[[bin]]
+name = "train_bid_cont"
+path = "src/bin/train_bid_cont.rs"
+required-features = ["dmc_train"]

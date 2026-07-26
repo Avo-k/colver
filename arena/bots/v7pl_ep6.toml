@@ -1,0 +1,13 @@
+# v7: v6 fine-tuned by supervised distillation on auction-conditioned bid labels
+# (playgen worlds given the auction prefix, DD-solved, Δ-winprob targets).
+# Play side is byte-identical to v6_isdd_75M so any arena delta is the bidder.
+[bid]
+strategy = "nn"
+model = "models/bid_v7_pl/bid_nn_ep6.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true
