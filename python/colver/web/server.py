@@ -361,9 +361,14 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
     world_total = max(oracle_sims, doudou_sims)
     prior_actions_raw = data.get("prior_actions", None)
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
+    # Identifiant d'onglet côté client : renvoyé tel quel dans chaque message
+    # pour que le flux atterrisse dans l'onglet qui l'a demandé, même si une
+    # analyse plus récente a déjà annulé celle-ci.
+    req_id = data.get("req_id")
 
     if len(hand) != 8:
-        await ws.send_json({"type": "annonces_sim_update", "error": "8 cartes requises"})
+        await ws.send_json({"type": "annonces_sim_update", "req_id": req_id,
+                            "error": "8 cartes requises"})
         return
 
     gen_task = None  # génération de mondes en cours, à annuler en sortie
@@ -524,7 +529,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     completed += 1
 
                 await ws.send_json({
-                    "type": "annonces_sim_update",
+                    "type": "annonces_sim_update", "req_id": req_id,
                     "completed": completed, "total": oracle_sims,
                     "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
                     "success_counts": success_counts,
@@ -537,7 +542,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 fut.cancel()
 
         await ws.send_json({
-            "type": "annonces_sim_done",
+            "type": "annonces_sim_done", "req_id": req_id,
             "completed": completed, "total": oracle_sims,
             "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
             "success_counts": success_counts,
@@ -579,7 +584,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 _doudou_accumulate(doudou_cells, doudou_stats, dd)
 
                 await ws.send_json({
-                    "type": "annonces_doudou_update",
+                    "type": "annonces_doudou_update", "req_id": req_id,
                     "completed": i + 1, "total": doudou_sims,
                     "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
                     "doudou_cells": doudou_cells,
@@ -587,7 +592,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                 })
 
             await ws.send_json({
-                "type": "annonces_doudou_done",
+                "type": "annonces_doudou_done", "req_id": req_id,
                 "completed": doudou_sims, "total": doudou_sims,
                 "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
                 "doudou_cells": doudou_cells,
@@ -598,7 +603,8 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
         return
     except Exception as e:
         try:
-            await ws.send_json({"type": "annonces_sim_update", "error": str(e)})
+            await ws.send_json({"type": "annonces_sim_update", "req_id": req_id,
+                                "error": str(e)})
         except Exception:
             pass
     finally:
@@ -616,12 +622,16 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
     prior_actions = [int(a) for a in prior_actions_raw] if prior_actions_raw else []
     forced_action_raw = data.get("forced_action", None)
     forced_action = int(forced_action_raw) if forced_action_raw is not None else None
+    # Cf. _run_annonces_sim : identifiant d'onglet renvoyé tel quel.
+    req_id = data.get("req_id")
 
     if len(hand) != 8:
-        await ws.send_json({"type": "annonces_doudou_update", "error": "8 cartes requises"})
+        await ws.send_json({"type": "annonces_doudou_update", "req_id": req_id,
+                            "error": "8 cartes requises"})
         return
     if not BID_MODEL_PATH or not DMC_MODEL_PATH:
-        await ws.send_json({"type": "annonces_doudou_update", "error": "Modèles Dédé non disponibles"})
+        await ws.send_json({"type": "annonces_doudou_update", "req_id": req_id,
+                            "error": "Modèles Dédé non disponibles"})
         return
 
     try:
@@ -643,7 +653,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
             for action in prior_actions:
                 env_check.step(action)
             if env_check.phase() != 0 or forced_action not in env_check.legal_actions():
-                await ws.send_json({"type": "annonces_doudou_update",
+                await ws.send_json({"type": "annonces_doudou_update", "req_id": req_id,
                                     "error": "Annonce illégale dans cette situation"})
                 return
 
@@ -660,7 +670,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
                 _doudou_accumulate(doudou_cells, doudou_stats, dd)
 
             await ws.send_json({
-                "type": "annonces_doudou_update",
+                "type": "annonces_doudou_update", "req_id": req_id,
                 "completed": i + 1, "total": num_sims,
                 "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
                 "doudou_cells": doudou_cells,
@@ -668,7 +678,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
             })
 
         await ws.send_json({
-            "type": "annonces_doudou_done",
+            "type": "annonces_doudou_done", "req_id": req_id,
             "completed": num_sims, "total": num_sims,
             "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
             "doudou_cells": doudou_cells,
@@ -679,7 +689,8 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
         return
     except Exception as e:
         try:
-            await ws.send_json({"type": "annonces_doudou_update", "error": str(e)})
+            await ws.send_json({"type": "annonces_doudou_update", "req_id": req_id,
+                                "error": str(e)})
         except Exception:
             pass
 

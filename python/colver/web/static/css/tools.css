@@ -76,6 +76,232 @@
     gap: 12px;
 }
 
+/* ── Barre latérale : mains analysées ──
+   Colonne étroite à gauche, dépliée sur grand écran, réduite à un rail
+   cliquable partout ailleurs. Sous 1024px la rangée passe en colonne (cf. plus
+   bas) : la barre devient alors un bandeau pleine largeur, repliable pareil. */
+#annonces-saved {
+    flex: 0 0 auto;
+    width: 210px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 10px;
+    padding: 10px 8px;
+}
+#annonces-saved.collapsed {
+    width: 34px;
+    padding: 8px 3px;
+    align-items: center;
+}
+#annonces-saved.collapsed #annonces-saved-list,
+#annonces-saved.collapsed #annonces-saved-foot,
+#annonces-saved.collapsed .ann-saved-title,
+#annonces-saved.collapsed .ann-saved-add { display: none; }
+#annonces-saved:not(.collapsed) .ann-saved-rail { display: none; }
+
+#annonces-saved-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ann-saved-title {
+    flex: 1;
+    min-width: 0;
+    color: var(--c-text-muted);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ann-saved-toggle {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    color: #bbb;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+}
+.ann-saved-toggle:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--c-accent);
+    color: var(--c-accent);
+}
+.ann-saved-chevron { display: block; font-size: 14px; }
+#annonces-saved.collapsed .ann-saved-chevron { transform: rotate(180deg); }
+
+.ann-saved-add {
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    font-size: var(--fs-sm);
+    line-height: 1.3;
+}
+.ann-saved-add:disabled { opacity: 0.35; cursor: default; }
+
+/* Rail vertical affiché une fois repliée */
+.ann-saved-rail {
+    writing-mode: vertical-rl;
+    background: none;
+    border: none;
+    color: var(--c-text-muted);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    padding: 6px 0;
+}
+.ann-saved-rail:hover { background: none; color: var(--c-accent); }
+
+#annonces-saved-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.ann-saved-empty {
+    color: #666;
+    font-size: var(--fs-2xs);
+    line-height: 1.4;
+    padding: 6px 2px;
+}
+.ann-saved-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+}
+.ann-saved-row:hover { background: rgba(255, 255, 255, 0.05); }
+.ann-saved-row.current {
+    border-color: color-mix(in srgb, var(--c-accent) 45%, transparent);
+    background: var(--c-accent-a10);
+}
+.ann-saved-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    background: none;
+    border: none;
+    padding: 5px 4px;
+    cursor: pointer;
+    text-align: left;
+}
+/* base.css repeint tout <button> en accent au survol : ces boutons-là sont
+   des zones cliquables transparentes, pas des actions. */
+.ann-saved-body:hover { background: none; }
+.ann-saved-cards { display: flex; flex-wrap: wrap; gap: 1px; }
+.ann-saved-hist { display: flex; flex-wrap: wrap; gap: 2px; }
+.ann-saved-hist .bid-chip { font-size: var(--fs-2xs); padding: 0 4px; }
+.ann-saved-first { color: #666; font-size: var(--fs-2xs); }
+.ann-saved-del {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 15px;
+    line-height: 1;
+    padding: 4px 3px;
+    cursor: pointer;
+}
+.ann-saved-del:hover { background: none; color: var(--c-danger-txt); }
+#annonces-saved-foot { display: flex; }
+#annonces-saved-clear { flex: 1; font-size: var(--fs-2xs); padding: 2px 6px; }
+
+/* ── Onglets d'analyse (une annonce = un onglet) ── */
+#annonces-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 4px;
+}
+.ann-tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: none;
+    border-radius: 7px 7px 0 0;
+    background: rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    margin-bottom: -5px;
+    user-select: none;
+}
+.ann-tab:hover { background: rgba(255, 255, 255, 0.07); }
+.ann-tab.active {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: color-mix(in srgb, var(--c-accent) 50%, transparent);
+    box-shadow: inset 0 2px 0 var(--c-accent);
+}
+.ann-tab.partial { border-style: dashed; }
+.ann-tab.error { border-color: color-mix(in srgb, var(--c-danger-txt) 45%, transparent); }
+.ann-tab-warn {
+    color: var(--c-danger-txt);
+    font-weight: var(--fw-semi);
+    font-size: var(--fs-2xs);
+}
+.ann-tab-tag {
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    letter-spacing: 0.04em;
+}
+.ann-tab-label { display: flex; align-items: center; gap: 5px; }
+.ann-tab-count {
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-variant-numeric: tabular-nums;
+}
+.ann-tab-spin {
+    width: 9px;
+    height: 9px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--c-accent);
+    border-radius: 50%;
+    animation: ann-tab-spin 0.8s linear infinite;
+}
+@keyframes ann-tab-spin { to { transform: rotate(360deg); } }
+.ann-tab-close {
+    background: none;
+    border: none;
+    color: #777;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 1px;
+    cursor: pointer;
+}
+.ann-tab-close:hover { background: none; color: var(--c-danger-txt); }
+
+/* Bandeau « analyse interrompue » sous un tableau partiel */
+.ann-tab-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    color: var(--c-text-muted);
+    font-size: var(--fs-2xs);
+}
+
 /* Annonces hand preview */
 #annonces-hand-preview {
     background: rgba(0, 0, 0, 0.2);
@@ -644,7 +870,7 @@
     display: flex;
     gap: 12px;
     align-items: flex-start;
-    margin-top: 16px;
+    margin-top: 10px;
 }
 
 @container annonces-right (max-width: 620px) {
@@ -1091,6 +1317,31 @@
     #annonces-left {
         overflow-y: visible;
     }
+    /* La colonne devient un bandeau : le rail se couche, la liste s'étale. */
+    #annonces-saved,
+    #annonces-saved.collapsed {
+        width: 100%;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        padding: 8px 10px;
+    }
+    #annonces-saved-head { width: 100%; }
+    #annonces-saved-list {
+        flex: 0 0 auto;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        align-items: flex-start;
+        overflow-x: auto;
+        overflow-y: hidden;
+        width: 100%;
+        max-height: none;
+        padding-bottom: 4px;
+    }
+    .ann-saved-row { flex: 0 0 auto; max-width: 190px; }
+    #annonces-saved-foot { width: 100%; justify-content: flex-end; }
+    #annonces-saved-clear { flex: 0 0 auto; }
+    .ann-saved-rail { writing-mode: horizontal-tb; padding: 0; }
 }
 
 /* ===== PROBLEMES PANELS ===== */

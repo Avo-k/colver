@@ -26,6 +26,20 @@ const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', 
 
 const TEMPLATE = `
 <div id="annonces-top-row">
+    <aside id="annonces-saved">
+        <div id="annonces-saved-head">
+            <button id="annonces-saved-toggle" class="ann-saved-toggle" aria-expanded="true"
+                    title="Replier / déplier"><span class="ann-saved-chevron">‹</span></button>
+            <span class="ann-saved-title">Mains analysées</span>
+            <button id="annonces-saved-add" class="secondary-btn ann-saved-add"
+                    title="Sauvegarder la main courante">+</button>
+        </div>
+        <div id="annonces-saved-list"></div>
+        <div id="annonces-saved-foot">
+            <button id="annonces-saved-clear" class="secondary-btn">Tout effacer</button>
+        </div>
+        <button id="annonces-saved-rail" class="ann-saved-rail" title="Mains analysées">Mains analysées</button>
+    </aside>
     <div id="annonces-left">
         <div id="annonces-config">
             <div id="annonces-header">
@@ -80,6 +94,7 @@ const TEMPLATE = `
             </span>
             <span id="annonces-alt-status" class="hidden"></span>
         </div>
+        <div id="annonces-tabs" class="hidden" role="tablist"></div>
         <div id="annonces-results-area" class="hidden">
             <div class="annonces-result-panel hidden" id="annonces-doudou-panel">
                 <div id="annonces-doudou-header" class="section-title">
@@ -119,9 +134,35 @@ const TEMPLATE = `
 let annoncesHand = new Set();
 let annoncesHistory = [];
 let xgbResults = null; // cached XGB analysis results
-let forcedAction = null; // alternative bid being analysed (null = Bid V6's own choice)
 let actionSelector = null; // paired bid selector for the history-add row
 let altSelector = null;    // paired bid selector for "analyser une autre annonce"
+
+// ── Onglets d'analyse ──
+// Un onglet = une annonce analysée sur la main courante. Le Jeu parfait ne
+// dépend pas de l'annonce (l'Oracle résout les quatre couleurs quoi qu'il
+// arrive) : il est partagé par tous les onglets, seul le Jeu réel est simulé
+// par onglet. Une seule simulation tourne à la fois côté serveur — ouvrir un
+// onglet interrompt celle en cours, qui garde son résultat partiel et peut
+// être relancée.
+let tabs = [];
+let activeTabId = null;
+let tabSeq = 0;
+let v6BestAction = null;   // l'annonce choisie par Bid V6 sur la main courante
+let oracleState = null;    // Jeu parfait, partagé : {counts, completed, total, elapsedMs, synth}
+
+function activeTab() {
+    return tabs.find(t => t.id === activeTabId) || null;
+}
+
+function tabById(id) {
+    return id === undefined || id === null ? null : tabs.find(t => t.id === id) || null;
+}
+
+// L'annonce de l'onglet courant, ou null quand c'est celle de Bid V6.
+function currentForced() {
+    const t = activeTab();
+    return t ? t.forced : null;
+}
 
 // Keep the URL in sync with the current hand/history, hand as two-char card
 // codes ("7S,KH,...") rather than raw indices.
@@ -258,6 +299,8 @@ function updateAnnoncesDisplay() {
 
     const handEl = document.getElementById('annonces-hand-display');
     renderHand(handEl, Array.from(annoncesHand));
+    document.getElementById('annonces-saved-add').disabled = count !== 8;
+    markCurrentSaved();
     syncUrl();
 }
 
@@ -307,6 +350,7 @@ function renderAnnoncesHistory() {
     yourRow.appendChild(yourBadge);
     yourRow.appendChild(yourLabel);
     list.appendChild(yourRow);
+    markCurrentSaved();
     syncUrl();
 }
 
@@ -419,6 +463,13 @@ function handleBidEvalResult(data) {
     document.getElementById('annonces-verdict').classList.remove('hidden');
     document.getElementById('annonces-verdict-action').innerHTML = bidChipHtml(bestAction);
     if (altSelector) altSelector.set(bestAction);
+
+    // L'onglet de base porte « Bid V6 » tant que le réseau n'a pas répondu :
+    // son étiquette devient l'annonce dès qu'on la connaît.
+    v6BestAction = bestAction;
+    renderTabs();
+    const base = tabs.find(t => t.forced === null);
+    if (base && base.id === activeTabId) renderForcedLabel(base);
 
     document.getElementById('annonces-results-header').innerHTML =
         `Bid V6 : ${bidChipHtml(bestAction)} ${docLink('annonces')}`;
@@ -595,7 +646,26 @@ function renderOracleTable(successCounts, completed, total, elapsedMs, oracleSyn
     html += '<div class="oracle-variant-label">Réussite par contrat</div>';
     html += renderOracleStrips(successCounts, completed);
     body.innerHTML = html;
-    highlightOracleCell(forcedAction);
+    highlightOracleCell(currentForced());
+}
+
+// Le Jeu parfait est commun à tous les onglets : on le mémorise ici et on le
+// repeint tel quel à chaque changement d'onglet, seule la case surlignée change.
+function applyOracle(data) {
+    oracleState = {
+        counts: data.success_counts,
+        completed: data.completed,
+        total: data.total,
+        elapsedMs: data.elapsed_ms,
+        synth: data.oracle_synth,
+    };
+    renderOracle();
+}
+
+function renderOracle() {
+    if (!oracleState) return;
+    renderOracleTable(oracleState.counts, oracleState.completed, oracleState.total,
+                      oracleState.elapsedMs, oracleState.synth);
 }
 
 function renderSimViewer(deals, numSims, sources) {
@@ -695,8 +765,9 @@ function confidenceClass(count) {
 }
 
 const DOUDOU_TEAM_LABELS = { all: 'Tous', ns: 'Nord-Sud', ew: 'Est-Ouest' };
+// Préférence d'affichage, volontairement globale : deux onglets comparés
+// doivent montrer la même tranche de contrats.
 let doudouTeamFilter = 'all';
-let lastDoudouData = null; // cached last render args, for filter switching
 
 // Cell = [ns_count, ns_achieved, ew_count, ew_achieved] (legacy 2-tuple tolerated).
 function doudouCellCounts(cell, filter) {
@@ -726,8 +797,9 @@ function renderDoudouHeadline(stats) {
     // synthèse juste en dessous.
     const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts`;
 
-    const after = forcedAction !== null
-        ? `après ${bidChipHtml(forcedAction)}` : 'sur cette main';
+    const forced = currentForced();
+    const after = forced !== null
+        ? `après ${bidChipHtml(forced)}` : 'sur cette main';
 
     return `<div class="doudou-headline ${cls}">` +
         `<span class="dh-pct">${pct}<span class="dh-unit">%</span></span>` +
@@ -795,7 +867,6 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
         return;
     }
     panel.classList.remove('hidden');
-    lastDoudouData = { doudouCells, doudouStats, completed, total, elapsedMs };
 
     updateProgressBar('doudou-progress', completed, total, elapsedMs);
     document.getElementById('doudou-stats-text').textContent = '';
@@ -852,10 +923,51 @@ function renderDoudouTable(doudouCells, doudouStats, completed, total, elapsedMs
     body.querySelectorAll('.doudou-filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             doudouTeamFilter = btn.dataset.filter;
-            const d = lastDoudouData;
-            if (d) renderDoudouTable(d.doudouCells, d.doudouStats, d.completed, d.total, d.elapsedMs);
+            renderDoudou(activeTab());
         });
     });
+}
+
+// Jeu réel de l'onglet `t` : tableau si la simulation a produit quelque chose,
+// message d'attente/erreur sinon.
+function renderDoudou(t) {
+    const panel = document.getElementById('annonces-doudou-panel');
+    panel.classList.remove('hidden');
+    renderForcedLabel(t);
+
+    const body = document.getElementById('annonces-doudou-body');
+
+    if (!t || (!t.doudou && !t.error)) {
+        clearDoudouBody();
+        if (t && t.status === 'running') {
+            body.innerHTML = '<div class="dd-loader"><div class="dd-loader-text">Simulation…</div></div>';
+        } else if (t && t.status === 'partial') {
+            body.appendChild(partialNote(t));
+        }
+        return;
+    }
+    if (t.error) {
+        clearDoudouBody();
+        body.innerHTML = `<div class="annonces-error">${t.error}</div>`;
+        return;
+    }
+    const d = t.doudou;
+    renderDoudouTable(d.cells, d.stats, d.completed, d.total, d.elapsedMs);
+    if (t.status === 'partial') body.appendChild(partialNote(t));
+}
+
+// Une seule simulation tourne à la fois : un onglet laissé en plan garde ce
+// qu'il avait et propose de reprendre.
+function partialNote(t) {
+    const note = document.createElement('div');
+    note.className = 'ann-tab-note';
+    note.innerHTML = '<span>Analyse interrompue par une autre annonce.</span>';
+    const btn = document.createElement('button');
+    btn.className = 'secondary-btn';
+    btn.textContent = 'Relancer';
+    btn.addEventListener('click', () => runDoudouFor(t));
+    note.appendChild(btn);
+    return note;
 }
 
 // Highlight the bandeau cell corresponding to the forced annonce (bid actions 1-40).
@@ -878,10 +990,7 @@ function highlightOracleCell(action) {
     if (cell) cell.classList.add('oracle-forced');
 }
 
-function resetDoudouPanel() {
-    lastDoudouData = null;
-    const panel = document.getElementById('annonces-doudou-panel');
-    panel.classList.remove('hidden');
+function clearDoudouBody() {
     document.getElementById('annonces-doudou-body').innerHTML = '';
     document.getElementById('doudou-headline').innerHTML = '';
     document.getElementById('doudou-stats-text').textContent = '';
@@ -890,34 +999,177 @@ function resetDoudouPanel() {
     dp.classList.remove('done');
     dp.querySelector('.sim-progress-fill').style.width = '0%';
     dp.querySelector('.sim-progress-text').textContent = '';
-    const forcedLabel = document.getElementById('doudou-forced-label');
-    if (forcedLabel) {
-        forcedLabel.innerHTML = forcedAction !== null
-            ? ` — annonce forcée : ${bidChipHtml(forcedAction)}` : '';
+}
+
+function renderForcedLabel(t) {
+    // Rien à dire pour l'onglet de Bid V6 : l'onglet porte déjà son annonce, et
+    // un titre plus long chasse la barre de progression hors de l'en-tête.
+    const el = document.getElementById('doudou-forced-label');
+    if (!el) return;
+    const forced = t ? t.forced : null;
+    el.innerHTML = forced !== null ? ` — annonce forcée : ${bidChipHtml(forced)}` : '';
+}
+
+// ── Onglets : cycle de vie ──
+
+// Crée un onglet pour `forced` (null = l'annonce que Bid V6 choisira lui-même)
+// et l'active, sans lancer la simulation.
+function createTab(forced) {
+    const t = {
+        id: ++tabSeq,
+        forced,
+        hand: Array.from(annoncesHand),
+        history: annoncesHistory.slice(),
+        doudou: null,
+        error: null,
+        status: 'idle',
+    };
+    tabs.push(t);
+    activeTabId = t.id;
+    return t;
+}
+
+function activateTab(id) {
+    const t = tabById(id);
+    if (!t) return;
+    activeTabId = id;
+    renderTabs();
+    renderActiveTab();
+}
+
+function closeTab(id) {
+    const i = tabs.findIndex(t => t.id === id);
+    if (i < 0 || tabs.length <= 1) return;
+    const wasActive = tabs[i].id === activeTabId;
+    tabs.splice(i, 1);
+    if (wasActive) activeTabId = tabs[Math.min(i, tabs.length - 1)].id;
+    renderTabs();
+    renderActiveTab();
+}
+
+function tabLabelHtml(t) {
+    if (t.forced === null) {
+        const chip = v6BestAction !== null ? bidChipHtml(v6BestAction) : '';
+        return `<span class="ann-tab-tag">V6</span>${chip || '<span>Bid V6</span>'}`;
+    }
+    return bidChipHtml(t.forced);
+}
+
+function renderTabs() {
+    const bar = document.getElementById('annonces-tabs');
+    if (!bar) return;
+    bar.classList.toggle('hidden', tabs.length === 0);
+    bar.innerHTML = '';
+    for (const t of tabs) {
+        const el = document.createElement('div');
+        el.className = 'ann-tab' + (t.id === activeTabId ? ' active' : '') +
+                       (t.status === 'running' ? ' running' : '') +
+                       (t.status === 'partial' ? ' partial' : '') +
+                       (t.status === 'error' ? ' error' : '');
+        el.setAttribute('role', 'tab');
+        el.setAttribute('tabindex', '0');
+        el.setAttribute('aria-selected', t.id === activeTabId ? 'true' : 'false');
+        if (t.status === 'partial') el.title = 'Analyse interrompue';
+        if (t.status === 'error') el.title = t.error || 'Analyse impossible';
+
+        const label = document.createElement('span');
+        label.className = 'ann-tab-label';
+        label.innerHTML = tabLabelHtml(t);
+        el.appendChild(label);
+
+        if (t.doudou && t.status !== 'running') {
+            const done = document.createElement('span');
+            done.className = 'ann-tab-count';
+            done.textContent = `${t.doudou.completed}`;
+            el.appendChild(done);
+        }
+        if (t.status === 'running') {
+            const spin = document.createElement('span');
+            spin.className = 'ann-tab-spin';
+            el.appendChild(spin);
+        }
+        if (t.status === 'error') {
+            const warn = document.createElement('span');
+            warn.className = 'ann-tab-warn';
+            warn.textContent = '!';
+            el.appendChild(warn);
+        }
+
+        el.addEventListener('click', () => activateTab(t.id));
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(t.id); }
+        });
+
+        if (tabs.length > 1) {
+            const close = document.createElement('button');
+            close.className = 'ann-tab-close';
+            close.innerHTML = '×';
+            close.title = 'Fermer cet onglet';
+            close.addEventListener('click', (e) => { e.stopPropagation(); closeTab(t.id); });
+            el.appendChild(close);
+        }
+        bar.appendChild(el);
     }
 }
 
-// Rerun the DouDou50 simulation with South's bid forced to `action`
-// (subsequent bids and play stay NN-driven). Also highlights the matching
-// oracle cell — the oracle table itself is bid-independent, so no rerun needed.
+function renderActiveTab() {
+    const t = activeTab();
+    renderDoudou(t);
+    renderOracle();
+    highlightOracleCell(t ? t.forced : null);
+}
+
+// Lance (ou relance) la simulation Jeu réel de l'onglet `t`. Une seule tourne
+// à la fois côté serveur : les autres passent en « partial ».
+function runDoudouFor(t) {
+    for (const o of tabs) {
+        if (o !== t && o.status === 'running') o.status = 'partial';
+    }
+    t.status = 'running';
+    t.error = null;
+    t.doudou = null;
+
+    const msg = {
+        type: 'annonces_doudou',
+        req_id: t.id,
+        hand: t.hand,
+        prior_actions: t.history,
+        num_sims: REAL_SIMS,
+    };
+    if (t.forced !== null) msg.forced_action = t.forced;
+    send(msg);
+
+    renderTabs();
+    if (t.id === activeTabId) renderActiveTab();
+}
+
+// « Analyser une autre annonce » : ouvre un onglet pour `action` — ou revient
+// à celui qui l'a déjà analysée — et simule le Jeu réel avec l'annonce de Sud
+// forcée (la suite des enchères et le jeu restent pilotés par les réseaux).
+// Le Jeu parfait ne bouge pas : il ne dépend pas de l'annonce.
 function runAltAnalysis(action) {
     if (annoncesHand.size !== 8) return;
-    forcedAction = action;
-
     const statusEl = document.getElementById('annonces-alt-status');
-    statusEl.classList.remove('hidden');
-    statusEl.innerHTML = `Analyse de ${bidChipHtml(action)} en cours…`;
+    statusEl.classList.add('hidden');
+    statusEl.innerHTML = '';
 
-    highlightOracleCell(action);
-    resetDoudouPanel();
+    const existing = tabs.find(t =>
+        t.forced === action || (t.forced === null && v6BestAction === action));
+    if (existing) {
+        activateTab(existing.id);
+        return;
+    }
 
-    send({
-        type: 'annonces_doudou',
-        hand: Array.from(annoncesHand),
-        prior_actions: annoncesHistory,
-        num_sims: REAL_SIMS,
-        forced_action: action,
-    });
+    const t = createTab(action);
+    runDoudouFor(t);
+}
+
+// Un message du serveur porte l'onglet qui l'a demandé. Sans `req_id` (mode
+// local, où l'Oracle tourne dans le Worker), on retombe sur l'onglet en cours
+// de simulation — jamais sur l'onglet actif, qui peut avoir changé.
+function targetTab(data) {
+    if (data.req_id !== undefined && data.req_id !== null) return tabById(data.req_id);
+    return tabs.find(t => t.status === 'running') || null;
 }
 
 function handleSimUpdate(data) {
@@ -926,15 +1178,17 @@ function handleSimUpdate(data) {
             `<div class="annonces-error">${data.error}</div>`;
         return;
     }
+    if (data.req_id !== undefined && data.req_id !== null && !tabById(data.req_id)) return;
     if (data.worlds_source) worldsSource = data.worlds_source;
     if (data.worlds_counts) worldsCounts = data.worlds_counts;
-    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
+    applyOracle(data);
 }
 
 function handleSimDone(data) {
+    if (data.req_id !== undefined && data.req_id !== null && !tabById(data.req_id)) return;
     if (data.worlds_source) worldsSource = data.worlds_source;
     if (data.worlds_counts) worldsCounts = data.worlds_counts;
-    renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
+    applyOracle(data);
     if (data.sampled_deals && data.sampled_deals.length > 0) {
         renderSimViewer(data.sampled_deals, data.completed, data.sampled_sources);
     }
@@ -943,31 +1197,43 @@ function handleSimDone(data) {
 // --- DouDou-only server handlers (used in local mode for DouDou part) ---
 
 function handleDoudouUpdate(data) {
+    const t = targetTab(data);
+    if (!t) return;
     if (data.error) {
-        if (forcedAction !== null) {
-            const statusEl = document.getElementById('annonces-alt-status');
-            statusEl.classList.remove('hidden');
-            statusEl.innerHTML = `<span class="annonces-error">${data.error}</span>`;
-        }
-        return; // Otherwise silently ignore — DouDou is optional in local mode
+        t.error = data.error;
+        t.status = 'error';
+        renderTabs();
+        if (t.id === activeTabId) renderDoudou(t);
+        return;
     }
-    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
+    t.doudou = {
+        cells: data.doudou_cells, stats: data.doudou_stats,
+        completed: data.completed, total: data.total, elapsedMs: data.elapsed_ms,
+    };
+    if (t.id === activeTabId) renderDoudou(t);
 }
 
 function handleDoudouDone(data) {
-    if (data.error) return;
-    renderDoudouTable(data.doudou_cells, data.doudou_stats, data.completed, data.total, data.elapsed_ms);
-    if (forcedAction !== null) {
-        const statusEl = document.getElementById('annonces-alt-status');
-        statusEl.classList.remove('hidden');
-        statusEl.innerHTML = `Jeu réel simulé avec annonce forcée : ${bidChipHtml(forcedAction)}`;
-    }
+    const t = targetTab(data);
+    if (!t || data.error) return;
+    t.doudou = {
+        cells: data.doudou_cells, stats: data.doudou_stats,
+        completed: data.completed, total: data.total, elapsedMs: data.elapsed_ms,
+    };
+    t.status = 'done';
+    renderTabs();
+    if (t.id === activeTabId) renderDoudou(t);
 }
 
 // --- Eval paths ---
 
 // Hide all result panels (hand cleared / redrawn).
 function hideResults() {
+    tabs = [];
+    activeTabId = null;
+    v6BestAction = null;
+    oracleState = null;
+    document.getElementById('annonces-tabs').classList.add('hidden');
     document.getElementById('annonces-results-area').classList.add('hidden');
     document.getElementById('annonces-nn-panel').classList.add('hidden');
     document.getElementById('annonces-verdict').classList.add('hidden');
@@ -987,19 +1253,43 @@ function resetPanels() {
     document.getElementById('annonces-sim-viewer-wrap').classList.add('hidden');
     const emptyCountsSeed = [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]];
-    renderOracleTable(emptyCountsSeed, 0, ORACLE_SIMS, null);
-    // Reset alternative-annonce state and DouDou panel (shown, empty state)
-    forcedAction = null;
+    oracleState = { counts: emptyCountsSeed, completed: 0, total: ORACLE_SIMS,
+                    elapsedMs: null, synth: null };
     document.getElementById('annonces-alt-status').classList.add('hidden');
-    resetDoudouPanel();
+    clearDoudouBody();
 }
 
-async function evalLocal(hand) {
+// Nouvelle \u00e9valuation : les onglets d\u00e9crivent la main courante, on repart d'un
+// seul onglet \u2014 celui de l'annonce que Bid V6 va choisir.
+function runEvaluation() {
+    const hand = Array.from(annoncesHand);
+    if (hand.length !== 8) return;
+
+    wasmBridge.cancelOracle();
+    tabs = [];
+    tabSeq = 0;
+    activeTabId = null;
+    v6BestAction = null;
+
+    resetPanels();
+    const base = createTab(null);
+    base.status = 'running';
+    renderTabs();
+    renderActiveTab();
+
+    recordSavedHand(hand, annoncesHistory);
+
+    // Local WASM by default (BidNet + Oracle); falls back to the server
+    // if WASM init fails. DouDou always runs server-side (10MB DMC model).
+    evalLocal(hand, base);
+}
+
+async function evalLocal(hand, tab) {
     try {
         await wasmBridge.ensureReady();
     } catch (err) {
         console.warn('[annonces] WASM init failed, falling back to server:', err);
-        evalServer(hand);
+        evalServer(hand, tab);
         return;
     }
 
@@ -1011,10 +1301,11 @@ async function evalLocal(hand) {
         handleBidEvalResult({ error: `WASM BidNet: ${err.message || err}` });
     }
 
-    // 2. Oracle via Worker (streaming)
+    // 2. Oracle via Worker (streaming). Partagé par tous les onglets : ouvrir
+    //    une autre annonce ne l'interrompt pas — il ne dépend pas de l'annonce.
     wasmBridge.runOracleSim(hand, ORACLE_SIMS,
         (data) => {
-            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
+            applyOracle(data);
         },
         (data) => {
             if (data.error) {
@@ -1022,7 +1313,7 @@ async function evalLocal(hand) {
                     `<div class="annonces-error">${data.error}</div>`;
                 return;
             }
-            renderOracleTable(data.success_counts, data.completed, data.total, data.elapsed_ms, data.oracle_synth);
+            applyOracle(data);
             if (data.sampled_deals && data.sampled_deals.length > 0) {
                 renderSimViewer(data.sampled_deals, data.completed);
             }
@@ -1030,13 +1321,152 @@ async function evalLocal(hand) {
     );
 
     // 3. DouDou via WebSocket (server-side, needs DMC model)
-    send({ type: 'annonces_doudou', hand, prior_actions: annoncesHistory, num_sims: REAL_SIMS });
+    runDoudouFor(tab);
 }
 
-function evalServer(hand) {
+function evalServer(hand, tab) {
     send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
-    send({ type: 'annonces_sim', hand, prior_actions: annoncesHistory,
+    // Le serveur enchaîne Oracle puis Dédé sur un même pool de mondes : le
+    // Jeu réel de ce flux appartient à l'onglet de base.
+    tab.status = 'running';
+    send({ type: 'annonces_sim', req_id: tab.id, hand, prior_actions: annoncesHistory,
            oracle_sims: ORACLE_SIMS, doudou_sims: REAL_SIMS });
+    renderTabs();
+}
+
+// ── Mains sauvegardées ──
+// Une main analysée, c'est la main *et* les enchères qui la précèdent : les
+// deux forment la situation, et la même main après « 100♥ » de l'adversaire
+// n'est pas la même question. La clé de déduplication porte donc sur les deux.
+
+const SAVED_KEY = 'colver:annonces:saved';
+const SIDEBAR_KEY = 'colver:annonces:sidebar';
+const SAVED_MAX = 40;
+
+function handSig(hand, history) {
+    return Array.from(hand).slice().sort((a, b) => a - b).join(',') + '|' + history.join(',');
+}
+
+function loadSaved() {
+    try {
+        const raw = localStorage.getItem(SAVED_KEY);
+        const list = raw ? JSON.parse(raw) : [];
+        return Array.isArray(list) ? list.filter(e => Array.isArray(e.hand) && e.hand.length === 8) : [];
+    } catch { return []; }
+}
+
+function storeSaved(list) {
+    try { localStorage.setItem(SAVED_KEY, JSON.stringify(list.slice(0, SAVED_MAX))); } catch { /* quota */ }
+}
+
+// Enregistre (ou remonte en tête) la situation courante.
+function recordSavedHand(hand, history) {
+    if (hand.length !== 8) return;
+    const sig = handSig(hand, history);
+    const list = loadSaved().filter(e => handSig(e.hand, e.history || []) !== sig);
+    list.unshift({
+        hand: Array.from(hand).sort((a, b) => a - b),
+        history: history.slice(),
+        ts: Date.now(),
+    });
+    storeSaved(list);
+    renderSavedList();
+}
+
+function renderSavedList() {
+    const list = document.getElementById('annonces-saved-list');
+    if (!list) return;
+    const entries = loadSaved();
+    list.innerHTML = '';
+
+    if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'ann-saved-empty';
+        empty.textContent = 'Les mains évaluées s’enregistrent ici.';
+        list.appendChild(empty);
+        document.getElementById('annonces-saved-clear').classList.add('hidden');
+        return;
+    }
+    document.getElementById('annonces-saved-clear').classList.remove('hidden');
+
+    const current = handSig(Array.from(annoncesHand), annoncesHistory);
+    entries.forEach((entry, i) => {
+        const row = document.createElement('div');
+        row.className = 'ann-saved-row';
+        row.dataset.sig = handSig(entry.hand, entry.history || []);
+        if (row.dataset.sig === current) row.classList.add('current');
+
+        const body = document.createElement('button');
+        body.className = 'ann-saved-body';
+        body.title = 'Charger et évaluer cette main';
+
+        // Pas de classe `hand` ici : elle impose la hauteur d'une carte pleine
+        // (cf. cards.css), qui laisserait un grand vide sous ces miniatures.
+        const cards = document.createElement('div');
+        cards.className = 'ann-saved-cards';
+        renderHandMini(cards, entry.hand, 18);
+        body.appendChild(cards);
+
+        const hist = document.createElement('div');
+        hist.className = 'ann-saved-hist';
+        hist.innerHTML = (entry.history && entry.history.length)
+            ? entry.history.map(bidChipHtml).join('')
+            : '<span class="ann-saved-first">Premier à parler</span>';
+        body.appendChild(hist);
+
+        body.addEventListener('click', () => loadSavedEntry(entry));
+        row.appendChild(body);
+
+        const del = document.createElement('button');
+        del.className = 'ann-saved-del';
+        del.innerHTML = '×';
+        del.title = 'Supprimer';
+        del.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const kept = loadSaved();
+            kept.splice(i, 1);
+            storeSaved(kept);
+            renderSavedList();
+        });
+        row.appendChild(del);
+        list.appendChild(row);
+    });
+}
+
+// Repeindre la liste à chaque carte cliquée reconstruirait des centaines
+// d'images : seul le liseré « situation courante » change vraiment.
+function markCurrentSaved() {
+    const cur = handSig(Array.from(annoncesHand), annoncesHistory);
+    document.querySelectorAll('#annonces-saved-list .ann-saved-row').forEach(row => {
+        row.classList.toggle('current', row.dataset.sig === cur);
+    });
+}
+
+function loadSavedEntry(entry) {
+    annoncesHand = new Set(entry.hand);
+    annoncesHistory = (entry.history || []).slice();
+    renderAnnoncesHistory();
+    updateAnnoncesDisplay();
+    renderSavedList();
+    runEvaluation();
+}
+
+function setSidebar(open) {
+    const el = document.getElementById('annonces-saved');
+    if (!el) return;
+    el.classList.toggle('collapsed', !open);
+    document.getElementById('annonces-saved-toggle')
+        .setAttribute('aria-expanded', open ? 'true' : 'false');
+    try { localStorage.setItem(SIDEBAR_KEY, open ? 'open' : 'closed'); } catch { /* private mode */ }
+}
+
+function sidebarInitiallyOpen() {
+    let stored = null;
+    try { stored = localStorage.getItem(SIDEBAR_KEY); } catch { /* private mode */ }
+    if (stored === 'open') return true;
+    if (stored === 'closed') return false;
+    // Par défaut : dépliée seulement là où elle ne mange rien à l'analyse.
+    return window.innerWidth >= 1400;
 }
 
 export function mount(container) {
@@ -1044,6 +1474,11 @@ export function mount(container) {
 
     annoncesHand = new Set();
     annoncesHistory = [];
+    tabs = [];
+    tabSeq = 0;
+    activeTabId = null;
+    v6BestAction = null;
+    oracleState = null;
 
     initAnnoncesGrid();
     actionSelector = buildBidSelector(document.getElementById('annonces-action-select'));
@@ -1066,6 +1501,23 @@ export function mount(container) {
 
     renderAnnoncesHistory();
     updateAnnoncesDisplay();
+
+    // Barre latérale des mains sauvegardées
+    setSidebar(sidebarInitiallyOpen());
+    renderSavedList();
+    document.getElementById('annonces-saved-toggle').addEventListener('click', () => {
+        const el = document.getElementById('annonces-saved');
+        setSidebar(el.classList.contains('collapsed'));
+    });
+    document.getElementById('annonces-saved-rail').addEventListener('click', () => setSidebar(true));
+    document.getElementById('annonces-saved-add').addEventListener('click', () => {
+        if (annoncesHand.size !== 8) return;
+        recordSavedHand(Array.from(annoncesHand), annoncesHistory);
+    });
+    document.getElementById('annonces-saved-clear').addEventListener('click', () => {
+        storeSaved([]);
+        renderSavedList();
+    });
 
     // Auto-evaluate if pre-filled with 8 cards
     if (annoncesHand.size === 8) {
@@ -1100,18 +1552,7 @@ export function mount(container) {
         hideResults();
     });
 
-    document.getElementById('annonces-eval-btn').addEventListener('click', () => {
-        const hand = Array.from(annoncesHand);
-
-        // Cancel any previous simulation before starting a new one
-        wasmBridge.cancelOracle();
-
-        resetPanels();
-
-        // Local WASM by default (BidNet + Oracle); falls back to the server
-        // if WASM init fails. DouDou always runs server-side (10MB DMC model).
-        evalLocal(hand);
-    });
+    document.getElementById('annonces-eval-btn').addEventListener('click', runEvaluation);
 
     // XGB suit dropdown
     document.getElementById('xgb-suit-select').addEventListener('change', (e) => {
@@ -1137,4 +1578,8 @@ export function unmount() {
     annoncesHand = new Set();
     annoncesHistory = [];
     xgbResults = null;
+    tabs = [];
+    activeTabId = null;
+    v6BestAction = null;
+    oracleState = null;
 }
