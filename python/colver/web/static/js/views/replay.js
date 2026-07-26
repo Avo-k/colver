@@ -5,7 +5,7 @@
 import { send, onMessage, offMessage } from '../ws.js';
 import { navigateTo } from '../router.js';
 import {
-    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, cardCode,
+    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, cardCode, suitHtml,
     bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
@@ -27,10 +27,10 @@ const TEMPLATE = `
 
     <div id="replay-left">
         <div id="replay-score-bar">
-            <span id="replay-score-ns">NS : 0</span>
+            <span id="replay-score-ns">Nord-Sud : 0</span>
             <span id="replay-game-id" class="game-id-tag hidden"></span>
             <span id="replay-contract-display"></span>
-            <span id="replay-score-ew">EO : 0</span>
+            <span id="replay-score-ew">Est-Ouest : 0</span>
             <button id="replay-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
         </div>
         <div id="replay-cfn" class="cfn-box hidden" title="Cliquer pour copier"></div>
@@ -129,6 +129,14 @@ function cardLabel(c) {
     return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
 }
 
+// La carte proposée par un bot se lit comme une vraie carte : pastille claire,
+// rang en noir et glyphe en rouge ou noir — d'où `on-light` (cf. tokens.css).
+function cardChip(c) {
+    return `<span class="an-card-chip on-light">` +
+        `<span class="an-chip-rank">${RANKS[cardRank(c)]}</span>` +
+        `${suitHtml(cardSuit(c))}</span>`;
+}
+
 // Navigate to the annonces analysis page pre-filled with the acting player's
 // hand and the auction history up to (not including) this bid.
 function openBidAnalysis(idx) {
@@ -170,7 +178,7 @@ function botsHtml(idx, played) {
         return `<span class="an-bot ${same ? 'an-bot-same' : 'an-bot-diff'}" ` +
             `title="${bot.title}">` +
             `<span class="an-bot-name">${bot.label}</span>` +
-            `<span class="an-bot-card">${cardLabel(card)}</span></span>`;
+            `<span class="an-bot-card">${cardChip(card)}</span></span>`;
     }).filter(Boolean).join('');
 
     return chips ? `<div class="an-bots">${chips}</div>` : '';
@@ -368,7 +376,7 @@ function renderAnalysisSummary() {
     if (_oracleBids && _oracleBids.suits) {
         // Deal-level DD scores per trump suit — static info, no bid "decision"
         html += '<table class="an-dd-table" title="Points réalisables en jeu parfait (double-dummy) pour chaque atout">' +
-            '<tr><th></th><th class="team-ns">NS</th><th class="team-ew">EO</th></tr>';
+            '<tr><th></th><th class="team-ns">Nord-Sud</th><th class="team-ew">Est-Ouest</th></tr>';
         for (const suit of SUIT_DISPLAY_ORDER) {
             const [ns, ew] = _oracleBids.suits[suit];
             const red = suit === 1 || suit === 2;
