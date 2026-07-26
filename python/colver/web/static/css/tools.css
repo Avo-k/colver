@@ -1678,7 +1678,7 @@
     letter-spacing: 0.05em;
 }
 
-.belief-obs-btn, .belief-mode-btn {
+.belief-obs-btn {
     background: rgba(255,255,255,0.06);
     border: 1px solid rgba(255,255,255,0.1);
     color: #999;
@@ -1689,7 +1689,7 @@
     font-weight: 600;
     transition: all 0.15s;
 }
-.belief-obs-btn:hover, .belief-mode-btn:hover {
+.belief-obs-btn:hover {
     background: rgba(255,255,255,0.12);
     color: #ddd;
 }
@@ -1698,12 +1698,6 @@
     border-color: var(--c-accent);
     color: var(--c-accent);
 }
-.belief-mode-btn.active {
-    background: rgba(130,207,170,0.15);
-    border-color: #82e0aa;
-    color: #82e0aa;
-}
-
 #belief-precompute {
     font-size: var(--fs-2xs);
     color: #888;
@@ -1838,14 +1832,6 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
-}
-
-.belief-bar-label {
-    font-size: var(--fs-2xs);
-    color: #666;
-    text-align: left;
-    font-weight: 600;
-    text-transform: uppercase;
 }
 
 .belief-bar {

@@ -937,34 +937,24 @@ class BeliefSession:
             )
         return w
 
-    def get_beliefs(self, observer: int, with_playgen: bool = False) -> dict:
-        """Return NN + heuristic (+ playgen on demand) belief weights + ground truth hands.
+    def get_beliefs(self, observer: int) -> dict:
+        """Return playgen marginals at the current position + ground truth hands.
 
-        Playgen marginals cost ~1s of MC sampling, so they are only computed
-        when the client displays them (with_playgen=True) and cached per
-        (position, observer) — the precompute sweep fills the same cache.
+        Playgen is the only source the page shows: the belief net and the
+        heuristic were dropped because playgen dominates them (see the
+        world-credibility benchmark). Marginals cost ~1s of MC sampling, so
+        they are cached per (position, observer) — the precompute sweep fills
+        the same cache.
         """
         idx = self.action_idx
-        # NN + heuristic: cheap, but cache anyway so a shared game is instant.
-        nnh = _belief_cache_get(self.game_cfn, "nn", idx, observer)
-        if nnh is None:
-            actions = [a for _, a, _ in self.all_actions[:idx]]
-            beliefs = colver.Beliefs.replay(
-                self.dealer, self.initial_hands, actions, observer, self.belief_model_path,
-            )
-            result = beliefs.weights(self.env)
-            nnh = {"nn": result["nn"], "heuristic": result["heuristic"]}
-            _belief_cache_put(self.game_cfn, "nn", idx, observer, nnh)
         playgen = None
-        if with_playgen and self.playgen_model_path:
+        if self.playgen_model_path:
             playgen = _belief_cache_get(self.game_cfn, "playgen", idx, observer)
             if playgen is None:
                 playgen = self._compute_playgen(idx, observer, self.env)
                 _belief_cache_put(self.game_cfn, "playgen", idx, observer, playgen)
         return {
             "observer": observer,
-            "nn": nnh["nn"],
-            "heuristic": nnh["heuristic"],
             "playgen": playgen,
             "ground_truth": self.initial_hands,
         }

@@ -1373,10 +1373,9 @@ async def websocket_endpoint(ws: WebSocket):
                     await wsend({"type": "error", "msg": "Pas de session croyances"})
                     continue
                 observer = int(data.get("observer", 0))
-                with_playgen = bool(data.get("playgen", False))
                 loop = asyncio.get_event_loop()
                 try:
-                    result = await loop.run_in_executor(None, belief_session.get_beliefs, observer, with_playgen)
+                    result = await loop.run_in_executor(None, belief_session.get_beliefs, observer)
                     await wsend({"type": "belief_weights", **result})
                 except Exception as e:
                     await wsend({"type": "error", "msg": f"Erreur croyances : {e}"})

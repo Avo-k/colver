@@ -1,5 +1,5 @@
-// Croyances view — belief network visualization
-// Step through a game and see how NN/heuristic beliefs evolve
+// Croyances view — playgen world-sampler visualization
+// Step through a game and see how playgen's card-location beliefs evolve
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardChipHtml, bidChipHtml, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
@@ -31,10 +31,7 @@ let currentLastAction = null;
 let initialHands = null;
 let dealer = 0;
 let observer = 0;
-let viewMode = 'nn'; // 'nn', 'playgen', 'heuristic', 'compare'
-let nnWeights = null;
-let heuristicWeights = null;
-let playgenWeights = null; // null pendant les enchères (contrat inconnu)
+let playgenWeights = null; // null tant que la position n'est pas échantillonnée
 let groundTruth = null;
 let loading = false;
 
@@ -67,12 +64,6 @@ const TEMPLATE = `
                 <button class="belief-obs-btn" data-obs="2">S</button>
                 <button class="belief-obs-btn" data-obs="3">O</button>
             </div>
-            <div id="belief-mode-btns">
-                <button class="belief-mode-btn active" data-mode="nn">NN</button>
-                <button class="belief-mode-btn" data-mode="playgen">Playgen</button>
-                <button class="belief-mode-btn" data-mode="heuristic">Heuristique</button>
-                <button class="belief-mode-btn" data-mode="compare">Comparer</button>
-            </div>
             <span id="belief-precompute"></span>
         </div>
     </div>
@@ -91,9 +82,7 @@ function setLoading(msg) {
 }
 
 function requestWeights() {
-    // Le calcul playgen (~2s de MC) n'est demandé que si le mode l'affiche
-    const withPlaygen = viewMode === 'playgen' || viewMode === 'compare';
-    send({ type: 'belief_get_weights', observer, playgen: withPlaygen });
+    send({ type: 'belief_get_weights', observer });
 }
 
 function onGenerated(data) {
@@ -112,8 +101,6 @@ function onGenerated(data) {
     currentIdx = 0;
     currentState = null;
     currentLastAction = null;
-    nnWeights = null;
-    heuristicWeights = null;
     playgenWeights = null;
     groundTruth = null;
 
@@ -163,8 +150,6 @@ function renderPrecompute() {
 
 function onWeights(data) {
     if (data.observer !== observer) return;
-    nnWeights = data.nn;
-    heuristicWeights = data.heuristic;
     playgenWeights = data.playgen || null;
     groundTruth = data.ground_truth;
     renderGrid();
@@ -274,18 +259,6 @@ function renderGrid() {
 
     if (!groundTruth) return;
 
-    // Sources to display: single bar in nn/playgen/heuristic modes, stacked in compare
-    const sources = [];
-    if (viewMode === 'nn') sources.push({ w: nnWeights, label: null });
-    else if (viewMode === 'playgen') sources.push({ w: playgenWeights, label: null });
-    else if (viewMode === 'heuristic') sources.push({ w: heuristicWeights, label: null });
-    else {
-        if (nnWeights) sources.push({ w: nnWeights, label: 'NN' });
-        if (playgenWeights) sources.push({ w: playgenWeights, label: 'PG' });
-        if (heuristicWeights) sources.push({ w: heuristicWeights, label: 'Heur.' });
-    }
-    const activeSources = sources.filter(s => s.w);
-
     // Determine known/played cards for observer
     const observerHand = new Set(currentState ? currentState.hands[observer] : (initialHands ? initialHands[observer] : []));
     const playedCards = new Set();
@@ -346,13 +319,12 @@ function renderGrid() {
                 tag.textContent = isInHand ? 'Moi' : 'Joue';
                 cardDiv.appendChild(tag);
             } else {
-                // Unknown card — show belief bars
+                // Unknown card — show the playgen belief bar
                 cardDiv.appendChild(img);
 
-                for (const src of activeSources) {
-                    cardDiv.appendChild(createBeliefBar(src.w, cardIdx, observer, groundTruth, src.label));
-                }
-                if (activeSources.length === 0) {
+                if (playgenWeights) {
+                    cardDiv.appendChild(createBeliefBar(playgenWeights, cardIdx, observer, groundTruth));
+                } else {
                     const noData = document.createElement('div');
                     noData.className = 'belief-no-data';
                     noData.textContent = '-';
@@ -368,16 +340,9 @@ function renderGrid() {
     }
 }
 
-function createBeliefBar(weights, cardIdx, observer, groundTruth, label) {
+function createBeliefBar(weights, cardIdx, observer, groundTruth) {
     const bar = document.createElement('div');
     bar.className = 'belief-bar-container';
-
-    if (label) {
-        const labelEl = document.createElement('div');
-        labelEl.className = 'belief-bar-label';
-        labelEl.textContent = label;
-        bar.appendChild(labelEl);
-    }
 
     const barInner = document.createElement('div');
     barInner.className = 'belief-bar';
@@ -433,15 +398,9 @@ function renderStats() {
     if (!statsEl) return;
     statsEl.innerHTML = '';
 
-    const modes = [];
-    if (viewMode === 'nn' || viewMode === 'compare') modes.push({ w: nnWeights, label: 'NN' });
-    if (viewMode === 'playgen' || viewMode === 'compare') modes.push({ w: playgenWeights, label: 'Playgen' });
-    if (viewMode === 'heuristic' || viewMode === 'compare') modes.push({ w: heuristicWeights, label: 'Heuristique' });
-
     // Le playgen v2 échantillonne aussi pendant l'enchère ; s'il manque, c'est
     // qu'il n'est pas encore calculé (ou indisponible) pour cette position.
-    if ((viewMode === 'playgen' || viewMode === 'compare') && !playgenWeights
-        && currentState && !currentState.is_terminal) {
+    if (!playgenWeights && currentState && !currentState.is_terminal) {
         const note = document.createElement('div');
         note.className = 'belief-stat-group';
         note.innerHTML = `<span class="belief-stat-label">Playgen</span><span class="belief-stat-item">en cours de calcul…</span>`;
@@ -479,52 +438,51 @@ function renderStats() {
         return;
     }
 
-    for (const { w, label } of modes) {
-        if (!w || !groundTruth) continue;
+    const w = playgenWeights;
+    if (!w || !groundTruth) return;
 
-        let correct = 0;
-        let totalEntropy = 0;
+    let correct = 0;
+    let totalEntropy = 0;
 
-        for (const c of unknowns) {
-            // Find ground truth holder
-            let truthHolder = -1;
-            for (let p = 0; p < 4; p++) {
-                if (p === observer) continue;
-                if (groundTruth[p].includes(c)) { truthHolder = p; break; }
-            }
-            if (truthHolder < 0) continue;
-
-            // Argmax (excluding observer)
-            let maxProb = -1, maxPlayer = -1;
-            for (let p = 0; p < 4; p++) {
-                if (p === observer) continue;
-                if (w[p][c] > maxProb) { maxProb = w[p][c]; maxPlayer = p; }
-            }
-            if (maxPlayer === truthHolder) correct++;
-
-            // Entropy
-            let entropy = 0;
-            for (let p = 0; p < 4; p++) {
-                if (p === observer) continue;
-                const prob = w[p][c];
-                if (prob > 0.001) entropy -= prob * Math.log2(prob);
-            }
-            totalEntropy += entropy;
+    for (const c of unknowns) {
+        // Find ground truth holder
+        let truthHolder = -1;
+        for (let p = 0; p < 4; p++) {
+            if (p === observer) continue;
+            if (groundTruth[p].includes(c)) { truthHolder = p; break; }
         }
+        if (truthHolder < 0) continue;
 
-        const accuracy = unknowns.length > 0 ? (correct / unknowns.length * 100).toFixed(0) : '0';
-        const avgEntropy = unknowns.length > 0 ? (totalEntropy / unknowns.length).toFixed(2) : '0';
+        // Argmax (excluding observer)
+        let maxProb = -1, maxPlayer = -1;
+        for (let p = 0; p < 4; p++) {
+            if (p === observer) continue;
+            if (w[p][c] > maxProb) { maxProb = w[p][c]; maxPlayer = p; }
+        }
+        if (maxPlayer === truthHolder) correct++;
 
-        const statDiv = document.createElement('div');
-        statDiv.className = 'belief-stat-group';
-        statDiv.innerHTML = `
-            <span class="belief-stat-label">${label}</span>
-            <span class="belief-stat-item">Precision: <b>${accuracy}%</b></span>
-            <span class="belief-stat-item">Top-1: <b>${correct}/${unknowns.length}</b></span>
-            <span class="belief-stat-item">Entropie moy.: <b>${avgEntropy} bits</b></span>
-        `;
-        statsEl.appendChild(statDiv);
+        // Entropy
+        let entropy = 0;
+        for (let p = 0; p < 4; p++) {
+            if (p === observer) continue;
+            const prob = w[p][c];
+            if (prob > 0.001) entropy -= prob * Math.log2(prob);
+        }
+        totalEntropy += entropy;
     }
+
+    const accuracy = (correct / unknowns.length * 100).toFixed(0);
+    const avgEntropy = (totalEntropy / unknowns.length).toFixed(2);
+
+    const statDiv = document.createElement('div');
+    statDiv.className = 'belief-stat-group';
+    statDiv.innerHTML = `
+        <span class="belief-stat-label">Playgen</span>
+        <span class="belief-stat-item">Precision: <b>${accuracy}%</b></span>
+        <span class="belief-stat-item">Top-1: <b>${correct}/${unknowns.length}</b></span>
+        <span class="belief-stat-item">Entropie moy.: <b>${avgEntropy} bits</b></span>
+    `;
+    statsEl.appendChild(statDiv);
 }
 
 function stepTo(target) {
@@ -572,19 +530,6 @@ function onObserverClick(e) {
     renderPrecompute();
     send({ type: 'belief_precompute', observer });
     requestWeights();
-}
-
-function onModeClick(e) {
-    const btn = e.target.closest('.belief-mode-btn');
-    if (!btn) return;
-    viewMode = btn.dataset.mode;
-    document.querySelectorAll('.belief-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === viewMode));
-    // Playgen pas encore calculé pour cette position → re-demander
-    if ((viewMode === 'playgen' || viewMode === 'compare') && !playgenWeights) {
-        requestWeights();
-    }
-    renderGrid();
-    renderStats();
 }
 
 // The server keeps the belief session per WebSocket connection. On reconnect
@@ -635,8 +580,8 @@ export function mount(container) {
     totalActions = 0; currentIdx = 0; currentState = null;
     currentLastAction = null; initialHands = null;
     allActions = null; gameCfn = null; precompute = null;
-    nnWeights = null; heuristicWeights = null; playgenWeights = null; groundTruth = null;
-    observer = 0; viewMode = 'nn'; loading = false;
+    playgenWeights = null; groundTruth = null;
+    observer = 0; loading = false;
 
     // Wire events
     document.getElementById('belief-generate-btn').addEventListener('click', onGenerateClick);
@@ -648,7 +593,6 @@ export function mount(container) {
     document.getElementById('belief-end-btn').addEventListener('click', onEndClick);
     document.getElementById('belief-slider').addEventListener('input', onSliderInput);
     document.getElementById('belief-observer-btns').addEventListener('click', onObserverClick);
-    document.getElementById('belief-mode-btns').addEventListener('click', onModeClick);
     document.getElementById('belief-history').addEventListener('click', onHistoryClick);
     document.addEventListener('keydown', onKeyDown);
 

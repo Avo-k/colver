@@ -76,7 +76,7 @@ const TEMPLATE = `
         <p>
             R\u00e9seau de neurones qui pr\u00e9dit, pour chaque carte non visible, la probabilit\u00e9 qu'elle se trouve
             dans chaque main adverse. Utilis\u00e9 par D\u00e9d\u00e9 pour \u00e9chantillonner des distributions de cartes
-            plus r\u00e9alistes que le hasard uniforme, et par la page Croyances pour la visualisation.
+            plus r\u00e9alistes que le hasard uniforme.
         </p>
     </div>
 
@@ -181,10 +181,10 @@ const TEMPLATE = `
     <div class="docs-section">
         <h4>Croyances</h4>
         <p>
-            Visualisez comment le r\u00e9seau de croyances et le mod\u00e8le heuristique pr\u00e9disent la localisation des cartes
-            au fil d'une partie. G\u00e9n\u00e9rez une partie al\u00e9atoire, avancez pas \u00e0 pas, et observez les barres de probabilit\u00e9
+            Visualisez comment <em>Playgen</em> pr\u00e9dit la localisation des cartes au fil d'une partie.
+            G\u00e9n\u00e9rez une partie al\u00e9atoire, avancez pas \u00e0 pas, et observez les barres de probabilit\u00e9
             par carte avec marquage de la v\u00e9rit\u00e9 terrain et statistiques de pr\u00e9cision.
-            Changez de perspective d'observateur (N/E/S/O) et comparez les pr\u00e9dictions NN vs heuristiques c\u00f4te \u00e0 c\u00f4te.
+            Changez de perspective d'observateur (N/E/S/O) pour voir ce que chaque si\u00e8ge peut d\u00e9duire.
         </p>
     </div>
 
