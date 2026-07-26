@@ -123,6 +123,10 @@ const CATEGORY_UI = {
     faute:       { tag: '??', cls: 'an-blund',  label: 'Faute' },
 };
 
+function pct(p) {
+    return `${(p * 100).toFixed(p >= 0.1 ? 0 : 1)} %`;
+}
+
 // Navigate to the annonces analysis page pre-filled with the acting player's
 // hand and the auction history up to (not including) this bid.
 function openBidAnalysis(idx) {
@@ -195,7 +199,7 @@ function replayRenderMoveStats(move, state) {
         const idx = replayBoard.historyIndex;
         let html = '';
         const bid = _bidsByIdx && _bidsByIdx[idx];
-        if (bid) {
+        if (bid && bid.model_best !== undefined) {
             const agree = bid.model_best === move.action;
             html += `<div class="an-move ${agree ? 'an-best' : 'an-inacc'}">` +
                 `<span class="an-tag">${agree ? '✓' : '≠'}</span>` +
@@ -203,6 +207,19 @@ function replayRenderMoveStats(move, state) {
                 `<span class="an-bid-q">Q ${bid.q_best.toFixed(2)}` +
                 (!agree && bid.q_played !== null && bid.q_played !== undefined
                     ? ` · joué ${bid.q_played.toFixed(2)}` : '') +
+                `</span></div>`;
+        }
+        // Playgen a son mot à dire sur l'enchère : sa tête d'annonce (v2), lue
+        // depuis la vue du siège qui parle. C'est un modèle du monde, pas un
+        // bidder entraîné — d'où la probabilité plutôt qu'un Q.
+        if (bid && bid.playgen_best !== undefined) {
+            const agree = bid.playgen_best === move.action;
+            html += `<div class="an-move ${agree ? 'an-best' : 'an-inacc'}">` +
+                `<span class="an-tag">${agree ? '✓' : '≠'}</span>` +
+                `Playgen : ${bidChipHtml(bid.playgen_best)}` +
+                `<span class="an-bid-q">p ${pct(bid.playgen_p)}` +
+                (!agree && bid.playgen_p_played !== null && bid.playgen_p_played !== undefined
+                    ? ` · joué ${pct(bid.playgen_p_played)}` : '') +
                 `</span></div>`;
         }
         html += `<button class="an-bid-analyse-btn" id="replay-bid-analyse-btn">Analyser cette annonce →</button>`;
@@ -292,9 +309,14 @@ function buildMovesList() {
             chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidChipHtml(m.action)}`;
             chip.title = SEAT_NAMES_FR[m.player];
             const bid = _bidsByIdx && _bidsByIdx[i];
-            if (bid && bid.model_best !== m.action) {
+            // Le liseré ne signale que le désaccord de Bid V6 : c'est lui le
+            // bidder de référence. Playgen ne parle que dans l'infobulle.
+            if (bid && bid.model_best !== undefined && bid.model_best !== m.action) {
                 chip.classList.add('mv-bid-diff');
                 chip.title += ` — Bid V6 : ${actionName(bid.model_best, 0)}`;
+            }
+            if (bid && bid.playgen_best !== undefined && bid.playgen_best !== m.action) {
+                chip.title += ` — Playgen : ${actionName(bid.playgen_best, 0)}`;
             }
             chip.addEventListener('click', () => jumpTo(i));
             bids.appendChild(chip);
