@@ -74,6 +74,39 @@ pub fn solve_for_trump(hands: [CardSet; 4], dealer: u8, trump: u8) -> [u8; 2] {
     solve(&state)
 }
 
+/// Solve with an explicit alpha-beta window, reusing an external TT buffer.
+///
+/// Fail-soft: the returned NS score is **exact only when `alpha < v < beta`**.
+/// Outside that range it is a bound (`v <= alpha` ⇒ upper bound, `v >= beta` ⇒
+/// lower bound) and the caller must re-search on a wider window to get the exact
+/// value. Intended for batches of near-identical positions — sampled worlds of
+/// one hand — where a good guess is available from the worlds already solved.
+pub fn solve_windowed_reuse_tt(
+    state: &GameState,
+    tt_buf: &mut [u64],
+    alpha: i16,
+    beta: i16,
+) -> i16 {
+    debug_assert_eq!(state.phase, Phase::Playing);
+    tt_buf.iter_mut().for_each(|x| *x = 0);
+    let mut history = [[0u32; 32]; 2];
+    let mut killers = [[EMPTY; 2]; 32];
+    alphabeta(state, alpha, beta, tt_buf, &mut history, &mut killers)
+}
+
+/// Windowed solve from a full deal + trump. See [`solve_windowed_reuse_tt`].
+pub fn solve_for_trump_windowed(
+    hands: [CardSet; 4],
+    dealer: u8,
+    trump: u8,
+    tt_buf: &mut [u64],
+    alpha: i16,
+    beta: i16,
+) -> i16 {
+    let state = GameState::setup_dd(dealer, hands, trump);
+    solve_windowed_reuse_tt(&state, tt_buf, alpha, beta)
+}
+
 /// Convenience: solve for trump using an external TT buffer.
 pub fn solve_for_trump_reuse_tt(
     hands: [CardSet; 4],

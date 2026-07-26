@@ -129,3 +129,13 @@ required-features = ["parallel"]
 name = "replay_dmc_vs_isdd"
 path = "src/bin/replay_dmc_vs_isdd.rs"
 required-features = ["parallel"]
+
+[[bin]]
+name = "bench_solve_window"
+path = "src/bin/bench_solve_window.rs"
+required-features = ["parallel"]
+
+[[bin]]
+name = "bench_tt_size"
+path = "src/bin/bench_tt_size.rs"
+required-features = ["parallel"]
