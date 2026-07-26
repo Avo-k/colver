@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +13,7 @@ from colver.web import playgen_gpu as _playgen_gpu
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.rooms as rooms
+import colver.web.pacing as pacing
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -167,7 +169,11 @@ async def api_leaderboard():
 @app.get("/api/games/{game_id}/analysis")
 async def api_game_analysis(game_id: str):
     import colver.web.analysis as analysis
-    result, err = await analysis.get_or_compute(game_id, bid_model_path=BID_MODEL_PATH)
+    result, err = await analysis.get_or_compute(
+        game_id,
+        bid_model_path=BID_MODEL_PATH,
+        playgen_model_path=PLAYGEN_MODEL_PATH,
+    )
     if err:
         return JSONResponse({"error": err}, status_code=404)
     return JSONResponse(result)
@@ -653,7 +659,7 @@ async def websocket_endpoint(ws: WebSocket):
     belief_session = None
     play_game_id = None
     watch_game_id = None
-    play_move_delay = 2.0
+    play_mode = pacing.DEFAULT_MODE
     sim_task = None  # background task for annonces_sim / annonces_doudou
     belief_precompute_task = None  # background playgen precompute sweep
     agent_review_task = None  # background per-card bot review, streamed
@@ -770,22 +776,13 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "start_game":
                 human_seat = data.get("human_seat", 2)
-                opponent_ai = data.get("opponent_ai", "dede")
-                partner_ai = data.get("partner_ai", "dede")
-                play_move_delay = max(1.0, min(8.0, float(data.get("move_delay", 2))))
-                # Build per-seat AI mapping (human excluded)
-                ai_types = {}
-                for seat in range(4):
-                    if seat == human_seat:
-                        continue
-                    if seat == (human_seat ^ 2):  # partner
-                        ai_types[seat] = partner_ai
-                    else:  # opponents
-                        ai_types[seat] = opponent_ai
-                needs_dmc = any(t == "doudou" for t in ai_types.values())
-                dmc_path = DMC_MODEL_PATH if (doudou_available and needs_dmc) else None
+                play_mode = pacing.normalize(data.get("mode"))
+                # One mode picks both the tempo and the bot, and all three AI
+                # seats run that same bot.
+                bot, dede_time_ms, degraded = pacing.resolve(play_mode, doudou_available)
+                ai_types = {s: bot for s in range(4) if s != human_seat}
+                dmc_path = DMC_MODEL_PATH if bot == "doudou" else None
                 bid_path = BID_MODEL_PATH
-                dede_time_ms = int(play_move_delay * 1000)
                 play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, dede_time_ms=dede_time_ms)
 
                 # Save game to DB
@@ -806,9 +803,12 @@ async def websocket_endpoint(ws: WebSocket):
                     "doudou_available": doudou_available,
                     "game_id": play_game_id,
                     "initial_hands": play_session.initial_hands,
+                    "mode": play_mode,
+                    "bot": bot,
+                    "mode_degraded": degraded,
                 }
                 await ws.send_json(init_msg)
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, mode=play_mode)
 
             elif msg_type == "play":
                 if play_session is None:
@@ -820,12 +820,6 @@ async def websocket_endpoint(ws: WebSocket):
                 # Ignore duplicate clicks when it's not the human's turn
                 if play_session.env.current_player() != human_seat:
                     continue
-
-                # Update move delay dynamically from slider
-                if "move_delay" in data:
-                    play_move_delay = max(1.0, min(8.0, float(data["move_delay"])))
-                    play_session.dede_time_ms = int(play_move_delay * 1000)
-                    play_session.bots.set_time_ms(play_session.dede_time_ms)
 
                 state = play_session.play_action(action)
                 msg = {"type": "game_state", "state": state}
@@ -849,7 +843,10 @@ async def websocket_endpoint(ws: WebSocket):
                         await db.append_action(play_game_id, play_session.history[-1])
                     if play_game_id and play_session.env.is_terminal():
                         await _complete_game(play_game_id, play_session)
-                    await asyncio.sleep(play_move_delay)
+                    # tricks_won is post-increment here, so the trick that just
+                    # completed is one below the count.
+                    await asyncio.sleep(
+                        pacing.trick_delay(play_mode, sum(state["tricks_won"]) - 1))
                     final_msg = {"type": "game_state", "state": state}
                     _enrich_terminal_msg(final_msg, play_session)
                     await ws.send_json(final_msg)
@@ -860,10 +857,10 @@ async def websocket_endpoint(ws: WebSocket):
                         await db.append_action(play_game_id, play_session.history[-1])
                     if play_game_id and play_session.env.is_terminal():
                         await _complete_game(play_game_id, play_session)
-                    # Pause after human's card is visible (simulates next player thinking)
-                    await asyncio.sleep(play_move_delay)
+                    # No pause here: _run_ai_turns holds this position itself
+                    # before revealing the next bot's move.
 
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id, move_delay=play_move_delay)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id, mode=play_mode)
 
             elif msg_type == "watch_start":
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
@@ -1376,17 +1373,30 @@ async def _complete_game(game_id, session):
     await elo.rate_game(game_id)
 
 
-async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
+async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE):
     """Auto-play AI turns until human's turn or game over.
 
     A forced pass on the human's seat counts as an AI turn: when passing is the
     only legal bid there is nothing to decide, so the server plays it instead of
     waiting for a click on the single available button.
+
+    Pacing note: the pause belongs to the position *preceding* a move, and the
+    bot's own thinking is spent inside it rather than on top of it. So each
+    iteration holds the current position for the mode's target, computes the
+    move while it is still on screen, and only then reveals it. That is why
+    there is no trailing sleep — and why the caller must not pause before
+    handing over.
     """
     while not session.env.is_terminal() and (
             session.env.current_player() != human_seat
             or only_pass_is_legal(session.env)):
-        action, name, state = session.play_ai_turn()
+        target = pacing.move_delay(
+            mode, session.env.phase(), sum(session.env.get_tricks_won()))
+        trick_idx = sum(session.env.get_tricks_won())
+        t0 = time.monotonic()
+        # The Rust search releases the GIL, so this keeps the event loop free.
+        action, name, state = await asyncio.to_thread(session.play_ai_turn)
+        await pacing.hold(target, time.monotonic() - t0)
         player = session.history[-1]["player"]
         ai_msg = {
             "type": "ai_move",
@@ -1416,8 +1426,8 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             tw[winner_team] = max(0, tw[winner_team] - 1)
             snapshot["tricks_won"] = tw
             await ws.send_json({"type": "game_state", "state": snapshot})
-            await asyncio.sleep(move_delay)
-            # Send cleared state — no delay after (next card arrives immediately)
+            await asyncio.sleep(pacing.trick_delay(mode, trick_idx))
+            # Send cleared state — no delay after (the next iteration holds it)
             final_msg = {"type": "game_state", "state": state}
             _enrich_terminal_msg(final_msg, session)
             await ws.send_json(final_msg)
@@ -1425,7 +1435,6 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, move_delay=2.0):
             state_msg = {"type": "game_state", "state": state}
             _enrich_terminal_msg(state_msg, session)
             await ws.send_json(state_msg)
-            await asyncio.sleep(move_delay)
 
     # Check terminal after AI turns
     if game_id and session.env.is_terminal():
