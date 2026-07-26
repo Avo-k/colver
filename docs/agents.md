@@ -137,6 +137,14 @@ model = "models/belief_v4_fix_v2.bin"
 
 Only IS-DD methods consume `[worlds]`; the section is ignored elsewhere.
 
+`strategy = "playgen"` is the odd one out: `model` points at a **playgen v2**
+checkpoint, not a bid net, and the policy (`PlaygenBidPolicy`, in
+[agent/bid.rs](../colver-core/src/agent/bid.rs)) needs the whole visible prefix, so
+it tracks the deal through `init_deal` / `observe` like a `WorldSource` does — which
+is why `build_bid` takes the seat. `temperature` works as for `nn`. It falls back to
+`ImprovedV2` when the sampler cannot answer: over-long auction, a non-v2 model, or a
+sampled action that turns out illegal. See [bid/README.md](bid/README.md).
+
 ## Python
 
 ```python

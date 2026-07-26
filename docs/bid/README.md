@@ -18,13 +18,16 @@ Dueling DQN, hidden size auto-detected from the weight file (tries 256, 512,
 
 ## Strategies
 
-**`playgen`** — playgen v2's own 43-way auction head used directly as a bidder
-(`strategy = "playgen"`, `model = models/playgen/playgen_v2_final.bin`). A behaviour
-clone of v6, not score-aware, yet within ~1-3 pp of it: 48.2% h2h over 3000 matches,
-61.6% vs `nn_v2_dmc50` where v6 scores 65.0%. See
-[experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md).
-
 Deterministic and learned bidders. Implementation: [colver-core/src/bid/bid_eval/](../../colver-core/src/bid/bid_eval/).
+
+**`playgen`** — playgen v2's own 43-way auction head used directly as a bidder
+(`strategy = "playgen"`, `model = models/playgen/playgen_v2_final.bin`). Implemented
+as `PlaygenBidPolicy` in [agent/bid.rs](../../colver-core/src/agent/bid.rs), *not* in
+`bid_eval/` — it needs the whole visible prefix, so like a world source it tracks the
+deal through `init_deal` / `observe`. A behaviour clone of v6 (the corpus it learned
+from) and not score-aware, yet within ~1-3 pp of it: 48.2% h2h over 3000 matches,
+61.6% vs `nn_v2_dmc50` where v6 scores 65.0%. Bot: `arena/bots/playgen_bid.toml`.
+See [experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md).
 
 - [strategies/guide_encheres.md](strategies/guide_encheres.md) — high-level guide to bidding strategies
 - [strategies/bid_v2.md](strategies/bid_v2.md) — Bid a Dede (current production NN bidder, 20M steps DD-only)
@@ -60,5 +63,6 @@ Distilled rules + heuristic strategy documentation.
 
 Old experiments not currently used in production but kept for reference.
 
+- [experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md) — **négatif, à lire avant de recommencer (2026-07-25)** : conditionner le label d'annonce sur le préfixe d'enchère resserre bien le posterior de 21,5 % autour du bon endroit, mais les deux bidders distillés qui en sortent perdent l'arène (47,3 % puis 43-44 % contre v6). Le pipeline est réutilisable, la définition de la cible est ce qui cloche. Contient aussi deux fausses pistes qui semblaient conclusives (« les mondes de playgen sont plus riches », « c'est la distribution des scores de match »)
 - [experiments/enchere_cannes_roro.md](experiments/enchere_cannes_roro.md)
 - [experiments/maxi_bid_roro.md](experiments/maxi_bid_roro.md)

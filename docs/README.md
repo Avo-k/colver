@@ -33,3 +33,4 @@ Belote Contrée engine + RL training stack.
 | Playgen world sampler (transformer) | [belief/playgen.md](belief/playgen.md) |
 | Building / running a bot | [agents.md](agents.md) |
 | Training commands | [training/overview.md](training/overview.md) |
+| Auction-conditioned bid labels (**negative** — read before retrying) | [bid/experiments/auction_conditioned_labels.md](bid/experiments/auction_conditioned_labels.md) |

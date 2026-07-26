@@ -33,6 +33,28 @@ let ns_pts = solve(&state, &mut tt);  // returns NS points with optimal play
 let dd_pts: [u8; 4] = solve_all_suits(&state, &mut tt);  // all 4 trump suits
 ```
 
+### Windowed solve (2026-07-26)
+
+`solve_windowed_reuse_tt(&state, &mut tt, alpha, beta)` and
+`solve_for_trump_windowed(hands, dealer, trump, &mut tt, alpha, beta)` expose the
+alpha-beta window that the other entry points hardcode to `[0, 252]`.
+
+Intended for a batch of near-identical positions — the sampled worlds of one hand,
+whose DD values cluster — where the running mean of the worlds already solved is a
+good seed. A full window rediscovers the value from scratch every time.
+
+**The search is fail-soft, so the result is exact only when `alpha < v < beta`.**
+Outside that range it is a bound (`v <= alpha` ⇒ upper bound, `v >= beta` ⇒ lower
+bound) and the caller *must* re-search wider to get the exact value. Getting this
+wrong is the same class of defect as `quick_tricks` below: a bound silently used as
+a value. [bench_solve_window.rs](../../colver-core/src/bin/bench_solve_window.rs)
+asserts every windowed result against the full-window value rather than assuming it.
+
+[bench_tt_size.rs](../../colver-core/src/bin/bench_tt_size.rs) sweeps the TT size on
+the same path: `new_tt_buffer()` is 2 MB, so 32 threads each carrying one is a 64 MB
+working set, well past L3. The solver masks with `tt.len() - 1`, so any power-of-two
+size is legal.
+
 ## BREAKING (2026-07-23): `quick_tricks` removed — it returned wrong DD values
 
 `quick_tricks` credited a whole run of plain-suit master cards as guaranteed
