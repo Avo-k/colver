@@ -5,9 +5,9 @@
 
 import * as SFX from '../sounds.js';
 import {
-    SEAT_NAMES_FR, cardTextHtml, cardToHtml, suitHtml,
+    SEAT_NAMES_FR, teamName, teamNameMid, cardToHtml, suitHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
-    contractStr, actionName, encodeBidAction, bidActionHtml,
+    actionName, encodeBidAction, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -22,13 +22,13 @@ export const TABLE_TEMPLATE = `
 <div id="play-table" class="table hidden">
     <div id="score-bar">
         <div class="score-team team-ns" id="score-ns">
-            <span class="score-team-label">NS</span>
+            <span class="score-team-label">Nous</span>
             <span class="score-team-pts">0</span>
         </div>
         <div id="contract-display"></div>
         <div class="score-side">
             <div class="score-team team-ew" id="score-ew">
-                <span class="score-team-label">EO</span>
+                <span class="score-team-label">Eux</span>
                 <span class="score-team-pts">0</span>
             </div>
             <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
@@ -243,8 +243,10 @@ export class GameTable {
 
         const c = state.contract;
         const el = document.getElementById('contract-display');
-        if (c && Object.keys(c).length > 0) {
-            const team = c.team === 0 ? 'NS' : 'EO';
+        // `c.value > 0` : avant la première annonce le serveur envoie un contrat
+        // à zéro, qui s'affichait « 0♠ par nous » au milieu du bandeau.
+        if (c && Object.keys(c).length > 0 && c.value > 0) {
+            const team = teamNameMid(c.team, true);
             const coinche = c.coinche === 1 ? ' x' : c.coinche === 2 ? ' xx' : '';
             el.innerHTML =
                 `<span class="contract-val">${c.value}${suitHtml(c.trump)}${coinche}</span>` +
@@ -485,6 +487,13 @@ export class GameTable {
 
     // ===== Game result =====
 
+    /**
+     * Fin de donne. Le titre dit ce qui s'est passé au jeu — « Contrat réussi »
+     * ou « Contrat chuté », pas « Victoire / Défaite » — et c'est sa couleur qui
+     * dit ce que ça vaut pour le joueur (vert = notre camp encaisse ; défendre
+     * une chute est une victoire). En dessous les scores en gros, puis les
+     * points de plis en plus petit.
+     */
     showGameResult(state) {
         const resultEl = document.getElementById('game-result');
         resultEl.classList.remove('hidden');
@@ -492,49 +501,69 @@ export class GameTable {
         const rewards = state.rewards;
         const isVictory = rewards ? rewards[0] > rewards[1] : state.points[0] > state.points[1];
         const isDraw = rewards ? rewards[0] === rewards[1] : state.points[0] === state.points[1];
-        const titleText = isVictory ? 'Victoire' : isDraw ? 'Egalite' : 'Defaite';
         const titleClass = isVictory ? 'victory' : isDraw ? 'draw' : 'defeat';
 
-        const contract = contractStr(state.contract);
         const sd = state.score_detail;
+        const c = state.contract;
+        const hasContract = !!c && Object.keys(c).length > 0 && c.value > 0;
 
-        let scoresHtml = '';
+        let titleText;
+        if (!hasContract) titleText = 'Personne n\'a pris';
+        else if (sd) titleText = sd.contract_made ? 'Contrat réussi' : 'Contrat chuté';
+        else titleText = isVictory ? 'Donne gagnée' : isDraw ? 'Égalité' : 'Donne perdue';
+
+        // Rappel du contrat : c'est lui que le titre juge.
+        const contractLine = hasContract
+            ? `${sd ? sd.contract_value : c.value}${suitHtml(c.trump)}`
+              + (c.coinche === 1 ? ' contré' : c.coinche === 2 ? ' surcontré' : '')
+              + ` demandé par ${teamNameMid(sd ? sd.contract_team : c.team, true)}`
+            : '';
+
+        // Scores finaux de la donne, en gros.
+        let finals;
         if (sd) {
-            const teamNames = ['NS', 'EO'];
-            const contractTeamName = teamNames[sd.contract_team];
-            const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
-            const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
-            const suitSymbols = ['♠', '♥', '♦', '♣'];
-            scoresHtml += `<div class="result-contract-detail ${contractClass}">${sd.contract_value}${suitSymbols[state.contract.trump]} par ${contractTeamName} — ${contractResult}</div>`;
-            scoresHtml += `<div class="result-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
-            if (sd.belote[0] > 0 || sd.belote[1] > 0) {
-                const parts = [];
-                if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote NS`);
-                if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote EO`);
-                scoresHtml += `<div class="result-score-line">${parts.join(' / ')}</div>`;
-            }
-            scoresHtml += `<div class="result-final-scores">Score : NS ${sd.final_scores[0]} — EO ${sd.final_scores[1]}</div>`;
+            finals = sd.final_scores;
         } else {
-            let ns = state.points[0], ew = state.points[1];
-            const hasBeloteNS = state.belote && state.belote[0] === 2;
-            const hasBeloteEW = state.belote && state.belote[1] === 2;
-            if (hasBeloteNS) ns += 20;
-            if (hasBeloteEW) ew += 20;
-            const beloteNS = hasBeloteNS ? ' <span class="belote-note">(dont belote)</span>' : '';
-            const beloteEW = hasBeloteEW ? ' <span class="belote-note">(dont belote)</span>' : '';
-            scoresHtml = `<div class="team-ns">NS : ${ns}${beloteNS}</div><div class="team-ew">EO : ${ew}${beloteEW}</div>`;
+            const bel = [
+                state.belote && state.belote[0] === 2 ? 20 : 0,
+                state.belote && state.belote[1] === 2 ? 20 : 0,
+            ];
+            finals = [state.points[0] + bel[0], state.points[1] + bel[1]];
+        }
+
+        // Points de plis, et la belote s'il y en a une, en plus petit.
+        const tricks = sd ? sd.trick_points : state.points;
+        let detailLine = `Plis : ${teamNameMid(0, true)} ${tricks[0]} — ${teamNameMid(1, true)} ${tricks[1]}`;
+        const belote = sd ? sd.belote : [
+            state.belote && state.belote[0] === 2 ? 20 : 0,
+            state.belote && state.belote[1] === 2 ? 20 : 0,
+        ];
+        const beloteParts = [];
+        for (const t of [0, 1]) {
+            if (belote[t] > 0) beloteParts.push(`+${belote[t]} pour ${teamNameMid(t, true)}`);
+        }
+        if (beloteParts.length) {
+            detailLine += ` <span class="belote-note">· belote ${beloteParts.join(' et ')}</span>`;
         }
 
         const buttonsHtml = this.resultButtons.map((b, i) =>
             `<button class="${b.className}" data-result-btn="${i}">${b.label}</button>`
         ).join('');
 
-        // Le rappel du contrat n'apparaît que faute de détail de score : le
-        // bandeau « 140♠ par NS — Reussi » le redit déjà, en mieux.
         resultEl.innerHTML =
             `<div class="result-title ${titleClass}">${titleText}</div>` +
-            (contract && !sd ? `<div class="result-contract">${contract}</div>` : '') +
-            `<div class="result-scores">${scoresHtml}</div>` +
+            (contractLine ? `<div class="result-contract">${contractLine}</div>` : '') +
+            `<div class="result-final">` +
+                `<div class="result-final-team team-ns">` +
+                    `<span class="result-final-pts">${finals[0]}</span>` +
+                    `<span class="result-final-name">${teamName(0, true)}</span>` +
+                `</div>` +
+                `<div class="result-final-team team-ew">` +
+                    `<span class="result-final-pts">${finals[1]}</span>` +
+                    `<span class="result-final-name">${teamName(1, true)}</span>` +
+                `</div>` +
+            `</div>` +
+            `<div class="result-tricks">${detailLine}</div>` +
             (buttonsHtml ? `<div class="result-buttons">${buttonsHtml}</div>` : '');
 
         this.resultButtons.forEach((b, i) => {

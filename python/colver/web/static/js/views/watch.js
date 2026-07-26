@@ -117,10 +117,10 @@ function template() {
 <div id="watch-main" class="hidden">
     <div id="watch-left">
         <div id="watch-score-bar">
-            <span id="watch-score-ns">NS\u00a0: 0</span>
+            <span id="watch-score-ns">Nord-Sud\u00a0: 0</span>
             <span id="watch-game-id" class="game-id-tag hidden"></span>
             <span id="watch-contract-display"></span>
-            <span id="watch-score-ew">EO\u00a0: 0</span>
+            <span id="watch-score-ew">Est-Ouest\u00a0: 0</span>
             <button id="watch-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
             <button id="watch-config-toggle" class="config-toggle-btn" title="Options">\u2699</button>
         </div>
@@ -161,7 +161,7 @@ function template() {
         <div id="watch-dd-box" class="dd-oracle-box hidden">
             <div class="dd-title">DD Oracle</div>
             <table class="dd-table">
-                <tr><th></th><th>NS</th><th>EO</th></tr>
+                <tr><th></th><th>Nord-Sud</th><th>Est-Ouest</th></tr>
                 <tr><td>\u2660</td><td id="dd-s-ns">-</td><td id="dd-s-ew">-</td></tr>
                 <tr><td class="red">\u2665</td><td id="dd-h-ns">-</td><td id="dd-h-ew">-</td></tr>
                 <tr><td>\u2663</td><td id="dd-c-ns">-</td><td id="dd-c-ew">-</td></tr>

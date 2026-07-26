@@ -22,6 +22,25 @@ export const SEAT_COLOR_VARS = [
 
 export const TEAM_COLOR_VARS = ['var(--c-team-ns)', 'var(--c-team-ew)'];
 
+// Noms des camps. « NS » et « EO » sont du jargon de notation : à une table on
+// dit « nous » et « eux ». Deux jeux de noms selon qui regarde :
+//   - relatif   : le lecteur est assis à la table (Jouer, Salon, fin de partie).
+//                 Le plateau est toujours pivoté pour le mettre au Sud, donc
+//                 l'équipe 0 est forcément la sienne.
+//   - neutre    : personne n'est assis (Regarder, Rejouer, Annonces, Croyances).
+export const TEAM_NAMES_FR = ['Nord-Sud', 'Est-Ouest'];
+export const TEAM_NAMES_REL = ['Nous', 'Eux'];
+
+/** Nom du camp `team` (0 = NS, 1 = EO). `relative` : vu par le joueur au Sud. */
+export function teamName(team, relative = false) {
+    return (relative ? TEAM_NAMES_REL : TEAM_NAMES_FR)[team] || '';
+}
+
+/** Même chose en milieu de phrase (« par nous », « par Nord-Sud »). */
+export function teamNameMid(team, relative = false) {
+    return relative ? (TEAM_NAMES_REL[team] || '').toLowerCase() : (TEAM_NAMES_FR[team] || '');
+}
+
 /** 0 = NS (sièges 0 et 2), 1 = EO (sièges 1 et 3). */
 export function teamOf(seat) {
     return seat % 2;

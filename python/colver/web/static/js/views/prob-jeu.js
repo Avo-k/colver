@@ -14,8 +14,8 @@ const TEMPLATE = `
     <div id="pj-left">
         <div class="prob-box" id="pj-info-bar">
             <span id="pj-contract-display" class="pj-contract"></span>
-            <span id="pj-score-ns">NS : 0</span>
-            <span id="pj-score-ew">EO : 0</span>
+            <span id="pj-score-ns">Nord-Sud : 0</span>
+            <span id="pj-score-ew">Est-Ouest : 0</span>
             <span id="pj-tricks-info" class="pj-tricks"></span>
         </div>
         <div class="prob-box">
@@ -101,8 +101,8 @@ function handleProblemReady(data) {
     pjLocked = false;
 
     document.getElementById('pj-contract-display').innerHTML = contractStr(data.contract);
-    document.getElementById('pj-score-ns').textContent = `NS : ${data.points[0]} (${data.tricks_won[0]}P)`;
-    document.getElementById('pj-score-ew').textContent = `EO : ${data.points[1]} (${data.tricks_won[1]}P)`;
+    document.getElementById('pj-score-ns').textContent = `Nord-Sud : ${data.points[0]} (${data.tricks_won[0]}P)`;
+    document.getElementById('pj-score-ew').textContent = `Est-Ouest : ${data.points[1]} (${data.tricks_won[1]}P)`;
     const trickNum = data.tricks_won[0] + data.tricks_won[1] + 1;
     document.getElementById('pj-tricks-info').textContent = `Pli ${trickNum}/8`;
 

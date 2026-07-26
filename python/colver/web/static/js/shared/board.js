@@ -2,7 +2,7 @@
 
 import * as SFX from '../sounds.js';
 import {
-    SEAT_NAMES_FR, cardTextHtml, suitHtml,
+    SEAT_NAMES_FR, teamName, teamNameMid, suitHtml,
     renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
@@ -276,8 +276,8 @@ export class BoardRenderer {
     }
 
     renderState(state) {
-        this.el('score-ns').textContent = `NS : ${state.points[0]} (${state.tricks_won[0]}P)`;
-        this.el('score-ew').textContent = `EO : ${state.points[1]} (${state.tricks_won[1]}P)`;
+        this.el('score-ns').textContent = `${teamName(0)} : ${state.points[0]} (${state.tricks_won[0]}P)`;
+        this.el('score-ew').textContent = `${teamName(1)} : ${state.points[1]} (${state.tricks_won[1]}P)`;
         this.el('contract-display').innerHTML = contractStr(state.contract);
         updateCfnBox(`${this.prefix}-cfn`, state.cfn);
 
@@ -387,7 +387,7 @@ export class BoardRenderer {
         const rewards = state.rewards;
         const nsWon = rewards ? rewards[0] > rewards[1] : state.points[0] > state.points[1];
         const isDraw = rewards ? rewards[0] === rewards[1] : false;
-        const resultText = isDraw ? 'Egalite' : (nsWon ? 'NS gagne' : 'EO gagne');
+        const resultText = isDraw ? 'Égalité' : `${teamName(nsWon ? 0 : 1)} gagne`;
 
         if (this.isReplay) {
             header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> <span class="stats-result">${resultText}</span>`;
@@ -398,21 +398,20 @@ export class BoardRenderer {
         let bodyHtml = '';
         const sd = state.score_detail;
         if (sd) {
-            const teamNames = ['NS', 'EO'];
-            const contractTeamName = teamNames[sd.contract_team];
-            const contractResult = sd.contract_made ? 'Reussi' : 'Chute';
+            const contractTeamName = teamNameMid(sd.contract_team);
+            const contractResult = sd.contract_made ? 'réussi' : 'chuté';
             const contractClass = sd.contract_made ? 'contract-made' : 'contract-failed';
             bodyHtml += `<div class="stats-contract-result ${contractClass}">${sd.contract_value}${suitHtml(state.contract.trump)} par ${contractTeamName} — ${contractResult}</div>`;
-            bodyHtml += `<div class="stats-score-line">Plis : NS ${sd.trick_points[0]} — EO ${sd.trick_points[1]}</div>`;
+            bodyHtml += `<div class="stats-score-line">Plis : ${teamName(0)} ${sd.trick_points[0]} — ${teamName(1)} ${sd.trick_points[1]}</div>`;
             if (sd.belote[0] > 0 || sd.belote[1] > 0) {
                 const parts = [];
-                if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote NS`);
-                if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote EO`);
+                if (sd.belote[0] > 0) parts.push(`+${sd.belote[0]} belote ${teamName(0)}`);
+                if (sd.belote[1] > 0) parts.push(`+${sd.belote[1]} belote ${teamName(1)}`);
                 bodyHtml += `<div class="stats-score-line">${parts.join(' / ')}</div>`;
             }
-            bodyHtml += `<div class="stats-final-scores">Score : NS ${sd.final_scores[0]} — EO ${sd.final_scores[1]}</div>`;
+            bodyHtml += `<div class="stats-final-scores">Score : ${teamName(0)} ${sd.final_scores[0]} — ${teamName(1)} ${sd.final_scores[1]}</div>`;
         } else {
-            bodyHtml = `<div class="stats-final">NS: ${state.points[0]}pts (${state.tricks_won[0]}P) / EO: ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
+            bodyHtml = `<div class="stats-final">${teamName(0)} : ${state.points[0]}pts (${state.tricks_won[0]}P) / ${teamName(1)} : ${state.points[1]}pts (${state.tricks_won[1]}P)</div>`;
         }
         body.innerHTML = bodyHtml;
     }

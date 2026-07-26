@@ -6,6 +6,7 @@ import {
     SUIT_GLYPHS, SUIT_NAMES_EN, SUIT_NAMES_FR, SUIT_DISPLAY_ORDER, SUIT_IS_RED,
     suitHtml, suitClass,
 } from './suits.js';
+import { TEAM_NAMES_FR, TEAM_NAMES_REL, teamName, teamNameMid } from './seats.js';
 
 export const RANKS = ['7', '8', '9', 'V', 'D', 'R', '10', 'A'];
 export const PLAIN_POINTS = [0, 0, 0, 2, 3, 4, 10, 11];
@@ -18,6 +19,7 @@ export const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 // Pour tout rendu HTML, passer par suitHtml() ou cardTextHtml().
 export const SUITS = SUIT_GLYPHS;
 export { SUIT_NAMES_EN, SUIT_DISPLAY_ORDER, SUIT_IS_RED, suitHtml, suitClass };
+export { TEAM_NAMES_FR, TEAM_NAMES_REL, teamName, teamNameMid };
 
 /** « A♥ » avec le symbole coloré — pour les listes de plis, historiques, etc. */
 export function cardTextHtml(cardIdx) {
@@ -246,19 +248,22 @@ export function renderLastTrick(container, trick, trickWinner, trickPoints, huma
     container.appendChild(grid);
 }
 
-/** Contrat en HTML (symbole coloré). */
-export function contractStr(contract) {
+/**
+ * Contrat en HTML (symbole coloré). `relative` : nommer les camps depuis la
+ * chaise du joueur (« par nous ») plutôt que de l'extérieur (« par Nord-Sud »).
+ */
+export function contractStr(contract, relative = false) {
     if (!contract || Object.keys(contract).length === 0) return '';
     const val = contract.value;
-    const team = contract.team === 0 ? 'NS' : 'EO';
+    const team = teamNameMid(contract.team, relative);
     const coinche = contract.coinche === 1 ? ' x' : contract.coinche === 2 ? ' xx' : '';
     return `${val}${suitHtml(contract.trump)} par ${team}${coinche}`;
 }
 
 /** Contrat en texte pur (title, alt, textContent). */
-export function contractText(contract) {
+export function contractText(contract, relative = false) {
     if (!contract || Object.keys(contract).length === 0) return '';
-    const team = contract.team === 0 ? 'NS' : 'EO';
+    const team = teamNameMid(contract.team, relative);
     const coinche = contract.coinche === 1 ? ' x' : contract.coinche === 2 ? ' xx' : '';
     return `${contract.value}${SUITS[contract.trump]} par ${team}${coinche}`;
 }

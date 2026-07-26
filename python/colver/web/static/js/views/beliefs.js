@@ -4,7 +4,7 @@
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import { suitHtml } from '../shared/suits.js';
-import { SEAT_COLOR_VARS } from '../shared/seats.js';
+import { SEAT_COLOR_VARS, teamName } from '../shared/seats.js';
 
 const SEAT_NAMES = ['N', 'E', 'S', 'O'];
 
@@ -202,7 +202,7 @@ function updateInfo() {
     const contractInfo = document.getElementById('belief-contract-info');
     if (contractInfo && currentState && currentState.contract && currentState.contract.value) {
         const c = currentState.contract;
-        const team = c.team === 0 ? 'NS' : 'EO';
+        const team = teamName(c.team);
         const coinche = c.coinche === 1 ? ' x' : c.coinche === 2 ? ' xx' : '';
         contractInfo.innerHTML = `Contrat: ${c.value}${suitHtml(c.trump)} ${team}${coinche}`;
     } else if (contractInfo) {

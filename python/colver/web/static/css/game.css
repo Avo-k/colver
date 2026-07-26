@@ -39,17 +39,45 @@
     margin-bottom: 16px;
 }
 
-.result-scores {
+/* Scores de fin de donne : deux colonnes « points en gros, camp en dessous ».
+   C'est le chiffre qu'on vient chercher, il passe donc avant tout le reste. */
+.result-final {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    font-size: var(--fs-lg);
-    font-weight: 600;
-    margin-bottom: 20px;
+    justify-content: center;
+    align-items: baseline;
+    gap: clamp(20px, 5vw, 48px);
+    margin-bottom: 10px;
 }
 
-.result-scores .team-ns { color: var(--c-team-ns); }
-.result-scores .team-ew { color: var(--c-team-ew); }
+.result-final-team {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.result-final-pts {
+    font-size: var(--fs-3xl);
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+
+.result-final-name {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    opacity: 0.85;
+}
+
+.result-final .team-ns { color: var(--c-team-ns); }
+.result-final .team-ew { color: var(--c-team-ew); }
+
+.result-tricks {
+    font-size: var(--fs-sm);
+    color: #999;
+    margin-bottom: 20px;
+}
 
 .belote-note {
     font-size: 0.8em;
@@ -141,40 +169,6 @@
     margin-top: 4px;
 }
 
-/* ===== SCORE BREAKDOWN (play tab end-of-game) ===== */
-.result-contract-detail {
-    font-size: var(--fs-sm);
-    font-weight: 600;
-    padding: 4px 8px;
-    border-radius: 4px;
-    margin-bottom: 4px;
-}
-
-.result-contract-detail.contract-made {
-    color: var(--c-success-txt);
-    background: rgba(76, 175, 80, 0.15);
-}
-
-.result-contract-detail.contract-failed {
-    color: var(--c-danger-txt);
-    background: rgba(229, 115, 115, 0.15);
-}
-
-.result-score-line {
-    font-size: var(--fs-sm);
-    color: #bbb;
-    padding: 2px 0;
-}
-
-.result-final-scores {
-    font-size: var(--fs-md);
-    font-weight: 700;
-    color: var(--c-accent);
-    padding: 4px 0 2px;
-    border-top: 1px solid rgba(255,255,255,0.15);
-    margin-top: 4px;
-}
-
 /* ===== FIN DE PARTIE SUR TÉLÉPHONE =====
    Le panneau doit tenir dans la zone de jeu que board.css lui réserve : on
    resserre les marges, on borne la largeur à l'écran et on garde les deux
@@ -186,8 +180,10 @@
         max-width: calc(100vw - 24px);
     }
     .result-title { font-size: var(--fs-xl); margin-bottom: 8px; }
-    .result-contract { margin-bottom: 10px; }
-    .result-scores { font-size: var(--fs-md); gap: 4px; margin-bottom: 14px; }
+    .result-contract { font-size: var(--fs-sm); margin-bottom: 10px; }
+    .result-final { gap: 28px; margin-bottom: 8px; }
+    .result-final-pts { font-size: var(--fs-2xl); }
+    .result-tricks { font-size: var(--fs-xs); margin-bottom: 14px; }
     .result-buttons { flex-wrap: nowrap; }
     .result-restart, .result-analyse {
         padding: 9px 12px;

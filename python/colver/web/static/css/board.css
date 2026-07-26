@@ -22,7 +22,7 @@
 
 /* ===== BANDEAU DE SCORE DE LA TABLE DE JEU =====
    Trois blocs sur deux lignes chacun — libellé au-dessus, valeur en dessous :
-   NS à gauche, le contrat au centre, EO à droite. Les colonnes latérales font
+   « Nous » à gauche, le contrat au centre, « Eux » à droite. Les latérales font
    la même largeur (1fr) pour que le contrat tombe au milieu du bandeau malgré
    les boutons outils, qui vivent dans la colonne de droite. */
 #play-table #score-bar {

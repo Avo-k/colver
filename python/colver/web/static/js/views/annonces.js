@@ -533,7 +533,7 @@ function renderOracleStrips(successCounts, completed) {
 // this suit is NS's best trump, plus compact Sûr/Tendu thresholds (ex-Paliers).
 function renderOracleSynth(synth, successCounts, completed) {
     let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
-        '<th>Points NS <span class="oracle-quant-sub">moy. DD</span></th>' +
+        '<th>Points Nord-Sud <span class="oracle-quant-sub">moy. DD</span></th>' +
         '<th>Méd.</th>' +
         '<th>Meilleure couleur <span class="oracle-quant-sub">% mondes</span></th>' +
         '<th class="oracle-mini-col">Sûr <span class="oracle-quant-sub">≥80%</span></th>' +
@@ -685,7 +685,7 @@ function confidenceClass(count) {
     return 'conf-hi';
 }
 
-const DOUDOU_TEAM_LABELS = { all: 'Tous', ns: 'NS', ew: 'EW' };
+const DOUDOU_TEAM_LABELS = { all: 'Tous', ns: 'Nord-Sud', ew: 'Est-Ouest' };
 let doudouTeamFilter = 'all';
 let lastDoudouData = null; // cached last render args, for filter switching
 
@@ -715,8 +715,8 @@ function renderDoudouSynth(stats, completed) {
         .map(([name, s]) => `${name} ${pct(stats.taker_seats[s], contracts)}%`).join(' \u00b7 ')]);
 
     rows.push(['Contrats r\u00e9ussis',
-        `NS ${pct(stats.ns_achieved, stats.ns_contracts)}% (${stats.ns_achieved}/${stats.ns_contracts})` +
-        ` \u00b7 EW ${pct(stats.ew_achieved, stats.ew_contracts)}% (${stats.ew_achieved}/${stats.ew_contracts})`]);
+        `Nord-Sud ${pct(stats.ns_achieved, stats.ns_contracts)}% (${stats.ns_achieved}/${stats.ns_contracts})` +
+        ` \u00b7 Est-Ouest ${pct(stats.ew_achieved, stats.ew_contracts)}% (${stats.ew_achieved}/${stats.ew_contracts})`]);
 
     if (stats.south_bids > 0) {
         const sb = stats.south_bids;
@@ -736,10 +736,10 @@ function renderDoudouSynth(stats, completed) {
 
     const avgParts = [];
     if (stats.ns_contracts > 0) {
-        avgParts.push(`contrat NS moyen ${Math.round(stats.ns_value_sum / stats.ns_contracts)}`);
+        avgParts.push(`contrat Nord-Sud moyen ${Math.round(stats.ns_value_sum / stats.ns_contracts)}`);
     }
     if (stats.pts_n > 0) {
-        avgParts.push(`points NS ${Math.round(stats.pts_ns_sum / stats.pts_n)} / EW ${Math.round(stats.pts_ew_sum / stats.pts_n)}`);
+        avgParts.push(`points Nord-Sud ${Math.round(stats.pts_ns_sum / stats.pts_n)} / Est-Ouest ${Math.round(stats.pts_ew_sum / stats.pts_n)}`);
     }
     if (avgParts.length) rows.push(['Moyennes', avgParts.join(' \u00b7 ')]);
 
