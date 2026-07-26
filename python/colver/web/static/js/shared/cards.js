@@ -16,14 +16,23 @@ export const SEAT_NAMES_FR = ['Nord', 'Est', 'Sud', 'Ouest'];
 
 // Ré-exports : les vues importent historiquement ces symboles depuis cards.js.
 // `SUITS` est le glyphe NU — réservé au texte pur (alt, title, textContent).
-// Pour tout rendu HTML, passer par suitHtml() ou cardTextHtml().
+// Pour tout rendu HTML, passer par suitHtml() ou cardChipHtml().
 export const SUITS = SUIT_GLYPHS;
 export { SUIT_NAMES_EN, SUIT_DISPLAY_ORDER, SUIT_IS_RED, suitHtml, suitClass };
 export { TEAM_NAMES_FR, TEAM_NAMES_REL, teamName, teamNameMid };
 
-/** « A♥ » avec le symbole coloré — pour les listes de plis, historiques, etc. */
-export function cardTextHtml(cardIdx) {
-    return `${RANKS[cardRank(cardIdx)]}${suitHtml(cardSuit(cardIdx))}`;
+/**
+ * « A♥ » sur une pastille claire — rang en noir, glyphe rouge ou noir, comme
+ * une vraie carte. C'est le rendu par défaut partout où on DÉSIGNE une carte
+ * (le coup qu'un bot aurait joué, une barre de score par carte, un pli rejoué)
+ * : sur le feutre sombre, le texte nu se lit comme une étiquette, la pastille
+ * se lit comme une carte. `on-light` bascule les glyphes sur les tokens de
+ * surface claire — aucune couleur n'est écrite en dur ici (cf. tokens.css).
+ */
+export function cardChipHtml(cardIdx) {
+    return `<span class="card-chip on-light">` +
+        `<span class="card-chip__rank">${RANKS[cardRank(cardIdx)]}</span>` +
+        `${suitHtml(cardSuit(cardIdx))}</span>`;
 }
 
 // Build per-hand suit sort keys that maximize color alternation.

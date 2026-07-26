@@ -5,7 +5,7 @@ import { send, onMessage, offMessage } from '../ws.js';
 import * as SFX from '../sounds.js';
 import {
     RANKS, SUITS, SEAT_NAMES_FR, cardSuit, cardRank, cardSvgPath, cardToHtml,
-    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
+    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml, cardChipHtml,
     _prevTrick, _animatingTrick, detectTrickCompletion, animateTrickFlush,
     SUIT_DISPLAY_ORDER, suitSortKeys
 } from '../shared/cards.js';
@@ -361,8 +361,7 @@ function renderVisitBars(container, visitCounts, bestAction, rootVisits) {
         const isBest = action === bestAction;
         row.className = 'visit-row' + (isBest ? ' best' : '');
         const pct = (visits / maxVisits * 100).toFixed(0);
-        const name = actionName(action, 1);
-        row.innerHTML = `<span class="visit-name">${name}</span>` +
+        row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
             `<div class="visit-bar-bg"><div class="visit-bar-fill" style="width:${pct}%"></div></div>` +
             `<span class="visit-count">${visits}</span>`;
         div.appendChild(row);
@@ -393,8 +392,7 @@ function renderQValueBars(container, qValues, bestAction) {
         const isBest = action === bestAction;
         row.className = 'visit-row' + (isBest ? ' best' : '');
         const pct = ((q - minQ) / range * 100).toFixed(0);
-        const name = actionName(action, 1);
-        row.innerHTML = `<span class="visit-name">${name}</span>` +
+        row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
             `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
             `<span class="visit-count">${q.toFixed(3)}</span>`;
         div.appendChild(row);
@@ -418,8 +416,7 @@ function renderDdScoreBars(container, cardScores, bestAction, determinizations) 
         const isBest = action === bestAction;
         row.className = 'visit-row' + (isBest ? ' best' : '');
         const pct = ((score - minS) / range * 100).toFixed(0);
-        const name = actionName(action, 1);
-        row.innerHTML = `<span class="visit-name">${name}</span>` +
+        row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
             `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
             `<span class="visit-count">${score.toFixed(1)}</span>`;
         div.appendChild(row);

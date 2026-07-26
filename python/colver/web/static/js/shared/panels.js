@@ -9,7 +9,7 @@
 // Le nom de siège passe par un callback : le plateau solo/salon affiche les
 // pseudos des joueurs, Watch et Replay les noms de sièges.
 
-import { cardTextHtml, SEAT_NAMES_FR, bidActionHtml } from './cards.js';
+import { cardChipHtml, SEAT_NAMES_FR, bidActionHtml } from './cards.js';
 import { teamClass } from './seats.js';
 
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
@@ -46,12 +46,12 @@ export function renderTrickHistory(container, tricks, playerName = defaultPlayer
             const parts = [];
             for (let j = 0; j < 4; j++) {
                 const c = t.cards[(leadSeat + j) % 4];
-                if (c >= 0 && c < 32) parts.push(cardTextHtml(c));
+                if (c >= 0 && c < 32) parts.push(cardChipHtml(c));
             }
             orderedCards = parts.join(' ');
         } else {
             orderedCards = t.cards
-                .map(c => (c >= 0 && c < 32) ? cardTextHtml(c) : '?')
+                .map(c => (c >= 0 && c < 32) ? cardChipHtml(c) : '?')
                 .join(' ');
         }
 

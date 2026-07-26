@@ -5,7 +5,7 @@
 import { send, onMessage, offMessage } from '../ws.js';
 import { navigateTo } from '../router.js';
 import {
-    SEAT_NAMES_FR, RANKS, SUITS, cardRank, cardSuit, cardCode, suitHtml,
+    SEAT_NAMES_FR, SUITS, cardCode, cardChipHtml,
     bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
@@ -123,20 +123,6 @@ const CATEGORY_UI = {
     faute:       { tag: '??', cls: 'an-blund',  label: 'Faute' },
 };
 
-function cardLabel(c) {
-    const suit = cardSuit(c);
-    const red = suit === 1 || suit === 2;
-    return `<span class="${red ? 'an-red' : ''}">${RANKS[cardRank(c)]}${SUITS[suit]}</span>`;
-}
-
-// La carte proposée par un bot se lit comme une vraie carte : pastille claire,
-// rang en noir et glyphe en rouge ou noir — d'où `on-light` (cf. tokens.css).
-function cardChip(c) {
-    return `<span class="an-card-chip on-light">` +
-        `<span class="an-chip-rank">${RANKS[cardRank(c)]}</span>` +
-        `${suitHtml(cardSuit(c))}</span>`;
-}
-
 // Navigate to the annonces analysis page pre-filled with the acting player's
 // hand and the auction history up to (not including) this bid.
 function openBidAnalysis(idx) {
@@ -178,7 +164,7 @@ function botsHtml(idx, played) {
         return `<span class="an-bot ${same ? 'an-bot-same' : 'an-bot-diff'}" ` +
             `title="${bot.title}">` +
             `<span class="an-bot-name">${bot.label}</span>` +
-            `<span class="an-bot-card">${cardChip(card)}</span></span>`;
+            `<span class="an-bot-card">${cardChipHtml(card)}</span></span>`;
     }).filter(Boolean).join('');
 
     return chips ? `<div class="an-bots">${chips}</div>` : '';
@@ -241,7 +227,7 @@ function replayRenderMoveStats(move, state) {
                 `<span class="an-tag">${ui.tag}</span> ${ui.label}`;
             if (an.cost > 0) {
                 html += ` <span class="an-cost">−${an.cost} pts</span>` +
-                    `<span class="an-alt">Oracle : ${cardLabel(an.best)}</span>`;
+                    `<span class="an-alt">Oracle : ${cardChipHtml(an.best)}</span>`;
             }
             html += '</div>';
         }
@@ -340,7 +326,7 @@ function buildMovesList() {
             }
             cardEl.className = cls;
             cardEl.dataset.idx = i;
-            cardEl.innerHTML = cardLabel(m.action);
+            cardEl.innerHTML = cardChipHtml(m.action);
             cardEl.title = tip;
             cardEl.addEventListener('click', () => jumpTo(i));
             trickRow.appendChild(cardEl);

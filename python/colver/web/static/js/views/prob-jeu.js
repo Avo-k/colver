@@ -2,7 +2,7 @@
 
 import { send, onMessage, offMessage } from '../ws.js';
 import * as SFX from '../sounds.js';
-import { RANKS, SUITS, SEAT_NAMES_FR, cardRank, cardSuit, cardToHtml, renderHand, renderTrick, contractStr, actionName, bidActionHtml } from '../shared/cards.js';
+import { SEAT_NAMES_FR, cardToHtml, cardChipHtml, renderHand, renderTrick, contractStr, bidActionHtml } from '../shared/cards.js';
 
 const TEMPLATE = `
 <div id="pj-config">
@@ -129,12 +129,15 @@ function handleCorrection(data) {
     const correct = data.player_action === data.oracle_action;
     const badge = document.getElementById('pj-player-badge');
     badge.className = 'prob-badge ' + (correct ? 'prob-badge-correct' : 'prob-badge-wrong');
-    badge.textContent = 'Vous : ' + data.player_action_name;
+    // Les cartes désignées ici sont rendues en pastille (cardChipHtml) plutôt
+    // qu'avec les noms texte du serveur : c'est le même vocabulaire visuel que
+    // « qui aurait joué quoi » dans Rejoué.
+    badge.innerHTML = 'Vous : ' + cardChipHtml(data.player_action);
 
-    document.getElementById('pj-oracle-best').textContent = 'Oracle DD : ' + data.oracle_action_name;
+    document.getElementById('pj-oracle-best').innerHTML = 'Oracle DD : ' + cardChipHtml(data.oracle_action);
     document.getElementById('pj-oracle-elapsed').textContent = `${data.oracle_elapsed_ms}ms`;
 
-    document.getElementById('pj-isdd-best').textContent = 'IS-DD : ' + data.isdd_action_name;
+    document.getElementById('pj-isdd-best').innerHTML = 'IS-DD : ' + cardChipHtml(data.isdd_action);
     const isddBarsEl = document.getElementById('pj-isdd-bars');
     isddBarsEl.innerHTML = '';
 
@@ -152,7 +155,7 @@ function handleCorrection(data) {
             const row = document.createElement('div');
             row.className = 'visit-row' + (isBest ? ' best' : '') + (isPlayer ? ' prob-player-pick' : '');
             const pct = ((score - minS) / rng * 100).toFixed(0);
-            row.innerHTML = `<span class="visit-name">${actionName(action, 1)}</span>` +
+            row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
                 `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
                 `<span class="visit-count">${score.toFixed(1)}</span>`;
             div.appendChild(row);
@@ -165,7 +168,7 @@ function handleCorrection(data) {
     const dmcSec = document.getElementById('pj-dmc-section');
     if (data.dmc_q_values && data.dmc_q_values.length) {
         dmcSec.classList.remove('hidden');
-        document.getElementById('pj-dmc-best').textContent = 'DouDou50 : ' + data.dmc_action_name;
+        document.getElementById('pj-dmc-best').innerHTML = 'DouDou50 : ' + cardChipHtml(data.dmc_action);
         const dmcBarsEl = document.getElementById('pj-dmc-bars');
         dmcBarsEl.innerHTML = '';
 
@@ -182,7 +185,7 @@ function handleCorrection(data) {
             const row = document.createElement('div');
             row.className = 'visit-row' + (isBest ? ' best' : '') + (isPlayer ? ' prob-player-pick' : '');
             const pct = ((q - minQ) / rng * 100).toFixed(0);
-            row.innerHTML = `<span class="visit-name">${actionName(action, 1)}</span>` +
+            row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
                 `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
                 `<span class="visit-count">${q.toFixed(3)}</span>`;
             div.appendChild(row);

@@ -2,7 +2,7 @@
 // Step through a game and see how NN/heuristic beliefs evolve
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, cardChipHtml, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import { suitHtml } from '../shared/suits.js';
 import { SEAT_COLOR_VARS, teamName } from '../shared/seats.js';
 
@@ -211,7 +211,12 @@ function updateInfo() {
 
     const lastAction = document.getElementById('belief-last-action');
     if (lastAction && currentLastAction) {
-        lastAction.innerHTML = `${SEAT_NAMES[currentLastAction.player]} joue ${actionHtml(currentLastAction.action, currentLastAction.phase)}`;
+        // La carte qui vient d'être jouée est une désignation, pas une étiquette :
+        // pastille. La frise d'historique en dessous reste en texte — ses puces
+        // portent la couleur du siège, qu'un fond clair effacerait.
+        const { player, action, phase } = currentLastAction;
+        const what = phase === 1 ? cardChipHtml(action) : actionHtml(action, phase);
+        lastAction.innerHTML = `${SEAT_NAMES[player]} joue ${what}`;
     } else if (lastAction) {
         lastAction.textContent = '';
     }

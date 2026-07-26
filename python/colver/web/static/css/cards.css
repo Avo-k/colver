@@ -71,6 +71,24 @@
     pointer-events: none;
 }
 
+/* Pastille « carte » en ligne — désigne une carte dans un texte ou une liste
+   (coup d'un bot, barre de score par carte, historique de plis). Surface claire
+   qui porte donc `.on-light` (cf. tokens.css) et ne code aucune couleur de
+   glyphe en dur. Voir cardChipHtml() dans shared/cards.js. */
+.card-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: #fbfbf6;
+    border: 1px solid #d9d6c8;
+    color: var(--c-suit-black-on-light);
+    font-weight: 700;
+    line-height: 1.35;
+}
+.card-chip__rank { font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; }
+
 /* Compact corner-index mini card (CSS text, no image) — for small spread hands.
    Seule surface claire de l'app qui porte un glyphe de couleur : elle porte
    donc `.on-light` (cf. tokens.css) et ne code aucune couleur en dur. */
