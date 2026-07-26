@@ -3,7 +3,7 @@
 import * as SFX from '../sounds.js';
 import {
     SEAT_NAMES_FR, teamName, teamNameMid, suitHtml,
-    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidActionHtml,
+    renderHand, renderTrick, renderLastTrick, contractStr, actionName, bidChipHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     animateTrickFlush, TRICK_FLUSH_DURATION

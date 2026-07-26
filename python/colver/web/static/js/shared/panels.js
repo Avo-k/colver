@@ -9,7 +9,7 @@
 // Le nom de siège passe par un callback : le plateau solo/salon affiche les
 // pseudos des joueurs, Watch et Replay les noms de sièges.
 
-import { cardChipHtml, SEAT_NAMES_FR, bidActionHtml } from './cards.js';
+import { cardChipHtml, SEAT_NAMES_FR, bidChipHtml } from './cards.js';
 import { teamClass } from './seats.js';
 
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
@@ -23,7 +23,7 @@ export function renderBidEntries(container, bidHistory, playerName = defaultPlay
     for (const bid of bidHistory) {
         const el = document.createElement('span');
         el.className = `watch-bid-entry ${teamClass(bid.player)}`;
-        el.innerHTML = `${playerName(bid.player)} ${bidActionHtml(bid.action)}`;
+        el.innerHTML = `${playerName(bid.player)} ${bidChipHtml(bid.action)}`;
         container.appendChild(el);
     }
 }

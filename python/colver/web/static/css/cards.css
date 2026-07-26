@@ -71,11 +71,14 @@
     pointer-events: none;
 }
 
-/* Pastille « carte » en ligne — désigne une carte dans un texte ou une liste
-   (coup d'un bot, barre de score par carte, historique de plis). Surface claire
-   qui porte donc `.on-light` (cf. tokens.css) et ne code aucune couleur de
-   glyphe en dur. Voir cardChipHtml() dans shared/cards.js. */
-.card-chip {
+/* Pastilles claires en ligne — la carte qu'on désigne (coup d'un bot, barre de
+   score, historique de plis) et l'annonce qu'on affiche (historique d'enchères,
+   verdicts, barres de Q). Ce sont les DEUX seuls endroits à toucher pour
+   changer leur tête : cardChipHtml() / bidChipHtml() produisent le balisage,
+   ces règles produisent le style. Surfaces claires, donc `.on-light`
+   (cf. tokens.css) : aucune couleur de glyphe n'est écrite en dur. */
+.card-chip,
+.bid-chip {
     display: inline-flex;
     align-items: center;
     gap: 1px;
@@ -86,8 +89,13 @@
     color: var(--c-suit-black-on-light);
     font-weight: 700;
     line-height: 1.35;
+    white-space: nowrap;
 }
-.card-chip__rank { font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; }
+.card-chip__rank,
+.bid-chip__val { font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif; }
+/* « 100 ♣ » respire un peu plus que « A♠ » : le chiffre et le glyphe ne sont
+   pas les deux moitiés d'un même nom. */
+.bid-chip { gap: 3px; }
 
 /* Compact corner-index mini card (CSS text, no image) — for small spread hands.
    Seule surface claire de l'app qui porte un glyphe de couleur : elle porte

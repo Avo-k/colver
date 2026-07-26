@@ -2,7 +2,7 @@
 // Step through a game and see how NN/heuristic beliefs evolve
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, cardRank, cardSuit, cardChipHtml, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, cardChipHtml, bidChipHtml, SEAT_NAMES_FR, SUIT_DISPLAY_ORDER } from '../shared/cards.js';
 import { suitHtml } from '../shared/suits.js';
 import { SEAT_COLOR_VARS, teamName } from '../shared/seats.js';
 
@@ -12,24 +12,11 @@ const SEAT_NAMES = ['N', 'E', 'S', 'O'];
 const DISPLAY_ORDER = [7, 6, 5, 4, 3, 2, 1, 0];
 
 
+// Cette vue avait sa propre copie du rendu d'une annonce et d'une carte. Elle
+// passe par les origines partagées : une annonce se rend en `bid-chip`, une
+// carte en `card-chip`, ici comme partout ailleurs.
 function actionHtml(action, phase) {
-    if (phase === 0) {
-        if (action === 0) return 'Passe';
-        if (action === 41) return 'Coinche';
-        if (action === 42) return 'Surcoinche';
-        if (action >= 37 && action <= 40) return `Capot ${suitHtml(action - 37)}`;
-        if (action >= 1 && action <= 36) {
-            const bidIdx = action - 1;
-            const valueIdx = Math.floor(bidIdx / 4);
-            const suitIdx = bidIdx % 4;
-            const value = 80 + valueIdx * 10;
-            return `${value}${suitHtml(suitIdx)}`;
-        }
-        return `?${action}`;
-    }
-    const rank = cardRank(action);
-    const suit = cardSuit(action);
-    return `${RANKS[rank]}${suitHtml(suit)}`;
+    return phase === 0 ? bidChipHtml(action) : cardChipHtml(action);
 }
 
 // Module state
@@ -211,12 +198,8 @@ function updateInfo() {
 
     const lastAction = document.getElementById('belief-last-action');
     if (lastAction && currentLastAction) {
-        // La carte qui vient d'être jouée est une désignation, pas une étiquette :
-        // pastille. La frise d'historique en dessous reste en texte — ses puces
-        // portent la couleur du siège, qu'un fond clair effacerait.
         const { player, action, phase } = currentLastAction;
-        const what = phase === 1 ? cardChipHtml(action) : actionHtml(action, phase);
-        lastAction.innerHTML = `${SEAT_NAMES[player]} joue ${what}`;
+        lastAction.innerHTML = `${SEAT_NAMES[player]} joue ${actionHtml(action, phase)}`;
     } else if (lastAction) {
         lastAction.textContent = '';
     }

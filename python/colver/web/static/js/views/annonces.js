@@ -2,7 +2,7 @@
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { RANKS, SUITS, cardSvgPath, renderHand, renderHandMini, actionName, bidActionHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
+import { RANKS, SUITS, cardSvgPath, renderHand, renderHandMini, actionName, bidChipHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
 import { suitHtml, createSuitPicker } from '../shared/suits.js';
 import { SEAT_COLOR_VARS } from '../shared/seats.js';
 import * as wasmBridge from '../wasm-bridge.js';
@@ -269,7 +269,7 @@ function renderAnnoncesHistory() {
 
         const actionSpan = document.createElement('span');
         actionSpan.className = 'ann-action-name';
-        actionSpan.innerHTML = bidActionHtml(action);
+        actionSpan.innerHTML = bidChipHtml(action);
 
         const delBtn = document.createElement('button');
         delBtn.className = 'ann-del-btn';
@@ -408,17 +408,17 @@ function handleBidEvalResult(data) {
     const range = maxQ - minQ || 1;
 
     document.getElementById('annonces-verdict').classList.remove('hidden');
-    document.getElementById('annonces-verdict-action').innerHTML = bidActionHtml(bestAction);
+    document.getElementById('annonces-verdict-action').innerHTML = bidChipHtml(bestAction);
     if (altSelector) altSelector.set(bestAction);
 
     document.getElementById('annonces-results-header').innerHTML =
-        `Bid V6 : ${bidActionHtml(bestAction)}`;
+        `Bid V6 : ${bidChipHtml(bestAction)}`;
 
     let html = '<div class="visit-bars ann-qvalues-scroll ann-collapsed" id="ann-qvalues">';
     qValues.forEach(([action, q], i) => {
         const pct = ((q - minQ) / range * 100).toFixed(0);
         const isBest = action === bestAction;
-        const name = bidActionHtml(action);
+        const name = bidChipHtml(action);
         html += `<div class="visit-row${isBest ? ' best' : ''}${i >= 5 ? ' ann-extra' : ''}">
             <span class="visit-name">${name}</span>
             <div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>
@@ -437,7 +437,7 @@ function handleBidEvalResult(data) {
         pol.forEach(([action, p]) => {
             const pct = (p * 100).toFixed(1);
             html += `<div class="visit-row${action === polBest ? ' best' : ''}">
-                <span class="visit-name">${bidActionHtml(action)}</span>
+                <span class="visit-name">${bidChipHtml(action)}</span>
                 <div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${Math.max(2, p * 100)}%"></div></div>
                 <span class="visit-count">${pct}%</span>
             </div>`;
@@ -850,7 +850,7 @@ function resetDoudouPanel() {
     const forcedLabel = document.getElementById('doudou-forced-label');
     if (forcedLabel) {
         forcedLabel.innerHTML = forcedAction !== null
-            ? ` — annonce forcée : ${bidActionHtml(forcedAction)}` : '';
+            ? ` — annonce forcée : ${bidChipHtml(forcedAction)}` : '';
     }
 }
 
@@ -863,7 +863,7 @@ function runAltAnalysis(action) {
 
     const statusEl = document.getElementById('annonces-alt-status');
     statusEl.classList.remove('hidden');
-    statusEl.innerHTML = `Analyse de ${bidActionHtml(action)} en cours…`;
+    statusEl.innerHTML = `Analyse de ${bidChipHtml(action)} en cours…`;
 
     highlightOracleCell(action);
     resetDoudouPanel();
@@ -918,7 +918,7 @@ function handleDoudouDone(data) {
     if (forcedAction !== null) {
         const statusEl = document.getElementById('annonces-alt-status');
         statusEl.classList.remove('hidden');
-        statusEl.innerHTML = `DouDou50 simulé avec annonce forcée : ${bidActionHtml(forcedAction)}`;
+        statusEl.innerHTML = `DouDou50 simulé avec annonce forcée : ${bidChipHtml(forcedAction)}`;
     }
 }
 

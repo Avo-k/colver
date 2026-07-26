@@ -6,7 +6,7 @@ import { send, onMessage, offMessage } from '../ws.js';
 import { navigateTo } from '../router.js';
 import {
     SEAT_NAMES_FR, SUITS, cardCode, cardChipHtml,
-    bidActionHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
+    bidChipHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox, updateCfnBox } from '../shared/cfn-box.js';
@@ -187,7 +187,7 @@ function replayRenderMoveStats(move, state) {
 
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> ` +
         `<span class="stats-player ${teamClass}">${seatName}</span>` +
-        `<span class="stats-action">${move.phase === 0 ? bidActionHtml(move.action) : move.name}</span>`;
+        `<span class="stats-action">${move.phase === 0 ? bidChipHtml(move.action) : move.name}</span>`;
     body.innerHTML = '';
 
     // Bid move: model annonce + oracle annonce + link to the annonces page
@@ -199,7 +199,7 @@ function replayRenderMoveStats(move, state) {
             const agree = bid.model_best === move.action;
             html += `<div class="an-move ${agree ? 'an-best' : 'an-inacc'}">` +
                 `<span class="an-tag">${agree ? '✓' : '≠'}</span>` +
-                `Bid V6 : ${bidActionHtml(bid.model_best)}` +
+                `Bid V6 : ${bidChipHtml(bid.model_best)}` +
                 `<span class="an-bid-q">Q ${bid.q_best.toFixed(2)}` +
                 (!agree && bid.q_played !== null && bid.q_played !== undefined
                     ? ` · joué ${bid.q_played.toFixed(2)}` : '') +
@@ -289,7 +289,7 @@ function buildMovesList() {
             const chip = document.createElement('span');
             chip.className = 'mv-bid ' + (m.player % 2 === 0 ? 'team-ns' : 'team-ew');
             chip.dataset.idx = i;
-            chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidActionHtml(m.action)}`;
+            chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidChipHtml(m.action)}`;
             chip.title = SEAT_NAMES_FR[m.player];
             const bid = _bidsByIdx && _bidsByIdx[i];
             if (bid && bid.model_best !== m.action) {

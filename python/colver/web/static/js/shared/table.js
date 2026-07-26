@@ -7,7 +7,7 @@ import * as SFX from '../sounds.js';
 import {
     SEAT_NAMES_FR, teamName, teamNameMid, cardToHtml, suitHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
-    actionName, encodeBidAction, bidActionHtml,
+    actionName, encodeBidAction, bidChipHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -382,7 +382,7 @@ export class GameTable {
             const span = document.createElement('span');
             const isPartnerTeam = (entry.player % 2) === (MY_SEAT % 2);
             span.className = 'bid-entry' + (isPartnerTeam ? ' team-partner' : ' team-opponent');
-            span.innerHTML = `${this.playerName(entry.player)} ${bidActionHtml(entry.action)}`;
+            span.innerHTML = `${this.playerName(entry.player)} ${bidChipHtml(entry.action)}`;
             el.appendChild(span);
         }
     }

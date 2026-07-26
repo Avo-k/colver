@@ -277,22 +277,32 @@ export function contractText(contract, relative = false) {
     return `${contract.value}${SUITS[contract.trump]} par ${team}${coinche}`;
 }
 
-export function bidActionHtml(action) {
+/**
+ * L'annonce sur une pastille claire — « 100 ♣ », « Capot ♠ », « Passe » :
+ * valeur et mot en sombre, glyphe rouge ou noir, comme sur une carte.
+ *
+ * ORIGINE UNIQUE du rendu d'une annonce : tout ce qui affiche une annonce dans
+ * l'app passe par ici, et l'apparence tient dans `.bid-chip` (cards.css) — pour
+ * changer la tête des annonces partout, il n'y a que ces deux endroits à
+ * toucher. `on-light` bascule les glyphes sur les tokens de surface claire, donc
+ * aucune couleur n'est écrite en dur (cf. tokens.css). Le pendant côté cartes
+ * est cardChipHtml(). Pour du texte nu (title, alt), voir actionName(a, 0).
+ */
+export function bidChipHtml(action) {
+    return `<span class="bid-chip on-light">${bidChipBody(action)}</span>`;
+}
+
+function bidChipBody(action) {
     if (action === 0) return 'Passe';
     if (action === 41) return 'Coinche';
     if (action === 42) return 'Surcoinche';
-    if (action >= 1 && action <= 40) {
-        let valIdx, suitIdx;
-        if (action <= 36) {
-            const idx = action - 1;
-            valIdx = Math.floor(idx / 4);
-            suitIdx = idx % 4;
-            const values = [80,90,100,110,120,130,140,150,160];
-            return `${values[valIdx]} ${suitHtml(suitIdx)}`;
-        } else {
-            suitIdx = action - 37;
-            return `Capot ${suitHtml(suitIdx)}`;
-        }
+    if (action >= 1 && action <= 36) {
+        const idx = action - 1;
+        const values = [80, 90, 100, 110, 120, 130, 140, 150, 160];
+        return `<span class="bid-chip__val">${values[Math.floor(idx / 4)]}</span>${suitHtml(idx % 4)}`;
+    }
+    if (action >= 37 && action <= 40) {
+        return `<span class="bid-chip__val">Capot</span>${suitHtml(action - 37)}`;
     }
     return `?${action}`;
 }

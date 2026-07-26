@@ -1,7 +1,7 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidActionHtml, cardCode } from '../shared/cards.js';
+import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidChipHtml, cardCode } from '../shared/cards.js';
 import { createSuitPicker, suitHtml } from '../shared/suits.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -210,7 +210,7 @@ function handleProblemReady(data) {
     for (const e of data.bid_history) {
         const sp = document.createElement('span');
         sp.className = 'bid-entry ' + (e.player % 2 === 0 ? 'team-partner' : 'team-opponent');
-        sp.innerHTML = `<span class="pa-bid-seat">${SEAT_NAMES_FR[e.player]}</span> ${bidActionHtml(e.action)}`;
+        sp.innerHTML = `<span class="pa-bid-seat">${SEAT_NAMES_FR[e.player]}</span> ${bidChipHtml(e.action)}`;
         entries.appendChild(sp);
     }
     const you = document.createElement('span');
@@ -318,13 +318,13 @@ function handleCorrection(data) {
     const correct = data.nn_action !== null && data.player_action === data.nn_action;
     const badge = document.getElementById('pa-player-badge');
     badge.className = 'prob-badge ' + (correct ? 'prob-badge-correct' : 'prob-badge-wrong');
-    badge.innerHTML = 'Votre annonce : ' + bidActionHtml(data.player_action);
+    badge.innerHTML = 'Votre annonce : ' + bidChipHtml(data.player_action);
 
     const nnBestEl = document.getElementById('pa-nn-best');
     const nnBarsEl = document.getElementById('pa-nn-bars');
     nnBarsEl.innerHTML = '';
     if (data.nn_q_values && data.nn_q_values.length) {
-        nnBestEl.innerHTML = 'NN : ' + (data.nn_action != null ? bidActionHtml(data.nn_action) : '\u2014');
+        nnBestEl.innerHTML = 'NN : ' + (data.nn_action != null ? bidChipHtml(data.nn_action) : '\u2014');
         const sorted = [...data.nn_q_values].sort((a, b) => b[1] - a[1]).slice(0, 8);
         const mn = Math.min(...sorted.map(x => x[1]));
         const mx = Math.max(...sorted.map(x => x[1]));
@@ -337,7 +337,7 @@ function handleCorrection(data) {
             const row = document.createElement('div');
             row.className = 'visit-row' + (isBest ? ' best' : '') + (isPlayer ? ' prob-player-pick' : '');
             const pct = ((q - mn) / rng * 100).toFixed(0);
-            row.innerHTML = `<span class="visit-name">${bidActionHtml(a)}</span>` +
+            row.innerHTML = `<span class="visit-name">${bidChipHtml(a)}</span>` +
                 `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
                 `<span class="visit-count">${q.toFixed(3)}</span>`;
             div.appendChild(row);
@@ -347,7 +347,7 @@ function handleCorrection(data) {
         nnBestEl.textContent = 'NN : non disponible';
     }
 
-    document.getElementById('pa-heuristic-best').innerHTML = 'Am\u00e9lior\u00e9 : ' + bidActionHtml(data.heuristic_action);
+    document.getElementById('pa-heuristic-best').innerHTML = 'Am\u00e9lior\u00e9 : ' + bidChipHtml(data.heuristic_action);
 
     const keys = ['s', 'h', 'd', 'c'];
     if (data.dd_suits) {

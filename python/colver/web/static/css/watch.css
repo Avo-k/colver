@@ -264,9 +264,11 @@
     font-size: var(--fs-2xs);
 }
 
-/* Les barres par carte portent une pastille `.card-chip` : la largeur tient un
+/* Les barres portent une pastille (carte ou annonce) : la largeur tient un
    « 10♥ » et le fond clair est fixe, donc « meilleur coup » et « votre choix »
-   passent par un liseré autour de la pastille, plus par la couleur du texte. */
+   passent par un liseré autour de la pastille, plus par la couleur du texte.
+   Une annonce est plus large — `min-width: auto` sur l'item flex laisse la
+   colonne s'élargir d'elle-même pour « Surcoinche ». */
 .visit-name {
     width: 44px;
     text-align: right;
@@ -275,7 +277,8 @@
     flex-shrink: 0;
 }
 
-.visit-row.best .card-chip { box-shadow: 0 0 0 2px var(--c-accent); }
+.visit-row.best .card-chip,
+.visit-row.best .bid-chip { box-shadow: 0 0 0 2px var(--c-accent); }
 
 .visit-bar-bg {
     flex: 1;
@@ -563,7 +566,8 @@
 
 /* Highlight player's pick in bar charts */
 .visit-row.prob-player-pick .visit-name { color:#82cfff; font-weight:700; }
-.visit-row.prob-player-pick .card-chip { box-shadow: 0 0 0 2px #82cfff; }
+.visit-row.prob-player-pick .card-chip,
+.visit-row.prob-player-pick .bid-chip { box-shadow: 0 0 0 2px #82cfff; }
 .visit-row.prob-player-pick .visit-bar-fill { background: linear-gradient(90deg,#1a5276,#5dade2); }
 
 /* ===== RESPONSIVE ===== */
