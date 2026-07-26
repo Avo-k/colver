@@ -258,15 +258,18 @@ export function renderLastTrick(container, trick, trickWinner, trickPoints, huma
 }
 
 /**
- * Contrat en HTML (symbole coloré). `relative` : nommer les camps depuis la
- * chaise du joueur (« par nous ») plutôt que de l'extérieur (« par Nord-Sud »).
+ * Contrat en HTML, sur une ligne : la pastille du contrat suivie du camp
+ * preneur. `relative` : nommer les camps depuis la chaise du joueur
+ * (« par nous ») plutôt que de l'extérieur (« par Nord-Sud »).
+ *
+ * Le contrat lui-même passe par contractChipHtml() — c'est la même pastille
+ * claire que dans le bandeau de la table de jeu et que dans l'historique des
+ * annonces. Seul le « par X » reste du texte, dans la couleur ambiante.
  */
 export function contractStr(contract, relative = false) {
-    if (!contract || Object.keys(contract).length === 0) return '';
-    const val = contract.value;
+    if (!contract || !contract.value) return '';
     const team = teamNameMid(contract.team, relative);
-    const coinche = contract.coinche === 1 ? ' x' : contract.coinche === 2 ? ' xx' : '';
-    return `${val}${suitHtml(contract.trump)} par ${team}${coinche}`;
+    return `${contractChipHtml(contract)} par ${team}`;
 }
 
 /** Contrat en texte pur (title, alt, textContent). */
@@ -290,6 +293,26 @@ export function contractText(contract, relative = false) {
  */
 export function bidChipHtml(action) {
     return `<span class="bid-chip on-light">${bidChipBody(action)}</span>`;
+}
+
+/**
+ * Le contrat sur la même pastille que les annonces — « 140 ♠ », « Capot ♥ »,
+ * suivi du multiplicateur quand le contrat est contré (×2) ou surcontré (×3).
+ *
+ * Le contrat *est* une annonce, celle qui a tenu : il se lit donc comme les
+ * autres, sur fond clair, et pas en accent sur le fond sombre du bandeau — où
+ * la valeur prenait la couleur d'accent et le glyphe celle des surfaces
+ * sombres, deux teintes sans rapport collées l'une à l'autre.
+ * Le camp preneur n'entre pas dans la pastille : il est écrit à côté.
+ */
+export function contractChipHtml(contract, extraClass = '') {
+    if (!contract || !contract.value) return '';
+    const val = contract.value === 250 ? 'Capot' : contract.value;
+    const mult = contract.coinche === 1 ? '<span class="bid-chip__mult">&times;2</span>'
+               : contract.coinche === 2 ? '<span class="bid-chip__mult">&times;3</span>'
+               : '';
+    const cls = `bid-chip on-light${extraClass ? ' ' + extraClass : ''}`;
+    return `<span class="${cls}"><span class="bid-chip__val">${val}</span>${suitHtml(contract.trump)}${mult}</span>`;
 }
 
 function bidChipBody(action) {

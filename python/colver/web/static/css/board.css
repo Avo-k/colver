@@ -65,7 +65,9 @@
     line-height: 1.15;
     text-align: center;
 }
-.contract-val { font-size: var(--fs-xl); font-weight: 700; }
+/* Le contrat porte la pastille claire des annonces (`.bid-chip`, cards.css) :
+   il se lit comme l'annonce qui a tenu. Seule la taille est ajustée ici. */
+.contract-val { font-size: var(--fs-lg); }
 .contract-by {
     font-size: var(--fs-2xs);
     font-weight: 600;
@@ -277,8 +279,8 @@
        belote plus le bouton Bug — tout doit tenir sur une ligne de 360px. */
     #play-table #score-bar { gap: 0 6px; padding: 4px 8px; }
     .score-team { min-width: 36px; }
-    .score-team-pts, .contract-val { font-size: var(--fs-lg); }
-    .contract-val { white-space: nowrap; }
+    .score-team-pts { font-size: var(--fs-lg); }
+    .contract-val { font-size: var(--fs-md); }
     .score-side { gap: 6px; }
     .score-team .belote-badge { font-size: 0.7rem; padding: 0 6px; }
     #play-table .cfn-box { display: none; }

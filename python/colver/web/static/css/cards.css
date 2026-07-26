@@ -97,6 +97,17 @@
    pas les deux moitiés d'un même nom. */
 .bid-chip { gap: 3px; }
 
+/* Le multiplicateur d'un contrat contré (×2) ou surcontré (×3), collé à droite
+   du glyphe. En rouge : c'est la seule information de la pastille qui change
+   l'enjeu, et elle doit sauter aux yeux sans grossir la pastille. Rouge *de
+   surface claire* — la pastille est claire, elle suit les tokens `-on-light`. */
+.bid-chip__mult {
+    font-size: 0.8em;
+    font-weight: 800;
+    color: var(--c-suit-red-on-light);
+    letter-spacing: -0.02em;
+}
+
 /* Compact corner-index mini card (CSS text, no image) — for small spread hands.
    Seule surface claire de l'app qui porte un glyphe de couleur : elle porte
    donc `.on-light` (cf. tokens.css) et ne code aucune couleur en dur. */

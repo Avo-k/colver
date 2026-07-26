@@ -7,7 +7,7 @@ import * as SFX from '../sounds.js';
 import {
     SEAT_NAMES_FR, teamName, teamNameMid, cardToHtml, suitHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
-    actionName, encodeBidAction, bidChipHtml,
+    actionName, encodeBidAction, bidChipHtml, contractChipHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -247,9 +247,8 @@ export class GameTable {
         // à zéro, qui s'affichait « 0♠ par nous » au milieu du bandeau.
         if (c && Object.keys(c).length > 0 && c.value > 0) {
             const team = teamNameMid(c.team, true);
-            const coinche = c.coinche === 1 ? ' x' : c.coinche === 2 ? ' xx' : '';
             el.innerHTML =
-                `<span class="contract-val">${c.value}${suitHtml(c.trump)}${coinche}</span>` +
+                contractChipHtml(c, 'contract-val') +
                 `<span class="contract-by">par ${team}</span>`;
         } else {
             el.innerHTML = '';
