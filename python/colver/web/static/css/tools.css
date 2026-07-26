@@ -3788,3 +3788,238 @@
 .pj-tricks {
     color: var(--c-text-muted);
 }
+
+/* ============================================================
+   ANALYSE DU JEU DE LA CARTE (/analyse/jeu)
+   ------------------------------------------------------------
+   Une ligne = une carte jouable. Deux groupes de colonnes qui
+   répondent à deux questions différentes et ne doivent pas se
+   confondre : les mondes de l'information set (ce que le siège
+   pouvait savoir — c'est là qu'on juge) et le vrai monde
+   (information parfaite — ce que Rejouer montre déjà). Le filet
+   vertical entre les groupes porte cette séparation.
+   ============================================================ */
+
+#aj-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    padding: var(--sp-3);
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.aj-import-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-top: var(--sp-2);
+}
+/* `min-width: 0` est ce qui autorise le champ à rétrécir : sans lui la largeur
+   intrinsèque d'un long CFN pousse le reste de la rangée à la ligne. */
+#aj-cfn {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+}
+#aj-idx { flex: 0 0 5rem; }
+#aj-load-btn { flex: 0 0 auto; }
+.aj-hint {
+    margin: var(--sp-2) 0 0;
+    font-size: var(--fs-xs);
+    color: var(--c-text-dim);
+}
+
+.aj-placeholder {
+    padding: var(--sp-6);
+    text-align: center;
+    color: var(--c-text-muted);
+    font-size: var(--fs-sm);
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-md);
+}
+
+/* ---------- la position ---------- */
+
+#aj-info-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    color: var(--c-text-muted);
+    margin-bottom: var(--sp-3);
+}
+
+#aj-position-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--sp-5);
+    align-items: start;
+}
+#aj-trick-area {
+    display: grid;
+    grid-template-areas: ". n ." "w . e" ". s .";
+    grid-template-columns: 1fr auto 1fr;
+    gap: var(--sp-1);
+    align-items: center;
+    justify-items: center;
+}
+#aj-trick-n { grid-area: n; }
+#aj-trick-s { grid-area: s; }
+#aj-trick-w { grid-area: w; }
+#aj-trick-e { grid-area: e; }
+
+#aj-bid-history {
+    display: flex;
+    gap: var(--sp-1);
+    flex-wrap: wrap;
+    margin-top: var(--sp-3);
+}
+
+/* ---------- la table ---------- */
+
+/* Une table large ne doit jamais faire défiler la page entière. */
+.aj-table-scroll { overflow-x: auto; }
+
+#aj-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+}
+#aj-table th {
+    background: var(--c-bg-deep);
+    color: var(--c-text-muted);
+    font-weight: var(--fw-semi);
+    padding: var(--sp-2);
+    text-align: center;
+    white-space: nowrap;
+}
+#aj-table td {
+    padding: var(--sp-2);
+    text-align: center;
+    border-bottom: 1px solid var(--c-border);
+    vertical-align: middle;
+}
+#aj-table tbody tr:hover td { background: var(--c-surface-1); }
+
+.aj-group-row th {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    border-bottom: 1px solid var(--c-border);
+}
+.aj-grp-sub {
+    display: block;
+    font-size: var(--fs-2xs);
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--c-text-dim);
+    font-weight: var(--fw-regular);
+}
+.aj-head-row th { font-size: var(--fs-2xs); }
+
+/* Le filet sépare « ce que le siège savait » de « ce qui était vrai ». */
+#aj-table th.aj-grp-real,
+#aj-table th.aj-grp-truth,
+#aj-table td.aj-truth-cell {
+    border-left: 1px solid var(--c-border-strong);
+}
+#aj-table .aj-grp-oracle { color: var(--c-text); }
+
+.aj-card-cell { white-space: nowrap; }
+.aj-played-tag {
+    display: inline-block;
+    margin-left: var(--sp-2);
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+}
+/* Carte équivalente à une autre : la ligne existe pour que l'avis d'un bot ait
+   toujours où atterrir, le marqueur dit qu'elle n'ajoute pas une option. */
+.aj-equiv {
+    margin-left: var(--sp-1);
+    color: var(--c-text-dim);
+    cursor: help;
+}
+/* La carte réellement jouée : un liseré, pas un fond — la teinte de fond est
+   déjà prise par la qualité du coup. */
+#aj-table tr.aj-played td:first-child {
+    box-shadow: inset 2px 0 0 var(--c-accent);
+}
+
+/* Qualité du coup, du regret moyen. Vert/rouge est ici légitime : c'est bien
+   un axe réussi → raté, pas une équipe. */
+#aj-table tr.aj-best  td:nth-child(2) { color: var(--c-success-txt); font-weight: var(--fw-bold); }
+#aj-table tr.aj-ok    td:nth-child(2) { color: var(--c-text); }
+#aj-table tr.aj-meh   td:nth-child(2) { color: var(--c-accent); }
+#aj-table tr.aj-bad   td:nth-child(2) { color: var(--c-danger-txt); }
+
+#aj-table td.aj-ok  { color: var(--c-success-txt); }
+#aj-table td.aj-meh { color: var(--c-accent); }
+#aj-table td.aj-bad { color: var(--c-danger-txt); }
+
+.aj-regret {
+    display: block;
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    line-height: 1.1;
+}
+.aj-unit { font-size: var(--fs-2xs); opacity: 0.7; }
+
+.aj-truth-cell { color: var(--c-text-muted); }
+
+.aj-avis-cell { white-space: nowrap; }
+.aj-avis {
+    display: inline-block;
+    margin: 0 1px;
+    padding: 1px var(--sp-2);
+    border-radius: var(--r-full);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    background: var(--c-surface-2);
+    border: 1px solid var(--c-border-strong);
+    color: var(--c-text-muted);
+}
+.aj-avis-oracle { border-color: var(--c-accent-a40); color: var(--c-accent); }
+.aj-avis-isdd   { border-color: var(--c-team-ns-a35); color: var(--c-team-ns); }
+
+/* ---------- bandeau mondes + légende ---------- */
+
+/* `.section-title` n'est pas flex : sans ça la barre de progression et le badge
+   tombent chacun sur leur ligne, et le badge, héritant des majuscules du titre,
+   se lit comme un second titre. */
+#aj-table-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+}
+
+.aj-worlds-badge {
+    margin-left: auto;
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: nowrap;
+}
+.aj-worlds-warn { color: var(--c-warn); }
+
+.aj-legend {
+    margin-top: var(--sp-3);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--c-border);
+    font-size: var(--fs-xs);
+    color: var(--c-text-dim);
+    line-height: var(--lh-snug);
+}
+.aj-legend p { margin: 0 0 var(--sp-1); }
+
+@media (max-width: 800px) {
+    #aj-position-grid { grid-template-columns: 1fr; }
+    #aj-wrap { padding: var(--sp-2); }
+}

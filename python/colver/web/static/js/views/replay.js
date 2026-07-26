@@ -102,6 +102,7 @@ let _analysisSummary = null;
 let _bidsByIdx = null;       // action_idx -> bid analysis (model annonce)
 let _oracleBids = null;      // deal-level DD contracts {suits, best}
 let _initialHands = null;    // all 4 hands at deal start (replay = full info)
+let _gameCfn = null;         // full-game CFN (auction + play) — porte le lien vers /analyse/jeu
 let _agentsByIdx = null;     // action_idx -> {doudou, oracle, isdd} card choices
 let _agentsPending = false;  // the review is still being computed server-side
 let _agentsDone = 0;         // cards reviewed so far (streamed, in play order)
@@ -249,7 +250,18 @@ function replayRenderMoveStats(move, state) {
             html += '</div>';
         }
     }
+    // Le pendant du lien des annonces, pour une carte : la page /analyse/jeu
+    // repart du CFN complet et de l'index, donc rien à recalculer ici. Inutile
+    // sur une carte forcée — il n'y a pas de décision à peser.
+    if (_gameCfn && !(an && an.forced)) {
+        html += `<button class="an-bid-analyse-btn" id="replay-card-analyse-btn">Analyser cette carte →</button>`;
+    }
     body.innerHTML = html + botsHtml(idx, move.action);
+    const cardBtn = document.getElementById('replay-card-analyse-btn');
+    if (cardBtn) {
+        cardBtn.addEventListener('click', () => navigateTo(
+            `/analyse/jeu?cfn=${encodeURIComponent(_gameCfn)}&i=${idx}`));
+    }
 }
 
 // ===== Navigable moves list =====
@@ -521,7 +533,9 @@ function handleReplayLoaded(data) {
     document.getElementById('replay-main').classList.remove('hidden');
     replayBoard.renderHistoryEntry(-1);
 
-    // Full-game CFN (auction + play): click-to-copy, paste into the belief page.
+    // Full-game CFN (auction + play): click-to-copy, paste into the belief page,
+    // et l'état que le lien « Analyser cette carte » passe à /analyse/jeu.
+    _gameCfn = data.game_cfn || null;
     updateCfnBox('replay-cfn', data.game_cfn);
 
     const header = replayBoard.el('stats-header');

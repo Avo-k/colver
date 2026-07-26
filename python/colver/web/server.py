@@ -10,6 +10,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal
 from colver.web import playgen_gpu as _playgen_gpu
+from colver.web import game_notation
+import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.rooms as rooms
@@ -612,6 +614,160 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             gen_task.cancel()
 
 
+async def _run_card_analysis(ws: WebSocket, data: dict):
+    """Analyse d'une décision de carte, mondes échantillonnés en streaming.
+
+    Un monde = un solve (qui couvre **toutes** les candidates d'un coup) plus,
+    tant que le budget de déroulements n'est pas épuisé, un déroulement forcé
+    par candidate. Les deux groupes de colonnes décrivent donc par construction
+    le même échantillon : c'est le même monde qui alimente les deux, dans le
+    même ordre, et le seul écart est la profondeur (`real_worlds` ≤
+    `oracle_worlds`, un déroulement coûtant bien plus cher qu'un solve).
+    """
+    import time as _time
+
+    req_id = data.get("req_id")
+
+    def _err(msg, **extra):
+        return {"type": "card_analysis_error", "req_id": req_id, "error": msg, **extra}
+
+    cfn = (data.get("cfn") or "").strip()
+    try:
+        idx = int(data.get("idx", 0))
+    except (TypeError, ValueError):
+        idx = 0
+
+    try:
+        core, bid_actions = game_notation.parse_full_cfn(cfn)
+        src = _colver_pkg.Env.from_cfn(core)
+        dealer = int(src.get_dealer())
+        initial_hands = [list(h) for h in src.get_initial_hands()]
+        play_actions = [int(a) for a in src.get_play_order()]
+        actions = [int(a) for a in bid_actions] + play_actions
+    except Exception as e:
+        await ws.send_json(_err(f"CFN illisible : {e}"))
+        return
+
+    # Un CFN cœur 3 sections ne porte pas l'enchère : en phase de jeu
+    # `format_contract` n'émet que le contrat résolu. Rejouer les cartes sur un
+    # état encore en phase d'annonces les ferait interpréter comme des annonces,
+    # et l'analyse porterait sur une position qui n'a jamais existé. Un contrat
+    # résolu demande au minimum une annonce et trois passes, donc une enchère
+    # vide avec des cartes jouées est toujours une notation tronquée.
+    if play_actions and not bid_actions:
+        await ws.send_json(_err(
+            "Ce CFN ne contient pas l'enchère (3 sections) : impossible de "
+            "reconstruire la position. Copiez le CFN complet depuis Rejouer."))
+        return
+
+    if not 0 <= idx < len(actions):
+        await ws.send_json(_err("Index hors de la partie"))
+        return
+
+    pos = _card_analysis.describe(dealer, initial_hands, actions, idx)
+    if "error" in pos:
+        await ws.send_json(_err(pos["error"], phase=pos.get("phase")))
+        return
+
+    budget = _card_analysis.plan(pos)
+    seat = pos["seat"]
+    team = seat % 2
+    candidates = pos["candidates"]
+
+    await ws.send_json({
+        "type": "card_analysis_position", "req_id": req_id,
+        "dealer": dealer, "idx": idx, "cfn": cfn,
+        "position": pos, "plan": budget,
+    })
+
+    if pos["forced"]:
+        return  # une seule carte jouable : rien à comparer
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        # Le vrai monde et les avis d'abord : c'est rapide et ça remplit déjà
+        # deux colonnes pendant que les mondes s'échantillonnent.
+        truth = await loop.run_in_executor(
+            _DD_EXECUTOR, _card_analysis.true_world,
+            dealer, initial_hands, actions, idx, candidates, seat)
+        await ws.send_json({"type": "card_analysis_truth", "req_id": req_id,
+                            "truth": truth})
+
+        avis = await asyncio.to_thread(
+            _card_analysis.opinions, dealer, initial_hands, actions, idx, seat,
+            play_model=DMC_MODEL_PATH, belief_model=BELIEF_MODEL_PATH)
+        await ws.send_json({"type": "card_analysis_opinions", "req_id": req_id,
+                            "opinions": avis})
+
+        n_worlds = budget["oracle_worlds"]
+        worlds, worlds_source = await asyncio.to_thread(
+            _card_analysis.sample_worlds, dealer, initial_hands, actions, idx,
+            seat, n_worlds, playgen_model=PLAYGEN_MODEL_PATH)
+        n_worlds = min(n_worlds, len(worlds))
+        real_worlds = min(budget["real_worlds"], n_worlds)
+
+        totals = _card_analysis.new_totals(candidates)
+        start = _time.monotonic()
+        window = min(_DD_EXECUTOR._max_workers, max(1, n_worlds))
+        next_i = 0
+        completed = 0
+        pending = set()
+        sample_hands = []
+
+        try:
+            while completed < n_worlds:
+                while next_i < n_worlds and len(pending) < window:
+                    fut = loop.run_in_executor(
+                        _DD_EXECUTOR, _card_analysis.world_job,
+                        dealer, actions, idx, pos["played"], worlds[next_i],
+                        candidates, team,
+                        DMC_MODEL_PATH, next_i < real_worlds)
+                    pending.add(fut)
+                    next_i += 1
+                if not pending:
+                    break
+                done, _ = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED)
+                for fut in done:
+                    pending.discard(fut)
+                    job = fut.result()
+                    _card_analysis.accumulate(totals, job, team)
+                    if len(sample_hands) < 10:
+                        sample_hands.append(job["hands"])
+                    completed += 1
+
+                await ws.send_json({
+                    "type": "card_analysis_update", "req_id": req_id,
+                    "completed": completed, "total": n_worlds,
+                    "real_total": real_worlds,
+                    "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
+                    "rows": _card_analysis.summarize(totals, team),
+                    "worlds_source": worlds_source,
+                })
+        finally:
+            for fut in pending:
+                fut.cancel()
+
+        await ws.send_json({
+            "type": "card_analysis_done", "req_id": req_id,
+            "completed": completed, "total": n_worlds,
+            "real_total": real_worlds,
+            "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
+            "rows": _card_analysis.summarize(totals, team),
+            "worlds_source": worlds_source,
+            "sample_hands": sample_hands,
+        })
+
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        try:
+            await ws.send_json(_err(str(e)))
+        except Exception:
+            pass
+
+
 async def _run_annonces_doudou(ws: WebSocket, data: dict):
     """Dédé-only simulation (used by local/WASM mode), runs as a background task."""
     import time as _time
@@ -1199,6 +1355,14 @@ async def websocket_endpoint(ws: WebSocket):
                 await _cancel_sim_task()
                 sim_task = asyncio.create_task(
                     _run_annonces_doudou(ws, data))
+
+            elif msg_type == "card_analysis":
+                # Même règle que les annonces : une seule simulation à la fois,
+                # et le `req_id` renvoyé évite qu'une analyse annulée peigne
+                # ses derniers messages dans la position suivante.
+                await _cancel_sim_task()
+                sim_task = asyncio.create_task(
+                    _run_card_analysis(ws, data))
 
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()

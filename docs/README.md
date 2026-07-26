@@ -21,6 +21,11 @@ Belote Contrée engine + RL training stack.
 - [training/](training/) — training pipelines and how to invoke them
 - [superpowers/](superpowers/) — agent-driven plans and design specs
 
+## Web frontend
+
+- [web_annonces_next_steps.md](web_annonces_next_steps.md) — Analyse annonce: prochaines étapes
+- [web_analyse_jeu.md](web_analyse_jeu.md) — Analyse du jeu de la carte: design + pièges d'implémentation
+
 ## Quick links by topic
 
 | Topic | Main doc |

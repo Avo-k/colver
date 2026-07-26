@@ -178,6 +178,40 @@ const TEMPLATE = `
         </p>
     </div>
 
+    <div class="docs-section" id="doc-jeu-carte">
+        <h4>Jeu de la carte <span class="docs-tag subtle">Analyse</span></h4>
+        <p>
+            Une ligne par carte jouable, à une position précise. La page répond à <strong>deux
+            questions différentes</strong>, et tout l'intérêt est de ne pas les confondre.
+        </p>
+        <p>
+            <strong>Les mondes de l'information set</strong> (colonnes de gauche) : on tire des donnes
+            compatibles avec ce que le siège qui joue pouvait <em>savoir</em> — sa main, les cartes
+            déjà tombées, les coupes que le jeu a révélées — et chacune est résolue en double-dummy.
+            <em>Meilleure</em> est la part des mondes où cette carte est la meilleure ; <em>Risque</em>
+            la part des mondes où elle perd au moins 10 points. C'est ici qu'on juge la décision.
+        </p>
+        <p>
+            <strong>Le vrai monde</strong> (colonne <em>Coût</em>) : un seul solve, sur la donne telle
+            qu'elle était vraiment. C'est exact, et c'est ce que montre déjà Rejouer — mais ça ne dit
+            pas si le choix était raisonnable. Une carte deuxième dans la vraie donne mais meilleure
+            dans 70 % des mondes était un <strong>bon</strong> coup contre de la malchance.
+        </p>
+        <p>
+            <strong>Jeu réel</strong> : la carte est forcée, puis <em>DouDou50</em> finit la donne aux
+            quatre places. L'écart est en points de donne marqués (contrat compris), Nord-Sud moins
+            Est-Ouest — <em>pas</em> la même échelle que les points cartes double-dummy des colonnes de
+            gauche, les deux ne se soustraient pas. La dernière colonne est lue du côté du siège qui
+            joue : en défense, c'est le contrat <em>chuté</em> qui est l'issue favorable.
+        </p>
+        <p>
+            Les cartes équivalentes sont regroupées : départager le 7 et le 8 d'une couleur sans carte
+            intermédiaire dehors dépenserait le budget deux fois pour une seule réponse. On arrive sur
+            cette page depuis <strong>Rejouer</strong>, où chaque carte porte un lien, ou en collant le
+            CFN d'une partie.
+        </p>
+    </div>
+
     <div class="docs-section">
         <h4>Croyances</h4>
         <p>

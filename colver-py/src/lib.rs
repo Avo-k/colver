@@ -1506,6 +1506,31 @@ impl Analyst {
         }
         Some(worlds.iter().map(|hands| hands.iter().map(|&h| mask_to_cards(h)).collect()).collect())
     }
+
+    /// Worlds sampled from a mid-**play** position: `worlds[i][seat]` is that
+    /// seat's *remaining* cards, the observer's own hand being its real one.
+    ///
+    /// Unlike [`auction_deals`](Self::auction_deals) these are not full deals —
+    /// the already-played cards are not repeated. A caller that needs a
+    /// solvable position must fold each seat's played cards back in.
+    #[pyo3(signature = (env, n_worlds, temperature=1.0))]
+    fn play_worlds(
+        &mut self,
+        py: Python<'_>,
+        env: PyRef<Env>,
+        n_worlds: usize,
+        temperature: f32,
+    ) -> Option<Vec<Vec<Vec<u8>>>> {
+        let state = env.state;
+        drop(env);
+        let worlds = py.allow_threads(|| {
+            self.inner.play_worlds(&state, n_worlds, temperature, &mut self.rng)
+        });
+        if worlds.is_empty() {
+            return None;
+        }
+        Some(worlds.iter().map(|hands| hands.iter().map(|&h| mask_to_cards(h)).collect()).collect())
+    }
 }
 
 fn mask_to_cards(mask: u32) -> Vec<u8> {

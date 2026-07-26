@@ -72,3 +72,17 @@ def auction_deals(dealer, initial_hands, actions, observer, n_worlds, temperatur
     if not resp or "hands" not in resp:
         return None
     return [[_mask_to_cards(seat_mask) for seat_mask in world] for world in resp["hands"]]
+
+
+def play_worlds(dealer, initial_hands, actions, observer, n_worlds, temperature=1.0):
+    """Mondes d'une position de **jeu** — worlds[monde][siège] = cartes qu'il
+    lui **reste** (même format que Analyst.play_worlds).
+
+    Ce ne sont pas des donnes complètes : les cartes déjà jouées n'y sont pas.
+    L'appelant qui veut une position résoluble doit y réinjecter, pour chaque
+    siège, les cartes qu'il a déjà posées.
+    """
+    resp = _post("/play_worlds", _payload(dealer, initial_hands, actions, observer, n_worlds, temperature))
+    if not resp or "hands" not in resp:
+        return None
+    return [[_mask_to_cards(seat_mask) for seat_mask in world] for world in resp["hands"]]
