@@ -167,9 +167,11 @@ class TrickTracker:
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dede_time_ms=None):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dede_time_ms=None, dealer=None, scores=None):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "dede"
+        # dealer: siège qui donne (None = tirage au sort, comme une donne isolée)
+        # scores: score cumulé de la partie [NS, EW], vu par les bots
         self.human_seat = human_seat
         if ai_types is None:
             ai_types = {}
@@ -179,7 +181,15 @@ class PlaySession(TrickTracker):
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()
-        self.env.reset()
+        if dealer is None:
+            self.env.reset()
+        else:
+            # `Env.reset()` tire le donneur au hasard ; en partie il tourne d'une
+            # donne à l'autre, donc on distribue nous-mêmes (même loi uniforme).
+            deck = list(range(32))
+            random.shuffle(deck)
+            self.env.redeal_with_hands(
+                int(dealer) % 4, [deck[i * 8:(i + 1) * 8] for i in range(4)])
         self.initial_hands = [list(h) for h in self.env.get_hands()]
         if bid_model_path:
             self.env.load_bid_model(bid_model_path)
@@ -192,6 +202,10 @@ class PlaySession(TrickTracker):
             belief_model=belief_model_path,
             time_ms=self.dede_time_ms,
         )
+        # Le score de la partie n'est pas décoratif : le bidder v6 lit une
+        # observation score-aware, il annonce autrement à 900-200 qu'à 0-0.
+        if scores:
+            self.bots.set_scores(scores[0], scores[1])
         self.bots.init_deal(self.env)
 
     def get_state(self, human_seat=2):

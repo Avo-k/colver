@@ -85,6 +85,43 @@
     color: var(--c-accent);
 }
 
+/* Où en est la *partie*, sous le résultat de la donne. Séparé par un filet :
+   ce sont deux comptes différents (la donne qu'on vient de jouer, le cumul
+   jusqu'à 1000 ou 2000), les confondre serait le piège. */
+.result-match {
+    border-top: 1px solid rgba(255,255,255,0.12);
+    padding-top: 12px;
+    margin-bottom: 18px;
+}
+.result-match-head {
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-weight: 600;
+    color: #8a8a7a;
+    margin-bottom: 6px;
+}
+.result-match-title {
+    font-size: var(--fs-lg);
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+}
+.result-match-title.victory { color: var(--c-success); }
+.result-match-title.defeat  { color: var(--c-danger); }
+.result-match-scores {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    font-size: var(--fs-md);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.result-match-scores .team-ns { color: var(--c-team-ns); }
+.result-match-scores .team-ew { color: var(--c-team-ew); }
+.result-match-sep { color: #666; font-weight: 400; }
+
 .result-buttons {
     display: flex;
     gap: 10px;
@@ -97,6 +134,15 @@
     font-size: var(--fs-md);
     border-radius: 6px;
     letter-spacing: 0.5px;
+}
+
+/* En salon, « En attente de l'hôte… » occupe la place du bouton principal :
+   la même boîte, mais rien à cliquer. */
+.result-restart[disabled] {
+    opacity: 0.55;
+    cursor: default;
+    background: rgba(255,255,255,0.08);
+    color: #bbb;
 }
 
 .result-analyse {
@@ -183,7 +229,13 @@
     .result-contract { font-size: var(--fs-sm); margin-bottom: 10px; }
     .result-final { gap: 28px; margin-bottom: 8px; }
     .result-final-pts { font-size: var(--fs-2xl); }
-    .result-tricks { font-size: var(--fs-xs); margin-bottom: 14px; }
+    .result-tricks { font-size: var(--fs-xs); margin-bottom: 10px; }
+    /* Le bloc « partie » s'ajoute à un panneau déjà juste en hauteur : il tient
+       en deux lignes serrées plutôt que de repousser les boutons hors zone. */
+    .result-match { padding-top: 8px; margin-bottom: 12px; }
+    .result-match-head { font-size: var(--fs-2xs); margin-bottom: 4px; }
+    .result-match-title { font-size: var(--fs-md); margin-bottom: 4px; }
+    .result-match-scores { font-size: var(--fs-sm); gap: 10px; }
     .result-buttons { flex-wrap: nowrap; }
     .result-restart, .result-analyse {
         padding: 9px 12px;

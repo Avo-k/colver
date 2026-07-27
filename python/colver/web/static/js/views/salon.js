@@ -13,6 +13,12 @@ const MODES = {
     standard: { label: 'Standard', bot: 'Dédé', hint: '≈ 40 s la donne' },
     rapide: { label: 'Rapide', bot: 'DouDou50', hint: '≈ 15 s la donne' },
 };
+// Mêmes formats qu'en solo (cf. match_state.TARGETS côté serveur).
+const TARGETS = [
+    { value: 0, label: 'Une donne', hint: 'une main, un résultat' },
+    { value: 1000, label: '1000 points', hint: '≈ 7 donnes' },
+    { value: 2000, label: '2000 points', hint: '≈ 14 donnes' },
+];
 const SEAT_TITLES = ['Nord', 'Est', 'Sud', 'Ouest'];
 
 const TEMPLATE = `
@@ -40,12 +46,25 @@ const TEMPLATE = `
         <p class="salon-desc">Partagez ce code pour inviter d'autres joueurs.</p>
         <div class="salon-seats" id="salon-seats"></div>
         <div id="salon-host-controls" class="salon-host-controls hidden">
-            <div id="salon-mode-choice" class="mode-choice">
-                ${Object.entries(MODES).map(([key, m]) => `
-                <button type="button" class="mode-btn" data-mode="${key}">
-                    <span class="mode-btn-label">${m.label}</span>
-                    <span class="mode-btn-sub">${m.bot} · ${m.hint}</span>
-                </button>`).join('')}
+            <div class="config-group">
+                <span class="config-group-label">Rythme</span>
+                <div id="salon-mode-choice" class="mode-choice">
+                    ${Object.entries(MODES).map(([key, m]) => `
+                    <button type="button" class="mode-btn" data-mode="${key}">
+                        <span class="mode-btn-label">${m.label}</span>
+                        <span class="mode-btn-sub">${m.bot} · ${m.hint}</span>
+                    </button>`).join('')}
+                </div>
+            </div>
+            <div class="config-group">
+                <span class="config-group-label">Format</span>
+                <div id="salon-target-choice" class="mode-choice">
+                    ${TARGETS.map(t => `
+                    <button type="button" class="mode-btn" data-target="${t.value}">
+                        <span class="mode-btn-label">${t.label}</span>
+                        <span class="mode-btn-sub">${t.hint}</span>
+                    </button>`).join('')}
+                </div>
             </div>
             <p id="salon-mode-note" class="mode-note hidden"></p>
             <button id="salon-start" class="compte-submit">Lancer la partie</button>
@@ -62,6 +81,8 @@ let table = null;
 let roomState = null;
 let lastGameId = null;
 let mounted = false;
+let isHostSeat = false;        // ce client tient-il le siège de l'hôte
+let awaitingNextDeal = false;  // donne finie, partie en cours
 
 function show(panelId) {
     for (const id of ['salon-entry', 'salon-login', 'salon-lobby', 'salon-game']) {
@@ -119,6 +140,10 @@ function renderLobby(data) {
         for (const btn of document.querySelectorAll('#salon-mode-choice .mode-btn')) {
             btn.classList.toggle('mode-btn-active', btn.dataset.mode === data.mode);
         }
+        for (const btn of document.querySelectorAll('#salon-target-choice .mode-btn')) {
+            btn.classList.toggle('mode-btn-active',
+                Number(btn.dataset.target) === (data.target || 0));
+        }
         const note = document.getElementById('salon-mode-note');
         note.classList.toggle('hidden', !data.mode_degraded);
         if (data.mode_degraded) {
@@ -128,7 +153,9 @@ function renderLobby(data) {
     }
 
     const statusEl = document.getElementById('salon-lobby-status');
-    if (data.status === 'playing') {
+    if (data.status === 'playing' && data.awaiting_next_deal) {
+        statusEl.textContent = 'Donne terminée — l\'hôte lance la suivante.';
+    } else if (data.status === 'playing') {
         statusEl.textContent = 'Partie en cours…';
     } else if (data.status === 'finished') {
         statusEl.textContent = 'Partie terminée — l\'hôte peut relancer.';
@@ -161,6 +188,10 @@ function handleRoomNone() {
 }
 
 function handleGameState(data) {
+    // Qui peut enchaîner la donne suivante : lu ici plutôt que dans le lobby,
+    // parce que c'est ce message qui accompagne le panneau de fin de donne.
+    isHostSeat = !!data.is_host;
+    awaitingNextDeal = !!data.awaiting_next_deal;
     if (data.game_id && data.game_id !== lastGameId) {
         lastGameId = data.game_id;
         table.reset();
@@ -187,6 +218,7 @@ function handleRoomError(data) {
 function handleRoomLeft() {
     roomState = null;
     lastGameId = null;
+    awaitingNextDeal = false;
     show('salon-entry');
 }
 
@@ -201,27 +233,48 @@ export async function mount(container) {
     container.innerHTML = TEMPLATE;
     mounted = true;
 
+    const salonButton = {
+        label: 'Salon', className: 'result-analyse',
+        onClick: () => show('salon-lobby'),
+    };
+    const analyseButton = {
+        label: 'Analyser', className: 'result-analyse',
+        onClick: (gameId) => {
+            if (!gameId) return;
+            navigateTo('/analyse/rejouer');
+            import('../views/replay.js').then(m => m.loadReplayById(gameId));
+        },
+    };
+
     table = new GameTable({
         sendMove: (action) => send({ type: 'room_play', action }),
         localEchoBids: false,
-        resultButtons: [
-            {
-                label: 'Revanche', className: 'result-restart',
-                onClick: () => send({ type: 'room_start' }),
-            },
-            {
-                label: 'Salon', className: 'result-analyse',
-                onClick: () => show('salon-lobby'),
-            },
-            {
-                label: 'Analyser', className: 'result-analyse',
-                onClick: (gameId) => {
-                    if (!gameId) return;
-                    navigateTo('/analyse/rejouer');
-                    import('../views/replay.js').then(m => m.loadReplayById(gameId));
+        // Entre deux donnes d'une partie, seul l'hôte enchaîne — les autres
+        // voient pourquoi rien ne bouge plutôt qu'un bouton qui échouerait.
+        resultButtons: () => {
+            if (awaitingNextDeal) {
+                return [
+                    isHostSeat
+                        ? {
+                            label: 'Donne suivante', className: 'result-restart',
+                            onClick: () => send({ type: 'room_next_deal' }),
+                        }
+                        : {
+                            label: 'En attente de l\'hôte…',
+                            className: 'result-restart', disabled: true,
+                        },
+                    analyseButton,
+                ];
+            }
+            return [
+                {
+                    label: 'Revanche', className: 'result-restart',
+                    onClick: () => send({ type: 'room_start' }),
                 },
-            },
-        ],
+                salonButton,
+                analyseButton,
+            ];
+        },
     });
     table.bind();
     // No config panel in salon mode — hide the solo-only gear button
@@ -249,6 +302,11 @@ export async function mount(container) {
     for (const btn of document.querySelectorAll('#salon-mode-choice .mode-btn')) {
         btn.addEventListener('click', () => {
             send({ type: 'room_config', mode: btn.dataset.mode });
+        });
+    }
+    for (const btn of document.querySelectorAll('#salon-target-choice .mode-btn')) {
+        btn.addEventListener('click', () => {
+            send({ type: 'room_config', target: Number(btn.dataset.target) });
         });
     }
 
@@ -288,4 +346,6 @@ export function unmount() {
     }
     roomState = null;
     lastGameId = null;
+    isHostSeat = false;
+    awaitingNextDeal = false;
 }

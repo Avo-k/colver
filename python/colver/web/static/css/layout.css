@@ -242,6 +242,22 @@ nav {
     color: var(--c-warn);
 }
 
+/* Deux réglages côte à côte (rythme, format) : sans intitulé, deux rangées de
+   boutons segmentés identiques se liraient comme un seul choix à six options. */
+.config-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-1);
+}
+.config-group-label {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-weight: var(--fw-semi);
+    color: var(--c-text-dim);
+}
+
 #cfn-input {
     background: #1a1a1a;
     color: var(--c-accent);

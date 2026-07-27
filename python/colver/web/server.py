@@ -16,6 +16,7 @@ import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.rooms as rooms
 import colver.web.pacing as pacing
+import colver.web.match_state as match_state
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -866,6 +867,8 @@ async def websocket_endpoint(ws: WebSocket):
     play_game_id = None
     watch_game_id = None
     play_mode = pacing.DEFAULT_MODE
+    play_match = None   # match_state.Match — une donne (target 0) ou une partie
+    play_cfg = None     # réglages de la partie, rejoués à chaque donne
     sim_task = None  # background task for annonces_sim / annonces_doudou
     belief_precompute_task = None  # background playgen precompute sweep
     agent_review_task = None  # background per-card bot review, streamed
@@ -878,6 +881,76 @@ async def websocket_endpoint(ws: WebSocket):
     async def wsend(payload):
         async with send_lock:
             await ws.send_json(payload)
+
+    async def _finish_deal():
+        """Clore la donne en cours : base, Elo, puis score de la partie.
+
+        Appelée avant l'envoi de l'état terminal, pour que le panneau de fin
+        montre le score de partie à jour. Plusieurs chemins peuvent y mener pour
+        une même donne (coup humain terminal, puis `_run_ai_turns`) — d'où le
+        garde-fou dans `Match.record`, sans lequel la donne serait comptée deux
+        fois.
+        """
+        if play_game_id is None or play_session is None:
+            return
+        await _complete_game(play_game_id, play_session)
+        if play_match is None:
+            return
+        if play_match.record(play_game_id, play_session.env.rewards()):
+            if play_match.id:
+                await db.update_match(
+                    play_match.id, play_match.totals[0], play_match.totals[1],
+                    len(play_match.deals), play_match.finished, play_match.winner)
+
+    async def _begin_deal():
+        """Distribuer et lancer la donne suivante de la partie en cours."""
+        nonlocal play_session, play_game_id
+        cfg = play_cfg
+        human_seat = cfg["human_seat"]
+        bot = cfg["bot"]
+        ai_types = {s: bot for s in range(4) if s != human_seat}
+        # En partie le donneur tourne ; sur une donne isolée on laisse le
+        # tirage au sort d'origine.
+        dealer = play_match.dealer if play_match.is_match else None
+        play_session = await asyncio.to_thread(
+            PlaySession,
+            ai_types=ai_types,
+            human_seat=human_seat,
+            dmc_model_path=DMC_MODEL_PATH if bot == "doudou" else None,
+            bid_model_path=BID_MODEL_PATH,
+            belief_model_path=BELIEF_MODEL_PATH,
+            dede_time_ms=cfg["time_ms"],
+            dealer=dealer,
+            scores=play_match.totals,
+        )
+
+        agents_map = {str(s): t for s, t in ai_types.items()}
+        agents_map[str(human_seat)] = "human"
+        play_game_id = await db.create_game(
+            mode="play",
+            dealer=int(play_session.env.get_dealer()),
+            hands=play_session.env.get_hands(),
+            agents=agents_map,
+            human_seat=human_seat,
+            user_id=ws_user["id"] if ws_user else None,
+            match_id=play_match.id,
+            deal_no=play_match.deal_no if play_match.is_match else None,
+        )
+
+        await ws.send_json({
+            "type": "game_state",
+            "state": play_session.get_state(human_seat),
+            "doudou_available": doudou_available,
+            "game_id": play_game_id,
+            "initial_hands": play_session.initial_hands,
+            "mode": cfg["mode"],
+            "bot": bot,
+            "mode_degraded": cfg["degraded"],
+            "match": play_match.payload(),
+        })
+        await _run_ai_turns(ws, play_session, human_seat, play_game_id,
+                            mode=cfg["mode"], match=play_match,
+                            on_deal_end=_finish_deal)
 
     async def _cancel_sim_task():
         nonlocal sim_task
@@ -981,40 +1054,37 @@ async def websocket_endpoint(ws: WebSocket):
                 continue
 
             if msg_type == "start_game":
-                human_seat = data.get("human_seat", 2)
                 play_mode = pacing.normalize(data.get("mode"))
                 # One mode picks both the tempo and the bot, and all three AI
                 # seats run that same bot.
                 bot, dede_time_ms, degraded = pacing.resolve(play_mode, doudou_available)
-                ai_types = {s: bot for s in range(4) if s != human_seat}
-                dmc_path = DMC_MODEL_PATH if bot == "doudou" else None
-                bid_path = BID_MODEL_PATH
-                play_session = PlaySession(ai_types=ai_types, human_seat=human_seat, dmc_model_path=dmc_path, bid_model_path=bid_path, belief_model_path=BELIEF_MODEL_PATH, dede_time_ms=dede_time_ms)
-
-                # Save game to DB
-                agents_map = {str(s): t for s, t in ai_types.items()}
-                agents_map[str(human_seat)] = "human"
-                play_game_id = await db.create_game(
-                    mode="play",
-                    dealer=int(play_session.env.get_dealer()),
-                    hands=play_session.env.get_hands(),
-                    agents=agents_map,
-                    human_seat=human_seat,
-                    user_id=ws_user["id"] if ws_user else None,
-                )
-
-                init_msg = {
-                    "type": "game_state",
-                    "state": play_session.get_state(human_seat),
-                    "doudou_available": doudou_available,
-                    "game_id": play_game_id,
-                    "initial_hands": play_session.initial_hands,
+                play_cfg = {
+                    "human_seat": data.get("human_seat", 2),
                     "mode": play_mode,
                     "bot": bot,
-                    "mode_degraded": degraded,
+                    "time_ms": dede_time_ms,
+                    "degraded": degraded,
                 }
-                await ws.send_json(init_msg)
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id, mode=play_mode)
+                target = match_state.normalize_target(data.get("target"))
+                play_match = match_state.Match(target)
+                if play_match.is_match:
+                    play_match.id = await db.create_match(
+                        mode="play", target=target,
+                        user_id=ws_user["id"] if ws_user else None)
+                await _begin_deal()
+
+            elif msg_type == "next_deal":
+                # Donne suivante d'une partie : mêmes réglages, donneur suivant,
+                # score cumulé conservé (et transmis aux bots).
+                if play_match is None or play_session is None:
+                    await ws.send_json({"type": "error", "msg": "No game in progress"})
+                elif not play_session.env.is_terminal():
+                    await ws.send_json({"type": "error", "msg": "Donne en cours"})
+                elif play_match.finished:
+                    await ws.send_json({"type": "error", "msg": "Partie terminée"})
+                else:
+                    play_match.next_deal()
+                    await _begin_deal()
 
             elif msg_type == "play":
                 if play_session is None:
@@ -1028,6 +1098,15 @@ async def websocket_endpoint(ws: WebSocket):
                     continue
 
                 state = play_session.play_action(action)
+                if play_game_id:
+                    await db.append_action(play_game_id, play_session.history[-1])
+                # Clore la donne *avant* d'envoyer l'état terminal : le score de
+                # la partie voyage avec lui (cf. `_enrich_terminal_msg`). Un
+                # dernier passe humain peut terminer la donne sans pli, donc les
+                # deux branches ci-dessous peuvent être terminales.
+                if play_session.env.is_terminal():
+                    await _finish_deal()
+
                 msg = {"type": "game_state", "state": state}
                 if play_session._belote_event:
                     msg["belote_event"] = play_session._belote_event
@@ -1045,28 +1124,22 @@ async def websocket_endpoint(ws: WebSocket):
                     snapshot_msg = dict(msg)
                     snapshot_msg["state"] = snapshot_state
                     await ws.send_json(snapshot_msg)
-                    if play_game_id:
-                        await db.append_action(play_game_id, play_session.history[-1])
-                    if play_game_id and play_session.env.is_terminal():
-                        await _complete_game(play_game_id, play_session)
                     # tricks_won is post-increment here, so the trick that just
                     # completed is one below the count.
                     await asyncio.sleep(
                         pacing.trick_delay(play_mode, sum(state["tricks_won"]) - 1))
                     final_msg = {"type": "game_state", "state": state}
-                    _enrich_terminal_msg(final_msg, play_session)
+                    _enrich_terminal_msg(final_msg, play_session, play_match)
                     await ws.send_json(final_msg)
                 else:
-                    _enrich_terminal_msg(msg, play_session)
+                    _enrich_terminal_msg(msg, play_session, play_match)
                     await ws.send_json(msg)
-                    if play_game_id:
-                        await db.append_action(play_game_id, play_session.history[-1])
-                    if play_game_id and play_session.env.is_terminal():
-                        await _complete_game(play_game_id, play_session)
                     # No pause here: _run_ai_turns holds this position itself
                     # before revealing the next bot's move.
 
-                await _run_ai_turns(ws, play_session, human_seat, play_game_id, mode=play_mode)
+                await _run_ai_turns(ws, play_session, human_seat, play_game_id,
+                                    mode=play_mode, match=play_match,
+                                    on_deal_end=_finish_deal)
 
             elif msg_type == "watch_start":
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
@@ -1569,12 +1642,18 @@ async def websocket_endpoint(ws: WebSocket):
         await rooms.handle_disconnect(ws)
 
 
-def _enrich_terminal_msg(msg, play_session):
-    """Add review data (initial hands, bids, tricks) to terminal game_state messages."""
+def _enrich_terminal_msg(msg, play_session, match=None):
+    """Add review data (initial hands, bids, tricks) to terminal game_state messages.
+
+    Le score de la partie voyage avec l'état terminal : c'est lui qui décide si
+    le panneau de fin propose « Donne suivante » ou clôt la partie.
+    """
     if play_session.env.is_terminal():
         msg["initial_hands"] = play_session.initial_hands
         msg["bid_history"] = play_session.bid_history
         msg["completed_tricks"] = play_session.completed_tricks
+        if match is not None:
+            msg["match"] = match.payload()
     return msg
 
 
@@ -1586,7 +1665,8 @@ async def _complete_game(game_id, session):
     await elo.rate_game(game_id)
 
 
-async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE):
+async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE,
+                        match=None, on_deal_end=None):
     """Auto-play AI turns until human's turn or game over.
 
     A forced pass on the human's seat counts as an AI turn: when passing is the
@@ -1627,6 +1707,9 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
 
         if game_id:
             await db.append_action(game_id, session.history[-1])
+        # Clore la donne avant l'état terminal, qui emporte le score de partie.
+        if session.env.is_terminal() and on_deal_end is not None:
+            await on_deal_end()
 
         if session.trick_just_completed:
             session.trick_just_completed = False
@@ -1642,15 +1725,18 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
             await asyncio.sleep(pacing.trick_delay(mode, trick_idx))
             # Send cleared state — no delay after (the next iteration holds it)
             final_msg = {"type": "game_state", "state": state}
-            _enrich_terminal_msg(final_msg, session)
+            _enrich_terminal_msg(final_msg, session, match)
             await ws.send_json(final_msg)
         else:
             state_msg = {"type": "game_state", "state": state}
-            _enrich_terminal_msg(state_msg, session)
+            _enrich_terminal_msg(state_msg, session, match)
             await ws.send_json(state_msg)
 
-    # Check terminal after AI turns
-    if game_id and session.env.is_terminal():
+    # Check terminal after AI turns (no-op when the loop already closed the
+    # deal: `on_deal_end` is idempotent).
+    if session.env.is_terminal() and on_deal_end is not None:
+        await on_deal_end()
+    elif game_id and session.env.is_terminal():
         await _complete_game(game_id, session)
 
 

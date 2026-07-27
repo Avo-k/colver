@@ -15,6 +15,7 @@ import random
 import time
 
 import colver.web.database as db
+import colver.web.match_state as match_state
 import colver.web.pacing as pacing
 from colver.web.game_manager import PlaySession, only_pass_is_legal
 
@@ -78,6 +79,21 @@ def rotate_bid_history(bid_history, viewer):
     return [{**b, "player": disp_seat(b["player"], viewer)} for b in bid_history]
 
 
+def rotate_match(payload, viewer):
+    """Score de partie dans le repère du spectateur (équipes et donneurs)."""
+    out = dict(payload)
+    out["totals"] = _rot_team_array(payload["totals"], viewer)
+    out["deals"] = [
+        {**d,
+         "scores": _rot_team_array(d["scores"], viewer),
+         "dealer": disp_seat(d["dealer"], viewer)}
+        for d in payload["deals"]
+    ]
+    if payload.get("winner") is not None:
+        out["winner"] = _rot_team(payload["winner"], viewer)
+    return out
+
+
 def rotate_tricks(tricks, viewer):
     out = []
     for t in tricks:
@@ -103,11 +119,19 @@ class Room:
         # One host-chosen mode bundles the tempo and the bot the empty seats
         # run; see pacing.py.
         self.mode = pacing.DEFAULT_MODE
+        # Format : une donne (0) ou une partie en 1000 / 2000 points.
+        self.target = match_state.DEFAULT_TARGET
+        self.match = None             # match_state.Match, une fois lancée
         self.session = None
         self.game_id = None
         self.task = None
         self.action_queue = asyncio.Queue()
         self.waiting_for = None       # physical seat awaited, or None
+        # Entre deux donnes d'une partie : tout le monde regarde le résultat,
+        # l'hôte enchaîne. Le driver reste la seule tâche du salon, il attend
+        # ici plutôt que de rendre la main.
+        self.awaiting_next_deal = False
+        self.next_deal_requested = asyncio.Event()
 
     # ----- mode -----
 
@@ -141,6 +165,11 @@ class Room:
     # ----- lobby state broadcast -----
 
     def _lobby_payload(self, for_user_id):
+        # Un membre non assis regarde depuis le repère physique : il n'a pas de
+        # camp, « Nous » n'a rien à désigner pour lui.
+        viewer = self.seat_of(for_user_id)
+        if viewer is None:
+            viewer = 0
         seats = []
         for uid in self.seats:
             if uid is None:
@@ -159,10 +188,14 @@ class Room:
             "you_seat": self.seat_of(for_user_id),
             "is_host": for_user_id == self.host_id,
             "mode": self.mode,
+            "target": self.target,
             "bot_type": self.bot_type,
             "mode_degraded": self._resolved_mode()[2],
             "members": [self.username(uid) for uid in self.members],
             "game_id": self.game_id,
+            "awaiting_next_deal": self.awaiting_next_deal,
+            "match": (rotate_match(self.match.payload(), viewer)
+                      if self.match is not None else None),
         }
 
     async def _send(self, ws, msg):
@@ -230,7 +263,13 @@ class Room:
             "waiting_for": disp_seat(self.waiting_for, viewer_seat)
             if self.waiting_for is not None else None,
             "game_id": self.game_id,
+            # De quoi décider quel bouton proposer en fin de donne : seul l'hôte
+            # enchaîne, les autres lisent le résultat en attendant.
+            "is_host": self.seats[viewer_seat] == self.host_id,
+            "awaiting_next_deal": self.awaiting_next_deal,
         }
+        if self.match is not None:
+            msg["match"] = rotate_match(self.match.payload(), viewer_seat)
         if state["is_terminal"]:
             msg["initial_hands"] = _rot_seat_array(
                 self.session.initial_hands, viewer_seat)
@@ -259,7 +298,21 @@ class Room:
     # ----- game driver -----
 
     async def start(self):
-        humans = [uid for uid in self.seats if uid is not None]
+        self.match = match_state.Match(self.target)
+        if self.match.is_match:
+            self.match.id = await db.create_match(
+                mode="multi", target=self.target, user_id=self.host_id)
+        self.status = "playing"
+        self.awaiting_next_deal = False
+        self.next_deal_requested.clear()
+        # Drain any stale actions from a previous game in this room
+        while not self.action_queue.empty():
+            self.action_queue.get_nowait()
+        await self.broadcast_lobby()
+        self.task = asyncio.create_task(self._drive())
+
+    async def _new_deal(self):
+        """Distribuer une donne : session, ligne en base, sièges, diffusion."""
         bot, think_ms, _degraded = self._resolved_mode()
         ai_types = {i: bot for i, uid in enumerate(self.seats) if uid is None}
         first_human_seat = next(i for i, uid in enumerate(self.seats) if uid is not None)
@@ -272,6 +325,10 @@ class Room:
             bid_model_path=self.models.get("bid"),
             belief_model_path=self.models.get("belief"),
             dede_time_ms=think_ms,
+            # En partie le donneur tourne d'une donne à l'autre ; le score
+            # cumulé va aux bots, dont le bidder est score-aware.
+            dealer=self.match.dealer if self.match.is_match else None,
+            scores=self.match.totals,
         ))
 
         agents_map = {}
@@ -283,64 +340,92 @@ class Room:
             hands=self.session.env.get_hands(),
             agents=agents_map,
             user_id=self.host_id,
+            match_id=self.match.id,
+            deal_no=self.match.deal_no if self.match.is_match else None,
         )
         for i, uid in enumerate(self.seats):
             if uid is not None:
                 await db.add_game_player(self.game_id, i, uid)
+        await self.broadcast_game_state()
 
-        self.status = "playing"
-        # Drain any stale actions from a previous game in this room
-        while not self.action_queue.empty():
-            self.action_queue.get_nowait()
-        await self.broadcast_lobby()
-        self.task = asyncio.create_task(self._drive())
+    async def _close_deal(self):
+        """Fin de donne : base, Elo, score de la partie.
 
-    async def _drive(self):
+        Appelée avant la diffusion de l'état terminal (donc avant que le client
+        n'affiche le panneau de fin), et `status` ne passe à « finished » que
+        quand la *partie* est jouée : entre deux donnes le salon reste en jeu.
+        """
+        session = self.session
+        points = list(session.env.get_points())
+        await db.complete_game(
+            self.game_id, points[0], points[1], session.env.get_contract())
+        import colver.web.elo as elo
+        await elo.rate_game(self.game_id)
+        if self.match.record(self.game_id, session.env.rewards()) and self.match.id:
+            await db.update_match(
+                self.match.id, self.match.totals[0], self.match.totals[1],
+                len(self.match.deals), self.match.finished, self.match.winner)
+        if self.match.finished:
+            # Flip status BEFORE the terminal broadcast so an instant
+            # "Revanche" (room_start) isn't rejected as still-playing.
+            self.status = "finished"
+        else:
+            self.awaiting_next_deal = True
+            # Les membres non assis ne reçoivent que le lobby : sans ça ils
+            # liraient « Partie en cours… » pendant toute l'attente.
+            await self.broadcast_lobby()
+
+    async def _play_deal(self):
+        """Boucle d'une donne : bots au tempo du mode, humains sur la file."""
         session = self.session
         loop = asyncio.get_event_loop()
-        try:
-            await self.broadcast_game_state()
-            while not session.env.is_terminal():
-                p = int(session.env.current_player())
-                if self.seats[p] is None or only_pass_is_legal(session.env):
-                    # Bot turn — or a human seat with nothing to decide, its
-                    # only legal bid being pass. Compute off the event loop
-                    # first, then hold the position for whatever is left of the
-                    # mode's target: the search is spent inside the pause, not
-                    # added to it. The position on screen is unchanged either
-                    # way, so this only removes dead time.
-                    target = pacing.move_delay(
-                        self.mode, session.env.phase(),
-                        sum(session.env.get_tricks_won()))
-                    t0 = time.monotonic()
-                    action, _name, _state = await loop.run_in_executor(
-                        None, session.play_ai_turn)
-                    await pacing.hold(target, time.monotonic() - t0)
-                else:
-                    # Human turn: wait for a valid action from that seat
-                    self.waiting_for = p
-                    action = await self._await_human_action(p)
-                    self.waiting_for = None
-                    session.play_action(action)
-                await db.append_action(self.game_id, session.history[-1])
-                if session.env.is_terminal():
-                    # Flip status BEFORE the terminal broadcast so an instant
-                    # "Revanche" (room_start) isn't rejected as still-playing.
-                    points = list(session.env.get_points())
-                    await db.complete_game(
-                        self.game_id, points[0], points[1],
-                        session.env.get_contract())
-                    import colver.web.elo as elo
-                    await elo.rate_game(self.game_id)
-                    self.status = "finished"
-                await self._after_action(p, action)
+        while not session.env.is_terminal():
+            p = int(session.env.current_player())
+            if self.seats[p] is None or only_pass_is_legal(session.env):
+                # Bot turn — or a human seat with nothing to decide, its
+                # only legal bid being pass. Compute off the event loop
+                # first, then hold the position for whatever is left of the
+                # mode's target: the search is spent inside the pause, not
+                # added to it. The position on screen is unchanged either
+                # way, so this only removes dead time.
+                target = pacing.move_delay(
+                    self.mode, session.env.phase(),
+                    sum(session.env.get_tricks_won()))
+                t0 = time.monotonic()
+                action, _name, _state = await loop.run_in_executor(
+                    None, session.play_ai_turn)
+                await pacing.hold(target, time.monotonic() - t0)
+            else:
+                # Human turn: wait for a valid action from that seat
+                self.waiting_for = p
+                action = await self._await_human_action(p)
+                self.waiting_for = None
+                session.play_action(action)
+            await db.append_action(self.game_id, session.history[-1])
+            if session.env.is_terminal():
+                await self._close_deal()
+            await self._after_action(p, action)
 
+    async def _drive(self):
+        try:
+            while True:
+                await self._new_deal()
+                await self._play_deal()
+                if self.match.finished:
+                    break
+                # Donne suivante : l'hôte enchaîne quand la table a lu le
+                # résultat. Le driver attend ici, il reste la seule tâche.
+                await self.next_deal_requested.wait()
+                self.next_deal_requested.clear()
+                self.awaiting_next_deal = False
+                self.match.next_deal()
             await self.broadcast_lobby()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             print(f"[room {self.code}] driver crashed: {e!r}")
             self.status = "finished"
+            self.awaiting_next_deal = False
             for m in self.connected_members():
                 await self._send(m["ws"], {
                     "type": "room_error",
@@ -415,9 +500,12 @@ async def _leave_current_room(user_id):
     seat = room.seat_of(user_id)
     if seat is not None:
         if room.status == "playing":
-            # A seated player abandoning kills the game (no bot takeover yet).
+            # A seated player abandoning kills the game (no bot takeover yet) —
+            # including between two deals of a match, where the driver is
+            # parked on `next_deal_requested`.
             room.stop()
             room.status = "finished"
+            room.awaiting_next_deal = False
             for m in room.connected_members():
                 await room._send(m["ws"], {
                     "type": "room_error",
@@ -531,6 +619,8 @@ async def handle_message(user, ws, data, models):
         if user["id"] == room.host_id and room.status != "playing":
             if data.get("mode") in pacing.MODES:
                 room.mode = data["mode"]
+            if "target" in data:
+                room.target = match_state.normalize_target(data.get("target"))
             await room.broadcast_lobby()
     elif msg_type == "room_start":
         if user["id"] != room.host_id:
@@ -542,6 +632,16 @@ async def handle_message(user, ws, data, models):
             await ws.send_json({"type": "room_error", "msg": "Prenez un siège d'abord"})
         else:
             await room.start()
+    elif msg_type == "room_next_deal":
+        # Enchaîner la donne suivante d'une partie — réservé à l'hôte, comme le
+        # lancement. Le driver attend sur cet évènement.
+        if not room.awaiting_next_deal:
+            pass  # donne en cours ou partie finie : rien à enchaîner
+        elif user["id"] != room.host_id:
+            await ws.send_json({"type": "room_error",
+                                "msg": "Seul l'hôte lance la donne suivante"})
+        else:
+            room.next_deal_requested.set()
     elif msg_type == "room_play":
         if room.status != "playing":
             await ws.send_json({"type": "room_error", "msg": "Pas de partie en cours"})

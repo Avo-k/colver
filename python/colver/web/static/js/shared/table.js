@@ -24,12 +24,17 @@ export const TABLE_TEMPLATE = `
         <div class="score-team team-ns" id="score-ns">
             <span class="score-team-label">Nous</span>
             <span class="score-team-pts">0</span>
+            <span class="score-team-match hidden"></span>
         </div>
-        <div id="contract-display"></div>
+        <div class="score-center">
+            <div id="contract-display"></div>
+            <div id="match-info" class="match-info hidden"></div>
+        </div>
         <div class="score-side">
             <div class="score-team team-ew" id="score-ew">
                 <span class="score-team-label">Eux</span>
                 <span class="score-team-pts">0</span>
+                <span class="score-team-match hidden"></span>
             </div>
             <button id="play-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
             <button id="play-config-toggle" class="config-toggle-btn" title="Options">⚙</button>
@@ -112,7 +117,10 @@ export class GameTable {
      *   sendMove(action)   — transport for the local player's action (required)
      *   localEchoBids      — push own bids into bidHistory on click (solo=true;
      *                        multi=false, the server echoes every move)
-     *   resultButtons      — [{label, className, onClick(gameId)}] on the result overlay
+     *   resultButtons      — [{label, className, disabled, onClick(gameId)}] on
+     *                        the result overlay, or a function ({gameId, match})
+     *                        => [...] when the buttons depend on the match
+     *                        (« Donne suivante » plutôt que « Nouvelle partie »)
      */
     constructor(opts) {
         this.sendMove = opts.sendMove;
@@ -123,6 +131,10 @@ export class GameTable {
     }
 
     reset() {
+        // La partie en cours, telle que le serveur la décrit : {target, totals,
+        // deal_no, finished, winner}. Renvoyée à chaque nouvelle donne, donc
+        // remise à zéro ici sans risque de la perdre.
+        this.match = null;
         this.bidHistory = [];
         this.playLocked = false;
         this._pendingPlayState = null;
@@ -190,6 +202,9 @@ export class GameTable {
     // ===== WS-ish message ingestion =====
 
     handleGameState(data) {
+        // Le score de partie ne voyage qu'avec la première et la dernière
+        // position d'une donne : entre les deux il ne bouge pas.
+        if (data.match) this.match = data.match;
         if (data.initial_hands) this._initialHands = data.initial_hands;
         if (data.bid_history) {
             this._serverBidHistory = data.bid_history;
@@ -252,6 +267,31 @@ export class GameTable {
                 `<span class="contract-by">par ${team}</span>`;
         } else {
             el.innerHTML = '';
+        }
+
+        this.renderMatchBar();
+    }
+
+    /**
+     * Score de la partie dans le bandeau, sous les points de la donne. Les deux
+     * chiffres cohabitent parce qu'ils répondent à deux questions : les points
+     * de plis disent où en est le contrat, le cumul dit où en est la partie.
+     * Rien ne s'affiche sur une donne isolée (`target = 0`).
+     */
+    renderMatchBar() {
+        const m = this.match;
+        const inMatch = !!m && m.target > 0;
+
+        const infoEl = document.getElementById('match-info');
+        if (infoEl) {
+            infoEl.classList.toggle('hidden', !inMatch);
+            if (inMatch) infoEl.textContent = `Partie en ${m.target} · donne ${m.deal_no}`;
+        }
+        for (const [team, id] of [[0, 'score-ns'], [1, 'score-ew']]) {
+            const el = document.querySelector(`#${id} .score-team-match`);
+            if (!el) continue;
+            el.classList.toggle('hidden', !inMatch);
+            if (inMatch) el.textContent = `partie ${m.totals[team]}`;
         }
     }
 
@@ -545,8 +585,12 @@ export class GameTable {
             detailLine += ` <span class="belote-note">· belote ${beloteParts.join(' et ')}</span>`;
         }
 
-        const buttonsHtml = this.resultButtons.map((b, i) =>
-            `<button class="${b.className}" data-result-btn="${i}">${b.label}</button>`
+        const buttons = typeof this.resultButtons === 'function'
+            ? this.resultButtons({ gameId: this.gameId, match: this.match })
+            : this.resultButtons;
+        const buttonsHtml = buttons.map((b, i) =>
+            `<button class="${b.className}" data-result-btn="${i}"` +
+            `${b.disabled ? ' disabled' : ''}>${b.label}</button>`
         ).join('');
 
         resultEl.innerHTML =
@@ -563,19 +607,44 @@ export class GameTable {
                 `</div>` +
             `</div>` +
             `<div class="result-tricks">${detailLine}</div>` +
+            this.matchResultHtml() +
             (buttonsHtml ? `<div class="result-buttons">${buttonsHtml}</div>` : '');
 
-        this.resultButtons.forEach((b, i) => {
+        buttons.forEach((b, i) => {
+            if (b.disabled) return;
             resultEl.querySelector(`[data-result-btn="${i}"]`)
                 .addEventListener('click', () => b.onClick(this.gameId));
         });
 
-        if (isVictory) {
+        // Une partie gagnée passe avant la donne : perdre la dernière donne en
+        // remportant la partie mérite les confettis, pas le son de défaite.
+        const m = this.match;
+        if (m && m.target > 0 && m.finished) {
+            if (m.winner === 0) { SFX.victory(); this.launchConfetti(); }
+            else SFX.defeat();
+        } else if (isVictory) {
             SFX.victory();
             this.launchConfetti();
         } else if (!isDraw) {
             SFX.defeat();
         }
+    }
+
+    /** Bloc « où en est la partie » sous le résultat de la donne. */
+    matchResultHtml() {
+        const m = this.match;
+        if (!m || m.target <= 0) return '';
+        const head = m.finished
+            ? `<div class="result-match-title ${m.winner === 0 ? 'victory' : 'defeat'}">`
+              + `${m.winner === 0 ? 'Partie gagnée' : 'Partie perdue'}</div>`
+            : `<div class="result-match-head">Partie en ${m.target}`
+              + ` · donne ${m.deal_no}</div>`;
+        return `<div class="result-match">${head}` +
+            `<div class="result-match-scores">` +
+                `<span class="team-ns">${teamName(0, true)} ${m.totals[0]}</span>` +
+                `<span class="result-match-sep">—</span>` +
+                `<span class="team-ew">${teamName(1, true)} ${m.totals[1]}</span>` +
+            `</div></div>`;
     }
 
     showEndOfGameReview(state) {

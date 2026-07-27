@@ -5,6 +5,7 @@ Migration 1 is idempotent (IF NOT EXISTS) so pre-migration prod databases
 (user_version=0 with existing tables) adopt the system cleanly.
 """
 
+import asyncio
 import json
 import os
 import random
@@ -21,6 +22,11 @@ DB_PATH = os.environ.get(
 )
 
 _db = None
+# La connexion n'est publiée qu'une fois migrée, et une seule tâche migre :
+# au démarrage, le backfill Elo et la première partie ouvrent la base en même
+# temps, et le second voyait sinon une base sans tables (`_db` était affecté
+# avant `_migrate`).
+_db_lock = asyncio.Lock()
 
 MIGRATIONS = [
     # v1 — base tables (matches the historical implicit schema)
@@ -117,6 +123,29 @@ MIGRATIONS = [
         data        TEXT NOT NULL
     );
     """,
+    # v7 — parties en plusieurs donnes (1000 / 2000 points)
+    # Une donne reste une ligne de `games` : c'est elle qui porte les actions,
+    # l'analyse et le partage. `matches` ne fait que les regrouper, avec le
+    # score cumulé et le vainqueur.
+    """
+    CREATE TABLE matches (
+        id          TEXT PRIMARY KEY,
+        mode        TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        target      INTEGER NOT NULL,
+        user_id     INTEGER REFERENCES users(id),
+        points_ns   INTEGER NOT NULL DEFAULT 0,
+        points_ew   INTEGER NOT NULL DEFAULT 0,
+        deals       INTEGER NOT NULL DEFAULT 0,
+        is_complete INTEGER NOT NULL DEFAULT 0,
+        winner      INTEGER
+    );
+
+    ALTER TABLE games ADD COLUMN match_id TEXT REFERENCES matches(id);
+    ALTER TABLE games ADD COLUMN deal_no INTEGER;
+    CREATE INDEX idx_games_match ON games(match_id, deal_no);
+    CREATE INDEX idx_matches_user ON matches(user_id, created_at);
+    """,
 ]
 
 
@@ -136,13 +165,17 @@ async def get_db():
     global _db
     if _db is not None:
         return _db
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    _db = await aiosqlite.connect(DB_PATH)
-    _db.row_factory = aiosqlite.Row
-    await _db.execute("PRAGMA journal_mode=WAL")
-    await _db.commit()
-    await _migrate(_db)
-    print(f"[database] Connected to {DB_PATH}")
+    async with _db_lock:
+        if _db is not None:
+            return _db
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        conn = await aiosqlite.connect(DB_PATH)
+        conn.row_factory = aiosqlite.Row
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.commit()
+        await _migrate(conn)
+        _db = conn
+        print(f"[database] Connected to {DB_PATH}")
     return _db
 
 
@@ -215,14 +248,16 @@ async def delete_session(token_hash):
 
 # ===== Games =====
 
-async def create_game(mode, dealer, hands, agents, human_seat=None, user_id=None):
+async def create_game(mode, dealer, hands, agents, human_seat=None, user_id=None,
+                      match_id=None, deal_no=None):
     db = await get_db()
     for _ in range(20):
         game_id = _gen_id()
         try:
             await db.execute(
-                "INSERT INTO games (id, mode, created_at, dealer, hands, agents, human_seat, user_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO games (id, mode, created_at, dealer, hands, agents, human_seat, user_id, "
+                "match_id, deal_no) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     game_id,
                     mode,
@@ -232,6 +267,8 @@ async def create_game(mode, dealer, hands, agents, human_seat=None, user_id=None
                     json.dumps(agents),
                     human_seat,
                     user_id,
+                    match_id,
+                    deal_no,
                 ),
             )
             await db.commit()
@@ -266,6 +303,66 @@ async def complete_game(game_id, points_ns, points_ew, contract):
         (points_ns, points_ew, json.dumps(contract) if contract else None, game_id),
     )
     await db.commit()
+
+
+# ===== Parties (plusieurs donnes) =====
+
+async def create_match(mode, target, user_id=None):
+    """Ouvrir une partie. Les donnes s'y rattachent par `games.match_id`."""
+    db = await get_db()
+    for _ in range(20):
+        match_id = _gen_id()
+        try:
+            await db.execute(
+                "INSERT INTO matches (id, mode, created_at, target, user_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (match_id, mode, _now(), int(target), user_id),
+            )
+            await db.commit()
+            return match_id
+        except aiosqlite.IntegrityError:
+            continue
+    raise RuntimeError("Failed to generate unique match ID")
+
+
+async def update_match(match_id, points_ns, points_ew, deals, is_complete, winner=None):
+    db = await get_db()
+    await db.execute(
+        "UPDATE matches SET points_ns = ?, points_ew = ?, deals = ?, "
+        "is_complete = ?, winner = ? WHERE id = ?",
+        (int(points_ns), int(points_ew), int(deals),
+         1 if is_complete else 0, winner, match_id),
+    )
+    await db.commit()
+
+
+async def get_match(match_id):
+    """Une partie et la liste ordonnée de ses donnes."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT * FROM matches WHERE id = ?", (match_id,))
+    if not rows:
+        return None
+    match = dict(rows[0])
+    match["is_complete"] = bool(match["is_complete"])
+    deals = await db.execute_fetchall(
+        "SELECT id, deal_no, dealer, points_ns, points_ew, contract, is_complete "
+        "FROM games WHERE match_id = ? ORDER BY deal_no",
+        (match_id,),
+    )
+    match["games"] = [
+        {
+            "id": d[0],
+            "deal_no": d[1],
+            "dealer": d[2],
+            "points_ns": d[3],
+            "points_ew": d[4],
+            "contract": json.loads(d[5]) if d[5] else None,
+            "is_complete": bool(d[6]),
+        }
+        for d in deals
+    ]
+    return match
 
 
 async def get_game(game_id):
