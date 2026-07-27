@@ -97,3 +97,66 @@
         padding: 10px 16px;
     }
 }
+
+/* ===== Le panneau ne recouvre jamais la main =====
+   Centré sur toute la zone de jeu, il tombait sur les cartes de Sud dès que
+   l'écran était court — c'est-à-dire sur n'importe quel téléphone tenu à la
+   verticale (mesuré : 48px de recouvrement sur un 360x640 après six annonces,
+   93px après dix ; le pire, la main entière). Deux causes, deux correctifs :
+
+   1. il se centre désormais sur ce qui reste AU-DESSUS de la main, et non sur
+      la zone entière. Cette hauteur est connue en CSS — une carte plus
+      l'étiquette du siège (cf. board.css) — et la place est là : le pli est
+      vide pendant les enchères ;
+   2. `max-height` le borne à cette même zone, sinon une longue enchère
+      l'allongeait jusqu'à la franchir. C'est l'historique, et lui seul, qui
+      défile : les boutons restent atteignables quoi qu'il arrive.
+
+   Deux paliers plutôt qu'un : la version portrait (largeur) et la version
+   paysage (hauteur), où la zone de jeu tombe à ~280px et le problème est le
+   même sans qu'aucun seuil de largeur ne l'attrape. */
+@media (max-width: 640px), (max-height: 500px) {
+    #play-table {
+        --bid-safe: calc(var(--card-h) + 34px);  /* main + étiquette + gouttière */
+    }
+    #play-table #bidding-panel {
+        top: calc((100% - var(--bid-safe)) / 2);
+        max-height: calc(100% - var(--bid-safe) - 8px);
+        width: min(340px, calc(100vw - 24px));
+        padding: 12px 14px;
+    }
+    /* `min-height` reste celui du bloc de base (24px, une ligne) : il suffit à
+       lever la taille minimale automatique du flex, donc l'historique peut se
+       réduire — mais jamais à zéro, sinon en paysage il disparaissait
+       entièrement au profit des boutons. */
+    #play-table #bid-history {
+        overflow-y: auto;
+        flex-shrink: 1;
+    }
+    #play-table #bid-controls {
+        flex-shrink: 0;
+    }
+}
+
+/* Téléphone à l'horizontale : la zone libre tombe à ~130px, moins que les trois
+   rangées de commandes empilées — le panneau débordait alors de sa propre
+   boîte et les boutons repartaient sur les cartes (le `max-height` borne la
+   boîte, pas ce qui en déborde). La largeur, elle, ne manque pas : les
+   commandes passent donc sur une seule ligne. Seuil de largeur pour ne viser
+   que le paysage — un écran court ET étroit garde l'empilement vertical, qui
+   est le seul à y tenir. */
+@media (max-height: 500px) and (min-width: 560px) {
+    #play-table #bidding-panel {
+        width: min(660px, calc(100vw - 24px));
+        padding: 10px 14px;
+        gap: 8px;
+    }
+    #play-table #bid-controls {
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    #play-table .bid-btn { padding: 8px 14px; }
+}

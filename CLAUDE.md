@@ -194,6 +194,7 @@ FastAPI + WebSocket + vanilla JS. Modes: Play (solo), Salon (multiplayer rooms),
   - Frontend refreshes via `refreshMoveStats()` (stats panel only) — **not** `renderHistoryEntry`, which carries navigation state (pending trick flush, forward/backward) that a mid-playback repaint would trample.
 
 **Mobile (≤600px):** Play view hides N/E/W seats, shows only trick area + South hand. South hand spans full viewport width with dynamically computed card overlap (JS in `play.js` sets `--card-overlap` based on card count and available width). Card sizes use CSS custom properties (`--card-w`) — note `#play-table` overrides `:root` values, so mobile overrides must target `#play-table` specifically. Header is 61px on mobile (not 46px as on desktop).
+- **Le panneau d'annonce ne recouvre jamais la main.** Il ne se centre pas sur la zone de jeu mais sur ce qui reste *au-dessus* de la main (`--bid-safe` = une carte + l'étiquette du siège), et son `max-height` borne cette même zone — sinon une enchère de six annonces suffit à le rallonger jusque sur les cartes de Sud. C'est l'historique, et lui seul, qui défile : les boutons restent atteignables. Deux paliers dans `bidding.css` : portrait (`max-width: 640px`) et paysage (`max-height: 500px`), où la zone libre tombe sous la hauteur des commandes empilées — elles passent donc sur une ligne.
 
 ## Arena: Bot Comparison Framework
 
