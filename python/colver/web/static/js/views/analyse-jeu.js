@@ -176,7 +176,7 @@ function renderPosition() {
     const turn = document.getElementById('aj-turn');
     turn.innerHTML = `À <strong style="color:${SEAT_COLOR_VARS[p.seat]}">${SEAT_NAMES_FR[p.seat]}</strong> de jouer`;
 
-    renderTrick('aj-trick', p.current_trick);
+    renderTrick('aj-trick', p.current_trick, p.trick_lead);
 
     document.getElementById('aj-hand-title').textContent =
         `Main de ${SEAT_NAMES_FR[p.seat]} — ${p.hands[p.seat].length} cartes`;

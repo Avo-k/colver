@@ -245,7 +245,17 @@ export class BoardRenderer {
                 // Display the 4 cards on the table by overriding the current trick
                 // with the just-completed trick. The flush animation is deferred to
                 // the next forward-step click (handled in goToNextMove).
-                const stateOverride = { ...data.state, current_trick: data.state.last_trick };
+                // `trick_lead` suit le même sort : à cette image le moteur a déjà
+                // résolu le pli et l'a fait passer au gagnant, alors que ce qu'on
+                // affiche est le pli d'avant. Son entame est celle du dernier pli
+                // terminé — l'empilement chronologique en dépend.
+                const done = data.completed_tricks || [];
+                const lastLead = done.length ? done[done.length - 1].lead : null;
+                const stateOverride = {
+                    ...data.state,
+                    current_trick: data.state.last_trick,
+                    trick_lead: lastLead ?? data.state.trick_lead,
+                };
                 this.renderState(stateOverride);
                 const lastTrickEl = this.el('last-trick');
                 if (lastTrickEl) {
@@ -297,7 +307,7 @@ export class BoardRenderer {
             renderHand(handEls[seat], state.hands[seat], false, null, null, trumpSuit);
         }
 
-        renderTrick(this.trickPrefix, state.current_trick);
+        renderTrick(this.trickPrefix, state.current_trick, state.trick_lead);
 
         const lastTrickEl = this.el('last-trick');
         if (lastTrickEl && _animatingTrick !== this.trickPrefix) {

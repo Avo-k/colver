@@ -358,9 +358,9 @@ export class GameTable {
                     this.renderState(pending);
                 }
             }, state.last_trick_winner);
-            renderTrick('trick', state.current_trick);
+            renderTrick('trick', state.current_trick, state.trick_lead);
         } else {
-            renderTrick('trick', state.current_trick);
+            renderTrick('trick', state.current_trick, state.trick_lead);
             const trickFull = state.current_trick && state.current_trick.filter(c => c >= 0 && c < 32).length === 4;
             if (!trickFull) {
                 const lastTrickEl = document.getElementById('last-trick');

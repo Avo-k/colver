@@ -499,9 +499,12 @@
 }
 .ann-see-more:hover { text-decoration: underline; }
 
+/* Pas de `flex-wrap: wrap` ici : `.hand` calcule son chevauchement pour que
+   huit cartes tombent pile dans sa largeur (cf. cards.css), et l'arrondi
+   sous-pixel suffisait alors à renvoyer la huitième à la ligne — au
+   téléphone, systématiquement. */
 #annonces-hand-display {
     justify-content: center;
-    flex-wrap: wrap;
 }
 
 /* Deal table: cardinal direction layout */
@@ -944,6 +947,12 @@
 }
 
 /* Oracle — quantile table (même grammaire que le tableau DouDou) */
+/* Et même traitement que `#annonces-doudou-body` : c'est le conteneur qui
+   défile. Sans ça les colonnes de droite (Sûr / Tendu, et la fin de la grille
+   « réussite par contrat ») étaient simplement inatteignables au téléphone —
+   pas rognées faute de place, rognées sans recours. */
+#annonces-sim-body { overflow-x: auto; }
+
 .oracle-quant-table {
     width: 100%;
     border-collapse: collapse;
@@ -1020,6 +1029,10 @@
     color: #666;
     font-size: var(--fs-2xs);
     white-space: nowrap;
+    /* La barre vit dans un `.section-title`, qui passe tout en capitales :
+       le compteur y affichait « 0.0S ». */
+    text-transform: none;
+    letter-spacing: normal;
 }
 
 /* DouDou table */
@@ -1342,6 +1355,61 @@
     #annonces-saved-foot { width: 100%; justify-content: flex-end; }
     #annonces-saved-clear { flex: 0 0 auto; }
     .ann-saved-rail { writing-mode: horizontal-tb; padding: 0; }
+}
+
+/* ===== Téléphone =====
+   L'empilement est déjà fait au palier 1024px. Restent les rangées qui
+   supposaient une largeur de bureau, et les deux tableaux qui ne rentreront
+   jamais : eux défilent, encore faut-il que ça se voie. */
+@media (max-width: 640px) {
+    /* Replié, le bandeau des mains analysées n'a rien à mettre sur deux
+       lignes : le chevron et l'étiquette tiennent côte à côte. */
+    #annonces-saved.collapsed { flex-wrap: nowrap; gap: 8px; }
+    #annonces-saved.collapsed #annonces-saved-head { width: auto; }
+
+    /* Le titre prend sa ligne : coincé entre le compteur et deux boutons, il
+       se pliait en trois — « Évaluation / des / annonces ». Les boutons se
+       resserrent pour tenir sur la ligne d'en dessous, sinon on n'aurait fait
+       que déplacer le pliage. La hauteur de frappe (40px) ne bouge pas. */
+    #annonces-header { flex-wrap: wrap; gap: 6px 8px; }
+    .annonces-title { flex: 1 0 100%; }
+    #annonces-header .secondary-btn {
+        padding-inline: var(--sp-2);
+        font-size: var(--fs-xs);
+    }
+
+    /* « Analyser une autre annonce » : le filet vertical et sa marge
+       supposaient un voisin à gauche. Seule sur sa ligne, la rangée débordait
+       des deux côtés de l'écran et son bouton passait hors cadre. */
+    #annonces-verdict { gap: 8px; }
+    #annonces-verdict .verdict-alt {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: center;
+        padding: 10px 0 0;
+        border-left: none;
+        border-top: 1px solid color-mix(in srgb, var(--c-accent) 25%, transparent);
+    }
+
+    /* Un tableau qui déborde ne se distingue pas d'un tableau tronqué tant
+       qu'on ne voit pas d'ascenseur — et le téléphone les masque tant qu'on
+       n'a pas commencé à faire glisser. Déclarer `::-webkit-scrollbar` suffit
+       à repasser en ascenseur permanent. */
+    #annonces-doudou-body,
+    #annonces-sim-body,
+    .aj-table-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: var(--c-border-strong) transparent;
+    }
+    #annonces-doudou-body::-webkit-scrollbar,
+    #annonces-sim-body::-webkit-scrollbar,
+    .aj-table-scroll::-webkit-scrollbar { height: 4px; }
+    #annonces-doudou-body::-webkit-scrollbar-thumb,
+    #annonces-sim-body::-webkit-scrollbar-thumb,
+    .aj-table-scroll::-webkit-scrollbar-thumb {
+        background: var(--c-border-strong);
+        border-radius: 2px;
+    }
 }
 
 /* ===== PROBLEMES PANELS ===== */
@@ -3662,13 +3730,17 @@
 
 /* ===== REPLAY — navigable moves list ===== */
 
+/* Seul panneau de la colonne à absorber la place qui reste (et à la rendre
+   quand elle manque, cf. le `flex-shrink: 0` des autres dans watch.css) : sa
+   liste défile déjà pour son compte. Le plancher lui garde de quoi montrer
+   quelques coups — en dessous, c'est la colonne entière qui défile. */
 #replay-moves {
     background: rgba(0, 0, 0, 0.3);
     border-radius: 8px;
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    min-height: 0;
+    min-height: 140px;
     flex: 1;
 }
 
@@ -3811,6 +3883,13 @@
     flex-direction: column;
     gap: var(--sp-3);
     padding: var(--sp-3);
+    /* `width: 100%` et pas seulement `max-width` : `#app` est un flex en
+       colonne et `margin: 0 auto` — marges automatiques sur l'axe secondaire —
+       empêche l'étirement, donc la largeur retombait sur le contenu. La table
+       à neuf colonnes tirait alors toute la page à 890px dans un écran de
+       390, `overflow-x` compris : un `overflow` ne coupe pas la propagation
+       de largeur intrinsèque, seule une largeur définie le fait. */
+    width: 100%;
     max-width: 1400px;
     margin: 0 auto;
 }
@@ -3820,16 +3899,19 @@
     align-items: center;
     gap: var(--sp-2);
     margin-top: var(--sp-2);
+    flex-wrap: wrap;
 }
 /* `min-width: 0` est ce qui autorise le champ à rétrécir : sans lui la largeur
    intrinsèque d'un long CFN pousse le reste de la rangée à la ligne. */
 #aj-cfn {
-    flex: 1 1 auto;
+    flex: 1 1 12rem;
     min-width: 0;
     font-family: var(--font-mono);
     font-size: var(--fs-xs);
 }
-#aj-idx { flex: 0 0 5rem; }
+/* Idem : un `input[type=number]` a une largeur propre de ~200px, que
+   `flex: 0 0 5rem` ne suffit pas à contraindre. */
+#aj-idx { flex: 0 0 5rem; min-width: 0; width: 5rem; }
 #aj-load-btn { flex: 0 0 auto; }
 .aj-hint {
     margin: var(--sp-2) 0 0;
@@ -3888,7 +3970,13 @@
 /* ---------- la table ---------- */
 
 /* Une table large ne doit jamais faire défiler la page entière. */
-.aj-table-scroll { overflow-x: auto; }
+.aj-table-scroll {
+    overflow-x: auto;
+    /* Neuf colonnes ne rentreront jamais dans un téléphone : c'est ici qu'on
+       fait défiler, et la colonne « Carte » reste collée à gauche (plus bas)
+       pour qu'on sache toujours de quelle carte parle la ligne. */
+    overscroll-behavior-x: contain;
+}
 
 #aj-table {
     width: 100%;
@@ -4028,6 +4116,67 @@
 @media (max-width: 800px) {
     #aj-position-grid { grid-template-columns: 1fr; }
     #aj-wrap { padding: var(--sp-2); }
+}
+
+/* ===== Téléphone =====
+   La page a deux blocs qui ne rentrent pas : le rappel de position (un pli en
+   croix plus une main de huit cartes) et la table. Le premier se resserre, la
+   seconde défile — c'est la seule des deux qui peut. */
+@media (max-width: 640px) {
+    /* Le pli en croix fait trois rangs de carte de haut quoi qu'il arrive : à
+       pleine taille il repoussait la table — le sujet de la page — sous la
+       ligne de flottaison. Cartes plus petites, et la croix cesse de s'étaler
+       sur toute la largeur (`1fr` de chaque côté) pour se caler au centre. */
+    #aj-trick-area {
+        --card-w: calc(var(--palette-w) * 1.1);
+        --card-h: calc(var(--card-w) * 1.43);
+        width: fit-content;
+        margin-inline: auto;
+    }
+    #aj-trick-area .card {
+        width: var(--card-w);
+        height: var(--card-h);
+    }
+
+    /* Le champ CFN est illisible de toute façon (une ligne de 60 caractères
+       dans 340px) : il passe sur sa propre ligne, et le couple coup + bouton
+       en dessous. On arrive ici par un lien depuis Rejouer neuf fois sur dix —
+       et dans ce cas le mode d'emploi qui va avec n'a plus lieu d'être. */
+    #aj-cfn { flex: 1 1 100%; }
+    #aj-wrap:has(#aj-main:not(.hidden)) .aj-hint { display: none; }
+
+    #aj-table { font-size: var(--fs-xs); }
+    #aj-table th, #aj-table td { padding: var(--sp-1) var(--sp-2); }
+    .aj-played-tag { display: none; }
+
+    /* Colonne « Carte » figée pendant le défilement horizontal : sans elle on
+       ne sait plus, arrivé aux colonnes de droite, de quelle carte parle la
+       ligne. Une cellule collante doit être opaque — d'où la surface propre
+       donnée au conteneur, qui lui sert aussi de fond exact. `border-collapse`
+       mange les bordures des cellules collantes, le filet passe donc par une
+       ombre portée. */
+    .aj-table-scroll {
+        background: var(--c-bg-deep);
+        border-radius: var(--r-sm);
+    }
+    #aj-table th:first-child,
+    #aj-table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        max-width: 6.5rem;
+        background: var(--c-bg-deep);
+        box-shadow: 1px 0 0 var(--c-border);
+    }
+    /* Une `box-shadow` remplace la précédente : le liseré de la carte jouée
+       doit réécrire le filet de la colonne. */
+    #aj-table tr.aj-played td:first-child {
+        box-shadow: inset 2px 0 0 var(--c-accent), 1px 0 0 var(--c-border);
+    }
+    /* Le badge « mondes » passe sous le titre : à côté de la barre de
+       progression, il n'avait plus que trois caractères de large. */
+    #aj-table-header { flex-wrap: wrap; }
+    .aj-worlds-badge { margin-left: 0; }
 }
 
 /* Lien « ← Retour à la partie » des pages d'analyse. Discret : c'est un chemin

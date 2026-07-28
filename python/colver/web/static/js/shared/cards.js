@@ -213,12 +213,23 @@ export function renderFaceDownHand(container, count) {
     }
 }
 
-export function renderTrick(prefix, trick) {
+/**
+ * Le pli en cours. `lead` = siège qui a entamé : les cartes s'empilent alors
+ * dans l'ordre où elles ont été jouées, l'entame dessous et la dernière
+ * dessus, comme un vrai tas sur la table. Sans lui (une page qui n'a pas
+ * l'information), l'ordre du DOM décide — c'est l'ancien comportement.
+ *
+ * Le z-index ne porte que sur les tapis où les cartes sont positionnées
+ * (board.css) ; ailleurs il est simplement sans effet.
+ */
+export function renderTrick(prefix, trick, lead = null) {
     const seatMap = { 0: 'n', 1: 'e', 2: 's', 3: 'w' };
     for (let seat = 0; seat < 4; seat++) {
         const el = document.getElementById(`${prefix}-${seatMap[seat]}`);
         if (!el) continue;
         el.innerHTML = '';
+        el.style.zIndex = (lead === null || lead === undefined)
+            ? '' : String(1 + ((seat - lead + 4) % 4));
         const c = trick[seat];
         if (c >= 0 && c < 32) {
             el.appendChild(cardToHtml(c));

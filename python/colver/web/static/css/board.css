@@ -145,25 +145,43 @@
     text-shadow: 0 0 6px color-mix(in srgb, var(--c-accent) 50%, transparent);
 }
 
+/* ===== Le pli, serré autour du centre =====
+   Les quatre cartes tenaient dans une grille 3×3 étalée — près de trois
+   hauteurs de carte pour une rangée qui, sur un écran d'ordinateur portable,
+   n'en fait pas deux. Le pli débordait alors sur les mains, et *par-dessous* :
+   Est et Sud viennent après lui dans le DOM, donc le recouvraient.
+
+   La grille fait maintenant exactement la taille du tas : trois colonnes d'une
+   largeur de carte, quatre rangées d'une demi-hauteur, chaque carte en couvrant
+   deux. Soit 3 largeurs × 2 hauteurs, contre ~4,8 × 2,9 — et c'est le tas le
+   plus serré qui laisse chaque index d'angle (celui du HAUT-GAUCHE, le seul
+   qui se lise à l'endroit) entièrement dégagé, quel que soit l'ordre
+   d'empilement : les cartes se touchent sans jamais se recouvrir.
+
+   `place-content: center` et pas `stretch` : la grille garde sa taille propre
+   au lieu d'être étirée sur la rangée. Elle reste donc centrée quand la place
+   manque — et déborde alors symétriquement, en haut ET en bas, au lieu de
+   pousser d'un seul côté.
+
+   `z-index` : quand ça déborde, c'est le pli qui passe au-dessus — c'est lui
+   qu'on regarde. `pointer-events: none` : une carte de pli ne se clique pas,
+   et sans ça elle intercepterait les clics sur la main qu'elle recouvre, sur
+   la table de jeu. */
 #trick-area, #watch-trick-area, #replay-trick-area {
     grid-area: trick;
     display: grid;
-    grid-template-areas:
-        ". n ."
-        "w . e"
-        ". s .";
-    grid-template-columns: 1fr auto 1fr;
-    grid-template-rows: 1fr auto 1fr;
-    gap: clamp(2px, 0.5vw, 8px);
-    align-items: center;
-    justify-items: center;
+    grid-template-columns: repeat(3, var(--card-w));
+    grid-template-rows: repeat(4, calc(var(--card-h) / 2));
+    place-content: center;
     min-height: 0;
+    z-index: 5;
+    pointer-events: none;
 }
 
-#trick-n, #watch-trick-n, #replay-trick-n { grid-area: n; }
-#trick-s, #watch-trick-s, #replay-trick-s { grid-area: s; }
-#trick-w, #watch-trick-w, #replay-trick-w { grid-area: w; }
-#trick-e, #watch-trick-e, #replay-trick-e { grid-area: e; }
+#trick-n, #watch-trick-n, #replay-trick-n { grid-column: 2; grid-row: 1 / span 2; }
+#trick-s, #watch-trick-s, #replay-trick-s { grid-column: 2; grid-row: 3 / span 2; }
+#trick-w, #watch-trick-w, #replay-trick-w { grid-column: 1; grid-row: 2 / span 2; }
+#trick-e, #watch-trick-e, #replay-trick-e { grid-column: 3; grid-row: 2 / span 2; }
 
 /* ===== LAST TRICK PANEL ===== */
 #last-trick, #replay-last-trick {
@@ -265,14 +283,20 @@
     max-height: 250px;
     overflow-y: auto;
 }
+/* « Ouest réfléchit… » se lisait dans le trou au milieu du pli étalé. Le pli
+   est maintenant serré et ce trou n'existe plus : le texte passe sous le tas
+   (une hauteur de carte plus bas) et prend un fond, parce que sur une table
+   pleine il finit toujours par tomber sur des cartes. */
 #play-status {
     position: absolute;
-    top: 50%;
+    top: calc(50% + var(--card-h) * 1.25);
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 30;
     text-align: center;
-    padding: 6px 16px;
+    padding: 4px 14px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.45);
     font-size: var(--fs-md);
     color: #c0b890;
     font-weight: 500;
@@ -322,16 +346,24 @@
        Les masquer complètement privait le joueur de tout repère : plus de nom,
        plus de « à qui le tour », plus de « il lui reste deux cartes ». On les
        sort donc de la grille (position absolue : le pli et le panneau
-       d'annonce gardent toute la largeur) et on les colle aux bords, décalés
-       de façon à ne laisser dépasser qu'une languette de dos de cartes.
-       C'est `.seats { overflow: hidden }` qui fait la découpe.
+       d'annonce gardent toute la largeur), on les colle aux bords, et on ne
+       garde de chaque main qu'une languette — c'est la main elle-même qui se
+       découpe (`overflow` sur `.hand`, plus bas).
        z-index 0 + pointer-events none : ce sont des repères, ils passent sous
-       le panneau d'annonce (z-index 35) et n'interceptent aucun tap. */
+       le panneau d'annonce (z-index 35) et n'interceptent aucun tap.
+
+       Rejouer reprend le même liseré pour Ouest et Est (Nord y garde sa main
+       entière, il a la place) : sans lui la page d'analyse perdait purement
+       et simplement deux des quatre mains au téléphone. */
     #play-table .seat.north,
     #play-table .seat.west,
-    #play-table .seat.east {
-        --peek-x: 20px;   /* largeur de carte visible sur les côtés */
-        --peek-y: 26px;   /* hauteur de carte visible en haut */
+    #play-table .seat.east,
+    #replay-main .seat.west,
+    #replay-main .seat.east {
+        /* La languette fait la largeur (ou la hauteur) d'un index d'angle,
+           pas une valeur en dur : c'est ce qu'on vient y lire. */
+        --peek-x: max(18px, calc(var(--card-w) * 0.3));
+        --peek-y: max(24px, calc(var(--card-h) * 0.3));
         display: flex !important;
         position: absolute;
         z-index: 0;
@@ -341,7 +373,9 @@
        jamais élargi — sinon il pousserait le liseré hors du bord. */
     #play-table .seat.north .seat-label,
     #play-table .seat.west .seat-label,
-    #play-table .seat.east .seat-label {
+    #play-table .seat.east .seat-label,
+    #replay-main .seat.west .seat-label,
+    #replay-main .seat.east .seat-label {
         margin-bottom: 2px;
         max-width: 100%;
         white-space: nowrap;
@@ -349,38 +383,69 @@
         text-overflow: ellipsis;
     }
 
-    /* Nord : les cartes pendent du bord haut, le nom passe dessous.
-       Largeur fixée par le siège et non par le libellé — sans ça un pseudo
-       court écrasait la rangée de cartes à sa propre largeur. */
+    /* ===== Où couper la carte =====
+       D'une languette on ne lit qu'une chose : l'index d'angle. Une carte en
+       porte deux — en haut à gauche, et le même retourné en bas à droite —
+       et un seul des deux se lit à l'endroit. La découpe garde donc toujours
+       le coin HAUT-GAUCHE : la tranche de gauche pour Ouest et Est, la bande
+       du haut pour Nord.
+       Ce qui suppose que la carte voisine ne le recouvre pas — et c'est le
+       cas, puisqu'elle vient toujours par la droite (mains horizontales) ou
+       par le bas (mains verticales) : chacune ne mange que le coin retourné,
+       celui qu'on ne montre pas. Les mains dévoilées en fin de donne
+       n'étaient qu'une bande de dessins sans valeurs tant que la découpe
+       tombait de l'autre côté. */
+    #play-table .seat.west .hand,
+    #play-table .seat.east .hand,
+    #replay-main .seat.west .hand,
+    #replay-main .seat.east .hand {
+        width: var(--peek-x);
+        overflow: hidden;
+        /* `.hand` centre ses cartes : centrées dans une boîte d'un tiers de
+           carte, on garderait la tranche du milieu — celle qui ne porte rien. */
+        align-items: flex-start;
+    }
+    #play-table .seat.north .hand {
+        height: var(--peek-y);
+        overflow: hidden;
+    }
+
+    /* Nord : le nom, puis la bande haute des cartes. Largeur fixée par le
+       siège et non par le libellé — sans ça un pseudo court écrasait la
+       rangée de cartes à sa propre largeur. */
     #play-table .seat.north {
-        top: calc(var(--peek-y) - var(--card-h));
+        top: 0;
         left: 50%;
         transform: translateX(-50%);
         width: 100%;
-        flex-direction: column-reverse;
+        flex-direction: column;
         align-items: flex-start;
     }
     /* Nom calé à gauche et non centré : le panneau « dernier pli » occupe le
        coin haut-droit dès le deuxième pli et le recouvrait. */
-    #play-table .seat.north .seat-label { margin: 2px 0 0; max-width: 55vw; }
+    #play-table .seat.north .seat-label { margin: 0 0 2px; max-width: 55vw; }
 
-    /* Ouest / Est : le nom reste dans l'écran, seule la main déborde. */
+    /* Ouest / Est : le nom reste dans l'écran, seule la main est rognée. */
     #play-table .seat.west,
-    #play-table .seat.east {
+    #play-table .seat.east,
+    #replay-main .seat.west,
+    #replay-main .seat.east {
         top: 50%;
         transform: translateY(-50%);
     }
-    #play-table .seat.west  { left: 0; align-items: flex-start; }
-    #play-table .seat.east  { right: 0; align-items: flex-end; }
+    #play-table .seat.west,
+    #replay-main .seat.west  { left: 0; align-items: flex-start; }
+    #play-table .seat.east,
+    #replay-main .seat.east  { right: 0; align-items: flex-end; }
     #play-table .seat.west .seat-label,
-    #play-table .seat.east .seat-label { max-width: 30vw; }
-    #play-table .seat.west .hand {
-        margin-left: calc(var(--peek-x) - var(--card-w));
-        margin-right: 0;
-    }
-    #play-table .seat.east .hand {
-        margin-right: calc(var(--peek-x) - var(--card-w));
-        margin-left: 0;
+    #play-table .seat.east .seat-label,
+    #replay-main .seat.west .seat-label,
+    #replay-main .seat.east .seat-label { max-width: 30vw; }
+    /* Rejouer : c'est `.seats` qui découpe, comme sur le tapis de jeu, et il
+       lui faut de quoi loger la colonne de huit cartes qu'on y superpose. */
+    #replay-main .seats {
+        overflow: hidden;
+        min-height: calc(var(--card-h) * 2.82 + 1.5rem);
     }
     /* South hand: span full screen width, cards overlap dynamically */
     #play-table .seat.south .hand {

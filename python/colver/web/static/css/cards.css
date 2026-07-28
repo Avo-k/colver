@@ -224,11 +224,18 @@
 
 /* ===== RESPONSIVE =====
    Le chevauchement horizontal s'adapte tout seul — plus rien à corriger ici
-   pour la main du bas. Seul l'empilement vertical se resserre. */
+   pour la main du bas. Seul l'empilement vertical se resserre.
+
+   0.26 et pas moins : au téléphone Ouest et Est ne sont plus que des liserés
+   de bord (cf. board.css), et la bande que la carte suivante laisse dépasser
+   est tout ce qu'on a pour lire la carte. L'index d'angle — le rang PLUS le
+   petit symbole en dessous — descend jusqu'à 24,5 % de la hauteur de la
+   carte ; en deçà on coupe le symbole et il ne reste qu'un chiffre sans
+   couleur. C'était le cas à 0.20. */
 @media (max-width: 640px) {
     .seat.west .hand,
     .seat.east .hand {
-        --card-vstep: calc(var(--card-h) * 0.20);
+        --card-vstep: calc(var(--card-h) * 0.26);
     }
 }
 

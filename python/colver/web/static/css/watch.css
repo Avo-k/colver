@@ -154,6 +154,15 @@
     flex-shrink: 0;
 }
 
+/* Les panneaux ne se compriment pas : c'est la colonne qui défile.
+   `flex-shrink` vaut 1 par défaut, donc sous ~600px de haut — un portable avec
+   sa barre de favoris, ou un zoom à 125% — chaque panneau était écrasé sous la
+   hauteur de son contenu. Le contenu, lui, ne l'était pas (`overflow: visible`)
+   et se dessinait par-dessus le panneau suivant : le verdict du coup passait
+   sur la boîte Analyse Oracle. La colonne, elle, n'atteignait jamais son
+   `overflow-y: auto` — il ne lui restait rien à faire défiler. */
+#watch-right > *, #replay-right > * { flex-shrink: 0; }
+
 /* ===== TRANSPORT CONTROLS ===== */
 #watch-transport, #replay-transport {
     display: flex;

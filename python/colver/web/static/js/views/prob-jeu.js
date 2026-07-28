@@ -116,7 +116,7 @@ function handleProblemReady(data) {
         bh.appendChild(sp);
     }
 
-    renderTrick('pj-trick', data.current_trick);
+    renderTrick('pj-trick', data.current_trick, data.trick_lead);
 
     const legalSet = new Set(pjLegalActions);
     const trump = data.contract ? data.contract.trump : -1;
