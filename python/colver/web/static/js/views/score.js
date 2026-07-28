@@ -3,10 +3,26 @@
 
 const STORAGE_CURRENT = 'colver:score:current';
 const STORAGE_HISTORY = 'colver:score:history';
+const STORAGE_PTS_SIDE = 'colver:score:ptsside';
 
 const BID_VALUES = [80, 90, 100, 110, 120, 130, 140, 150, 160];
 
-// ===== Scoring (FFB rules, 2026-04-16 update — surcoinche ×3, base 160+contrat×mult) =====
+// ===== Scoring (FFB rules — surcoinche ×3, base 162 + contrat×mult) =====
+// La base représente tous les points cartes de la donne : 162 (dix de der compris), ou 252
+// quand le preneur fait les 8 plis. Sur une chute, la défense prend le contrat *et* ces
+// points, quel que soit le partage réel des plis. Ici les scores sont exacts — le moteur
+// Rust arrondit à la dizaine, ce qui y ramène 162 sur 160 (cf. engine/scoring.rs).
+//
+// Belote/rebelote : les 20 points sont acquis à l'équipe qui les a annoncés et lui restent
+// quoi qu'il arrive — chute comprise, coinche comprise. Ils ne comptent pour la réussite du
+// contrat que si ce sont les preneurs qui les ont. C'est le seul endroit où ce compteur
+// diverge du moteur Rust, qui verse *toute* la belote au camp gagnant sur une chute ou sous
+// une coinche (cf. engine/scoring.rs).
+
+/** Points cartes de la donne : 252 quand les preneurs font les 8 plis, 162 sinon. */
+function dealTotal(r) {
+    return r.capotRealise ? 252 : 162;
+}
 
 /**
  * Compute round score from form inputs. Exact values, no rounding.
@@ -17,47 +33,30 @@ function computeRoundScore(r) {
     const defense = 1 - taker;
     const beloteBonus = [0, 0];
     if (r.belote === 0 || r.belote === 1) beloteBonus[r.belote] = 20;
-    const totalBelote = beloteBonus[0] + beloteBonus[1];
     const contractValue = r.isCapot ? 250 : r.value * 10;
-    const scores = [0, 0];
+    const mult = r.coinche === 0 ? 1 : r.coinche === 1 ? 2 : 3;
 
-    if (r.isCapot) {
-        const reussi = !!r.capotRealise;
-        if (reussi) {
-            if (r.coinche === 0) {
-                scores[taker] = 252 + contractValue + beloteBonus[taker];
-                scores[defense] = beloteBonus[defense];
-            } else if (r.coinche === 1) {
-                scores[taker] = 250 + contractValue * 2 + totalBelote;
-            } else {
-                scores[taker] = 250 + contractValue * 3 + totalBelote;
-            }
-        } else {
-            const mult = r.coinche === 0 ? 1 : r.coinche === 1 ? 2 : 3;
-            scores[defense] = 160 + contractValue * mult + totalBelote;
-        }
+    // La belote est acquise à son équipe avant tout le reste.
+    const scores = [beloteBonus[0], beloteBonus[1]];
+
+    const reussi = r.isCapot
+        ? !!r.capotRealise
+        : (r.takerPts | 0) + beloteBonus[taker] >= contractValue;
+
+    if (!reussi) {
+        // Chute : la défense prend le contrat et tous les points cartes de la donne.
+        scores[defense] += 162 + contractValue * mult;
         return { scores, reussi };
     }
 
-    const takerPts = r.takerPts | 0;
-    const takerTotal = takerPts + beloteBonus[taker];
-    const reussi = takerTotal >= contractValue;
-    const total = r.capotRealise ? 252 : 162;
-    const defensePtsActual = Math.max(0, total - takerPts);
-
-    if (reussi) {
-        const contreBase = r.capotRealise ? 250 : 160;
-        if (r.coinche === 0) {
-            scores[taker] = takerPts + contractValue + beloteBonus[taker];
-            scores[defense] = defensePtsActual + beloteBonus[defense];
-        } else if (r.coinche === 1) {
-            scores[taker] = contreBase + contractValue * 2 + totalBelote;
-        } else {
-            scores[taker] = contreBase + contractValue * 3 + totalBelote;
-        }
+    // Contrat réussi. Base d'un contré/surcontré = le total cartes de la donne.
+    const total = dealTotal(r);
+    if (r.coinche === 0) {
+        const takerPts = r.isCapot ? total : (r.takerPts | 0);
+        scores[taker] += takerPts + contractValue;
+        scores[defense] += Math.max(0, total - takerPts);
     } else {
-        const mult = r.coinche === 0 ? 1 : r.coinche === 1 ? 2 : 3;
-        scores[defense] = 160 + contractValue * mult + totalBelote;
+        scores[taker] += total + contractValue * mult;
     }
     return { scores, reussi };
 }
@@ -106,6 +105,17 @@ function saveHistory(h) {
     localStorage.setItem(STORAGE_HISTORY, JSON.stringify(h));
 }
 
+// Côté saisi par défaut (0 = preneurs, 1 = défense). Compter la défense c'est compter moins
+// de cartes, donc beaucoup de tables le font systématiquement : le choix est une habitude,
+// on le retient d'une manche à l'autre plutôt que de le redemander.
+function loadPtsSide() {
+    return localStorage.getItem(STORAGE_PTS_SIDE) === '1' ? 1 : 0;
+}
+
+function savePtsSide(side) {
+    localStorage.setItem(STORAGE_PTS_SIDE, String(side));
+}
+
 function newGame(teams, maxScore) {
     return {
         id: 'g' + Date.now() + Math.random().toString(36).slice(2, 6),
@@ -119,11 +129,18 @@ function newGame(teams, maxScore) {
 
 // ===== Game logic helpers =====
 
+// `scores` est stocké avec la manche, mais il n'est que dérivé : on le recalcule à
+// l'affichage pour qu'une correction de règle rattrape aussi les manches déjà saisies.
+function roundScores(r) {
+    return computeRoundScore(r).scores;
+}
+
 function totalsOf(game) {
     const t = [0, 0];
     for (const r of game.rounds) {
-        t[0] += r.scores[0];
-        t[1] += r.scores[1];
+        const s = roundScores(r);
+        t[0] += s[0];
+        t[1] += s[1];
     }
     return t;
 }
@@ -145,6 +162,7 @@ const app = {
     container: null,
     game: null,
     history: [],
+    ptsSide: 0, // 0 = preneurs, 1 = défense — dernier côté saisi, mémorisé
     formState: null, // { editingIndex: null|number, draft: {...} }
 };
 
@@ -399,8 +417,9 @@ function renderRounds() {
     }
 
     let cum = [0, 0];
-    const cumulatives = app.game.rounds.map(r => {
-        cum = [cum[0] + r.scores[0], cum[1] + r.scores[1]];
+    const perRound = app.game.rounds.map(roundScores);
+    const cumulatives = perRound.map(s => {
+        cum = [cum[0] + s[0], cum[1] + s[1]];
         return [...cum];
     });
 
@@ -411,9 +430,13 @@ function renderRounds() {
         const beloteTag = r.belote >= 0 ? `<span class="belote-tag">B&middot;${escapeHtml(app.game.teams[r.belote])}</span>` : '';
         const multTag = r.coinche === 1 ? '<span class="mult-tag">CONTRÉ</span>' : r.coinche === 2 ? '<span class="mult-tag">SURCONTRÉ</span>' : '';
         const valLabel = r.isCapot ? 'Capot' : `${r.value * 10}`;
-        const ptsLabel = r.isCapot ? (r.capotRealise ? 'réussi' : 'chuté') : `${r.takerPts}`;
-        const reussi = r.isCapot ? !!r.capotRealise : (r.takerPts + (r.belote === r.taker ? 20 : 0)) >= (r.value * 10);
+        const reussi = computeRoundScore(r).reussi;
         const chuteTag = !reussi ? '<span class="chute-tag">CHUTE</span>' : '';
+        // Les deux camps, puisque l'un ou l'autre a pu être celui qu'on a compté à table.
+        const takerPts = Math.max(0, Math.min(dealTotal(r), r.takerPts | 0));
+        const ptsCell = r.isCapot
+            ? '—'
+            : `<span class="pts-pren">${takerPts}</span><span class="pts-sep">·</span><span class="pts-def">${dealTotal(r) - takerPts}</span>`;
         return `
             <tr class="round-row" data-round-idx="${i}">
                 <td class="col-num">${i + 1}</td>
@@ -422,15 +445,15 @@ function renderRounds() {
                     &middot; ${valLabel}
                     ${multTag} ${chuteTag} ${beloteTag}
                 </td>
-                <td>${r.isCapot ? '—' : `<span style="color:#aaa">${ptsLabel} pts</span>`}</td>
+                <td class="col-pts">${ptsCell}</td>
                 <td class="col-score">
-                    <span class="pts">${r.scores[0]}</span><span class="cum">(${cumA})</span>
+                    <span class="pts">${perRound[i][0]}</span><span class="cum">(${cumA})</span>
                     <span class="row-actions">
                         <button class="delete" data-delete-idx="${i}" title="Supprimer">✕</button>
                     </span>
                 </td>
                 <td class="col-score">
-                    <span class="pts">${r.scores[1]}</span><span class="cum">(${cumB})</span>
+                    <span class="pts">${perRound[i][1]}</span><span class="cum">(${cumB})</span>
                 </td>
             </tr>
         `;
@@ -443,7 +466,7 @@ function renderRounds() {
                     <tr>
                         <th class="col-num">#</th>
                         <th>Contrat</th>
-                        <th>Pts pris</th>
+                        <th class="col-pts">Pren. · Déf.</th>
                         <th class="col-score">${escapeHtml(app.game.teams[0])}</th>
                         <th class="col-score">${escapeHtml(app.game.teams[1])}</th>
                     </tr>
@@ -540,6 +563,7 @@ function defaultDraft() {
         isCapot: false,
         coinche: 0,
         takerPts: 80,
+        ptsSide: app.ptsSide, // côté saisi ; takerPts reste la valeur canonique
         belote: -1,
         capotRealise: false,
     };
@@ -552,6 +576,8 @@ function openForm(editingIndex) {
     } else {
         const r = app.game.rounds[editingIndex];
         draft = { ...r };
+        // Manches enregistrées avant l'ajout du choix du côté.
+        if (draft.ptsSide !== 0 && draft.ptsSide !== 1) draft.ptsSide = app.ptsSide;
     }
     app.formState = { editingIndex, draft };
     renderForm();
@@ -561,6 +587,30 @@ function closeForm() {
     app.formState = null;
     const m = $('#score-modal-root');
     if (m) m.remove();
+}
+
+// `takerPts` reste la valeur canonique d'une manche — le côté compté ne change que la
+// lecture et l'écriture du champ, jamais ce qui est stocké ni le calcul du score.
+
+/** Valeur à afficher dans le champ, selon le côté compté. */
+function shownPts(d) {
+    const total = dealTotal(d);
+    const takerPts = Math.max(0, Math.min(total, d.takerPts | 0));
+    return d.ptsSide === 1 ? total - takerPts : takerPts;
+}
+
+/** Écrit une valeur saisie pour le côté compté, ramenée sur `takerPts`. */
+function setShownPts(d, v) {
+    const total = dealTotal(d);
+    const clamped = Math.max(0, Math.min(total, Number.isNaN(v) ? 0 : v));
+    d.takerPts = d.ptsSide === 1 ? total - clamped : clamped;
+}
+
+/** Rappel des deux camps, pour que la conversion reste vérifiable d'un coup d'œil. */
+function ptsMirrorText(d) {
+    const total = dealTotal(d);
+    const takerPts = Math.max(0, Math.min(total, d.takerPts | 0));
+    return `${escapeHtml(app.game.teams[d.taker])} ${takerPts} · ${escapeHtml(app.game.teams[1 - d.taker])} ${total - takerPts}`;
 }
 
 function renderForm() {
@@ -630,6 +680,7 @@ function renderFormBody() {
     `).join('');
 
     // Points input section: hidden if capot announced
+    const total = dealTotal(d);
     const ptsSection = d.isCapot ? `
         <div class="field">
             <span class="field-label">Capot réussi ?</span>
@@ -640,14 +691,21 @@ function renderFormBody() {
         </div>
     ` : `
         <div class="field">
-            <span class="field-label">Points faits par les preneurs (sur 162)</span>
+            <div class="field-label-row">
+                <span class="field-label">Points comptés (sur ${total})</span>
+                <div class="pts-side-toggle" id="pts-side-row">
+                    <button type="button" class="${d.ptsSide === 0 ? 'active' : ''}" data-pts-side="0">Preneurs</button>
+                    <button type="button" class="${d.ptsSide === 1 ? 'active' : ''}" data-pts-side="1">Défense</button>
+                </div>
+            </div>
             <div class="pts-input-row">
                 <button type="button" class="pts-step" data-pts-step="-10">−10</button>
                 <button type="button" class="pts-step" data-pts-step="-1">−1</button>
-                <input type="number" id="pts-input" min="0" max="162" inputmode="numeric" value="${d.takerPts}">
+                <input type="number" id="pts-input" min="0" max="${total}" inputmode="numeric" value="${shownPts(d)}">
                 <button type="button" class="pts-step" data-pts-step="1">+1</button>
                 <button type="button" class="pts-step" data-pts-step="10">+10</button>
             </div>
+            <div class="pts-mirror" id="pts-mirror">${ptsMirrorText(d)}</div>
         </div>
 
         ${d.coinche > 0 ? `
@@ -655,7 +713,7 @@ function renderFormBody() {
                 <label class="toggle-row">
                     <input type="checkbox" id="capot-realise" ${d.capotRealise ? 'checked' : ''}>
                     <span class="toggle-label">Tous les plis pris (capot réalisé)</span>
-                    <span class="toggle-hint">base 250</span>
+                    <span class="toggle-hint">base 252</span>
                 </label>
             </div>
         ` : ''}
@@ -716,6 +774,7 @@ function bindForm() {
         if (v) {
             d.value = parseInt(v.dataset.bidVal, 10);
             d.isCapot = false;
+            d.capotRealise = false; // sinon le total resterait à 252 après un aller-retour Capot
             d.takerPts = d.value * 10;
             renderFormBody();
             return;
@@ -739,26 +798,41 @@ function bindForm() {
             btn.addEventListener('click', () => { d.capotRealise = btn.dataset.capotYes === '1'; renderFormBody(); });
         });
     } else {
+        const sideRow = $('#pts-side-row');
+        if (sideRow) {
+            sideRow.addEventListener('click', e => {
+                const b = e.target.closest('[data-pts-side]');
+                if (!b) return;
+                const side = parseInt(b.dataset.ptsSide, 10);
+                if (side === d.ptsSide) return;
+                // Bascule d'affichage seulement : la manche décrite ne change pas.
+                d.ptsSide = side;
+                app.ptsSide = side;
+                savePtsSide(side);
+                renderFormBody();
+            });
+        }
         const input = $('#pts-input');
         if (input) {
             input.addEventListener('input', () => {
-                let v = parseInt(input.value, 10);
-                if (Number.isNaN(v)) v = 0;
-                v = Math.max(0, Math.min(162, v));
-                d.takerPts = v;
+                setShownPts(d, parseInt(input.value, 10));
                 updatePreviewOnly();
             });
             input.addEventListener('blur', () => { renderFormBody(); });
         }
         document.querySelectorAll('[data-pts-step]').forEach(b => {
             b.addEventListener('click', () => {
-                const step = parseInt(b.dataset.ptsStep, 10);
-                d.takerPts = Math.max(0, Math.min(162, d.takerPts + step));
+                setShownPts(d, shownPts(d) + parseInt(b.dataset.ptsStep, 10));
                 renderFormBody();
             });
         });
         const cr = $('#capot-realise');
-        if (cr) cr.addEventListener('change', () => { d.capotRealise = cr.checked; renderFormBody(); });
+        if (cr) cr.addEventListener('change', () => {
+            d.capotRealise = cr.checked;
+            // Capot réalisé = les preneurs ont tous les points cartes de la donne.
+            d.takerPts = cr.checked ? 252 : Math.min(d.takerPts, 162);
+            renderFormBody();
+        });
     }
 
     $('#form-cancel').addEventListener('click', closeForm);
@@ -779,6 +853,8 @@ function updatePreviewOnly() {
         scoreEls[0].textContent = `+${scores[0]}`;
         scoreEls[1].textContent = `+${scores[1]}`;
     }
+    const mirror = $('#pts-mirror');
+    if (mirror) mirror.innerHTML = ptsMirrorText(d);
 }
 
 function submitRound() {
@@ -803,6 +879,7 @@ export function mount(container) {
     app.container = container;
     app.game = loadCurrent();
     app.history = loadHistory();
+    app.ptsSide = loadPtsSide();
     render();
 }
 

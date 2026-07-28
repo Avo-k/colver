@@ -289,6 +289,10 @@
     font-weight: 600;
 }
 
+.score-rounds .col-pts { white-space: nowrap; color: #aaa; }
+.score-rounds .col-pts .pts-sep { color: #555; margin: 0 5px; }
+.score-rounds .col-pts .pts-def { color: #777; }
+
 .score-rounds .col-score { text-align: right; font-variant-numeric: tabular-nums; }
 .score-rounds .col-score .pts { font-weight: 600; }
 .score-rounds .col-score .cum { color: #888; font-size: var(--fs-xs); margin-left: 6px; }
@@ -414,6 +418,49 @@
     padding: 12px 14px;
     font-size: var(--fs-md);
     flex: 1;
+}
+
+.score-form .field-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Preneurs / Défense : quel camp on a compté à table. base.css repeint tout button:hover
+   en accent, d'où les fonds redéclarés ici. */
+.score-form .pts-side-toggle {
+    display: inline-flex;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid #444;
+    border-radius: 6px;
+    overflow: hidden;
+}
+.score-form .pts-side-toggle button {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: #999;
+    padding: 5px 12px;
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.score-form .pts-side-toggle button:hover { background: #333; color: #ddd; }
+.score-form .pts-side-toggle button.active,
+.score-form .pts-side-toggle button.active:hover {
+    background: var(--c-accent);
+    color: #1a1a1a;
+}
+
+.score-form .pts-mirror {
+    font-size: var(--fs-2xs);
+    color: #888;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px;
 }
 
 .score-form .pts-input-row {
