@@ -142,3 +142,12 @@ async def my_games(request: Request, limit: int = 50, offset: int = 0):
         return JSONResponse({"error": "Non connecté"}, status_code=401)
     games = await db.list_games(limit=min(limit, 200), offset=offset, user_id=user["id"])
     return JSONResponse(games)
+
+
+@router.get("/me/matches")
+async def my_open_matches(request: Request):
+    """Les parties en 1000 / 2000 points laissées en plan, à reprendre."""
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"error": "Non connecté"}, status_code=401)
+    return JSONResponse(await db.list_open_matches(user["id"]))

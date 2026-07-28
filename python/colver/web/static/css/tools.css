@@ -4199,3 +4199,14 @@
     border-color: var(--c-border-strong);
     background: var(--c-surface-1);
 }
+/* Variante « retour vers le jeu » (Rejouer → la partie en cours) : même forme,
+   mais c'est une reprise de partie, pas une sortie d'analyse. */
+.analyse-back-go {
+    color: var(--c-accent);
+    border-color: var(--c-accent-a30);
+}
+.analyse-back-go:hover {
+    color: var(--c-accent);
+    border-color: var(--c-accent);
+    background: var(--c-accent-a10);
+}

@@ -952,6 +952,80 @@ async def websocket_endpoint(ws: WebSocket):
                             mode=cfg["mode"], match=play_match,
                             on_deal_end=_finish_deal)
 
+    def _play_state_msg():
+        """La position courante, telle qu'on la renverrait à un client revenu.
+
+        Même forme que le message de `_begin_deal`, plus l'historique d'enchères :
+        il vit côté client, il est parti avec la vue, et seul le serveur peut le
+        rendre (`GameTable` reconstruit son panneau à partir de `bid_history`).
+        """
+        cfg = play_cfg or {}
+        human_seat = cfg.get("human_seat", 2)
+        msg = {
+            "type": "game_state",
+            "state": play_session.get_state(human_seat),
+            "doudou_available": doudou_available,
+            "game_id": play_game_id,
+            "initial_hands": play_session.initial_hands,
+            "mode": cfg.get("mode", play_mode),
+            "bot": cfg.get("bot"),
+            "mode_degraded": cfg.get("degraded", False),
+            "match": play_match.payload() if play_match is not None else None,
+            "bid_history": play_session.bid_history,
+        }
+        return _enrich_terminal_msg(msg, play_session, play_match)
+
+    async def _send_open_matches():
+        """La liste « à reprendre » : parties ouvertes du compte, sauf celle qui
+        est déjà à l'écran — on ne propose pas de reprendre là où on est."""
+        matches = await db.list_open_matches(ws_user["id"]) if ws_user else []
+        live = play_match.id if play_match is not None else None
+        await ws.send_json({
+            "type": "play_open",
+            "matches": [m for m in matches if m["id"] != live],
+        })
+
+    async def _resume_match(match_id):
+        """Reprendre une partie interrompue, à la donne suivante.
+
+        La donne en cours au moment de la coupure n'est pas rejouable : les bots
+        n'ont pas d'état persistant, et rejouer la donne depuis ses actions ne
+        leur rendrait pas le leur. Elle est donc abandonnée et la partie repart
+        sur une donne neuve, au score acquis — c'est le prix affiché du bouton.
+        """
+        nonlocal play_match, play_cfg, play_mode
+        if ws_user is None:
+            await ws.send_json({"type": "error",
+                                "msg": "Connectez-vous pour reprendre une partie"})
+            return
+        row = await db.load_open_match(match_id, ws_user["id"])
+        if row is None:
+            await ws.send_json({"type": "error",
+                                "msg": "Partie introuvable ou déjà terminée"})
+            return
+        deals = row["deals"]
+        if deals:
+            # Le donneur passe à gauche après une donne jouée…
+            dealer = (int(deals[-1]["dealer"]) + 1) % 4
+        elif row["pending_dealer"] is not None:
+            # …mais une donne abandonnée n'a pas eu lieu : le même redonne.
+            dealer = int(row["pending_dealer"])
+        else:
+            dealer = None  # partie sans aucune donne : tirage au sort
+        play_match = match_state.Match.restore(
+            row["target"], [row["points_ns"], row["points_ew"]], deals, dealer,
+            match_id=row["id"])
+        play_mode = pacing.normalize(row["pacing"])
+        bot, dede_time_ms, degraded = pacing.resolve(play_mode, doudou_available)
+        play_cfg = {
+            "human_seat": 2 if row["human_seat"] is None else int(row["human_seat"]),
+            "mode": play_mode,
+            "bot": bot,
+            "time_ms": dede_time_ms,
+            "degraded": degraded,
+        }
+        await _begin_deal()
+
     async def _cancel_sim_task():
         nonlocal sim_task
         if sim_task and not sim_task.done():
@@ -1070,8 +1144,38 @@ async def websocket_endpoint(ws: WebSocket):
                 if play_match.is_match:
                     play_match.id = await db.create_match(
                         mode="play", target=target,
-                        user_id=ws_user["id"] if ws_user else None)
+                        user_id=ws_user["id"] if ws_user else None,
+                        pacing=play_mode, human_seat=play_cfg["human_seat"])
                 await _begin_deal()
+
+            elif msg_type == "play_status":
+                # Retour sur la page Jouer. Trois cas, dans cet ordre : la partie
+                # est encore vivante sur cette socket (aller-retour vers
+                # l'analyse) — on la remet à l'écran telle quelle, sans rien
+                # abandonner ; sinon l'URL demande une reprise ; dans tous les
+                # cas on renvoie ce qu'il reste à reprendre.
+                if play_session is not None and play_match is not None \
+                        and not play_match.finished:
+                    await ws.send_json(_play_state_msg())
+                elif data.get("resume"):
+                    await _resume_match(str(data["resume"]).strip().lower())
+                await _send_open_matches()
+
+            elif msg_type == "resume_match":
+                await _resume_match(str(data.get("match_id") or "").strip().lower())
+                await _send_open_matches()
+
+            elif msg_type == "abandon_match":
+                # Concéder : la partie est close sans vainqueur. Si c'est celle
+                # qui est en cours, la table est lâchée avec elle.
+                dropped = str(data.get("match_id") or "").strip().lower()
+                if ws_user is not None and dropped:
+                    await db.abandon_match(dropped, ws_user["id"])
+                    if play_match is not None and play_match.id == dropped:
+                        play_match = None
+                        play_session = None
+                        play_game_id = None
+                await _send_open_matches()
 
             elif msg_type == "next_deal":
                 # Donne suivante d'une partie : mêmes réglages, donneur suivant,
@@ -1255,10 +1359,18 @@ async def websocket_endpoint(ws: WebSocket):
                     moves.append(entry)
                     if finished:
                         break
+                # Cette donne appartenait-elle à une partie encore en cours, et
+                # au joueur qui regarde ? Alors la page d'analyse peut proposer
+                # d'y retourner — c'est le chemin inverse du bouton « Analyser ».
+                resume = None
+                if ws_user is not None and game_data.get("match_id"):
+                    resume = await db.open_match_summary(
+                        game_data["match_id"], ws_user["id"])
                 await wsend({
                     "type": "replay_loaded",
                     "state": initial_state,
                     "game_id": game_id,
+                    "resume": resume,
                     "mode": game_data["mode"],
                     "agents": game_data["agents"],
                     "seat_names": await db.game_seat_names(game_data),

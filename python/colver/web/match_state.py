@@ -44,6 +44,30 @@ class Match:
         self.deals = []      # [{"game_id", "scores": [ns, ew], "dealer"}]
         self.deal_no = 1     # numéro (1-based) de la donne en cours
 
+    @classmethod
+    def restore(cls, target, totals, deals, dealer, match_id=None):
+        """Reconstruire une partie interrompue, prête à donner la donne suivante.
+
+        `totals` est le cumul stocké (`matches.points_ns/ew`) : le score marqué
+        d'une donne n'est enregistré nulle part donne par donne, seulement
+        additionné là — `games.points_ns/ew` sont les points *cartes*, une autre
+        échelle. Les donnes déjà jouées reviennent donc sans leur score
+        (`"scores": None`, plutôt qu'un chiffre de la mauvaise unité) ; elles ne
+        servent plus qu'à compter et à numéroter.
+
+        `dealer` est le donneur de la donne **à venir**, calculé par l'appelant :
+        lui seul sait si la coupure a laissé une donne en plan (le même joueur
+        redonne) ou pas (le donneur passe à gauche).
+        """
+        match = cls(target=target, dealer=dealer, match_id=match_id)
+        match.totals = [int(totals[0]), int(totals[1])]
+        match.deals = [
+            {"game_id": d["game_id"], "scores": None, "dealer": d["dealer"]}
+            for d in deals
+        ]
+        match.deal_no = len(match.deals) + 1
+        return match
+
     # ----- déroulé -----
 
     @property

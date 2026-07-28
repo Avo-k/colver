@@ -32,8 +32,12 @@ const PROFILE_TEMPLATE = `
         <div class="compte-stats" id="profile-stats"></div>
         <button id="compte-logout" class="compte-logout">Se déconnecter</button>
     </div>
+    <div class="compte-card hidden" id="compte-open-card">
+        <h3 class="compte-subtitle">Parties en cours</h3>
+        <div id="compte-open" class="history-list"></div>
+    </div>
     <div class="compte-card">
-        <h3 class="compte-subtitle">Mes parties</h3>
+        <h3 class="compte-subtitle">Mes donnes</h3>
         <div id="compte-games" class="history-list compte-games">
             <div class="history-empty">Chargement…</div>
         </div>
@@ -124,6 +128,48 @@ async function mountProfile(container, me) {
         renderGames(list, games);
     } catch {
         list.innerHTML = '<div class="history-empty">Erreur de chargement</div>';
+    }
+
+    // Une *partie* (1000 / 2000 points) groupe des *donnes* : elle ne peut pas
+    // vivre dans la liste ci-dessus, qui en montre les lignes une à une.
+    // Reprendre passe par la page Jouer, qui tient la socket de jeu.
+    try {
+        const resp = await fetch(`${base()}api/me/matches`);
+        const matches = resp.ok ? await resp.json() : [];
+        renderOpenMatches(matches);
+    } catch { /* la carte reste masquée */ }
+}
+
+function renderOpenMatches(matches) {
+    if (!matches || matches.length === 0) return;
+    document.getElementById('compte-open-card').classList.remove('hidden');
+    const list = document.getElementById('compte-open');
+    list.innerHTML = '';
+    for (const m of matches) {
+        const row = document.createElement('div');
+        row.className = 'history-row';
+        row.addEventListener('click', () => {
+            navigateTo(`/jouer/humain?resume=${encodeURIComponent(m.id)}`);
+        });
+
+        const id = document.createElement('span');
+        id.className = 'history-id';
+        id.textContent = m.id;
+
+        const us = (m.human_seat ?? 2) % 2 === 0 ? m.points_ns : m.points_ew;
+        const them = (m.human_seat ?? 2) % 2 === 0 ? m.points_ew : m.points_ns;
+        const info = document.createElement('span');
+        info.className = 'history-info ' + (us >= them ? 'ns-won' : 'ew-won');
+        info.textContent = `${us}-${them}`;
+
+        const meta = document.createElement('span');
+        meta.className = 'history-date';
+        meta.textContent = `/ ${m.target} · ${m.deals} donne${m.deals > 1 ? 's' : ''}`;
+
+        row.appendChild(id);
+        row.appendChild(info);
+        row.appendChild(meta);
+        list.appendChild(row);
     }
 }
 

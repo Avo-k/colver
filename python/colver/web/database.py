@@ -146,6 +146,17 @@ MIGRATIONS = [
     CREATE INDEX idx_games_match ON games(match_id, deal_no);
     CREATE INDEX idx_matches_user ON matches(user_id, created_at);
     """,
+    # v8 — reprendre une partie interrompue
+    # Le rythme est un réglage de *partie*, pas de donne : sans lui, reprendre
+    # une partie « rapide » la rendrait à Dédé. `abandoned` sépare la partie
+    # concédée de la partie jouée jusqu'au bout — les deux sont `is_complete`,
+    # seule la seconde a un vainqueur.
+    """
+    ALTER TABLE matches ADD COLUMN pacing TEXT;
+    ALTER TABLE matches ADD COLUMN human_seat INTEGER;
+    ALTER TABLE matches ADD COLUMN abandoned INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX idx_matches_open ON matches(user_id, is_complete);
+    """,
 ]
 
 
@@ -307,16 +318,20 @@ async def complete_game(game_id, points_ns, points_ew, contract):
 
 # ===== Parties (plusieurs donnes) =====
 
-async def create_match(mode, target, user_id=None):
-    """Ouvrir une partie. Les donnes s'y rattachent par `games.match_id`."""
+async def create_match(mode, target, user_id=None, pacing=None, human_seat=None):
+    """Ouvrir une partie. Les donnes s'y rattachent par `games.match_id`.
+
+    `pacing` et `human_seat` sont les réglages à rejouer si la partie est
+    reprise plus tard : ils valent pour toutes ses donnes.
+    """
     db = await get_db()
     for _ in range(20):
         match_id = _gen_id()
         try:
             await db.execute(
-                "INSERT INTO matches (id, mode, created_at, target, user_id) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (match_id, mode, _now(), int(target), user_id),
+                "INSERT INTO matches (id, mode, created_at, target, user_id, "
+                "pacing, human_seat) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (match_id, mode, _now(), int(target), user_id, pacing, human_seat),
             )
             await db.commit()
             return match_id
@@ -334,6 +349,95 @@ async def update_match(match_id, points_ns, points_ew, deals, is_complete, winne
          1 if is_complete else 0, winner, match_id),
     )
     await db.commit()
+
+
+async def list_open_matches(user_id, limit=8):
+    """Les parties solo d'un joueur qui n'ont pas été jouées jusqu'au bout.
+
+    `pending` dit qu'une donne était en cours au moment de la coupure : elle
+    n'est pas reprenable (les bots n'ont pas d'état persistant), donc la
+    reprendre l'abandonne. C'est la seule information dont l'affichage a besoin
+    pour poser honnêtement le choix.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT m.id, m.target, m.created_at, m.points_ns, m.points_ew, m.deals, "
+        "m.pacing, m.human_seat, "
+        "EXISTS (SELECT 1 FROM games g WHERE g.match_id = m.id "
+        "        AND g.is_complete = 0) AS pending "
+        "FROM matches m "
+        "WHERE m.user_id = ? AND m.mode = 'play' AND m.is_complete = 0 "
+        "      AND m.target > 0 "
+        "ORDER BY m.created_at DESC LIMIT ?",
+        (user_id, limit),
+    )
+    return [
+        {
+            "id": r[0], "target": r[1], "created_at": r[2],
+            "points_ns": r[3], "points_ew": r[4], "deals": r[5],
+            "pacing": r[6], "human_seat": r[7], "pending": bool(r[8]),
+        }
+        for r in rows
+    ]
+
+
+async def open_match_summary(match_id, user_id):
+    """Une partie en cours appartenant à ce joueur, ou None. Sert au lien de
+    reprise que Rejouer affiche sous une donne de partie."""
+    matches = await list_open_matches(user_id, limit=50)
+    for m in matches:
+        if m["id"] == match_id:
+            return m
+    return None
+
+
+async def load_open_match(match_id, user_id):
+    """Tout ce qu'il faut pour reconstruire une partie interrompue.
+
+    `deals` ne porte que les donnes **terminées** : leur identifiant et leur
+    donneur. Pas leur score — `games.points_ns/ew` sont les points *cartes* de
+    la donne (`env.get_points()`), pas les points *marqués* (`env.rewards()`,
+    contrat compris) qui font le score de la partie. Ces derniers ne sont
+    cumulés que dans `matches.points_ns/ew`, seule source du score repris.
+
+    Une donne interrompue reste dans `games` (invisible partout ailleurs : tous
+    les listings filtrent `is_complete = 1`), on n'en garde ici que le donneur,
+    pour que la donne rejouée soit redonnée par le même joueur.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT * FROM matches WHERE id = ? AND user_id = ? AND is_complete = 0",
+        (match_id, user_id),
+    )
+    if not rows:
+        return None
+    match = dict(rows[0])
+    games = await db.execute_fetchall(
+        "SELECT id, dealer, is_complete FROM games "
+        "WHERE match_id = ? ORDER BY deal_no",
+        (match_id,),
+    )
+    match["deals"] = [{"game_id": g[0], "dealer": g[1]} for g in games if g[2]]
+    pending = [g for g in games if not g[2]]
+    match["pending_dealer"] = pending[-1][1] if pending else None
+    return match
+
+
+async def abandon_match(match_id, user_id):
+    """Concéder une partie : close, mais sans vainqueur.
+
+    Une partie jouée jusqu'au bout a toujours un `winner` (`Match.finished`
+    exige un écart), donc `is_complete = 1` + `winner IS NULL` ne peut désigner
+    qu'un abandon ; `abandoned` le dit quand même explicitement.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        "UPDATE matches SET is_complete = 1, abandoned = 1, winner = NULL "
+        "WHERE id = ? AND user_id = ? AND is_complete = 0",
+        (match_id, user_id),
+    )
+    await db.commit()
+    return cur.rowcount > 0
 
 
 async def get_match(match_id):

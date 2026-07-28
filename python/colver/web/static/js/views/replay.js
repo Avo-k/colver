@@ -15,6 +15,7 @@ import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js'
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
 
 const TEMPLATE = `
+<a id="replay-resume" class="analyse-back analyse-back-go hidden" href="/jouer/humain"></a>
 <div id="replay-main">
     <div id="replay-history">
         <div class="section-title" id="replay-history-title">Historique</div>
@@ -578,8 +579,28 @@ function handleReplayLoaded(data) {
     }
     syncReplayUrl();
 
+    renderResumeLink(data.resume);
+
     loadAnalysis(data.game_id);
     requestAgentReview(data.game_id);
+}
+
+// Chemin de retour vers la partie en cours, quand la donne analysée en est une
+// et qu'elle appartient au joueur connecté. C'est l'inverse du bouton
+// « Analyser » de la table : sans lui, analyser une donne au milieu d'une
+// partie en 2000 points était un aller sans retour.
+function renderResumeLink(match) {
+    const el = document.getElementById('replay-resume');
+    if (!el) return;
+    if (!match) {
+        el.classList.add('hidden');
+        return;
+    }
+    const us = (match.human_seat ?? 2) % 2 === 0 ? match.points_ns : match.points_ew;
+    const them = (match.human_seat ?? 2) % 2 === 0 ? match.points_ew : match.points_ns;
+    el.setAttribute('href', `/jouer/humain?resume=${encodeURIComponent(match.id)}`);
+    el.textContent = `↩ Reprendre la partie — ${us} – ${them}, objectif ${match.target}`;
+    el.classList.remove('hidden');
 }
 
 // « EST (DOUDOU) », « SUD (AVOK) » — qui tenait le siège dans cette partie-là.
@@ -636,7 +657,7 @@ async function loadGameHistory(autoLoadFirst = false) {
             mine = meResp.ok && !!(await meResp.json()).user;
         } catch { /* anonymous */ }
         const title = document.getElementById('replay-history-title');
-        if (title) title.textContent = mine ? 'Mes parties' : 'Historique';
+        if (title) title.textContent = mine ? 'Mes donnes' : 'Historique';
         const url = mine ? `${base}api/me/games?limit=50` : `${base}api/games?limit=50`;
         const resp = await fetch(url);
         if (!resp.ok) return;

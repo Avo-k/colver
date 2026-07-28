@@ -1,6 +1,6 @@
 // Play view (solo humain vs IA) — thin wrapper around the shared GameTable
 
-import { send, onMessage, offMessage } from '../ws.js';
+import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { GameTable, TABLE_TEMPLATE, MY_SEAT } from '../shared/table.js';
 import { navigateTo } from '../router.js';
 
@@ -22,6 +22,7 @@ const TARGETS = [
 
 const TEMPLATE = `
 <div id="play-config">
+    <div id="play-resume" class="play-resume hidden"></div>
     <p id="play-intro">Jouez à la Belote Contrée contre l'IA.</p>
     <div class="config-group">
         <span class="config-group-label">Rythme</span>
@@ -77,9 +78,91 @@ function setTarget(target) {
     }
 }
 
+// Partie à reprendre demandée par l'URL (`?resume=<id>`), envoyée dès que la
+// socket est ouverte. Le paramètre est retiré de l'URL aussitôt lu : reprendre
+// abandonne la donne en cours, ce n'est pas une action qu'un F5 doit rejouer.
+let resumeWanted = null;
+// La liste des parties à reprendre appartient à l'écran de configuration, pas
+// à la table : dès qu'une donne est affichée elle disparaît, y compris derrière
+// le bouton ⚙ qui rouvre les réglages en cours de partie.
+let gameOnScreen = false;
+
+// ===== Parties en cours =====
+
+function matchDate(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return `${d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`
+        + ` à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function renderOpenMatches(matches) {
+    const el = document.getElementById('play-resume');
+    if (!el) return;
+    if (gameOnScreen || !matches || matches.length === 0) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    el.classList.remove('hidden');
+    el.innerHTML = '<span class="config-group-label">Reprendre</span>'
+        + matches.map(m => {
+            // Le score est lu du côté du joueur, comme le bandeau de la table.
+            const us = (m.human_seat ?? 2) % 2 === 0 ? m.points_ns : m.points_ew;
+            const them = (m.human_seat ?? 2) % 2 === 0 ? m.points_ew : m.points_ns;
+            const deals = `${m.deals} donne${m.deals > 1 ? 's' : ''}`;
+            return `
+    <div class="resume-row" data-id="${m.id}">
+        <span class="resume-score">
+            <b class="${us === them ? '' : (us > them ? 'resume-ahead' : 'resume-behind')}">${us}</b>
+            <span class="resume-sep">–</span><b>${them}</b>
+        </span>
+        <span class="resume-meta">objectif ${m.target} · ${deals} · ${matchDate(m.created_at)}${
+            m.pending ? '<br><span class="resume-warn">une donne était en cours :'
+                + ' elle sera abandonnée</span>' : ''}</span>
+        <button type="button" class="resume-go">Reprendre</button>
+        <button type="button" class="resume-drop">Abandonner</button>
+    </div>`;
+        }).join('');
+
+    for (const row of el.querySelectorAll('.resume-row')) {
+        const id = row.dataset.id;
+        row.querySelector('.resume-go').addEventListener('click', () => {
+            send({ type: 'resume_match', match_id: id });
+        });
+        // Concéder est irréversible : le bouton demande confirmation sur place
+        // plutôt que d'ouvrir une boîte de dialogue du navigateur.
+        const drop = row.querySelector('.resume-drop');
+        drop.addEventListener('click', () => {
+            if (drop.dataset.armed) {
+                send({ type: 'abandon_match', match_id: id });
+                return;
+            }
+            drop.dataset.armed = '1';
+            drop.textContent = 'Confirmer ?';
+            drop.classList.add('resume-drop-armed');
+        });
+    }
+}
+
+function handleOpenMatches(data) {
+    // La réponse prouve que la demande est passée : `play_status` répond
+    // toujours par la liste, même quand il reprend une partie au passage.
+    resumeWanted = null;
+    renderOpenMatches(data.matches);
+}
+
+function probeStatus() {
+    send({ type: 'play_status', resume: resumeWanted });
+}
+
 // ===== WS message handlers (stored for offMessage) =====
 
 function handleGameState(data) {
+    if (!gameOnScreen) {
+        gameOnScreen = true;
+        renderOpenMatches(null);
+    }
     if (data.game_id && data.game_id !== lastGameId) {
         // Donne suivante d'une partie : même table, tout est à refaire.
         lastGameId = data.game_id;
@@ -160,6 +243,8 @@ export function mount(container) {
 
     document.getElementById('start-game').addEventListener('click', () => {
         table.reset();
+        gameOnScreen = true;
+        renderOpenMatches(null);
         lastGameId = null;
         send({
             type: 'start_game', mode: currentMode, target: currentTarget,
@@ -171,13 +256,31 @@ export function mount(container) {
 
     onMessage('game_state', handleGameState);
     onMessage('ai_move', handleAiMove);
+    onMessage('play_open', handleOpenMatches);
     onMessage('error', handleError);
+
+    // Demander au serveur où on en est : une partie encore vivante sur cette
+    // socket revient telle quelle à l'écran (aller-retour vers l'analyse), et
+    // sinon on récupère la liste des parties à reprendre. `send()` est muet
+    // quand la socket n'est pas encore ouverte (chargement à froid), d'où le
+    // rappel sur `onOpen`.
+    const params = new URLSearchParams(location.search);
+    resumeWanted = params.get('resume');
+    if (resumeWanted) {
+        history.replaceState(null, '', location.pathname);
+    }
+    onOpen(probeStatus);
+    probeStatus();
 }
 
 export function unmount() {
     offMessage('game_state', handleGameState);
     offMessage('ai_move', handleAiMove);
+    offMessage('play_open', handleOpenMatches);
     offMessage('error', handleError);
+    offOpen(probeStatus);
+    resumeWanted = null;
+    gameOnScreen = false;
     lastGameId = null;
     if (table) {
         table.unbind();

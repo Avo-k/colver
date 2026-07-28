@@ -242,6 +242,62 @@ nav {
     color: var(--c-warn);
 }
 
+/* ===== REPRENDRE UNE PARTIE =====
+   Les parties en 1000/2000 points laissées en plan. Ligne pleine largeur en
+   tête du panneau (`flex-basis: 100%` : `#play-config` est un flex qui enroule),
+   au-dessus des réglages — c'est une reprise, pas un réglage de plus. */
+.play-resume {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    padding-bottom: var(--sp-3);
+    margin-bottom: var(--sp-1);
+    border-bottom: 1px solid var(--c-border);
+}
+.resume-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-3);
+}
+.resume-score {
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semi);
+    font-variant-numeric: tabular-nums;
+}
+.resume-sep { color: var(--c-text-dim); margin: 0 2px; }
+.resume-ahead { color: var(--c-success-txt); }
+.resume-behind { color: var(--c-danger-txt); }
+.resume-meta {
+    flex: 1;
+    min-width: 12ch;
+    font-size: var(--fs-xs);
+    line-height: var(--lh-snug);
+    color: var(--c-text-dim);
+}
+/* Reprendre coûte la donne interrompue : le dire sur la ligne, pas ailleurs. */
+.resume-warn { color: var(--c-warn); }
+.resume-go, .resume-drop {
+    padding: var(--sp-1) var(--sp-3);
+    font-size: var(--fs-sm);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--c-border);
+    background: var(--c-surface-1);
+    color: var(--c-text-muted);
+}
+.resume-go {
+    border-color: var(--c-accent-a30);
+    color: var(--c-accent);
+}
+.resume-go:hover { background: var(--c-accent-a15); border-color: var(--c-accent); }
+.resume-drop:hover { background: var(--c-surface-2); color: var(--c-text); }
+.resume-drop-armed, .resume-drop-armed:hover {
+    color: var(--c-warn);
+    border-color: var(--c-warn);
+    background: transparent;
+}
+
 /* Deux réglages côte à côte (rythme, format) : sans intitulé, deux rangées de
    boutons segmentés identiques se liraient comme un seul choix à six options. */
 .config-group {
