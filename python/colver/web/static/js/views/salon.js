@@ -3,10 +3,10 @@
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { GameTable, TABLE_TEMPLATE } from '../shared/table.js';
 import { navigateTo } from '../router.js';
+import { botLabel } from '../shared/agents.js';
 
 const base = () => document.querySelector('base')?.getAttribute('href') || '/';
 
-const BOT_LABELS = { dede: 'Dédé', doudou: 'DouDou', oracle_dd: 'Oracle' };
 // Same bundles as the solo view and pacing.py: one host choice sets both the
 // tempo and which bot fills the empty seats.
 const MODES = {
@@ -127,7 +127,7 @@ function renderLobby(data) {
             }
         } else {
             div.innerHTML = title +
-                `<div class="salon-seat-name salon-seat-free">${BOT_LABELS[data.bot_type] || 'Bot'} 🤖</div>` +
+                `<div class="salon-seat-name salon-seat-free">${botLabel(data.bot_type)} 🤖</div>` +
                 `<div class="salon-seat-sub">cliquer pour s'asseoir</div>`;
             div.addEventListener('click', () => send({ type: 'room_sit', seat: i }));
         }
@@ -202,7 +202,7 @@ function handleGameState(data) {
         table.show();
     }
     if (data.seat_names) {
-        table.setSeatLabels(data.seat_names.map(n => BOT_LABELS[n] || n));
+        table.setSeatLabels(data.seat_names.map(n => botLabel(n)));
     }
     table.handleGameState(data);
 }

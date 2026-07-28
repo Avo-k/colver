@@ -1261,6 +1261,7 @@ async def websocket_endpoint(ws: WebSocket):
                     "game_id": game_id,
                     "mode": game_data["mode"],
                     "agents": game_data["agents"],
+                    "seat_names": await db.game_seat_names(game_data),
                     "total_actions": len(game_data["actions"]),
                     "moves": moves,
                     "bid_history": [],

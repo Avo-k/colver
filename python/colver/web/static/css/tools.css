@@ -3534,7 +3534,9 @@
 .an-forced { color: #888; font-style: italic; }
 .an-cost { font-family: monospace; font-weight: 700; }
 .an-alt { color: #bbb; margin-left: auto; }
-.an-alt .an-red, .an-red { color: var(--c-danger-txt); }
+/* `.an-red` a disparu : les glyphes ♠♥♦♣ passent tous par `suitHtml()`, qui
+   les rend rouges OU noirs (tokens.css). Un rouge local n'avait de contrepartie
+   noire nulle part, d'où des ♠ et ♣ couleur du texte ambiant. */
 
 /* "Qui aurait joué quoi" — the three reference bots, under the played card */
 .an-bots {

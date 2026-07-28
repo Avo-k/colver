@@ -382,6 +382,45 @@ async def add_game_player(game_id, seat, user_id):
     await db.commit()
 
 
+async def game_seat_names(game):
+    """Qui occupait chaque siège d'une partie enregistrée.
+
+    Rend 4 entrées `{"name", "bot"}` dans l'ordre moteur (N, E, S, O) ; `bot`
+    vrai, `name` porte alors la *clé* d'agent (« dede », « doudou »…) et c'est
+    à l'affichage de la traduire.
+
+    `games.agents` ne suffit pas : en solo le siège humain y vaut « human » (le
+    pseudo vit dans `games.user_id`), et en salon le pseudo y est bien écrit
+    mais rien ne le distingue d'une clé de bot — un joueur nommé « dede »
+    passerait pour un robot. Les sièges humains sont donc résolus par la base,
+    comme le fait déjà l'Elo (`elo._seat_entities`).
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT gp.seat, u.username FROM game_players gp"
+        " LEFT JOIN users u ON u.id = gp.user_id WHERE gp.game_id = ?",
+        (game["id"],),
+    )
+    humans = {row[0]: row[1] for row in rows}
+    if game["mode"] == "play" and game["human_seat"] is not None:
+        name = None
+        if game.get("user_id") is not None:
+            urows = await db.execute_fetchall(
+                "SELECT username FROM users WHERE id = ?", (game["user_id"],))
+            name = urows[0][0] if urows else None
+        humans[game["human_seat"]] = name
+
+    agents = game["agents"] or {}
+    seats = []
+    for s in range(4):
+        if s in humans:
+            # Partie jouée sans compte : personne à nommer, mais bien un humain.
+            seats.append({"name": humans[s] or "Invité", "bot": False})
+        else:
+            seats.append({"name": agents.get(str(s)) or "?", "bot": True})
+    return seats
+
+
 async def list_games(limit=50, offset=0, user_id=None):
     db = await get_db()
     where = "WHERE mode IN ('play', 'multi') AND is_complete = 1"

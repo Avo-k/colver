@@ -4,9 +4,10 @@
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import {
-    SEAT_NAMES_FR, SUITS, cardCode, cardChipHtml,
+    SEAT_NAMES_FR, suitHtml, cardCode, cardChipHtml,
     bidChipHtml, actionName, SUIT_DISPLAY_ORDER, _animatingTrick
 } from '../shared/cards.js';
+import { botLabel } from '../shared/agents.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox, updateCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
@@ -423,8 +424,7 @@ function renderAnalysisSummary() {
             '<tr><th></th><th class="team-ns">Nord-Sud</th><th class="team-ew">Est-Ouest</th></tr>';
         for (const suit of SUIT_DISPLAY_ORDER) {
             const [ns, ew] = _oracleBids.suits[suit];
-            const red = suit === 1 || suit === 2;
-            html += `<tr><td class="${red ? 'an-red' : ''}">${SUITS[suit]}</td>` +
+            html += `<tr><td>${suitHtml(suit)}</td>` +
                 `<td>${ns}</td><td>${ew}</td></tr>`;
         }
         html += '</table>';
@@ -543,6 +543,7 @@ function handleReplayLoaded(data) {
     _currentGameId = data.game_id;
     setActionIdx(0);
     setReplayGameId(data.game_id);
+    setSeatLabels(data.seat_names);
     // Replay states expose all 4 hands; deal-start hands feed the annonces link
     _initialHands = (data.state && data.state.hands) || null;
 
@@ -579,6 +580,22 @@ function handleReplayLoaded(data) {
 
     loadAnalysis(data.game_id);
     requestAgentReview(data.game_id);
+}
+
+// « EST (DOUDOU) », « SUD (AVOK) » — qui tenait le siège dans cette partie-là.
+// Le nom sert de repère de lecture : sans lui, quatre sièges anonymes ne disent
+// pas de qui est le coup qu'on est en train d'analyser. `seat_names` est résolu
+// côté serveur (`db.game_seat_names`), la clé de bot est traduite ici.
+// Les libellés sont en majuscules par CSS (`.seat-label`).
+function setSeatLabels(seats) {
+    const ids = ['replay-label-n', 'replay-label-e', 'replay-label-s', 'replay-label-w'];
+    for (let s = 0; s < 4; s++) {
+        const el = document.getElementById(ids[s]);
+        if (!el) continue;
+        const who = seats && seats[s];
+        const name = who ? (who.bot ? botLabel(who.name) : who.name) : null;
+        el.textContent = name ? `${SEAT_NAMES_FR[s]} (${name})` : SEAT_NAMES_FR[s];
+    }
 }
 
 function setReplayGameId(id) {
@@ -633,14 +650,14 @@ async function loadGameHistory(autoLoadFirst = false) {
     }
 }
 
+// Le glyphe passe par `suitHtml` : ♠ et ♣ héritaient sinon de l'or de la
+// ligne, et seuls ♥ ♦ étaient colorés. Rouge / noir, comme partout ailleurs.
 function contractLabel(g) {
     const c = g.contract;
     if (!c || !c.value) return '<span class="history-nocontract">passée</span>';
-    const suit = c.trump;
-    const red = suit === 1 || suit === 2;
     const mult = c.coinche === 2 ? ' ×3' : c.coinche === 1 ? ' ×2' : '';
     const val = c.value === 250 ? 'Capot' : c.value;
-    return `${val}<span class="${red ? 'an-red' : ''}">${SUITS[suit]}</span>${mult}`;
+    return `${val}${suitHtml(c.trump)}${mult}`;
 }
 
 function renderGameHistory(games) {
