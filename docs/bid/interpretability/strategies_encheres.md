@@ -350,32 +350,34 @@ Pour comprendre les enjeux stratégiques des enchères, voici le comptage (mode 
 
 ### Contrat chuté (standard)
 - **Preneurs** : 0
-- **Défense** : 160 + valeur du contrat + toute belote → arrondi à la dizaine
+- **Défense** : 162 + valeur du contrat + toute belote → arrondi à la dizaine
+
+La défense prend le contrat **et** tous les points cartes de la donne, quel que soit le partage réel des plis.
 
 ### Contré (réussi)
-- **Preneurs** : 320 + contrat×2 + toute belote
+- **Preneurs** : 162 + contrat×2 + toute belote (252 si capot réalisé)
 - **Défense** : 0
 
 ### Contré (chuté)
 - **Preneurs** : 0
-- **Défense** : 320 + contrat×2 + toute belote
+- **Défense** : 162 + contrat×2 + toute belote
 
 ### Surcontré
-- Même formule mais 640 + contrat×4
+- Même formule mais contrat×3 — le multiplicateur ne porte que sur la valeur du contrat, jamais sur la base.
 
 ### Capot (enchère à 250)
-- Réussi : 500 (contré: 1000, surcontré: 2000) + belote
-- Chuté : mêmes valeurs mais pour la défense
+- Contrat ordinaire à 250, pas un forfait : réussi = 252 + 250 = 500 (contré 750, surcontré 1000) + belote
+- Chuté : 162 + 250×mult pour la défense
 
-**Le total des points de levées vaut toujours 162** (152 de cartes + 10 de dix de der). En cas de capot : 252 (152 + 100 de dix de der capot).
+**Le total des points de levées vaut toujours 162** (152 de cartes + 10 de dix de der). En cas de capot : 252 (152 + 100 de dix de der capot). C'est cette valeur qui sert de base aux formules ci-dessus.
 
 ### Impact sur la stratégie d'enchères
 
 - **Enchérir 80 et réussir** : preneurs gagnent ~(81+80)=161→160, défense ~81→80. Gain net : +80 par rapport à ne pas enchérir (où les deux équipes auraient ~80)
-- **Enchérir 80 et chuter** : preneurs 0, défense 160+80=240. Perte nette : ~-240 pour les preneurs (contre ~80 s'ils n'enchérissaient pas)
-- **Enchérir 120 et chuter** : preneurs 0, défense 160+120=280. Perte massive.
-- **Coincher et réussir** : 320+160=480 à soi seul. Gain énorme.
-- **Se faire coincher et chuter** : 320+160=480 pour l'adversaire. Catastrophe.
+- **Enchérir 80 et chuter** : preneurs 0, défense 162+80=242→240. Perte nette : ~-240 pour les preneurs (contre ~80 s'ils n'enchérissaient pas)
+- **Enchérir 120 et chuter** : preneurs 0, défense 162+120=282→280. Perte massive.
+- **Coincher et réussir** : 162+80×2=322→320 à soi seul. Gain énorme.
+- **Se faire coincher et chuter** : 162+80×2=322→320 pour l'adversaire. Catastrophe.
 
 → Le coût d'une chute est **toujours supérieur** au gain d'une réussite. Cela justifie un biais conservateur en enchères, et explique pourquoi les stratégies plafonnées gagnent les tournois.
 

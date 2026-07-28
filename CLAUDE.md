@@ -78,13 +78,14 @@ Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, 
 - Only 4 color suits (no Sans Atout / Tout Atout)
 - Scoring (FFB section 9.1): "points faits + demandés". Multiplier applies to **contract value only**, not base.
   - Normal réussi: card_pts + contrat + belote. Defense: their card_pts + belote.
-  - Contré réussi: 160 (or 250 if capot réalisé) + contrat×2 + belote. Defense: 0.
-  - Surcontré réussi: 160 (or 250 if capot réalisé) + contrat×3 + belote. Defense: 0.
-  - Chute: defense gets 160 + contrat×mult + all belote. Preneurs: 0.
+  - Contré réussi: 162 (or 252 if capot réalisé) + contrat×2 + belote. Defense: 0.
+  - Surcontré réussi: 162 (or 252 if capot réalisé) + contrat×3 + belote. Defense: 0.
+  - Chute: defense gets 162 + contrat×mult + all belote. Preneurs: 0 — **la défense prend le contrat et *tous* les points cartes**, quel que soit le partage réel des plis.
   - Capot = contrat à 250. Dix de der = 100 → 252 pts cartes.
+  - **The base is the deal's whole card total (162, or 252 on a capot réalisé), not a round 160** (changed 2026-07-28). **Not breaking, and no data to re-run:** every other term is a multiple of 10, so `round10` brings 162 + 10k back onto 160 + 10k and no engine score moves — pinned by `test_chute_base_162_marks_like_160_under_rounding`. It only shows where points stay exact, i.e. the web score sheet (`views/score.js`). Drop the rounding and *that* is the breaking change.
 - **BREAKING (2026-04-16):** two scoring rule changes. Any arena/training result from before this date must be re-run.
   1. **Surcoinche multiplier:** ×3 (was ×4). Affects surcontré réussi and chute.
-  2. **Contré/surcontré scoring formula:** base is now 160 + contrat×mult (was 320/640 + contrat×mult). Capot is a regular contract at 250 (was flat 500/1000/2000).
+  2. **Contré/surcontré scoring formula:** base is now the card total + contrat×mult (was 320/640 + contrat×mult). Capot is a regular contract at 250 (was flat 500/1000/2000).
 
 ### Terminologie (FR)
 

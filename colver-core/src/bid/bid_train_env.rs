@@ -29,7 +29,9 @@ use crate::state::{GameState, Phase};
 
 /// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
 /// Fitted from 10k full matches. v3_max: δ=320, v4_sa: δ=360 → average 340.
-/// Scoring rules: surcontré ×3, contré base 160, capot = contrat 250.
+/// Scoring rules: surcontré ×3, base 162 (tous les points cartes), capot = contrat 250.
+/// La base est passée de 160 à 162 après ce fit, sans effet : l'arrondi à la dizaine rend
+/// les mêmes marques (cf. `engine/scoring.rs`).
 pub fn win_probability(s_me: f32, s_opp: f32) -> f32 {
     let r_sum = (2000.0 - s_me) + (2000.0 - s_opp);
     let denom = r_sum.max(1.0).powf(0.8) + 340.0;

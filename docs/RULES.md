@@ -126,42 +126,54 @@ The taker succeeds when:
 
 ### Non-Capot Contracts
 
+The base of every fixed-sum line below is **all the card points of the deal**: 162 (dix de der
+included), or 252 when the taker actually won all 8 tricks -- announced capot or not. A coinche
+multiplier applies to the **contract value only**, never to that base.
+
 #### Standard (no coinche)
 
 | | Taker | Defense |
 |-|-------|---------|
-| **Reussi** | round10(trick_points + contract_value + belote) | round10(trick_points + belote) |
-| **Chute** | 0 | round10(160 + contract_value + all_belote) |
+| **Reussi** | round10(trick_points + contract_value + own_belote) | round10(trick_points + own_belote) |
+| **Chute** | 0 | round10(162 + contract_value + all_belote) |
 
-#### Coinche (x2)
+On a chute the defense takes the contract **and** every card point of the deal, whatever the
+actual trick split.
 
-| | Taker | Defense |
-|-|-------|---------|
-| **Reussi** | round10(320 + contract_value x 2 + all_belote) | 0 |
-| **Chute** | 0 | round10(320 + contract_value x 2 + all_belote) |
+#### Coinche (x2) / Surcoinche (x3)
 
-#### Surcoinche (x4)
+`mult` = 2 when coinched, 3 when surcoinched.
 
 | | Taker | Defense |
 |-|-------|---------|
-| **Reussi** | round10(640 + contract_value x 4 + all_belote) | 0 |
-| **Chute** | 0 | round10(640 + contract_value x 4 + all_belote) |
+| **Reussi** | round10(162* + contract_value x mult + all_belote) | 0 |
+| **Chute** | 0 | round10(162 + contract_value x mult + all_belote) |
 
-### Capot Contracts (250)
+\* 252 if the taker won all 8 tricks.
+
+### Capot Contracts
+
+Capot is a regular contract worth **250**, not a flat bonus -- the tables above apply, with
+contract_value = 250 and trick_points = 252 when realised.
 
 | Coinche level | Reussi (taker) | Reussi (defense) | Chute (taker) | Chute (defense) |
 |---------------|----------------|------------------|---------------|-----------------|
-| Standard | round10(500 + own_belote) | round10(own_belote) | 0 | round10(500 + all_belote) |
-| Coinche | round10(1000 + all_belote) | 0 | 0 | round10(1000 + all_belote) |
-| Surcoinche | round10(2000 + all_belote) | 0 | 0 | round10(2000 + all_belote) |
+| Standard | round10(252 + 250 + own_belote) = **500** | round10(own_belote) | 0 | round10(162 + 250 + all_belote) |
+| Coinche | round10(252 + 250 x 2 + all_belote) = **750** | 0 | 0 | round10(162 + 250 x 2 + all_belote) |
+| Surcoinche | round10(252 + 250 x 3 + all_belote) = **1000** | 0 | 0 | round10(162 + 250 x 3 + all_belote) |
 
-Note on capot reussi (standard): each team keeps their own belote. On chute or when coinched/surcoincheD, all belote goes to the winning side.
+Note on capot reussi (standard): each team keeps their own belote. On chute or when
+coinched/surcoinched, all belote goes to the winning side.
 
 ### Rounding
 
 All scores are rounded to the nearest 10: `round10(x) = (x + 5) / 10 * 10`
 
 Examples: 85 -> 90, 84 -> 80, 162 -> 160
+
+Every term other than the base is a multiple of 10, so under this rounding a base of 162 and a
+base of 160 mark the *same* score -- the 162 is what the rule says, and it only shows where
+points are kept exact, i.e. the web score sheet (`views/score.js`).
 
 ### Scoring Examples
 
@@ -173,7 +185,7 @@ Examples: 85 -> 90, 84 -> 80, 162 -> 160
 **Example 2** -- Taker bids 100 Spades, scores 82 trick points:
 - Chute (82 < 100)
 - Taker: **0**
-- Defense: round10(160 + 100) = **260**
+- Defense: round10(162 + 100) = round10(262) = **260**
 
 **Example 3** -- Taker bids 100, scores 88 trick points, has belote (20):
 - 88 + 20 = 108 >= 100: Reussi (belote saves the contract!)
@@ -181,7 +193,7 @@ Examples: 85 -> 90, 84 -> 80, 162 -> 160
 
 **Example 4** -- Taker bids 80 Spades coinche, scores 100:
 - Reussi
-- Taker: round10(320 + 160) = **480**
+- Taker: round10(162 + 80 x 2) = round10(322) = **320**
 - Defense: **0**
 
 ## Match
