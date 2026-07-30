@@ -28,6 +28,71 @@ export function renderBidEntries(container, bidHistory, playerName = defaultPlay
     }
 }
 
+/**
+ * L'enchère lue comme à la table : une colonne par joueur dans l'ordre de
+ * parole, une ligne par tour.
+ *
+ * La suite de puces (`renderBidEntries`) dit ce qui a été annoncé, mais pas
+ * qui a parlé au-dessus de qui — c'est pourtant toute la question quand on
+ * relit une enchère au milieu du jeu (« mon partenaire a-t-il soutenu, ou
+ * juste passé après leur 110 ? »). Les colonnes partent du premier parleur,
+ * donc la lecture verticale suit les tours de parole.
+ */
+export function renderAuctionTable(container, bidHistory, playerName = defaultPlayerName, mySeat = null) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!bidHistory || bidHistory.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'auction-empty';
+        empty.textContent = 'Aucune annonce';
+        container.appendChild(empty);
+        return;
+    }
+
+    const first = bidHistory[0].player;
+    const order = [0, 1, 2, 3].map(i => (first + i) % 4);
+
+    for (const seat of order) {
+        const head = document.createElement('div');
+        head.className = `auction-col-head ${teamClass(seat)}`;
+        if (seat === mySeat) head.classList.add('is-me');
+        head.textContent = playerName(seat);
+        container.appendChild(head);
+    }
+
+    // Une annonce dont le siège ne suit pas le tour attendu ne peut pas
+    // arriver (le serveur les émet dans l'ordre de jeu), mais si ça arrivait
+    // on remplirait des cases vides plutôt que de décaler toute la grille.
+    let slot = 0;
+    for (const bid of bidHistory) {
+        const target = order.indexOf(bid.player);
+        while (slot % 4 !== target) {
+            container.appendChild(emptyAuctionCell());
+            slot++;
+        }
+        const cell = document.createElement('div');
+        cell.className = `auction-cell ${teamClass(bid.player)}`;
+        cell.innerHTML = auctionCellHtml(bid.action);
+        container.appendChild(cell);
+        slot++;
+    }
+}
+
+function emptyAuctionCell() {
+    const el = document.createElement('div');
+    el.className = 'auction-cell';
+    return el;
+}
+
+/** Passe et coinche en texte, les vraies annonces en pastille : une colonne de
+ *  pastilles claires pour trois passes se lit comme trois annonces. */
+function auctionCellHtml(action) {
+    if (action === 0) return '<span class="auction-pass">Passe</span>';
+    if (action === 41) return '<span class="auction-coinche">Coinche</span>';
+    if (action === 42) return '<span class="auction-coinche">Surcoinche</span>';
+    return bidChipHtml(action);
+}
+
 /** Les plis terminés, cartes dans l'ordre de jeu à partir de l'entameur. */
 export function renderTrickHistory(container, tricks, playerName = defaultPlayerName) {
     if (!container) return;

@@ -14,7 +14,7 @@ import {
 } from './cards.js';
 import { setGameId as setBugReportGameId, openBugReport } from './bug-report.js';
 import { createSuitPicker } from './suits.js';
-import { renderBidEntries, renderTrickHistory } from './panels.js';
+import { renderAuctionTable, renderBidEntries, renderTrickHistory } from './panels.js';
 
 export const MY_SEAT = 2; // South, always (server-side rotation guarantees it)
 
@@ -93,9 +93,15 @@ export const TABLE_TEMPLATE = `
                 </div>
             </div>
         </div>
+        <div id="auction-drop" class="hidden">
+            <div id="auction-drop-card">
+                <div class="section-title">Enchères</div>
+                <div id="auction-grid"></div>
+                <div class="auction-hint">Appuyez n'importe où pour refermer</div>
+            </div>
+        </div>
     </div>
     <div id="last-trick" class="hidden"></div>
-    <div id="bid-history-panel" class="hidden"></div>
     <div id="play-review" class="hidden">
         <div id="play-bid-history">
             <div class="section-title">Encheres</div>
@@ -127,6 +133,9 @@ export class GameTable {
         this.localEchoBids = opts.localEchoBids !== false;
         this.resultButtons = opts.resultButtons || [];
         this.seatNames = null;    // display-ordered [N,E,S,W] override
+        this._onKeyDown = (e) => {
+            if (e.key === 'Escape' && this._auctionOpen) this.closeAuction();
+        };
         this.reset();
     }
 
@@ -142,6 +151,7 @@ export class GameTable {
         this.gameId = null;
         this._serverBidHistory = null;
         this._serverCompletedTricks = null;
+        this.closeAuction();
         _prevTrick['trick'] = [];
         if (_animatingTrick === 'trick') setAnimatingTrick(null);
     }
@@ -159,6 +169,14 @@ export class GameTable {
             picker.id = 'bid-suit';
             mount.replaceWith(picker);
         }
+
+        // Le rappel des enchères se referme d'un appui n'importe où : il est
+        // là pour être consulté puis chassé, et sur téléphone viser une croix
+        // de 20px après avoir lu coûte plus cher que de retoucher l'écran.
+        // Un vrai glissement (défilement d'une longue enchère) n'émet pas de
+        // `click`, donc il ne le ferme pas.
+        const drop = document.getElementById('auction-drop');
+        if (drop) drop.addEventListener('click', () => this.closeAuction());
     }
 
     show() {
@@ -167,11 +185,14 @@ export class GameTable {
         document.getElementById('game-result').innerHTML = '';
         document.getElementById('confetti-container').innerHTML = '';
         document.getElementById('play-review').classList.add('hidden');
+        document.addEventListener('keydown', this._onKeyDown);
     }
 
     unbind() {
         if (_animatingTrick === 'trick') setAnimatingTrick(null);
         this._pendingPlayState = null;
+        this.closeAuction();
+        document.removeEventListener('keydown', this._onKeyDown);
     }
 
     playerName(seat) {
@@ -233,9 +254,17 @@ export class GameTable {
             // locally, so only a bid we actually clicked is a duplicate.
             const isOwnEcho = this.localEchoBids && data.player === MY_SEAT && !data.auto;
             if (!isOwnEcho) {
-                const name = actionName(data.action, 0);
-                this.bidHistory.push({ player: data.player, action: data.action, name });
-                SFX.playForAction(data.phase || 0, data.action);
+                const phase = data.phase || 0;
+                // `bidHistory` ne prend que les annonces. Chaque coup y était
+                // versé, cartes comprises : invisible tant que le panneau ne
+                // s'ouvrait que pendant les enchères, mais le rappel en cours
+                // de jeu montrait alors les cartes jouées en fin d'enchère
+                // (une carte lue comme une annonce donne « 130♠ »).
+                if (phase === 0) {
+                    const name = actionName(data.action, 0);
+                    this.bidHistory.push({ player: data.player, action: data.action, name });
+                }
+                SFX.playForAction(phase, data.action);
             }
         }
         if (data.belote_event) {
@@ -262,14 +291,76 @@ export class GameTable {
         // à zéro, qui s'affichait « 0♠ par nous » au milieu du bandeau.
         if (c && Object.keys(c).length > 0 && c.value > 0) {
             const team = teamNameMid(c.team, true);
-            el.innerHTML =
+            // Le contrat *est* le résumé de l'enchère : c'est donc lui qui la
+            // rouvre, plutôt qu'un bouton de plus dans un bandeau qui doit déjà
+            // tenir sur 360px. Pendant les annonces le panneau d'enchère porte
+            // déjà l'historique, et à la fin de la donne le récapitulatif : le
+            // chevron n'apparaît qu'entre les deux, quand l'enchère a disparu
+            // de l'écran.
+            const reviewable = state.phase === 1 && !state.is_terminal
+                && this._auctionBids().length > 0;
+            const body =
                 contractChipHtml(c, 'contract-val') +
-                `<span class="contract-by">par ${team}</span>`;
+                `<span class="contract-by">par ${team}` +
+                (reviewable ? '<span class="contract-caret" aria-hidden="true">▾</span>' : '') +
+                '</span>';
+            if (reviewable) {
+                el.innerHTML =
+                    `<button type="button" class="contract-toggle" aria-controls="auction-drop"` +
+                    ` aria-expanded="${this._auctionOpen ? 'true' : 'false'}"` +
+                    ` title="Revoir les enchères">${body}</button>`;
+                el.querySelector('.contract-toggle')
+                    .addEventListener('click', () => this.toggleAuction());
+            } else {
+                el.innerHTML = body;
+                this.closeAuction();
+            }
         } else {
             el.innerHTML = '';
+            this.closeAuction();
         }
 
         this.renderMatchBar();
+    }
+
+    // ===== Rappel des enchères pendant le jeu =====
+
+    /** L'enchère de la donne : celle du serveur si on l'a (rejoint en cours,
+     *  reprise de partie), sinon celle qu'on a accumulée coup par coup. */
+    _auctionBids() {
+        return this._serverBidHistory
+            || this.bidHistory.map(b => ({ player: b.player, action: b.action }));
+    }
+
+    toggleAuction() {
+        if (this._auctionOpen) this.closeAuction();
+        else this.openAuction();
+    }
+
+    openAuction() {
+        const drop = document.getElementById('auction-drop');
+        if (!drop) return;
+        renderAuctionTable(
+            document.getElementById('auction-grid'),
+            this._auctionBids(),
+            (s) => this.playerName(s),
+            MY_SEAT,
+        );
+        drop.classList.remove('hidden');
+        this._auctionOpen = true;
+        this._setCaretState();
+    }
+
+    closeAuction() {
+        const drop = document.getElementById('auction-drop');
+        if (drop) drop.classList.add('hidden');
+        this._auctionOpen = false;
+        this._setCaretState();
+    }
+
+    _setCaretState() {
+        const btn = document.querySelector('#contract-display .contract-toggle');
+        if (btn) btn.setAttribute('aria-expanded', this._auctionOpen ? 'true' : 'false');
     }
 
     /**
@@ -377,10 +468,8 @@ export class GameTable {
 
         // Bidding panel
         const biddingPanel = document.getElementById('bidding-panel');
-        const bidHistoryPanel = document.getElementById('bid-history-panel');
         if (isBidPhase) {
             biddingPanel.classList.remove('hidden');
-            bidHistoryPanel.classList.add('hidden');
             this.renderBidHistory();
             const bidControls = document.getElementById('bid-controls');
             // Forced pass (our side coinched then partner declined the
@@ -395,7 +484,6 @@ export class GameTable {
             }
         } else {
             biddingPanel.classList.add('hidden');
-            bidHistoryPanel.classList.add('hidden');
         }
 
         // Status

@@ -1799,11 +1799,15 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
         action, name, state = await asyncio.to_thread(session.play_ai_turn)
         await pacing.hold(target, time.monotonic() - t0)
         player = session.history[-1]["player"]
+        # La phase du coup, comme en salon (`room_move`) : sans elle le client
+        # ne peut pas distinguer une annonce d'une carte, et rangeait chaque
+        # carte jouée dans l'historique des enchères (au son d'annonce).
         ai_msg = {
             "type": "ai_move",
             "player": player,
             "action": action,
             "name": name,
+            "phase": int(session.history[-1]["phase"]),
         }
         if player == human_seat:
             # Our own seat, played for us — the client's local echo never fired.

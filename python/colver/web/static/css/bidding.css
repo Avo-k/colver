@@ -43,6 +43,117 @@
     color: var(--c-team-ew);
 }
 
+/* ===== REVOIR L'ENCHÈRE PENDANT LE JEU =====
+   Une fois la première carte jouée, l'enchère quitte l'écran — et c'est
+   justement là qu'on veut la relire. Le déclencheur est le contrat lui-même,
+   au centre du bandeau : il en est le résumé, il est déjà en haut de l'écran,
+   et il ne coûte pas la largeur d'un bouton de plus sur un bandeau qui doit
+   tenir sur 360px. Le panneau, lui, a le droit de recouvrir la table : on le
+   consulte, on le referme, on joue. */
+.contract-toggle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.15;
+    /* `base.css` habille tout <button> en pavé d'accent : ici c'est du texte. */
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.contract-toggle:hover { background: none; }
+.contract-toggle:hover .contract-by,
+.contract-toggle[aria-expanded="true"] .contract-by { color: var(--c-accent); }
+.contract-caret {
+    display: inline-block;
+    margin-left: 3px;
+    transition: transform var(--t-base) var(--ease);
+}
+.contract-toggle[aria-expanded="true"] .contract-caret { transform: rotate(180deg); }
+
+#auction-drop {
+    position: absolute;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    cursor: pointer;
+}
+#auction-drop-card {
+    width: min(420px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    background: rgba(10, 10, 10, 0.92);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    padding: 12px 14px;
+    animation: auction-drop-in 0.16s ease-out;
+}
+@keyframes auction-drop-in {
+    from { transform: translateY(-10px); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #auction-drop-card { animation: none; }
+    .contract-caret { transition: none; }
+}
+
+/* Une colonne par joueur dans l'ordre de parole, une ligne par tour : c'est
+   comme ça qu'on relit une enchère, en lisant verticalement ce que chacun a
+   dit tour après tour. */
+#auction-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px 2px;
+    align-items: center;
+}
+.auction-col-head {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    text-align: center;
+    padding-bottom: 4px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    /* En salon le libellé est un pseudo de longueur libre : il est tronqué,
+       jamais élargi — sinon une colonne mangerait les trois autres. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.auction-col-head.is-me { border-bottom-color: var(--c-accent); }
+.auction-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 26px;
+    font-size: var(--fs-sm);
+}
+.auction-pass { color: #8a8a7a; font-size: var(--fs-xs); }
+.auction-coinche {
+    color: #e04438;
+    font-weight: 700;
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.auction-empty { color: #8a8a7a; font-size: var(--fs-sm); text-align: center; }
+.auction-hint {
+    margin-top: 10px;
+    text-align: center;
+    font-size: var(--fs-2xs);
+    color: #8a8a7a;
+}
+
 #bid-controls {
     display: flex;
     flex-direction: column;
