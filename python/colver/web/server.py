@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal, trick_snapshot
 from colver.web import playgen_gpu as _playgen_gpu
 from colver.web import game_notation
 import colver.web.card_analysis as _card_analysis
@@ -1219,19 +1219,14 @@ async def websocket_endpoint(ws: WebSocket):
                 if play_session.trick_just_completed:
                     play_session.trick_just_completed = False
                     # Show completed trick (4 cards visible), pause, then clear
-                    snapshot_state = dict(state)
-                    snapshot_state["current_trick"] = state["last_trick"]
-                    # tricks_won already incremented; roll back so hand counts stay correct
-                    tw = list(snapshot_state["tricks_won"])
-                    tw[state["last_trick_winner"] % 2] = max(0, tw[state["last_trick_winner"] % 2] - 1)
-                    snapshot_state["tricks_won"] = tw
                     snapshot_msg = dict(msg)
-                    snapshot_msg["state"] = snapshot_state
+                    snapshot_msg["state"] = trick_snapshot(state)
                     await ws.send_json(snapshot_msg)
                     # tricks_won is post-increment here, so the trick that just
                     # completed is one below the count.
-                    await asyncio.sleep(
-                        pacing.trick_delay(play_mode, sum(state["tricks_won"]) - 1))
+                    await asyncio.sleep(pacing.trick_delay(
+                        play_mode, sum(state["tricks_won"]) - 1,
+                        deal_over=state["is_terminal"]))
                     final_msg = {"type": "game_state", "state": state}
                     _enrich_terminal_msg(final_msg, play_session, play_match)
                     await ws.send_json(final_msg)
@@ -1827,15 +1822,9 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
         if session.trick_just_completed:
             session.trick_just_completed = False
             # Show completed trick (4 cards visible), pause, then clear
-            snapshot = dict(state)
-            snapshot["current_trick"] = state["last_trick"]
-            # tricks_won is already incremented; roll it back so hand counts stay correct
-            tw = list(snapshot["tricks_won"])
-            winner_team = state["last_trick_winner"] % 2
-            tw[winner_team] = max(0, tw[winner_team] - 1)
-            snapshot["tricks_won"] = tw
-            await ws.send_json({"type": "game_state", "state": snapshot})
-            await asyncio.sleep(pacing.trick_delay(mode, trick_idx))
+            await ws.send_json({"type": "game_state", "state": trick_snapshot(state)})
+            await asyncio.sleep(pacing.trick_delay(
+                mode, trick_idx, deal_over=state["is_terminal"]))
             # Send cleared state — no delay after (the next iteration holds it)
             final_msg = {"type": "game_state", "state": state}
             _enrich_terminal_msg(final_msg, session, match)

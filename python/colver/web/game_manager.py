@@ -27,6 +27,29 @@ def only_pass_is_legal(env) -> bool:
             and list(env.legal_actions()) == [BID_PASS])
 
 
+def trick_snapshot(state):
+    """Image d'affichage d'un pli complet, avant que la table ne soit balayée.
+
+    Le moteur résout le pli dès sa quatrième carte, donc l'état qu'il rend a
+    déjà la table vide : on y réinjecte les quatre cartes, et on décrémente le
+    compteur de plis du camp gagnant — sinon les mains adverses, comptées à
+    `8 - plis joués`, perdraient une carte de trop.
+
+    Sur la dernière levée l'état est terminal, et le panneau de fin recouvre la
+    table : `deal_end_hold` dit au client de montrer le pli et d'attendre l'état
+    terminal réel avant de l'afficher.
+    """
+    snap = dict(state)
+    snap["current_trick"] = state["last_trick"]
+    tricks_won = list(snap["tricks_won"])
+    winner_team = state["last_trick_winner"] % 2
+    tricks_won[winner_team] = max(0, tricks_won[winner_team] - 1)
+    snap["tricks_won"] = tricks_won
+    if state["is_terminal"]:
+        snap["deal_end_hold"] = True
+    return snap
+
+
 # ---- Server-wide belief cache -------------------------------------------------
 # Belief weights (NN + playgen) depend only on the game + position + observer, so
 # they can be shared across connections/refreshes. Keyed by the full-game CFN

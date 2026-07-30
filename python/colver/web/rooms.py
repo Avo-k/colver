@@ -17,7 +17,7 @@ import time
 import colver.web.database as db
 import colver.web.match_state as match_state
 import colver.web.pacing as pacing
-from colver.web.game_manager import PlaySession, only_pass_is_legal
+from colver.web.game_manager import PlaySession, only_pass_is_legal, trick_snapshot
 
 ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
@@ -248,12 +248,7 @@ class Room:
         if snapshot:
             # Show the completed trick (4 cards) before it gets cleared:
             # same presentation trick as the solo flow in server.py.
-            state = dict(state)
-            state["current_trick"] = state["last_trick"]
-            tw = list(state["tricks_won"])
-            winner_team = state["last_trick_winner"] % 2
-            tw[winner_team] = max(0, tw[winner_team] - 1)
-            state["tricks_won"] = tw
+            state = trick_snapshot(state)
         rotated = rotate_state(state, viewer_seat)
         msg = {
             "type": "room_game_state",
@@ -473,8 +468,9 @@ class Room:
             await self.broadcast_game_state(snapshot=True)
             # tricks_won is post-increment, so the trick just completed is one
             # below the count.
-            await asyncio.sleep(
-                pacing.trick_delay(self.mode, sum(session.env.get_tricks_won()) - 1))
+            await asyncio.sleep(pacing.trick_delay(
+                self.mode, sum(session.env.get_tricks_won()) - 1,
+                deal_over=session.env.is_terminal()))
             await self.broadcast_game_state()
         else:
             await self.broadcast_game_state()

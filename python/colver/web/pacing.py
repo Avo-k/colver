@@ -38,6 +38,13 @@ DEFAULT_MODE = "standard"
 
 _LAST_TRICK = 7  # 0-based index of the 8th trick
 
+# La dernière levée d'une donne est la seule qu'on ne verrait jamais : le
+# panneau de fin recouvre la table, et il arrive dans la même image que le pli.
+# On la tient donc plus longtemps qu'un pli ordinaire, et sans regarder le mode
+# — ce n'est pas un tempo, c'est le dernier regard sur le pli qui a décidé la
+# donne, une fois par donne.
+DEAL_END_HOLD = 2.0
+
 
 def normalize(mode):
     """Coerce anything a client sent into a known mode name."""
@@ -75,8 +82,13 @@ def card_delay(mode, trick_idx):
     return _taper(MODES[normalize(mode)]["card"], trick_idx)
 
 
-def trick_delay(mode, trick_idx):
-    """Hold of a completed trick, before the four cards are swept away."""
+def trick_delay(mode, trick_idx, deal_over=False):
+    """Hold of a completed trick, before the four cards are swept away.
+
+    `deal_over` : ce pli termine la donne, cf. `DEAL_END_HOLD`.
+    """
+    if deal_over:
+        return DEAL_END_HOLD
     return _taper(MODES[normalize(mode)]["trick"], trick_idx)
 
 

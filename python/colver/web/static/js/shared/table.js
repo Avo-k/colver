@@ -400,8 +400,16 @@ export class GameTable {
 
         // Status
         if (state.is_terminal) {
-            this.showGameResult(state);
-            this.showEndOfGameReview(state);
+            // `deal_end_hold` : image de la dernière levée, envoyée avant
+            // l'état terminal réel. Le panneau de fin recouvre la table et
+            // remplace les mains par la donne initiale — l'afficher ici, c'est
+            // effacer le pli dans l'image même où il apparaît. On le garde donc
+            // pour l'état suivant, que le serveur envoie après la pause
+            // (`pacing.DEAL_END_HOLD`).
+            if (!state.deal_end_hold) {
+                this.showGameResult(state);
+                this.showEndOfGameReview(state);
+            }
             document.getElementById('play-status').textContent = '';
         } else if (forcedPass) {
             document.getElementById('play-status').textContent =
