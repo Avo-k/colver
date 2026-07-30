@@ -55,10 +55,14 @@
     flex-direction: column;
     align-items: center;
     line-height: 1.15;
-    /* `base.css` habille tout <button> en pavé d'accent : ici c'est du texte. */
+    /* `base.css` habille tout <button> en pavé d'accent : ici c'est du texte.
+       `min-height` compris — la règle de confort tactile (40px sous 640px)
+       rallongeait le bandeau de score de huit pixels sur téléphone, pris sur
+       la table. La cible reste large : c'est tout le contrat qu'on touche. */
     background: none;
     border: 0;
     padding: 0;
+    min-height: 0;
     color: inherit;
     font: inherit;
     cursor: pointer;
@@ -77,9 +81,13 @@
     position: absolute;
     inset: 0;
     z-index: 60;
+    /* Colonne, et non rangée : le panneau devient un élément flexible sur
+       l'axe des hauteurs, donc il *rétrécit* jusqu'à la zone de jeu au lieu
+       d'être borné par un `max-height: 100%` — qui se calcule sur la boîte de
+       rembourrage et laissait déborder de seize pixels (mesuré en paysage). */
     display: flex;
-    justify-content: center;
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: center;
     padding: 8px;
     background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(3px);
@@ -88,8 +96,10 @@
 }
 #auction-drop-card {
     width: min(420px, 100%);
-    max-height: 100%;
-    overflow-y: auto;
+    min-height: 0;
+    /* Les deux axes : une enchère longue défile, et une rangée de quatre
+       annonces larges ne peut pas pousser la carte hors de l'écran. */
+    overflow: auto;
     background: rgba(10, 10, 10, 0.92);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 12px;
@@ -137,6 +147,11 @@
     justify-content: center;
     min-height: 26px;
     font-size: var(--fs-sm);
+    /* Sans ça, la taille minimale automatique d'un élément de grille est celle
+       de son contenu : « SURCOINCHE » élargissait sa colonne, les quatre
+       cessaient d'être égales, et sur un écran de 320px le mot débordait sur
+       la colonne voisine. Les colonnes restent à 1fr, le mot se coupe. */
+    min-width: 0;
 }
 .auction-pass { color: #8a8a7a; font-size: var(--fs-xs); }
 .auction-coinche {
@@ -145,6 +160,9 @@
     font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    text-align: center;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
 }
 .auction-empty { color: #8a8a7a; font-size: var(--fs-sm); text-align: center; }
 .auction-hint {
@@ -153,6 +171,26 @@
     font-size: var(--fs-2xs);
     color: #8a8a7a;
 }
+
+/* Sur les plus petits écrans (320px : quatre colonnes de soixante pixels), la
+   pastille d'annonce est ce qu'il y a de plus large dans une case — c'est elle
+   qu'on resserre, pas la grille. */
+@media (max-width: 360px) {
+    #auction-drop-card { padding: 12px 8px; }
+    #auction-grid { gap: 4px 1px; }
+    .auction-col-head { letter-spacing: 0.5px; }
+    .auction-cell .bid-chip { padding: 0 3px; gap: 2px; font-size: var(--fs-xs); }
+    /* « Surcoinche » en capitales ne tient pas dans soixante-sept pixels, et
+       la coupure de secours donnait « SURCOINC / HE ». En bas de casse le mot
+       reste entier — c'est la capitalisation qu'on sacrifie, pas le mot. */
+    .auction-coinche { letter-spacing: 0; text-transform: none; }
+}
+
+/* Le panneau « dernier pli » vit dans `#play-table` et non dans `.seats` :
+   il commence donc dix-huit pixels plus haut que la surcouche, et cette
+   tranche-là dépassait — un « NORD +17 » en pleine lumière au-dessus d'un
+   écran assombri. Il s'efface le temps qu'on lise l'enchère. */
+#play-table:has(#auction-drop:not(.hidden)) #last-trick { visibility: hidden; }
 
 #bid-controls {
     display: flex;
