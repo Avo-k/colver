@@ -45,6 +45,16 @@ _LAST_TRICK = 7  # 0-based index of the 8th trick
 # donne, une fois par donne.
 DEAL_END_HOLD = 2.0
 
+# Le dernier pli ne contient aucune décision : chacun n'a plus qu'une carte.
+# Il se déroule donc tout seul, à son propre tempo et sans regarder le mode —
+# 1 s avant la première carte, 0,3 s avant chacune des suivantes. Pour un siège
+# humain ces délais sont une échéance et non une attente : le joueur garde la
+# main sur sa carte, et s'il ne la pose pas le serveur la joue pour lui, comme
+# il joue déjà un passe forcé. La dernière image, elle, reste tenue
+# `DEAL_END_HOLD` : c'est le seul moment où on regarde le pli, pas où on joue.
+LAST_TRICK_LEAD = 1.0
+LAST_TRICK_CARD = 0.3
+
 
 def normalize(mode):
     """Coerce anything a client sent into a known mode name."""
@@ -77,8 +87,20 @@ def bid_delay(mode):
     return MODES[normalize(mode)]["bid"]
 
 
-def card_delay(mode, trick_idx):
-    """Pause after a card that does not complete the trick."""
+def last_trick_delay(cards_in_trick):
+    """Délai avant la carte n° `cards_in_trick` (0-based) du dernier pli."""
+    return LAST_TRICK_LEAD if int(cards_in_trick) <= 0 else LAST_TRICK_CARD
+
+
+def card_delay(mode, trick_idx, cards_in_trick=None):
+    """Pause after a card that does not complete the trick.
+
+    `cards_in_trick` : cartes déjà posées sur le pli en cours. Il n'est lu que
+    sur la dernière levée, qui a son propre tempo (cf. `last_trick_delay`) ;
+    `None` = l'appelant ne sait pas, on retombe sur le tempo du mode.
+    """
+    if cards_in_trick is not None and int(trick_idx) == _LAST_TRICK:
+        return last_trick_delay(cards_in_trick)
     return _taper(MODES[normalize(mode)]["card"], trick_idx)
 
 
@@ -92,14 +114,15 @@ def trick_delay(mode, trick_idx, deal_over=False):
     return _taper(MODES[normalize(mode)]["trick"], trick_idx)
 
 
-def move_delay(mode, phase, tricks_completed):
+def move_delay(mode, phase, tricks_completed, cards_in_trick=None):
     """Pause for a non-trick-completing action, from the surrounding state.
 
-    `phase` / `tricks_completed` come straight off the env (0 = bidding).
+    `phase` / `tricks_completed` / `cards_in_trick` come straight off the env
+    (0 = bidding).
     """
     if int(phase) == 0:
         return bid_delay(mode)
-    return card_delay(mode, tricks_completed)
+    return card_delay(mode, tricks_completed, cards_in_trick)
 
 
 async def hold(target, elapsed=0.0):

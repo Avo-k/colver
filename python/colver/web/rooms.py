@@ -17,7 +17,8 @@ import time
 import colver.web.database as db
 import colver.web.match_state as match_state
 import colver.web.pacing as pacing
-from colver.web.game_manager import PlaySession, only_pass_is_legal, trick_snapshot
+from colver.web.game_manager import (
+    PlaySession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot)
 
 ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
@@ -308,6 +309,11 @@ class Room:
 
     async def _new_deal(self):
         """Distribuer une donne : session, ligne en base, sièges, diffusion."""
+        # Un clic parti juste après que le serveur ait joué la carte du dernier
+        # pli à la place de son siège atterrit ici sans destinataire : il serait
+        # servi au premier tour de ce siège dans la donne suivante.
+        while not self.action_queue.empty():
+            self.action_queue.get_nowait()
         bot, think_ms, _degraded = self._resolved_mode()
         ai_types = {i: bot for i, uid in enumerate(self.seats) if uid is None}
         first_human_seat = next(i for i, uid in enumerate(self.seats) if uid is not None)
@@ -385,11 +391,26 @@ class Room:
                 # way, so this only removes dead time.
                 target = pacing.move_delay(
                     self.mode, session.env.phase(),
-                    sum(session.env.get_tricks_won()))
+                    sum(session.env.get_tricks_won()), cards_in_trick(session.env))
                 t0 = time.monotonic()
                 action, _name, _state = await loop.run_in_executor(
                     None, session.play_ai_turn)
                 await pacing.hold(target, time.monotonic() - t0)
+            elif in_last_trick(session.env):
+                # Dernier pli : la carte est forcée, donc le pli se déroule tout
+                # seul. Le joueur garde le droit de poser la sienne, mais s'il
+                # ne le fait pas dans le délai du pli le serveur la joue — sinon
+                # les trois autres attendraient un clic qui ne décide rien.
+                target = pacing.last_trick_delay(cards_in_trick(session.env))
+                self.waiting_for = p
+                try:
+                    action = await asyncio.wait_for(
+                        self._await_human_action(p), target)
+                except asyncio.TimeoutError:
+                    action = int(session.env.legal_actions()[0])
+                finally:
+                    self.waiting_for = None
+                session.play_action(action)
             else:
                 # Human turn: wait for a valid action from that seat
                 self.waiting_for = p

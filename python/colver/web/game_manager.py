@@ -27,6 +27,26 @@ def only_pass_is_legal(env) -> bool:
             and list(env.legal_actions()) == [BID_PASS])
 
 
+LAST_TRICK = 7  # index 0-based de la 8e levée
+
+
+def in_last_trick(env) -> bool:
+    """La dernière levée est en cours : plus personne n'a de choix.
+
+    Huit plis, huit cartes : sur le dernier chaque siège n'en a qu'une, donc
+    aucun coup n'est une décision — ni pour un bot, ni pour un humain. Les
+    pilotes déroulent ce pli tout seuls (cf. `pacing.last_trick_delay`), en
+    laissant un joueur poser sa carte lui-même s'il est plus rapide.
+    """
+    return (env.phase() == 1 and not env.is_terminal()
+            and sum(env.get_tricks_won()) == LAST_TRICK)
+
+
+def cards_in_trick(env) -> int:
+    """Cartes déjà posées sur le pli en cours (0 quand il n'est pas entamé)."""
+    return sum(1 for c in env.get_current_trick() if c >= 0)
+
+
 def trick_snapshot(state):
     """Image d'affichage d'un pli complet, avant que la table ne soit balayée.
 

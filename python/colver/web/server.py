@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal, trick_snapshot
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot
 from colver.web import playgen_gpu as _playgen_gpu
 from colver.web import game_notation
 import colver.web.card_analysis as _card_analysis
@@ -877,10 +877,48 @@ async def websocket_endpoint(ws: WebSocket):
     # handler corrupts the ASGI state and raises RuntimeError, killing the
     # socket. Serialize every send through this lock.
     send_lock = asyncio.Lock()
+    # Lecture du socket engagée par la course du dernier pli et pas encore
+    # servie (`pending_recv`), et messages qu'elle a lus sans les vouloir
+    # (`deferred`). La boucle principale reprend les deux avant de lire.
+    pending_recv = None
+    deferred = []
 
     async def wsend(payload):
         async with send_lock:
             await ws.send_json(payload)
+
+    async def _wait_human_card(delay):
+        """La carte que le joueur pose dans les `delay` s, ou None à l'échéance.
+
+        Sert au dernier pli, le seul moment où le serveur joue une carte à la
+        place d'un humain. La lecture du socket n'est jamais annulée — on garde
+        la tâche en attente et la boucle principale en récupère le résultat —
+        sinon un `play` arrivé pile à l'échéance serait perdu avec elle. Tout ce
+        qui n'est pas la carte attendue (navigation, autre page) est laissé à la
+        boucle principale, qui le traitera juste après.
+        """
+        nonlocal pending_recv
+        deadline = time.monotonic() + delay
+        while True:
+            if pending_recv is None:
+                pending_recv = asyncio.ensure_future(ws.receive_json())
+            rest = deadline - time.monotonic()
+            if rest <= 0:
+                return None
+            await asyncio.wait({pending_recv}, timeout=rest)
+            if not pending_recv.done():
+                return None
+            data = pending_recv.result()
+            pending_recv = None
+            if (data.get("type") == "play" and play_session is not None
+                    and not play_session.env.is_terminal()
+                    and int(play_session.env.current_player())
+                        == int(data.get("human_seat", 2))
+                    and data.get("action") in list(play_session.env.legal_actions())):
+                return int(data["action"])
+            # Pas la carte : on le laisse à la boucle principale, qui le
+            # traitera juste après, et on attend le reste du délai.
+            deferred.append(data)
 
     async def _finish_deal():
         """Clore la donne en cours : base, Elo, puis score de la partie.
@@ -950,7 +988,7 @@ async def websocket_endpoint(ws: WebSocket):
         })
         await _run_ai_turns(ws, play_session, human_seat, play_game_id,
                             mode=cfg["mode"], match=play_match,
-                            on_deal_end=_finish_deal)
+                            on_deal_end=_finish_deal, wait_human=_wait_human_card)
 
     def _play_state_msg():
         """La position courante, telle qu'on la renverrait à un client revenu.
@@ -1116,7 +1154,15 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
-            data = await ws.receive_json()
+            if deferred:
+                data = deferred.pop(0)
+            elif pending_recv is not None:
+                # Lecture engagée par la course du dernier pli et jamais
+                # annulée : c'est elle qui porte le message suivant.
+                recv, pending_recv = pending_recv, None
+                data = await recv
+            else:
+                data = await ws.receive_json()
             msg_type = data.get("type")
 
             if msg_type and msg_type.startswith("room_"):
@@ -1197,8 +1243,11 @@ async def websocket_endpoint(ws: WebSocket):
                 action = data["action"]
                 human_seat = data.get("human_seat", 2)
 
-                # Ignore duplicate clicks when it's not the human's turn
-                if play_session.env.current_player() != human_seat:
+                # Ignore duplicate clicks when it's not the human's turn. Le cas
+                # se produit aussi au dernier pli, quand le clic arrive juste
+                # après que le serveur ait joué la carte à notre place.
+                if (play_session.env.is_terminal()
+                        or play_session.env.current_player() != human_seat):
                     continue
 
                 state = play_session.play_action(action)
@@ -1238,7 +1287,8 @@ async def websocket_endpoint(ws: WebSocket):
 
                 await _run_ai_turns(ws, play_session, human_seat, play_game_id,
                                     mode=play_mode, match=play_match,
-                                    on_deal_end=_finish_deal)
+                                    on_deal_end=_finish_deal,
+                                    wait_human=_wait_human_card)
 
             elif msg_type == "watch_start":
                 agents = data.get("agents", {0: "smart", 1: "smart", 2: "smart", 3: "smart"})
@@ -1747,6 +1797,13 @@ async def websocket_endpoint(ws: WebSocket):
         if agent_review_task and not agent_review_task.done():
             agent_review_task.cancel()
     finally:
+        # Lecture laissée en attente par la course du dernier pli : sans ça la
+        # déconnexion lui remonte une exception que personne ne réclame.
+        if pending_recv is not None:
+            if not pending_recv.done():
+                pending_recv.cancel()
+            elif not pending_recv.cancelled():
+                pending_recv.exception()  # marque l'erreur comme réclamée
         await rooms.handle_disconnect(ws)
 
 
@@ -1774,12 +1831,18 @@ async def _complete_game(game_id, session):
 
 
 async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE,
-                        match=None, on_deal_end=None):
+                        match=None, on_deal_end=None, wait_human=None):
     """Auto-play AI turns until human's turn or game over.
 
     A forced pass on the human's seat counts as an AI turn: when passing is the
     only legal bid there is nothing to decide, so the server plays it instead of
     waiting for a click on the single available button.
+
+    Le dernier pli est du même ordre — chaque siège n'a plus qu'une carte — mais
+    il se joue, pas seulement il se décide : on le déroule donc sans rendre la
+    main, en laissant au siège humain le délai du pli pour poser sa carte
+    lui-même (`wait_human`, qui rend l'action cliquée ou `None` à l'échéance).
+    Sans `wait_human` la boucle s'arrête au siège humain comme avant.
 
     Pacing note: the pause belongs to the position *preceding* a move, and the
     bot's own thinking is spent inside it rather than on top of it. So each
@@ -1788,16 +1851,32 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
     there is no trailing sleep — and why the caller must not pause before
     handing over.
     """
-    while not session.env.is_terminal() and (
-            session.env.current_player() != human_seat
-            or only_pass_is_legal(session.env)):
-        target = pacing.move_delay(
-            mode, session.env.phase(), sum(session.env.get_tricks_won()))
+    while not session.env.is_terminal():
+        # Un siège humain qui n'a rien à décider est joué par le serveur : passe
+        # forcé, ou carte unique du dernier pli.
+        human_turn = (session.env.current_player() == human_seat
+                      and not only_pass_is_legal(session.env))
+        if human_turn and not (wait_human is not None and in_last_trick(session.env)):
+            break
         trick_idx = sum(session.env.get_tricks_won())
+        target = pacing.move_delay(
+            mode, session.env.phase(), trick_idx, cards_in_trick(session.env))
         t0 = time.monotonic()
-        # The Rust search releases the GIL, so this keeps the event loop free.
-        action, name, state = await asyncio.to_thread(session.play_ai_turn)
-        await pacing.hold(target, time.monotonic() - t0)
+        clicked = False
+        if human_turn:
+            # Dernier pli : la carte est forcée, mais le joueur garde le droit
+            # de la poser. On attend `target`, puis on la joue pour lui.
+            action = await wait_human(target)
+            clicked = action is not None
+            if not clicked:
+                action = int(session.env.legal_actions()[0])
+            state = await asyncio.to_thread(session.play_action, action)
+            name = _colver_pkg.Env.action_name(int(action),
+                                               int(session.history[-1]["phase"]))
+        else:
+            # The Rust search releases the GIL, so this keeps the event loop free.
+            action, name, state = await asyncio.to_thread(session.play_ai_turn)
+            await pacing.hold(target, time.monotonic() - t0)
         player = session.history[-1]["player"]
         # La phase du coup, comme en salon (`room_move`) : sans elle le client
         # ne peut pas distinguer une annonce d'une carte, et rangeait chaque
@@ -1809,7 +1888,7 @@ async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAU
             "name": name,
             "phase": int(session.history[-1]["phase"]),
         }
-        if player == human_seat:
+        if player == human_seat and not clicked:
             # Our own seat, played for us — the client's local echo never fired.
             ai_msg["auto"] = True
         if session._belote_event:
