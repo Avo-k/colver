@@ -172,7 +172,7 @@ const TEMPLATE = `
                     </div>
                 </div>
             </div>
-            <p class="aide-hint aide-formula-hint"><sup>\u2217</sup> 252 si capot r\u00e9alis\u00e9. <strong>mult</strong> = \u00d72 si coinch\u00e9, \u00d73 si surcoinch\u00e9 \u2014 s'applique uniquement \u00e0 la valeur du contrat. En chute, la d\u00e9fense prend le contrat et <em>tous</em> les points cartes de la donne (162), quel que soit le partage r\u00e9el des plis. Les scores marqu\u00e9s sont arrondis \u00e0 la dizaine.</p>
+            <p class="aide-hint aide-formula-hint"><sup>\u2217</sup> 252 si capot r\u00e9alis\u00e9. <strong>mult</strong> = \u00d72 si coinch\u00e9, \u00d73 si surcoinch\u00e9 \u2014 s'applique uniquement \u00e0 la valeur du contrat. En chute, la d\u00e9fense prend le contrat et <em>tous</em> les points cartes de la donne (162), quel que soit le partage r\u00e9el des plis. Les scores sont marqu\u00e9s au point pr\u00e8s, sans arrondi.</p>
         </div>
 
         <div class="aide-section aide-bids-section">

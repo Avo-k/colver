@@ -14,12 +14,13 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete
 - **Etat de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
-- **Six agents IA** — reseau Q DMC, IS-DD avec reseau de croyances, oracle DD, Smart/Naive IS-MCTS, et heuristique
+- **Six agents IA** — reseau Q DMC, IS-DD, oracle DD, Smart/Naive IS-MCTS, et heuristique
 - **Encheres par reseau de neurones** — "Bid V6 IS-DD", un Dueling DQN score-aware et belote-aware (117→512³→43) entraine 75M etapes sur points reels IS-DD avec simulation de match complete
 - **Interpretabilite ML** — distillation XGBoost + sondage de couche cachee revelent le systeme de scoring implicite du NN, traduit en regles utilisables par un humain (88-94% d'accord)
-- **Reseau de croyances** — prediction NN de la localisation des cartes pour la recherche IS-DD
-- **Interface web** — jouez contre l'IA, observez, analysez et resolvez des problemes (FastAPI + WebSocket)
-- **Bindings Python** via PyO3 — classe `Env` avec stubs de types complets, installable depuis PyPI
+- **Modele de mondes Playgen** — un transformer causal qui prolonge une donne a partir de ce qu'un seul siege voit ; le derouler revele les mains cachees, et c'est de la que viennent desormais les mondes echantillonnes par IS-DD
+- **Une seule couche d'agents** — un bot est une spec TOML (`[bid]` / `[play]` / `[worlds]`), construite cote Rust et pilotee a l'identique par l'arene, le web et `colver.Agent`
+- **Interface web** — jouez en solo ou en salon multijoueur, observez, rejouez avec analyse carte par carte, entrainez-vous sur des problemes (FastAPI + WebSocket)
+- **Bindings Python** via PyO3 — `Env`, `Agent`, `Analyst` et `Beliefs` avec stubs de types complets, installable depuis PyPI
 - Zero dependances dans le coeur (seulement `rand` derriere un feature flag)
 
 ## Interface Web
@@ -32,21 +33,47 @@ uv run python -m colver.web
 # Ouvrir http://localhost:8000
 ```
 
-**Humain vs IA** — Jouez en tant que Sud contre des adversaires IA. Choisissez l'agent pour vos adversaires (Est/Ouest) et votre partenaire (Nord) independamment. La partie suit les regles officielles FFB : encheres avec coinche/surcoinche, puis 8 plis. Les cartes sont jouees instantanement au clic ; le curseur de pause controle le delai de l'IA.
+Quatre destinations : **Jouer**, **Analyser**, **Apprendre**, **Classement**. Le compte est facultatif — c'est lui qui rattache les parties a un joueur, rend les parties reprenables et les fait classer.
+
+### Jouer
+
+**Humain vs IA** — Jouez en Sud contre trois bots. Exactement deux reglages, tous deux choisis avant la donne :
+
+- **Tempo** — `Standard` (Dede, ~40 s la donne) ou `Rapide` (DouDou50, ~15 s). Le couplage est voulu : une recherche IS-DD coute du temps reel par coup, donc un tempo rapide n'est honnete que derriere un bot qui repond instantanement. Les quatre sieges IA jouent le meme bot — une table ou le partenaire est plus faible que les adversaires ne dit rien de la facon dont vous avez joue.
+- **Format** — une donne seche (defaut), ou une partie en 1000 / 2000 points. Le score cumule part aux bots, et Bid V6 le lit : il n'annonce pas la meme chose a 900-200 qu'a 0-0.
+
+Vos cartes sont jouees instantanement au clic ; la pause appartient a la position *precedant* un coup, et le bot reflechit dedans, pas par-dessus. Le passe force est joue pour vous, le dernier pli — ou plus personne n'a de choix — se deroule tout seul, et la derniere levee reste 2 s a l'ecran avant le panneau de fin. Connecte, on peut quitter une partie et la reprendre plus tard.
 
 ![Onglet Jouer](images/screenshots/tab-play.png)
+
+**Salon multijoueur** — Des salons a code de 4 caracteres ; les bots occupent les sieges que les humains ne prennent pas. L'hote choisit le tempo et le format. Chaque etat diffuse est filtre sur la main du destinataire et pivote pour qu'il soit toujours assis en Sud. Les sieges sont lies aux comptes : un joueur deconnecte retrouve le sien.
+
+![Salon](images/screenshots/tab-salon.png)
 
 **IA vs IA** — Observez des parties IA contre IA avec toutes les mains visibles. Assignez un agent different a chacune des 4 places. Avancez action par action, jouez des plis entiers, ou utilisez la lecture automatique. Le panneau de stats affiche les Q-values, scores DD ou evaluations de main. Collez une chaine CFN pour charger une position specifique.
 
 ![Onglet Regarder](images/screenshots/tab-watch.png)
 
-**Rejouer** — Parcourez et rejouez les parties passees (jouees ou observees). Cliquez sur une entree pour la rejouer pas a pas.
+### Analyser
 
-**Annonces** — Composez une main de 8 cartes, choisissez votre position dans le tour d'encheres, et voyez ce que l'encherisseur NN annoncerait — avec les Q-values pour chaque action legale, plus un panneau "Facteurs cles" distille par XGBoost, une table oracle DD, et une simulation DouDou50 du taux reel de reussite du contrat. Tourne cote serveur ou entierement dans le navigateur via WASM ("Calcul local").
+**Rejouer** — Parcourez et rejouez les donnes passees (jouees, observees ou partagees), coup par coup. Deux passes d'analyse independantes s'y ajoutent, chacune mise en cache et chargee separement pour que la lente ne bloque jamais la rapide :
+
+- la **passe DD** — le cout exact de chaque carte, plus une revue d'enchere portant deux avis par annonce : les Q-values de Bid V6 et la tete d'enchere 43-voies de playgen ;
+- la **revue d'agents** — ce que DouDou50, l'Oracle et Dede auraient joue a chaque carte non forcee, envoyee au fil du calcul.
+
+Chaque carte et chaque annonce porte un lien vers sa page d'analyse, et le chemin du retour.
+
+![Rejouer](images/screenshots/tab-replay.png)
+
+**Annonces** — Composez une main de 8 cartes, posez les encheres qui ont precede votre tour, et voyez ce que *Bid V6 IS-DD* annoncerait — les Q-values de chaque action legale, plus un panneau "Facteurs cles" distille par XGBoost. Deux tableaux jouent ensuite la main sur des centaines de distributions des 24 autres cartes : **Jeu parfait** (chaque donne resolue en double-dummy par l'Oracle — un plafond theorique) et **Jeu reel** (l'enchere complete menee par le NN aux quatre places, puis 8 plis joues par DouDou50 — ce qui arrive vraiment). Un onglet par annonce analysee, donc deux annonces sur la meme main se comparent cote a cote ; les mains analysees restent dans une barre laterale. Tourne cote serveur ou entierement dans le navigateur via WASM ("Calcul local").
 
 ![Onglet Annonces](images/screenshots/tab-annonces.png)
 
-**Croyances** — Visualisez comment le reseau de croyances et le modele heuristique predisent la localisation des cartes au fil d'une partie. Generez une partie aleatoire, avancez pas a pas, et observez les barres de probabilite par carte avec marquage de la verite terrain et statistiques de precision. Changez de perspective (N/E/S/O) et comparez les predictions NN vs heuristiques cote a cote.
+**Jeu de la carte** — Une ligne par carte jouable a une position donnee, pour repondre a deux questions qu'il ne faut pas confondre : *les mondes de l'information set* (des donnes compatibles avec ce que le siege pouvait savoir, chacune resolue en double-dummy — c'est la qu'on juge la decision) et *le vrai monde* (un seul solve exact, sur la donne telle qu'elle etait). Un troisieme bloc force la carte et laisse DouDou50 finir la donne. Une carte deuxieme dans la vraie donne mais meilleure dans 70 % des mondes etait un bon coup contre de la malchance.
+
+![Jeu de la carte](images/screenshots/tab-analyse-jeu.png)
+
+**Croyances** — Regardez *playgen* localiser les cartes cachees au fil d'une donne, pendant l'enchere comme pendant le jeu. Avancez pas a pas et lisez les barres de probabilite par carte face a la verite terrain, depuis chacun des quatre sieges.
 
 ![Onglet Croyances](images/screenshots/tab-croyances.png)
 
@@ -54,22 +81,28 @@ uv run python -m colver.web
 
 **Problemes de jeu** — Problemes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
 
-**Annoncer** — Guide de strategie visuel derive du bot par ML : ponderation par carte, regles de decision par position, regle du miroir en defense. 88-94% d'accord avec le NN, memorisable en quelques minutes.
+### Apprendre
+
+**Aide-memoire** — Aide-memoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, regles d'encheres.
+
+**Guide des annonces** — Guide de strategie visuel derive du bot par ML : ponderation par carte, regles de decision par position, regle du miroir en defense. 88-94% d'accord avec le NN, memorisable en quelques minutes.
 
 ![Onglet Annoncer](images/screenshots/tab-annoncer.png)
 
-**Marquer** — Compteur de points pour vos vraies parties. Choisissez un score cible (1000-3000), ajoutez des manches avec un formulaire qui calcule automatiquement les scores exacts aux regles FFB (contrat, multiplicateur coinche/surcoinche, points faits, belote), et suivez la probabilite de victoire mise a jour apres chaque manche. Les parties terminees sont archivees localement.
+**Marquer les points** — Compteur de points pour vos vraies parties. Choisissez un score cible (1000-3000), ajoutez des manches avec un formulaire qui calcule automatiquement les scores exacts aux regles FFB (contrat, multiplicateur coinche/surcoinche, points faits, belote), et suivez la probabilite de victoire mise a jour apres chaque manche. Tout vit dans le navigateur — pas de serveur, pas de compte.
 
 ![Onglet Marquer](images/screenshots/tab-score.png)
 
-**Aide** — Aide-memoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, regles d'encheres.
+### Classement
+
+Un Elo par entite classee — un compte humain ou un type de bot — mis a jour donne par donne des que les quatre sieges sont identifiables. Les bots ont un K plus faible : ce sont des points de repere, et ils occupent jusqu'a trois sieges par partie.
 
 ## Compilation et execution
 
 Necessite Rust 1.70+ et Python 3.10+.
 
 ```bash
-# Tests (357 tests)
+# Tests (418 tests)
 cargo test -p colver-core
 
 # Benchmark de performance
@@ -88,12 +121,18 @@ uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 # Interface web (jouer contre l'IA)
 uv run python -m colver.web
 
-# Entrainement DMC (reseau Q)
-PYTHONPATH=scripts/training uv run python scripts/training/train_dmc.py --num-envs 256 --steps 20000000
+# Bot contre bot, 200 matchs dans chaque sens (les bots sont des TOML dans arena/bots/)
+cargo run --bin arena --release -- h2h v6_isdd_75M_belief v6_isdd_75M --matches 200
 
-# Evaluation DMC vs IS-MCTS
-uv run python scripts/analysis/eval_dmc.py models/dmc_final.pt --baseline smart --time-ms 20 --both-sides
+# Entrainement conjoint enchere + jeu (GPU, candle)
+cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
+
+# Sidecar GPU playgen — la source de mondes d'IS-DD
+cargo run -p colver-core --bin playgen_gpu_server --features gpu_server --release -- --playgen models/playgen/playgen_v2_final.bin --port 8003
+export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
 ```
+
+Sans `$COLVER_PLAYGEN_GPU_URL`, les bots IS-DD retombent sur des mondes uniformes sous contraintes (le web l'annonce dans les stats de la decision ; l'arene, elle, refuse de construire le bot si la spec ne le demande pas explicitement).
 
 ## Agents IA
 
@@ -103,7 +142,7 @@ Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche
 
 ### Dede — IS-DD (`is_dd.rs`)
 
-Recherche Information Set Double-Dummy. Maintient un modele probabiliste de croyances sur les cartes cachees — mis a jour apres chaque action via des contraintes dures (coupes, plafond d'atout) et des signaux faibles (encheres, conventions de jeu). Peut etre augmente par un **reseau de croyances** (prediction NN de la localisation des cartes, 330→512→512→128, ~2Mo). Echantillonne des mains adverses ponderees par ces croyances, puis resout chaque monde exactement avec le solveur alpha-beta DD. IS-DD se prononce « is Dede » — d'ou le surnom.
+Recherche Information Set Double-Dummy : echantillonner des donnes compatibles avec ce que ce siege peut savoir, resoudre chacune exactement avec le solveur alpha-beta DD, agreger. Les contraintes dures (coupes revelees par le jeu, plafond d'atout, cartes deja tombees) sont des faits et s'appliquent toujours. Les mondes viennent d'une `WorldSource` que l'agent possede — **playgen via le sidecar GPU par defaut**, avec un echantillonnage uniforme sous contraintes en repli. Un **reseau de croyances** peut en plus ponderer le tirage. IS-DD se prononce « is Dede » — d'ou le surnom.
 
 ### DouDou50 — Reseau Q DMC (`dmc_net.rs`)
 
@@ -112,6 +151,10 @@ Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/ab
 **Architecture** : ResNet Dueling DQN 411→1024→1024→1024→32 avec LayerNorm et skip connections (~2.6M parametres). Utilise un encodage canonique des couleurs (pas d'augmentation necessaire). Inference en Rust pur (~1ms/decision, pas de PyTorch necessaire). Agent le plus fort dans l'ensemble.
 
 L'ancien modele **DouDou35** (415→1024³→32, obs legacy, 35M etapes) reste supporte. *DouDou* = en reference a DouZero.
+
+### Playgen — modele de mondes (`playgen/`)
+
+Un transformer causal (10,7M parametres) entraine a prolonger une donne de maniere autoregressive a partir du prefixe visible par un seul observateur. Le derouler revele les mains cachees : un deroulement *est* donc un monde determinise tire d'une posterieure apprise, et non d'un melange uniforme — c'est ce qu'IS-DD echantillonne, et ce que la page Croyances affiche. La v2 porte en plus une tete d'enchere 43-voies, qui rend possible l'echantillonnage en cours d'enchere (et, par curiosite, l'usage de playgen comme encherisseur). Il tourne sur CPU ou CUDA ; en production un sidecar (`playgen_gpu_server`) le sert en HTTP, ~50x plus vite que sur CPU.
 
 ### Anciens agents de recherche
 
@@ -134,16 +177,36 @@ Versions precedentes toujours supportees via auto-detection :
 | Agent | Type | Vitesse/coup | Notes |
 |---|---|---|---|
 | Oracle (DD) | Solveur DD (triche) | ~7ms | Borne superieure |
-| Dede (IS-DD) | Solveur DD + croyances | ~20ms | Plus fort avec recherche |
+| Dede (IS-DD) | Solveur DD sur mondes echantillonnes | budget (1 s sur le web) | Plus fort avec recherche |
 | **DouDou50** | **Reseau Q (ResNet)** | **<1ms** | Plus fort, sans recherche |
 | Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |
 | Naive IS-MCTS | Recherche | ~8ms | Budget configurable |
 
 **Note** : Les agents a base de recherche voient leur force augmenter avec le budget de temps. L'agent DMC n'utilise aucune recherche — la decision est prise en une seule inference.
 
+## Un bot est une spec, pas un chemin de code
+
+Un bot est un fichier TOML decrivant un encherisseur, un joueur de cartes et (pour IS-DD) une source de mondes. L'arene, le frontend web et `colver.Agent` lisent la meme spec et obtiennent le meme agent — il n'existe aucune seconde implementation.
+
+```toml
+[bid]
+strategy = "nn"                    # heuristic|improved|smart|roro|maxi|nn|playgen|…
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+
+[play]
+method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle_dd|heuristic
+time_ms = 1000
+
+[worlds]                           # IS-DD uniquement ; sidecar par defaut
+source = "sidecar"
+url = "http://localhost:8003"
+```
+
+`arena/bots/*.toml` contient les bots de reference ; les resultats en face-a-face et en round-robin s'accumulent dans `arena/results/matches.csv`. Tester une nouvelle combinaison, c'est ecrire un fichier, pas recompiler.
+
 ## Architecture
 
-**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-web` (FastAPI/WebSocket)
+**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (solveur dans le navigateur) + `python/colver/web` (FastAPI/WebSocket)
 
 ### Representation des cartes
 
@@ -169,7 +232,7 @@ Encheres → Jeu → Fin. Les encheres se terminent apres 3 passes consecutives,
 ```python
 import colver
 
-print(colver.__version__)  # "0.3.2"
+print(colver.__version__)  # "0.9.1"
 
 # Environnement unique
 env = colver.Env()
@@ -191,6 +254,17 @@ model = colver.model_path()  # ~/.cache/colver/models/dmc_final.bin
 if model:
     env.load_dmc_model(str(model))
     result = env.action_dmc_with_stats()  # {"best_action": 5, "q_values": [...]}
+
+# Un bot complet a partir d'une spec — le meme TOML que lit l'arene
+agent = colver.Agent(spec_toml, seat=2)
+agent.init_deal(env)
+agent.observe(env, action)       # toutes les actions, y compris les votres
+decision = agent.decide(env)     # {"action": …, plus les stats de la methode}
+
+# Playgen comme analyste : marginales des cartes cachees, mondes, politique d'enchere
+analyst = colver.Analyst("models/playgen/playgen_v2_final.bin")
+analyst.init_deal(env, observer=2)
+probs = analyst.marginals(env, n_worlds=50)
 ```
 
 ## Performance
@@ -223,7 +297,9 @@ L'image fait ~257 Mo (pas de dependance PyTorch). Tous les agents tournent en Ru
 
 ## Regles
 
-Implemente la Belote Contree avec 4 couleurs (Pique, Coeur, Carreau, Trefle). Comptage en mode "points faits + points demandes". Voir `REGLES-DE-LA-BELOTE-CONTREE.pdf` pour le reglement complet FFB.
+Implemente la Belote Contree avec 4 couleurs (Pique, Coeur, Carreau, Trefle). Comptage en mode "points faits + points demandes", les multiplicateurs coinche (x2) et surcoinche (x3) ne portant que sur la valeur du contrat. Sur une chute, la defense prend le contrat *et* tous les points cartes, quel que soit le partage reel des plis.
+
+Les scores sont **exacts — rien n'est arrondi**. La FFB arrondit la marque a la dizaine ; ici une chute marque 162 + le contrat, pas 160, de sorte que le moteur et la feuille de score du web affichent toujours le meme chiffre. Voir `REGLES-DE-LA-BELOTE-CONTREE.pdf` pour le reglement complet FFB.
 
 ## References
 

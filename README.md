@@ -20,13 +20,14 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 ## Features
 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
-- **56-byte `Copy` game state** for fast MCTS cloning
-- **Six AI agents** — DMC Q-network, IS-DD with belief network, DD oracle, Smart/Naive IS-MCTS, and heuristic
+- **≤96-byte `Copy` game state** for fast MCTS cloning
+- **Six AI agents** — DMC Q-network, IS-DD, DD oracle, Smart/Naive IS-MCTS, and heuristic
 - **NN bidding** — "Bid V6 IS-DD", a score- and belote-aware Dueling DQN (117→512³→43) trained 75M steps on real IS-DD points with full match simulation, used by all agents
 - **ML interpretability** — XGBoost distillation + hidden-layer probe reveal the NN's implicit scoring system, translated into human-usable rules (88-94% agreement)
-- **Belief network** — NN-based card location prediction for IS-DD search
-- **Web interface** — play against AI, spectate, analyze, and solve problems (FastAPI + WebSocket)
-- **Python bindings** via PyO3 — `Env` class with full type stubs, installable from PyPI
+- **Playgen world model** — a causal transformer that continues a deal from what one seat can see; rolling it out reveals the hidden hands, which is where IS-DD's sampled worlds now come from
+- **One agent layer** — a bot is a TOML spec (`[bid]` / `[play]` / `[worlds]`), built by the Rust side and driven identically by the arena, the web and `colver.Agent`
+- **Web interface** — play solo or in multiplayer rooms, spectate, replay with per-card analysis, and train on problems (FastAPI + WebSocket)
+- **Python bindings** via PyO3 — `Env`, `Agent`, `Analyst` and `Beliefs` with full type stubs, installable from PyPI
 - Zero dependencies in the core (only `rand` behind a feature flag)
 
 ## Web Interface
@@ -39,21 +40,47 @@ uv run python -m colver.web
 # Open http://localhost:8000
 ```
 
-**Humain vs IA** — Play as South against AI opponents. Choose the agent for your opponents (East/West) and your partner (North) independently. The game follows official FFB Belote Contree rules: bidding with coinche/surcoinche, then 8 tricks. Cards are played instantly on click; the pause slider controls AI thinking delay.
+Everything is in French, behind four destinations: **Jouer**, **Analyser**, **Apprendre**, **Classement**. An account is optional — it is what links games to you, and what makes matches resumable and rated.
+
+### Jouer
+
+**Humain vs IA** — Play as South against three bots. There are exactly two settings, both chosen before the deal:
+
+- **Tempo** — `Standard` (Dede, ~40 s a deal) or `Rapide` (DouDou50, ~15 s). The bundle is deliberate: an IS-DD search costs real wall-clock per move, so a fast tempo is only honest behind a bot that answers instantly. All four AI seats run the same bot — a table where your partner is weaker than your opponents tells you nothing about how you played.
+- **Match length** — a single deal (default), or a match to 1000 / 2000 points. The running score is passed to the bots, and Bid V6 reads it: it bids differently at 900-200 than at 0-0.
+
+Cards are played instantly on click; the pause belongs to the position *before* a move and the bot thinks inside it, not on top of it. Forced passes are played for you, the last trick (where nobody has a choice left) runs itself, and the final trick is held 2 s before the end-of-deal panel. Signed-in players can leave a match and resume it later.
 
 ![Play tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-play.png)
+
+**Salon multijoueur** — Rooms with a 4-character join code; bots fill whatever seats humans do not. The host picks the tempo and the match length. Every broadcast state is filtered to the viewer's own hand and rotated so the viewer always sits South. Seats are account-bound, so a disconnected player can come back to their seat.
+
+![Salon](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-salon.png)
 
 **IA vs IA** — Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats. Step through actions, play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision. Paste a CFN string to load a specific position.
 
 ![Watch tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-watch.png)
 
-**Rejouer** — Browse and replay past games (played or spectated). Click an entry to step through it with navigation controls.
+### Analyser
 
-**Annonces** — Compose an 8-card hand, choose your position in the bidding round, and see what the NN bidder would bid — with Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision), a DD oracle table, and a DouDou50 simulation of how often the contract actually succeeds. Runs server-side or fully in the browser via WASM ("Calcul local").
+**Rejouer** — Browse and replay past deals (played, spectated or shared) and step through them card by card. Two independent analysis passes run on top, each cached and fetched separately so the slow one never blocks the fast one:
+
+- the **DD pass** — the exact cost of every card, plus a bid review carrying two opinions per auction action: Bid V6's Q-values and playgen's 43-way auction head;
+- the **agent review** — what DouDou50, the Oracle and Dede would have played at every non-forced card, streamed in as it computes.
+
+Every card and every bid links out to its own analysis page, and back.
+
+![Rejouer](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-replay.png)
+
+**Annonces** — Compose an 8-card hand, set the bids that preceded your turn, and see what *Bid V6 IS-DD* would call — Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision). Two tables then play the hand out over hundreds of random deals of the other 24 cards: **Jeu parfait** (each deal solved double-dummy by the Oracle — a theoretical ceiling) and **Jeu reel** (the full auction bid by the NN at all four seats, then 8 tricks played by DouDou50 — what actually happens). One tab per bid analysed, so two bids on the same hand can be compared side by side, and analysed hands are kept in a sidebar. Runs server-side or fully in the browser via WASM ("Calcul local").
 
 ![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
 
-**Croyances** — Visualize how the belief network and heuristic model predict card locations as a game progresses. Generate a random game, step through it, and see per-card probability bars with ground truth overlay and accuracy stats. Switch observer perspective (N/E/S/W) and compare NN vs heuristic predictions side by side.
+**Jeu de la carte** — One row per playable card at a given position, answering two questions that must not be confused: *the worlds of the information set* (deals compatible with what the seat could know, each solved double-dummy — this is where the decision is judged) and *the real world* (a single exact solve on the deal as it actually was). A third block forces the card and lets DouDou50 finish the deal. A card that was second-best in the real deal but best in 70 % of the worlds was a good play against bad luck.
+
+![Jeu de la carte](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-analyse-jeu.png)
+
+**Croyances** — Watch *playgen* locate the hidden cards as a deal unfolds, during the auction as well as during play. Step through a generated deal and read the per-card probability bars against ground truth, from any of the four seats.
 
 ![Croyances tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-croyances.png)
 
@@ -61,22 +88,28 @@ uv run python -m colver.web
 
 **Problemes de jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
 
-**Annoncer** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, memorizable in minutes.
+### Apprendre
+
+**Aide-memoire** — Visual cheat sheet: card strength order and values (trump / non-trump), deal points, bidding rules.
+
+**Guide des annonces** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, memorizable in minutes.
 
 ![Annoncer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annoncer.png)
 
-**Marquer** — Score keeper for real-life games. Pick a target score (1000-3000), add rounds with a form that computes exact FFB scores automatically (contract, coinche/surcoinche multiplier, points made, belote), and watch the live win-probability estimate update after every round. Finished games are archived locally.
+**Marquer les points** — Score keeper for real-life games. Pick a target score (1000-3000), add rounds with a form that computes exact FFB scores automatically (contract, coinche/surcoinche multiplier, points made, belote), and watch the live win-probability estimate update after every round. Everything lives in the browser — no server, no account.
 
 ![Marquer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-score.png)
 
-**Aide** — Visual cheat sheet: card strength order and values (trump / non-trump), deal points, bidding rules.
+### Classement
+
+One Elo per rated entity — a human account or a bot type — updated deal by deal whenever all four seats are identifiable. Bots use a lower K: they are reference points and occupy up to three seats per game.
 
 ## Build & Run
 
 Requires Rust 1.70+ and Python 3.10+.
 
 ```bash
-# Tests (357 tests)
+# Tests (418 tests)
 cargo test -p colver-core
 
 # Performance benchmark
@@ -95,12 +128,18 @@ uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 # Web interface (play against AI)
 uv run python -m colver.web
 
-# DMC training (Q-network)
-PYTHONPATH=scripts/training uv run python scripts/training/train_dmc.py --num-envs 256 --steps 20000000
+# Bot vs bot, 200 matches each way (bots are TOML files in arena/bots/)
+cargo run --bin arena --release -- h2h v6_isdd_75M_belief v6_isdd_75M --matches 200
 
-# DMC evaluation vs IS-MCTS
-uv run python scripts/analysis/eval_dmc.py models/dmc_final.pt --baseline smart --time-ms 20 --both-sides
+# Joint bid+play training (GPU, candle)
+cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
+
+# Playgen GPU sidecar — where IS-DD gets its worlds from
+cargo run -p colver-core --bin playgen_gpu_server --features gpu_server --release -- --playgen models/playgen/playgen_v2_final.bin --port 8003
+export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
 ```
+
+Without `$COLVER_PLAYGEN_GPU_URL`, IS-DD bots fall back to constraint-uniform worlds (the web says so in the decision's stats; the arena refuses to build the bot unless the spec opts in).
 
 ## AI Agents
 
@@ -110,7 +149,7 @@ Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. A
 
 ### Dede — IS-DD (`is_dd.rs`)
 
-Information Set Double-Dummy search. Maintains a probabilistic belief model over hidden cards — updated after every action via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). Optionally augmented with a **belief network** (NN-based card location prediction, 330→512→512→128, ~2MB). Samples plausible opponent hands weighted by these beliefs, then solves each world exactly with the alpha-beta DD solver. IS-DD sounds like "is Dede" — hence the name.
+Information Set Double-Dummy search: sample plausible deals consistent with what this seat can know, solve each one exactly with the alpha-beta DD solver, aggregate. Hard constraints (voids revealed by the play, trump ceiling, cards already gone) are facts and always apply. The sampled worlds come from a `WorldSource` the agent owns — **playgen over the GPU sidecar by default**, with a constraint-uniform sampler as the fallback. A **belief network** can additionally weight the sampling. IS-DD sounds like "is Dede" — hence the name.
 
 ### DouDou50 — DMC Q-Network (`dmc_net.rs`)
 
@@ -119,6 +158,10 @@ Information Set Double-Dummy search. Maintains a probabilistic belief model over
 **Architecture**: ResNet Dueling DQN 411→1024→1024→1024→32 with LayerNorm and skip connections (~2.6M parameters). Uses canonical suit encoding (no augmentation needed). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
 
 The previous model **DouDou35** (415→1024³→32, legacy obs, 35M steps) is still supported for backward compatibility. *DouDou* = a reference to DouZero.
+
+### Playgen — world model (`playgen/`)
+
+A causal transformer (10.7M params) trained to continue a deal autoregressively from the prefix one observer can see. Rolling it out reveals the hidden hands, so a rollout *is* a determinized world drawn from a learned posterior rather than from a uniform shuffle — that is what IS-DD samples, and what the Croyances page displays. v2 also carries a 43-way auction head, which makes it usable for mid-auction sampling (and, as a curiosity, as a bidder in its own right). It runs on CPU or CUDA; in production a sidecar (`playgen_gpu_server`) serves it over HTTP, ~50× faster than sampling on CPU.
 
 ### Older search agents
 
@@ -141,16 +184,36 @@ Past versions still supported via auto-detect:
 | Agent | Type | Speed/move | Notes |
 |---|---|---|---|
 | Oracle (DD) | DD solver (cheats) | ~7ms | Perfect info upper bound |
-| Dede (IS-DD) | DD solver + beliefs | ~20ms | Strongest search-based |
+| Dede (IS-DD) | DD solver over sampled worlds | budget (1 s in the web) | Strongest search-based |
 | **DouDou50** | **Q-network (ResNet)** | **<1ms** | Strongest overall, no search |
 | Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
 | Naive IS-MCTS | Search | ~8ms | Configurable budget |
 
 **Note**: Search-based agents get stronger with more time budget. The DMC agent uses no search — one forward pass per decision.
 
+## Bots are specs, not code paths
+
+A bot is a TOML file describing a bidder, a card player and (for IS-DD) a world source. The arena, the web frontend and `colver.Agent` all read the same spec and get the same agent — there is no second implementation anywhere.
+
+```toml
+[bid]
+strategy = "nn"                    # heuristic|improved|smart|roro|maxi|nn|playgen|…
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+
+[play]
+method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle_dd|heuristic
+time_ms = 1000
+
+[worlds]                           # IS-DD only; defaults to the sidecar
+source = "sidecar"
+url = "http://localhost:8003"
+```
+
+`arena/bots/*.toml` holds the reference bots; head-to-head and round-robin results accumulate in `arena/results/matches.csv`. Testing a new combination means writing a file, not recompiling.
+
 ## Architecture
 
-**Workspace:** `colver-core` (pure Rust) + `colver-py` (PyO3/NumPy FFI) + `colver-web` (FastAPI/WebSocket)
+**Workspace:** `colver-core` (pure Rust) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (in-browser solver) + `python/colver/web` (FastAPI/WebSocket)
 
 ### Card Representation
 
@@ -176,7 +239,7 @@ Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoin
 ```python
 import colver
 
-print(colver.__version__)  # "0.3.3"
+print(colver.__version__)  # "0.9.1"
 
 # Single environment
 env = colver.Env()
@@ -198,6 +261,17 @@ model = colver.model_path()  # ~/.cache/colver/models/dmc_final.bin
 if model:
     env.load_dmc_model(str(model))
     result = env.action_dmc_with_stats()  # {"best_action": 5, "q_values": [...]}
+
+# A whole bot from a spec — same TOML the arena reads
+agent = colver.Agent(spec_toml, seat=2)
+agent.init_deal(env)
+agent.observe(env, action)       # every action, including your own
+decision = agent.decide(env)     # {"action": …, plus per-method stats}
+
+# Playgen as an analyst: hidden-card marginals, sampled worlds, auction policy
+analyst = colver.Analyst("models/playgen/playgen_v2_final.bin")
+analyst.init_deal(env, observer=2)
+probs = analyst.marginals(env, n_worlds=50)
 ```
 
 ## Performance
@@ -230,7 +304,9 @@ The image is ~257 MB (no PyTorch dependency). All agents run in pure Rust and wo
 
 ## Rules
 
-Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scoring mode: "points faits + points demandes". See `REGLES-DE-LA-BELOTE-CONTREE.pdf` for the full FFB rulebook.
+Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scoring mode: "points faits + points demandes", with the coinche (x2) and surcoinche (x3) multipliers applying to the contract value only. On a chute the defense takes the contract *and* every card point, whatever the real split of tricks.
+
+Scores are **exact — nothing is rounded**. The FFB rounds the marque to the nearest 10; here a chute marks 162 + the contract, not 160, so the engine and the web score sheet always show the same number. See `REGLES-DE-LA-BELOTE-CONTREE.pdf` for the full FFB rulebook.
 
 ## References
 

@@ -134,8 +134,8 @@ multiplier applies to the **contract value only**, never to that base.
 
 | | Taker | Defense |
 |-|-------|---------|
-| **Reussi** | round10(trick_points + contract_value + own_belote) | round10(trick_points + own_belote) |
-| **Chute** | 0 | round10(162 + contract_value + all_belote) |
+| **Reussi** | trick_points + contract_value + own_belote | trick_points + own_belote |
+| **Chute** | 0 | 162 + contract_value + all_belote |
 
 On a chute the defense takes the contract **and** every card point of the deal, whatever the
 actual trick split.
@@ -146,8 +146,8 @@ actual trick split.
 
 | | Taker | Defense |
 |-|-------|---------|
-| **Reussi** | round10(162* + contract_value x mult + all_belote) | 0 |
-| **Chute** | 0 | round10(162 + contract_value x mult + all_belote) |
+| **Reussi** | 162* + contract_value x mult + all_belote | 0 |
+| **Chute** | 0 | 162 + contract_value x mult + all_belote |
 
 \* 252 if the taker won all 8 tricks.
 
@@ -158,42 +158,39 @@ contract_value = 250 and trick_points = 252 when realised.
 
 | Coinche level | Reussi (taker) | Reussi (defense) | Chute (taker) | Chute (defense) |
 |---------------|----------------|------------------|---------------|-----------------|
-| Standard | round10(252 + 250 + own_belote) = **500** | round10(own_belote) | 0 | round10(162 + 250 + all_belote) |
-| Coinche | round10(252 + 250 x 2 + all_belote) = **750** | 0 | 0 | round10(162 + 250 x 2 + all_belote) |
-| Surcoinche | round10(252 + 250 x 3 + all_belote) = **1000** | 0 | 0 | round10(162 + 250 x 3 + all_belote) |
+| Standard | 252 + 250 + own_belote = **502** | own_belote | 0 | 162 + 250 + all_belote |
+| Coinche | 252 + 250 x 2 + all_belote = **752** | 0 | 0 | 162 + 250 x 2 + all_belote |
+| Surcoinche | 252 + 250 x 3 + all_belote = **1002** | 0 | 0 | 162 + 250 x 3 + all_belote |
 
 Note on capot reussi (standard): each team keeps their own belote. On chute or when
 coinched/surcoinched, all belote goes to the winning side.
 
 ### Rounding
 
-All scores are rounded to the nearest 10: `round10(x) = (x + 5) / 10 * 10`
-
-Examples: 85 -> 90, 84 -> 80, 162 -> 160
-
-Every term other than the base is a multiple of 10, so under this rounding a base of 162 and a
-base of 160 mark the *same* score -- the 162 is what the rule says, and it only shows where
-points are kept exact, i.e. the web score sheet (`views/score.js`).
+**None** (since 2026-07-31). Scores are marked exactly as summed, at the point. The FFB rounds
+the marque to the nearest 10 (its section 9.2), we deliberately don't -- the engine and the web
+score sheet (`views/score.js`) now agree on every donne, and the 162 base is visible in the
+marque instead of collapsing onto 160.
 
 ### Scoring Examples
 
 **Example 1** -- Taker bids 80 Hearts, scores 92 trick points:
 - Reussi (92 >= 80)
-- Taker: round10(92 + 80) = round10(172) = **170**
-- Defense: round10(70) = **70**
+- Taker: 92 + 80 = **172**
+- Defense: **70**
 
 **Example 2** -- Taker bids 100 Spades, scores 82 trick points:
 - Chute (82 < 100)
 - Taker: **0**
-- Defense: round10(162 + 100) = round10(262) = **260**
+- Defense: 162 + 100 = **262**
 
 **Example 3** -- Taker bids 100, scores 88 trick points, has belote (20):
 - 88 + 20 = 108 >= 100: Reussi (belote saves the contract!)
-- Taker: round10(88 + 100 + 20) = round10(208) = **210**
+- Taker: 88 + 100 + 20 = **208**
 
 **Example 4** -- Taker bids 80 Spades coinche, scores 100:
 - Reussi
-- Taker: round10(162 + 80 x 2) = round10(322) = **320**
+- Taker: 162 + 80 x 2 = **322**
 - Defense: **0**
 
 ## Match

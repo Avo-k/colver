@@ -23,6 +23,7 @@ Belote Contrée engine + RL training stack.
 
 ## Web frontend
 
+- [web_todo.md](web_todo.md) — backlog web (non implémenté)
 - [web_annonces_next_steps.md](web_annonces_next_steps.md) — Analyse annonce: prochaines étapes
 - [web_analyse_jeu.md](web_analyse_jeu.md) — Analyse du jeu de la carte: design + pièges d'implémentation
 

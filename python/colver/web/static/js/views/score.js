@@ -10,8 +10,8 @@ const BID_VALUES = [80, 90, 100, 110, 120, 130, 140, 150, 160];
 // ===== Scoring (FFB rules — surcoinche ×3, base 162 + contrat×mult) =====
 // La base représente tous les points cartes de la donne : 162 (dix de der compris), ou 252
 // quand le preneur fait les 8 plis. Sur une chute, la défense prend le contrat *et* ces
-// points, quel que soit le partage réel des plis. Ici les scores sont exacts — le moteur
-// Rust arrondit à la dizaine, ce qui y ramène 162 sur 160 (cf. engine/scoring.rs).
+// points, quel que soit le partage réel des plis. Les scores sont exacts, au point près —
+// le moteur Rust ne les arrondit plus non plus depuis le 2026-07-31 (cf. engine/scoring.rs).
 //
 // Belote/rebelote : les 20 points sont acquis à l'équipe qui les a annoncés et lui restent
 // quoi qu'il arrive — chute comprise, coinche comprise. Ils ne comptent pour la réussite du

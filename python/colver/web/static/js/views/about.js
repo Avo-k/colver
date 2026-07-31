@@ -6,7 +6,9 @@ const TEMPLATE = `
     <p class="docs-intro">
         Colver est un environnement de Belote Contr\u00e9e haute performance con\u00e7u pour la recherche en apprentissage par renforcement.
         Le moteur est \u00e9crit en Rust, capable de plus d'un million de simulations par seconde.
-        Cette interface web permet de jouer contre diff\u00e9rents agents IA, de les observer s'affronter et de cr\u00e9er des donnes personnalis\u00e9es.
+        Cette interface web permet d'y jouer \u2014 seul contre les bots ou \u00e0 plusieurs en salon \u2014,
+        de les regarder s'affronter, et surtout de revenir sur une donne pour savoir ce qu'il
+        aurait fallu annoncer et jouer.
     </p>
     <p class="docs-link">
         Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
@@ -27,11 +29,18 @@ const TEMPLATE = `
     <div class="docs-section">
         <h4>D\u00e9d\u00e9 (IS-DD) <span class="docs-tag">Fort</span></h4>
         <p>
-            Maintient un mod\u00e8le probabiliste de croyances sur les cartes cach\u00e9es, mis \u00e0 jour apr\u00e8s chaque action
-            via des contraintes dures (inf\u00e9rence de coupes, plafond d'atout) et des signaux faibles (patterns d'ench\u00e8res, conventions de jeu).
-            \u00c9chantillonne des mains adverses plausibles pond\u00e9r\u00e9es par ces croyances, puis r\u00e9sout chaque monde exactement
-            avec un solveur alpha-b\u00eata double-dummy \u2014 optimal par d\u00e9terminisation.
+            D\u00e9d\u00e9 tire des donnes compatibles avec ce que son si\u00e8ge peut savoir, r\u00e9sout chacune
+            exactement avec un solveur alpha-b\u00eata double-dummy, et joue la carte qui s'en sort le
+            mieux en moyenne. Les contraintes dures \u2014 coupes r\u00e9v\u00e9l\u00e9es par le jeu, plafond d'atout,
+            cartes d\u00e9j\u00e0 tomb\u00e9es \u2014 sont des faits et s'appliquent toujours.
             IS-DD se prononce \u00ab is D\u00e9d\u00e9 \u00bb \u2014 d'o\u00f9 le surnom.
+        </p>
+        <p>
+            Toute la difficult\u00e9 est dans le tirage : des mains adverses tir\u00e9es au hasard donneraient
+            des mondes que personne n'annoncerait ni ne jouerait ainsi. Les mondes viennent donc de
+            <em>Playgen</em> (voir plus bas), qui les tire d'une distribution apprise. Sans lui,
+            D\u00e9d\u00e9 retombe sur un tirage uniforme sous contraintes \u2014 et le dit dans ses statistiques
+            de d\u00e9cision.
         </p>
     </div>
 
@@ -71,28 +80,69 @@ const TEMPLATE = `
 
     <h3>Croyances</h3>
 
-    <div class="docs-section">
-        <h4>R\u00e9seau de croyances</h4>
+    <div class="docs-section" id="doc-playgen">
+        <h4>Playgen</h4>
         <p>
-            R\u00e9seau de neurones qui pr\u00e9dit, pour chaque carte non visible, la probabilit\u00e9 qu'elle se trouve
-            dans chaque main adverse. Utilis\u00e9 par D\u00e9d\u00e9 pour \u00e9chantillonner des distributions de cartes
-            plus r\u00e9alistes que le hasard uniforme.
+            Un transformer causal entra\u00een\u00e9 \u00e0 <em>prolonger</em> une donne \u00e0 partir du seul pr\u00e9fixe
+            visible par un observateur : les annonces entendues, les cartes tomb\u00e9es, sa propre main.
+            Le d\u00e9rouler jusqu'au bout r\u00e9v\u00e8le les mains cach\u00e9es \u2014 un d\u00e9roulement est donc une donne
+            compl\u00e8te, plausible, tir\u00e9e d'une distribution apprise plut\u00f4t que d'un m\u00e9lange uniforme.
+        </p>
+        <p>
+            C'est de l\u00e0 que viennent les mondes de <em>D\u00e9d\u00e9</em>, et c'est ce que montre la page
+            Croyances : en agr\u00e9geant beaucoup de d\u00e9roulements, on obtient pour chaque carte non vue
+            la probabilit\u00e9 qu'elle soit dans chaque main. Le mod\u00e8le sait aussi annoncer, ce qui lui
+            permet de tirer des donnes en <em>cours</em> d'ench\u00e8re et, accessoirement, de servir
+            d'ench\u00e9risseur (son avis appara\u00eet dans la revue d'ench\u00e8re de Rejouer).
         </p>
     </div>
 
     <h3>Pages</h3>
 
-    <div class="docs-section">
+    <div class="docs-section" id="doc-jouer">
         <h4>Humain vs IA</h4>
         <p>
-            Jouez en Sud contre des adversaires IA. Choisissez l'IA pour vos adversaires (Est/Ouest) et votre partenaire (Nord) ind\u00e9pendamment.
-            La partie suit les r\u00e8gles officielles FFB de la Belote Contr\u00e9e : phase d'ench\u00e8res avec coinche/surcoinche, puis 8 plis de jeu.
+            Jouez en Sud contre trois bots, aux r\u00e8gles officielles FFB : ench\u00e8res avec
+            coinche/surcoinche, puis 8 plis. Deux r\u00e9glages seulement, choisis avant la donne.
         </p>
         <p>
-            Le curseur <strong>Pause</strong> (1\u20138s) contr\u00f4le le d\u00e9lai entre les cartes \u2014
-            ajustable \u00e0 tout moment pendant la partie. Vos cartes sont jou\u00e9es instantan\u00e9ment au clic ;
-            la pause simule le temps de r\u00e9flexion des adversaires.
-            Cliquez sur la zone CFN sous la barre de score pour copier la position actuelle (partage ou signalement de bug).
+            Le <strong>rythme</strong> d\u00e9signe \u00e0 la fois le tempo d'affichage et le bot assis aux
+            quatre places : <em>Standard</em> = D\u00e9d\u00e9, \u2248 40 s la donne ; <em>Rapide</em> = DouDou50,
+            \u2248 15 s. Les deux vont ensemble et ce n'est pas cosm\u00e9tique \u2014 une recherche IS-DD co\u00fbte du
+            temps r\u00e9el \u00e0 chaque coup, donc un tempo rapide n'est honn\u00eate que derri\u00e8re un bot qui
+            r\u00e9pond instantan\u00e9ment. Les quatre si\u00e8ges jouent le m\u00eame bot : une table o\u00f9 le partenaire
+            est plus faible que les adversaires ne dirait rien de votre partie.
+        </p>
+        <p>
+            Le <strong>format</strong> est une donne s\u00e8che, ou une partie en 1000 / 2000 points.
+            Dans une partie, le score cumul\u00e9 est transmis aux bots \u2014 et l'ench\u00e9risseur le lit :
+            il n'annonce pas la m\u00eame chose \u00e0 900-200 qu'\u00e0 0-0. Connect\u00e9, vous pouvez quitter une
+            partie en cours et la reprendre plus tard (une donne <em>entam\u00e9e</em>, elle, ne se
+            reprend pas : les bots n'ont pas de m\u00e9moire persistante, la donne est conc\u00e9d\u00e9e et le
+            score de partie conserv\u00e9).
+        </p>
+        <p>
+            Vos cartes partent instantan\u00e9ment au clic. La pause appartient \u00e0 la position qui
+            <em>pr\u00e9c\u00e8de</em> un coup, et le bot r\u00e9fl\u00e9chit dedans plut\u00f4t que par-dessus. Quand passer
+            est la seule annonce possible, le serveur passe pour vous ; le dernier pli, o\u00f9 plus
+            personne n'a de choix, se d\u00e9roule tout seul ; et la derni\u00e8re lev\u00e9e reste 2 s \u00e0 l'\u00e9cran
+            avant le panneau de fin. Pendant le jeu, le contrat au centre du bandeau se d\u00e9plie
+            (chevron \u25be) pour revoir toute l'ench\u00e8re. Cliquez la zone CFN sous la barre de score
+            pour copier la position (partage ou signalement de bug).
+        </p>
+    </div>
+
+    <div class="docs-section" id="doc-salon">
+        <h4>Salon multijoueur</h4>
+        <p>
+            Cr\u00e9ez un salon, partagez son code \u00e0 4 caract\u00e8res, et jouez \u00e0 plusieurs humains autour de
+            la m\u00eame table \u2014 les si\u00e8ges libres sont tenus par des bots. L'h\u00f4te choisit le rythme et le
+            format, et lance la donne quand tout le monde est assis.
+        </p>
+        <p>
+            Chaque joueur ne re\u00e7oit que sa propre main, et la table est pivot\u00e9e pour qu'il soit
+            toujours assis en bas : personne ne peut lire le jeu d'un autre, m\u00eame en inspectant les
+            messages. Les si\u00e8ges sont li\u00e9s aux comptes, donc une d\u00e9connexion ne co\u00fbte pas la place.
         </p>
     </div>
 
@@ -106,12 +156,25 @@ const TEMPLATE = `
         </p>
     </div>
 
-    <div class="docs-section">
+    <div class="docs-section" id="doc-rejouer">
         <h4>Rejouer</h4>
         <p>
-            Parcourez et rejouez les parties pass\u00e9es (jou\u00e9es ou observ\u00e9es). L'historique liste les parties r\u00e9centes \u2014
-            cliquez sur une entr\u00e9e pour la rejouer pas \u00e0 pas avec les contr\u00f4les de navigation.
-            Recherchez par identifiant de partie pour en retrouver une sp\u00e9cifique. Les parties incompl\u00e8tes sont clairement signal\u00e9es.
+            Parcourez et rejouez les donnes pass\u00e9es \u2014 jou\u00e9es, observ\u00e9es ou re\u00e7ues par lien \u2014
+            coup par coup, avec les quatre mains visibles. L'adresse de la page suit le coup affich\u00e9 :
+            un coup pr\u00e9cis se partage tel quel.
+        </p>
+        <p>
+            Deux analyses s'ajoutent par-dessus, calcul\u00e9es s\u00e9par\u00e9ment pour que la lente ne retarde
+            pas la rapide. La premi\u00e8re donne le <strong>co\u00fbt exact de chaque carte</strong> (un solve
+            double-dummy sur la vraie donne) et une revue de l'ench\u00e8re portant deux avis : celui de
+            <em>Bid V6</em>, la r\u00e9f\u00e9rence, et celui de <em>Playgen</em>, qui est un mod\u00e8le du monde
+            plut\u00f4t qu'un ench\u00e9risseur. La seconde dit ce que <strong>DouDou50, l'Oracle et D\u00e9d\u00e9</strong>
+            auraient jou\u00e9 \u00e0 chaque carte non forc\u00e9e, quel qu'en soit l'auteur ; elle s'affiche au fil
+            du calcul.
+        </p>
+        <p>
+            Chaque annonce et chaque carte porte un lien vers sa page d'analyse d\u00e9di\u00e9e, avec le
+            chemin du retour vers le coup exact d'o\u00f9 vous veniez.
         </p>
     </div>
 
@@ -135,10 +198,20 @@ const TEMPLATE = `
             \u00e0 deux questions diff\u00e9rentes\u00a0: <em>ce contrat est-il tenable\u00a0?</em> et <em>que se passe-t-il vraiment\u00a0?</em>
         </p>
         <p>
-            Le s\u00e9lecteur <strong>Simulations</strong> fixe le nombre de donnes tir\u00e9es. Plus il est \u00e9lev\u00e9,
-            plus les chiffres sont stables \u2014 et plus le calcul est long. \u00ab\u00a0Analyser une autre annonce\u00a0\u00bb
-            relance le <em>Jeu r\u00e9el</em> en for\u00e7ant votre annonce\u00a0: le reste de l'ench\u00e8re et tout le jeu
-            restent pilot\u00e9s par les r\u00e9seaux, ce qui permet de comparer deux annonces sur un pied d'\u00e9galit\u00e9.
+            \u00ab&nbsp;Analyser une autre annonce&nbsp;\u00bb relance le <em>Jeu r\u00e9el</em> en for\u00e7ant l'annonce
+            de votre choix&nbsp;: le reste de l'ench\u00e8re et tout le jeu restent pilot\u00e9s par les r\u00e9seaux,
+            ce qui permet de comparer deux annonces sur un pied d'\u00e9galit\u00e9. Chaque annonce analys\u00e9e
+            ouvre son propre <strong>onglet</strong> au lieu d'\u00e9craser la pr\u00e9c\u00e9dente&nbsp;; le
+            <em>Jeu parfait</em>, lui, est partag\u00e9 par tous les onglets, puisque l'Oracle r\u00e9sout les
+            quatre couleurs sans rien savoir de ce que vous annoncez. Une seule simulation tourne \u00e0 la
+            fois&nbsp;: ouvrir un onglet interrompt celle en cours, qui garde son r\u00e9sultat partiel et
+            propose de la relancer.
+        </p>
+        <p>
+            Les mains \u00e9valu\u00e9es s'empilent dans la barre lat\u00e9rale <strong>Mains analys\u00e9es</strong> \u2014
+            dans votre navigateur, rien n'est envoy\u00e9. Une entr\u00e9e retient la main <em>et</em> les
+            ench\u00e8res qui la pr\u00e9c\u00e9daient&nbsp;: la m\u00eame main apr\u00e8s \u00ab&nbsp;100\u2665&nbsp;\u00bb n'est pas la
+            m\u00eame question.
         </p>
     </div>
 
@@ -238,6 +311,39 @@ const TEMPLATE = `
         </p>
     </div>
 
+    <div class="docs-section">
+        <h4>Aide-m\u00e9moire, Guide des annonces, Marquer</h4>
+        <p>
+            Trois pages de r\u00e9f\u00e9rence, sans IA en marche. L'<strong>aide-m\u00e9moire</strong> donne
+            l'ordre de force et la valeur des cartes (\u00e0 l'atout et hors atout), les points de la donne
+            et les r\u00e8gles d'ench\u00e8re. Le <strong>guide des annonces</strong> traduit le r\u00e9seau en
+            r\u00e8gles tenant sur une page \u2014 poids par carte, seuils selon la position, r\u00e8gle du miroir
+            en d\u00e9fense \u2014 obtenues par distillation ML et d'accord avec lui dans 88 \u00e0 94&nbsp;% des cas.
+            <strong>Marquer les points</strong> est un compteur pour vos vraies parties&nbsp;: il calcule
+            la marque exacte (contrat, coinche, points faits, belote) et affiche la probabilit\u00e9 de
+            victoire apr\u00e8s chaque manche. Tout y reste dans votre navigateur.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>Classement</h4>
+        <p>
+            Un Elo par joueur class\u00e9 \u2014 compte humain ou type de bot \u2014 mis \u00e0 jour <em>donne par donne</em>
+            d\u00e8s que les quatre si\u00e8ges sont identifiables (des bots, ou des humains connect\u00e9s). Les donnes
+            pass\u00e9es ne comptent pas. Les bots bougent avec un coefficient plus faible&nbsp;: ce sont des
+            points de rep\u00e8re, et ils occupent souvent trois si\u00e8ges sur quatre.
+        </p>
+    </div>
+
+    <div class="docs-section">
+        <h4>Compte</h4>
+        <p>
+            Le compte est facultatif&nbsp;: on peut jouer sans. Il sert \u00e0 rattacher vos donnes \u00e0 vous \u2014
+            donc \u00e0 les retrouver dans Rejouer, \u00e0 reprendre une partie commenc\u00e9e, \u00e0 garder votre si\u00e8ge
+            en salon apr\u00e8s une d\u00e9connexion, et \u00e0 \u00eatre class\u00e9.
+        </p>
+    </div>
+
     <h3>Remerciements</h3>
     <div class="docs-section">
         <p>
@@ -249,7 +355,7 @@ const TEMPLATE = `
     <div class="docs-footer">
         <p>
             Cr\u00e9\u00e9 par <a href="https://github.com/Avo-k" target="_blank" rel="noopener">Avo-k</a>
-            &amp; <a href="https://claude.ai" target="_blank" rel="noopener">Claude Opus 4.6</a>
+            &amp; <a href="https://claude.ai" target="_blank" rel="noopener">Claude</a>
         </p>
     </div>
 </div>
