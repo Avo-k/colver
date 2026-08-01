@@ -7,11 +7,13 @@ use crate::trick::trick_winner;
 /// Rules:
 /// 1. Must follow lead suit if possible
 /// 2. If can't follow:
-///    a. If partner is winning ("master") → play anything
+///    a. If partner is winning ("master") → play anything, **without exception** — including a
+///       trump lower than theirs when they cut and trump is all that is left (FFB contrée §2.3)
 ///    b. Else must trump if possible; must overtrump if possible
 ///    c. "Ne pisse pas": if can't overtrump, may discard instead of undertrumping
 /// 3. When playing trump (following or cutting): must overtrump highest trump on table if possible
-/// 4. When partner has cut (trumped) and is master, and you only have trumps → must overtrump
+///
+/// 2a used to carve out an exception forcing the overtrump; removed 2026-08-01, see `docs/RULES.md`.
 pub fn legal_plays(state: &GameState) -> CardSet {
     let hand = state.hands[state.current_player as usize];
     debug_assert!(hand != 0, "Player has no cards");
@@ -65,32 +67,17 @@ fn legal_plays_color(
         let in_trump = cards_in_suit(hand, trump_suit);
 
         if partner_is_master(state) {
-            // Rule 2.1: Partner is winning → can discard (play anything)
-            // Rule 4 exception: if partner CUT with trump and we only have
-            // trump left, must overtrump the best trump on table.
-            let non_trump = hand & !SUIT_MASK[trump_suit as usize];
-            if non_trump != 0 {
-                // Have non-trump cards → can discard anything
-                return hand;
-            }
-
-            // Only have trump. Did partner cut (play trump on non-trump lead)?
-            let partner = GameState::partner(state.current_player);
-            let partner_card = state.current_trick[partner as usize];
-            if partner_card != EMPTY && card_suit(partner_card) == trump_suit {
-                // Partner cut with trump → must overtrump best trump on table
-                let best_trump_rank = best_trump_rank_on_trick(state, trump_suit);
-                if let Some(br) = best_trump_rank {
-                    let higher = overtrump_in_suit(in_trump, trump_suit, br);
-                    if higher != 0 {
-                        return higher;
-                    }
-                }
-                // Can't overtrump → play any trump
-                return in_trump;
-            }
-
-            // Partner winning with non-trump, we only have trump → play any trump
+            // Partner holds the trick: no obligation at all, play anything — including a
+            // trump *lower* than theirs when they cut and trump is all we have left.
+            // FFB contrée §2.3: « il n'est pas obligatoire de couper. On peut se défausser
+            // de n'importe quelle carte sans exception (y compris un atout inférieur au
+            // sien). » Same wording in the 2016 belote rules; the 2015 contrée rules spell
+            // the trump-only case out as « le seul cas de figure où il est permis de jouer
+            // un atout inférieur ».
+            //
+            // Until 2026-08-01 this branch forced an overtrump in the trump-only case,
+            // following the one FFB edition that drops the « n'est pas » — see
+            // docs/rules-survey/matrices/jeu-de-la-carte.md.
             return hand;
         }
 
@@ -503,82 +490,40 @@ mod tests {
     }
 
     #[test]
-    fn test_rule4_partner_cut_only_trump_must_overtrump() {
-        // Rule 4: partner has cut (played trump on non-trump lead), is master,
-        // and we only have trump → must overtrump.
-        // Trump: Clubs (3). Lead: Diamonds by P3.
-        // P3 leads QD. P0 plays 7D. P1 cuts with 8C (trump). P2 to play.
-        // P2 only has trump: 9C, AC (stronger than 8C) → must play only those higher trumps.
+    fn test_partner_cut_only_trump_is_free_choice() {
+        // Partner cut a non-trump lead and holds the trick, and trump is all we have left.
+        // FFB contrée §2.3: no obligation whatsoever — an *undertrump* is explicitly allowed,
+        // and 2015 §4 calls it "le seul cas de figure où il est permis de jouer un atout
+        // inférieur". Before 2026-08-01 this engine forced an overtrump here, following the
+        // single FFB edition that drops the negation from that sentence.
+        //
+        // Trump: Clubs (bits 24..31, trump strength 7<8<Q<K<10<A<9<J).
+        // P1 leads 7D. P2 (P0's partner) cuts with 8C. P3 discards 7H. P0 to play.
         let mut state = make_playing_state(3, [
-            0x0F_0000,       // P0: 7,8,9,J diamonds
-            0x0200_0000,     // P1: 8C (trump, strength=1)
-            0x6400_0000,     // P2: 9C(0x04) + 10C(0x40) + AC(not avail)... let me recalc
-            // Clubs: 7=bit24, 8=bit25, 9=bit26, J=bit27, Q=bit28, K=bit29, 10=bit30, A=bit31
-            // P2 has 9C and AC (both stronger than 8C in trump)
-            0xF0_0000,       // P3: Q,K,10,A diamonds
-        ]);
-        // Fix P2's hand: 9C (bit26) + AC (bit31) = 0x8400_0000
-        state.hands[2] = 0x8400_0000; // 9C + AC only
-
-        state.trick_lead = 3;
-        state.current_trick[3] = make_card(Suit::Diamonds, 4); // P3: QD
-        state.current_trick[0] = make_card(Suit::Diamonds, 0); // P0: 7D
-        state.current_trick[1] = make_card(Suit::Clubs, 1);    // P1: 8C (trump cut)
-        state.trick_count = 3;
-        state.current_player = 2;
-
-        // P2 only has trump (9C, AC). Partner P0 played 7D (not master).
-        // P1 (opponent) cut with 8C and is winning. Partner NOT master → must overtrump.
-        // Actually P1 is opponent of P2 (P2 team=NS, P1 team=EW). P0 is partner of P2.
-        // P0 played 7D (not winning). P1 cut with 8C (winning). Partner is NOT master.
-        // So this goes through the regular "must trump/overtrump" path, not Rule 4.
-        // Let me restructure so partner IS the one who cut.
-
-        // New setup: P1 leads AD (non-trump). P2 plays 7S (discard). P3 cuts with 8C (trump).
-        // P0 to play. P0 only has trump. P0's partner is P2 (not master). P3 is opponent who cut.
-        // That's still not Rule 4...
-
-        // Rule 4 scenario: partner must have cut AND be master.
-        // P3 leads AD. P0 cuts with 8C (trump, winning). P1 next. P1's partner is P3 (who led AD).
-        // No, P1's partner is P3... P0 cut. P0 is opponent of P1. Not Rule 4.
-
-        // Let me use: P1 leads 7D. P2 cuts with 8C (trump). P2 is partner of P0.
-        // P3 next, then P0. Let's say P3 discards. P0 to play. P0's partner P2 cut with 8C.
-        // P2 is winning (only trump on table). P0 only has trump → Rule 4: must overtrump.
-        let mut state = make_playing_state(3, [
-            0x6800_0000,     // P0: JC(bit27) + 10C(bit30) + AC(bit31) ... let me be precise
-            0x0F_0000,       // P1: 7,8,9,J diamonds
-            0x0200_0000,     // P2: 8C only (will cut)
+            0,                  // P0: set per case below
+            0x0F_0000,          // P1: 7,8,9,J diamonds
+            0x0200_0000,        // P2: 8C only (cuts)
             0xF0_0000 | 0xFF00, // P3: Q,K,10,A diamonds + all hearts
         ]);
-        // Clubs bits: 7=24, 8=25, 9=26, J=27, Q=28, K=29, 10=30, A=31
-        // P0 has only trump: 9C(26) + AC(31) = 0x8400_0000
-        state.hands[0] = 0x8400_0000;
-
         state.trick_lead = 1;
-        state.current_trick[1] = make_card(Suit::Diamonds, 0); // P1: 7D (lead)
-        state.current_trick[2] = make_card(Suit::Clubs, 1);    // P2: 8C (partner of P0, cuts)
-        state.current_trick[3] = make_card(Suit::Hearts, 0);   // P3: 7H (discard)
+        state.current_trick[1] = make_card(Suit::Diamonds, 0); // lead 7D
+        state.current_trick[2] = make_card(Suit::Clubs, 1); // partner cuts with 8C
+        state.current_trick[3] = make_card(Suit::Hearts, 0); // opponent discards
         state.trick_count = 3;
         state.current_player = 0;
 
-        // P0 can't follow diamonds. Partner P2 cut with 8C and is master.
-        // P0 only has trump (9C, AC). Rule 4: must overtrump.
-        // 8C has trump strength 1. 9C has strength 6, AC has strength 5. Both higher.
-        let legal = legal_plays(&state);
-        assert_eq!(legal, state.hands[0]); // Both 9C and AC are higher → both legal
+        // Only trumps stronger than partner's → all legal (nothing to arbitrate).
+        state.hands[0] = 0x8400_0000; // 9C + AC
+        assert_eq!(legal_plays(&state), state.hands[0]);
 
-        // Now test with only lower trump: P0 has 7C only (strength 0, weaker than 8C strength 1)
-        state.hands[0] = 0x0100_0000; // 7C only (bit24)
-        let legal = legal_plays(&state);
-        // Can't overtrump → play any trump (only 7C)
-        assert_eq!(legal, 0x0100_0000);
+        // Only a *weaker* trump → legal, and it is the whole point of the rule.
+        state.hands[0] = 0x0100_0000; // 7C
+        assert_eq!(legal_plays(&state), 0x0100_0000);
 
-        // Now test mixed: P0 has 7C (weaker) + AC (stronger)
-        state.hands[0] = 0x8100_0000; // 7C(bit24) + AC(bit31)
-        let legal = legal_plays(&state);
-        // Must overtrump: only AC is higher than 8C
-        assert_eq!(legal, 0x8000_0000); // AC only
+        // Mixed weak + strong → BOTH legal. This is the assertion that flipped:
+        // the engine used to return AC alone, forcing the overtrump.
+        state.hands[0] = 0x8100_0000; // 7C + AC
+        assert_eq!(legal_plays(&state), 0x8100_0000);
     }
 
     #[test]

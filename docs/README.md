@@ -6,9 +6,11 @@ Belote Contrée engine + RL training stack.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — workspace layout, key subsystems, observation formats
 - [agents.md](agents.md) — **the `Player` / `WorldSource` layer**: how a bot is built and driven, and the bot-spec format
-- [RULES.md](RULES.md) — game rules summary
+- [RULES.md](RULES.md) — game rules summary (**as implemented in Colver**)
+- [rules-survey/](rules-survey/) — **what the rest of the world actually does**: ~594 rulebooks (federations, tournaments, clubs, apps, open source) compared axis by axis. Start at [rules-survey/SYNTHESE.md](rules-survey/SYNTHESE.md)
 - [BENCH.md](BENCH.md) — performance benchmarks
 - [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
+- [engine_todo.md](engine_todo.md) — backlog moteur & modèles (règles, données, entraînement, zoo)
 - [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
 - `règles officielles belote contrée.pdf` — official FFB rules
 
