@@ -2,6 +2,10 @@
 
 Idées notées, rien d'engagé. (Dernière mise à jour : 2026-08-01)
 
+**Faits le 2026-08-01 (seconde passe) : §4.5, §2.5, §2.1.** Leurs sections sont
+gardées, réécrites au passé, pour ce qu'elles apprennent — en particulier §4.5,
+dont la cause était ouverte et est maintenant connue.
+
 Rangé par **gain / effort**, pas par thème : les premiers blocs sont ce
 qu'il faut faire pour passer d'un site personnel à un site à quelques dizaines
 de joueurs, dans l'ordre où ça se fait. L'effort est en journées de travail,
@@ -31,17 +35,56 @@ module suffit.)
 
 ## 2. Gain fort, effort moyen
 
-### 2.1 Cycle de vie du compte (2-3 j, indispensable au-delà du cercle proche)
+### 2.1 Cycle de vie du compte — FAIT (2026-08-01), sauf les mentions légales
 
-Il n'y a **ni changement de mot de passe, ni réinitialisation, ni adresse
-e-mail, ni suppression de compte** — `auth.py` ne fait que register / login /
-logout. À quelques dizaines de joueurs, le premier « j'ai perdu mon mot de
-passe » n'a aucune réponse possible.
+`auth.py` ne faisait que register / login / logout : ni changement de mot de
+passe, ni réinitialisation, ni adresse e-mail, ni suppression. À quelques
+dizaines de joueurs, le premier « j'ai perdu mon mot de passe » n'avait aucune
+réponse.
 
-La suppression n'est pas qu'un confort : on stocke un pseudo, un bcrypt et
-l'historique de jeu de personnes réelles, sans mentions légales ni politique de
-confidentialité. Décider aussi ce que devient une donne quand son joueur part
-(anonymiser `games.user_id` plutôt que casser les parties de salon).
+**Ce qui est fait.** Migration v11 (`users.email` unique et facultative, table
+`password_resets`), module `mail.py`, et quatre routes : `POST /api/auth/password`
+(changer, en connaissant l'actuel), `/auth/email` (poser, changer ou retirer),
+`/auth/forgot` + `/auth/reset` (lien par courriel), `POST /api/account/delete`.
+Côté client, une section « Réglages du compte » repliée sur `/compte`, et deux
+pages `/mot-de-passe/oublie` et `/mot-de-passe/nouveau` (`views/motdepasse.js`,
+`noindex`).
+
+Trois règles traversent le tout, et ce sont elles que les tests vérifient
+(`tests/test_account.py`) plutôt que les codes de retour un par un :
+
+- **Ne jamais dire si un compte existe.** `forgot` répond exactement la même
+  chose pour un pseudo connu, un inconnu, un compte sans adresse et un SMTP en
+  panne. Sinon le formulaire public devient un annuaire. `login` avait déjà
+  cette discipline (un bcrypt brûlé sur un utilisateur absent, pour le temps de
+  réponse).
+- **Tout changement d'identifiant révoque les autres sessions** — c'est
+  précisément le cas qu'on veut couvrir. Un changement de mot de passe garde la
+  sienne (sinon on se déconnecte en se protégeant), une réinitialisation les
+  tue toutes (quelqu'un a peut-être pris le compte).
+- **Toute opération sensible redemande le mot de passe**, même connecté : le
+  cookie prouve qu'une session a été ouverte, pas qu'on est encore devant
+  l'écran.
+
+Deux détails qui ne se devinent pas :
+
+- **Sans SMTP configuré, `mail.send` écrit le lien au journal** au lieu de
+  l'envoyer, et la demande aboutit quand même. La réinitialisation est donc
+  utilisable de bout en bout en développement, et une panne d'envoi reste
+  visible au lieu d'être masquée par un refus. Config :
+  `COLVER_SMTP_HOST/_PORT/_USER/_PASSWORD/_TLS`, `COLVER_MAIL_FROM` ; les liens
+  sont fabriqués depuis `COLVER_PUBLIC_URL`, jamais depuis `request.url` (
+  derrière Cloudflare puis Caddy, ce serait `localhost:8000`).
+- **Supprimer un compte n'efface pas ses donnes, ça les détache** : une donne de
+  salon appartient à quatre joueurs, l'effacer prendrait la partie des trois
+  autres avec elle. `games.user_id` → NULL, `game_players` et `elo_ratings`
+  effacés, le siège devient « Invité » (ce que `game_seat_names` affichait déjà
+  pour un `user_id` absent).
+
+**Ce qui reste** : les mentions légales et la politique de confidentialité. On
+stocke un pseudo, un bcrypt, une adresse e-mail et l'historique de jeu de
+personnes réelles ; la suppression existe désormais, la page qui l'explique non.
+C'est de la rédaction, pas du code.
 
 S'y raccroche depuis le §2.7 : **un joueur anonyme garde la redonne gratuite**,
 et il n'y a rien à corriger côté reprise — sans compte, aucune identité à
@@ -148,34 +191,58 @@ sans explication. Un modèle Pydantic par type de message supprime toute une
 classe de plantages et documente le protocole au passage — c'est le même
 travail.
 
-### 2.5 Premiers tests Python et CI qui teste (2-3 j, dette)
+Le message `play` est **déjà** validé depuis le §4.5, mais pour une autre raison
+(la légalité du coup, pas le type du champ) et à la main. C'est le modèle de ce
+qu'il faut généraliser : refuser, le dire au journal, renvoyer la position, et
+surtout ne pas tomber. Les deux tests `TestCoupIllegal` de `test_ws_play.py`
+couvrent déjà « une action absurde ne tue pas la socket » pour ce message-là.
 
-Le noyau Rust est bien testé ; la couche web (6 600 lignes, et la logique la
+### 2.5 Premiers tests Python et CI qui teste — FAIT (2026-08-01)
+
+Le noyau Rust était bien testé ; la couche web (6 600 lignes, et la logique la
 plus retorse du projet : reprise de partie, pilote de salon, course du dernier
-pli dans `_wait_human_card`) n'a **aucun test**. Et la CI se limite à
-`publish.yml` : ni test, ni lint, ni typage au push, aucune configuration
-ruff/mypy/pytest dans `pyproject.toml`.
+pli dans `_wait_human_card`) n'avait **aucun test**, et la CI se limitait à
+`publish.yml`.
 
-Par où commencer, dans l'ordre du risque : `match_state.Match` (record
-idempotent, `finished` à égalité), la reprise (`load_open_match` → `restore`,
-et le fait que le score marqué ne se reconstitue pas en sommant les donnes), le
-passe forcé, `pacing.resolve` dégradé.
+**Ce qui est en place** : `tests/` (142 tests, ~15 s), configuration pytest +
+ruff dans `pyproject.toml`, groupe de dépendances `test` séparé de `dev` (la CI
+n'installe ni torch ni scikit-learn), et `.github/workflows/ci.yml` — deux
+jobs, `cargo check` + `cargo test -p colver-core` d'un côté, ruff + pytest de
+l'autre, sur push et PR.
 
-Le §2.7 a déjà écrit ces tests, mais en scripts jetables — à reprendre tels
-quels comme premiers fichiers pytest. Ce qu'ils couvrent : (1) fidélité du
-rejeu, une donne coupée à 0/1/3/6/13/20/31 coups × 4 tirages × DouDou50 et
-Dédé, position et registres comparés terme à terme ; (2) `pending_deal` /
-`drop_deal`, isolation entre comptes, donne d'une partie contre donne isolée,
-donne terminale en base jamais close, journaux incohérents ; (3) un aller-retour
-complet sur le vrai WebSocket via `fastapi.testclient` — couper, revenir,
-reprendre, finir. Le (3) montre au passage l'outil qui manquait : **TestClient
-suffit à piloter le protocole WS de bout en bout**, sans serveur à lancer.
+Les fichiers, dans l'ordre du risque : `test_match_state` (record idempotent,
+`finished` à égalité, `restore` qui ne resomme pas les donnes),
+`test_play_session` (fidélité du rejeu), `test_resume` (`pending_deal` /
+`drop_deal`, isolation entre comptes, donne de partie contre donne isolée),
+`test_integrity` (§4.5), `test_account` (§2.1), `test_pacing`, `test_ws_play`.
 
-Piège rencontré en l'écrivant, qui vaut pour tout test de ce protocole : le
-premier `game_state` d'une donne **peut déjà être le tour du joueur** (le
-donneur est tiré au sort), donc un harnais qui lit un message de plus « pour
-attendre son tour » se bloque une fois sur quatre, sur une donne sur laquelle
-le serveur, lui, attend.
+Ce que l'écriture a appris, et qui vaut pour tout test de cette couche :
+
+- **`TestClient` suffit à piloter le protocole WebSocket de bout en bout**, sans
+  serveur à lancer — c'était l'outil qui manquait.
+- **Ne jamais lire « un message de plus »** : le donneur est tiré au sort, donc
+  le premier `game_state` peut déjà être le tour du joueur, et un harnais qui
+  compte les messages se bloque une fois sur quatre sur une donne où le serveur,
+  lui, attend. On lit jusqu'à une *condition* (`Table.until`).
+- **`game_id` n'accompagne que le premier `game_state`** d'une donne ; le relire
+  sur le dernier message reçu donne un `KeyError` dès que la main est passée.
+- **Neutraliser `pacing` dans les tests de protocole** (fixture `no_tempo`) : une
+  donne dure 16 à 42 s de pauses d'affichage, qui ont leurs propres tests
+  unitaires. Avec, `test_ws_play` tombe de plusieurs minutes à 2 s.
+- **Les objets de module fuient d'un test à l'autre.** `auth._AUTH_LIMITER` est
+  partagé par le processus et tous les tests sortent de la même « IP » : sans
+  remise à zéro (`RateLimiter.reset`, fixture autouse), le premier fichier qui
+  teste un échec d'authentification laisse le budget vide pour les suivants, et
+  leurs échecs n'ont plus rien à voir avec ce qu'ils prétendent tester.
+- **Fermer la connexion aiosqlite** en fin de fixture : oubliée, elle laisse un
+  thread vivant et le processus de test ne rend jamais la main.
+- Les modèles ne se téléchargent pas (`conftest` neutralise les `download_*`
+  avant tout import) : la suite tourne sans poids, bots repliés sur les règles
+  du moteur. Aucun test ne doit dépendre d'un modèle.
+
+**Pas encore fait** : mypy, et les warnings-as-errors — `server.py` utilise
+encore `@app.on_event`, déprécié par FastAPI, et la règle échouerait dès
+l'import sans rien apprendre de plus que ce que le §2.6 note déjà.
 
 ### 2.6 Déployer en fin de donne, pas au milieu (drain)
 
@@ -496,64 +563,72 @@ Pièges :
   état/coup — vérifier que les vues l'ignorent proprement si elles ne le
   connaissent pas.
 
-### 4.5 Donnes enregistrées dont les `actions` ne collent pas aux `hands` (détecté 2026-08-01)
+### 4.5 Donnes enregistrées dont les `actions` ne collent pas aux `hands` — FAIT (2026-08-01), cause comprise
 
-**2 des 17 donnes terminées de la base de dev sont incohérentes** : en les
-rejouant, certaines cartes sortent deux fois et d'autres jamais. Exemple `i2aj`
-— le siège 2 joue le 7♠ au 4ᵉ pli *et* au 5ᵉ, tandis que la Dame et l'As de
-carreau ne sont jamais joués ; total cartes 149 au lieu de 152. `e96z` a trois
-doublons.
+Des donnes terminées décrivent une partie impossible : en les rejouant,
+certaines cartes sortent deux fois et d'autres jamais.
 
 `env.step()` **ne valide pas la légalité** — c'est le comportement attendu d'un
 moteur RL, où le contrôle est à la charge de l'appelant — donc le moteur avale
 une carte absente de la main : elle s'ajoute au pli sans être retirée nulle
 part. La donne se rejoue jusqu'au bout, sans erreur, avec un décompte faux.
 
-**Conséquences aujourd'hui** : Rejouer affiche ces donnes avec des cartes en
-double ; leur analyse DD et leur revue d'agents partent d'un état impossible ;
-`games.points_ns/ew` ne correspond pas aux plis. La page de comptage
-(`/problemes/compter`) les rejette et journalise, c'est elle qui les a
-trouvées. Depuis le §2.7, la reprise d'une donne les rejette aussi, et plus tôt
-— action par action plutôt que sur le total des plis — et efface la ligne
-(`drop_deal`) plutôt que de reprendre une donne fausse.
+**La cause était le gestionnaire `play` du solo** (`server.py`). Il prenait
+`data["action"]` sur la socket et ne vérifiait que deux choses — donne non
+terminale, et c'est bien le tour de ce siège — jamais que le coup existait. Le
+salon validait déjà (`rooms._await_human_action`) ; le solo, non. Un client
+modifié, un double-clic mal tombé ou un message malformé suffisait donc à écrire
+une donne fausse.
 
-**Reproduire** :
+Ce qui l'a confirmé : le scan d'intégrité trouve **2 donnes** dans la base de
+dev (`tpzx`, `x2to`, toutes deux du 2026-07-24, `mode = 'play'`), et dans les
+deux cas la carte illégale est jouée par le **siège 2 — le siège humain en
+solo**. C'est la signature exacte de ce chemin.
+
+**Le correctif, en deux moitiés du même prédicat** :
+
+- **En écriture** : `game_manager.check_legal`, appelé depuis
+  `PlaySession._record_action` — le chemin unique par lequel une action entre
+  dans une session. Il couvre donc le clic humain, le coup de bot et le rejeu
+  d'une donne reprise, en solo comme en salon, plus `WatchSession.apply_action`.
+  `replay` (§2.7) n'a plus son test à lui : il n'ajoute que le rang du coup
+  fautif. Le gestionnaire `play` refuse et renvoie la position (`_play_state_msg`)
+  au lieu de laisser tomber la socket.
+- **En lecture** : `integrity.check_deal` / `integrity.scan`, migration v10
+  (`games.invalid`, `checked_at`, `invalid_reason`). Le scan tourne au démarrage
+  **avant** le backfill Elo (une donne irrejouable ne doit pas être notée ;
+  en parallèle la course se jouerait à la milliseconde). Chaque ligne n'est
+  examinée qu'une fois (`checked_at`), donc le coût est borné par les donnes
+  terminées depuis le dernier lancement. `/health` publie `invalid_deals`.
+
+**Le prédicat, et pourquoi il suffit** : une donne est saine si, partant de
+`hands` et `dealer`, chaque action est légale à son tour et la dernière rend la
+donne terminale. Un journal entièrement légal ne peut ni jouer deux fois la même
+carte ni en oublier une — les 152 points et le dix de der tombent juste par
+construction. C'est **plus strict** que l'assertion de `CountingSession._payload`
+(somme des plis = 152) qui avait donné l'alerte : celle-ci rendait 0 anomalie sur
+les mêmes 19 donnes où la légalité en trouve 2. Le symptôme était les points ; la
+cause est la légalité, et elle nomme le coup fautif.
+
+**On marque, on n'efface pas** : une donne fausse est un incident, et l'effacer
+effacerait la trace avec elle. `invalid = 1` la retire de `get_game`,
+`list_games`, `random_user_game`, des statistiques et de l'Elo, et purge ses
+analyses en cache (calculées depuis un état impossible — même raison qu'à la
+migration v9). `db.list_invalid_games` les rend à l'exploitant.
+
+**Reste, mineur** : les donnes fausses notées *avant* ce correctif gardent leur
+ligne d'`elo_history`. L'Elo est séquentiel, le défaire demanderait un recalcul
+complet pour un effet de deux donnes.
+
+**Reproduire** (le scan le fait maintenant tout seul au démarrage) :
 
 ```bash
 uv run python -c "
-import sys, json, sqlite3, os
-sys.path.insert(0, 'python')
-from colver.web.game_manager import CountingSession
-db = sqlite3.connect(os.path.expanduser('~/.local/share/colver/colver.db'))
-db.row_factory = sqlite3.Row
-for r in db.execute(\"SELECT * FROM games WHERE is_complete=1 AND mode IN ('play','multi')\"):
-    g = dict(r)
-    for k in ('hands', 'actions', 'agents'): g[k] = json.loads(g[k])
-    try:
-        CountingSession().from_game(g)
-    except Exception as e:
-        print(g['id'], g['mode'], '->', e)
+import asyncio, sys; sys.path.insert(0, 'python')
+from colver.web import database as db, integrity
+async def m():
+    await db.get_db()
+    print(await integrity.scan())
+asyncio.run(m())
 "
 ```
-
-L'assertion qui les attrape est dans `CountingSession._payload` : la somme des
-points cartes des plis doit faire 152, et le dix de der lu sur
-`env.get_points()` doit valoir 10 ou 100.
-
-**À trancher** :
-
-1. **D'où vient la corruption** — c'est la vraie question, et elle est ouverte.
-   Un `hands` réécrit après coup ? une donne rejouée sur un `Env` mal remis à
-   zéro ? un `redeal_with_hands` en cours de partie ? Les deux donnes sont en
-   `mode = 'play'` ; regarder leur `created_at` et ce qui tournait alors. Tant
-   que la cause n'est pas connue, rien ne dit que ça ne se reproduit plus.
-2. **Valider à l'écriture** plutôt qu'à la lecture : refuser une action absente
-   des cartes restantes du joueur avant de l'écrire dans `games.actions`
-   (`PlaySession._record_action`, `rooms.py`). Un coup illégal doit être une
-   erreur bruyante, pas une ligne en base. Le prédicat est déjà écrit :
-   `PlaySession.replay` (§2.7) teste `action in env.legal_actions()` avant
-   chaque coup — il suffit de le remonter dans `_record_action`, où il vaudra
-   pour le jeu comme pour le rejeu.
-3. **Que faire des lignes existantes** — les marquer plutôt que les effacer
-   (une colonne, ou `is_complete = 0`), pour qu'elles cessent d'alimenter
-   Rejouer, l'analyse et les listings sans perdre la trace de l'incident.
