@@ -4,8 +4,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
+from datetime import datetime, timezone
 from html import escape as _html_escape
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
@@ -448,7 +451,86 @@ async def api_get_game(game_id: str):
 
 @app.on_event("startup")
 async def _elo_backfill():
-    asyncio.create_task(elo.backfill())
+    _spawn(elo.backfill())
+
+
+# ===== Sauvegarde périodique de la base =====
+
+# `colver.db` n'existe qu'en un exemplaire (comptes, historique, Elo, analyses
+# en cache) : un VACUUM INTO périodique en copie un instantané cohérent hors
+# du volume. COLVER_BACKUP_DIR vide ou "0" → désactivé ; non défini → un
+# sous-répertoire backups/ à côté du fichier .db (en Docker, le compose le
+# pointe hors du volume de la base — c'est tout l'intérêt).
+_backup_env = os.environ.get("COLVER_BACKUP_DIR")
+if _backup_env in ("", "0"):
+    BACKUP_DIR = None
+else:
+    BACKUP_DIR = _backup_env or os.path.join(
+        os.path.dirname(db.DB_PATH), "backups")
+BACKUP_INTERVAL_H = float(os.environ.get("COLVER_BACKUP_INTERVAL_H", "24"))
+BACKUP_KEEP = int(os.environ.get("COLVER_BACKUP_KEEP", "14"))
+
+
+def _backup_due_delay():
+    """Secondes avant le prochain backup dû, d'après la copie la plus récente.
+
+    Sans ce délai, chaque redémarrage écrirait un instantané : une rafale de
+    déploiements (ou un crash-loop sous `restart: unless-stopped`) remplacerait
+    les 14 sauvegardes retenues par autant de copies de la même heure — la
+    fenêtre de rétention passerait de 14 jours à quelques minutes, précisément
+    le jour où on casse quelque chose.
+    """
+    try:
+        stamps = [
+            datetime.strptime(p.name, "colver-%Y%m%d-%H%M%S.db")
+            for p in Path(BACKUP_DIR).glob("colver-*.db")
+            if re.fullmatch(r"colver-\d{8}-\d{6}\.db", p.name)
+        ]
+        if not stamps:
+            return 0.0
+        age = datetime.now(timezone.utc) - max(stamps).replace(tzinfo=timezone.utc)
+        return max(0.0, BACKUP_INTERVAL_H * 3600 - age.total_seconds())
+    except Exception:
+        return 0.0
+
+
+async def _backup_loop():
+    delay = await asyncio.to_thread(_backup_due_delay)
+    if delay > 0:
+        logger.info("Dernier backup récent, prochain dans %.1f h", delay / 3600)
+        await asyncio.sleep(delay)
+    while True:
+        try:
+            # Les migrations d'abord : `get_db()` ne rend la main qu'une fois
+            # la base migrée (verrou `_db_lock`), sinon le backup peut capturer
+            # un état mi-migration impossible à restaurer proprement. Dans le
+            # try : une base indisponible au boot ne doit pas tuer la tâche
+            # pour toujours, juste faire rater ce tour-ci.
+            await db.get_db()
+            path = await asyncio.to_thread(
+                db.backup_db, BACKUP_DIR, BACKUP_KEEP)
+            logger.info("Database backed up to %s", path)
+        except Exception:
+            logger.exception("Database backup failed")
+        await asyncio.sleep(BACKUP_INTERVAL_H * 3600)
+
+
+# L'event loop ne tient que des références faibles sur les tâches : sans ce
+# set, une tâche de fond peut être ramassée en plein vol.
+_BG_TASKS = set()
+
+
+def _spawn(coro):
+    t = asyncio.create_task(coro)
+    _BG_TASKS.add(t)
+    t.add_done_callback(_BG_TASKS.discard)
+    return t
+
+
+@app.on_event("startup")
+async def _db_backup():
+    if BACKUP_DIR and BACKUP_INTERVAL_H > 0:
+        _spawn(_backup_loop())
 
 
 @app.get("/api/leaderboard")

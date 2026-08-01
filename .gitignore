@@ -45,3 +45,6 @@ retro_evals.txt
 # Tournament results
 results/
 .claude/
+
+# Sauvegardes de la base web (bind mount docker-compose)
+backups/

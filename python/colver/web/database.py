@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import random
+import re
+import sqlite3
 import string
 from datetime import datetime, timezone
 from pathlib import Path
@@ -203,6 +205,51 @@ async def get_db():
         _db = conn
         logger.info("Connected to %s", DB_PATH)
     return _db
+
+
+def backup_db(dest_dir, keep=14):
+    """Copie un instantané de la base dans `dest_dir`, avec rétention.
+
+    Synchrone, à lancer via `asyncio.to_thread`. Le VACUUM INTO tourne sur une
+    connexion sqlite3 dédiée, pas sur `_db` : la connexion partagée sérialise
+    tout par un seul thread aiosqlite, et une copie complète y mettrait chaque
+    écriture de partie en file d'attente le temps du backup. VACUUM INTO ne
+    fait que lire la source, et en WAL un lecteur ne bloque jamais les
+    écrivains — le serveur continue de jouer pendant la copie.
+
+    L'appelant doit avoir attendu `get_db()` avant le premier backup : elle ne
+    rend la main qu'une fois les migrations passées. Sinon l'instantané peut
+    capturer un état mi-migration (script committé, `user_version` pas encore
+    bumpé — `executescript` committe implicitement) que la restauration
+    re-migrerait, et les migrations v2+ ne sont pas idempotentes.
+    """
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    dest = dest_dir / f"colver-{stamp}.db"
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # VACUUM INTO échoue si la cible existe ; le nom horodaté l'évite, et
+        # un échec (loggé par l'appelant) vaut mieux qu'un écrasement. Un
+        # VACUUM interrompu laisse un fichier partiel — c'est à l'application
+        # de le supprimer (doc SQLite) ; sans ça, la rétention compterait des
+        # cadavres comme des sauvegardes et évincerait les vraies.
+        try:
+            conn.execute("VACUUM INTO ?", (str(dest),))
+        except BaseException:
+            dest.unlink(missing_ok=True)
+            raise
+    finally:
+        conn.close()
+    if keep > 0:
+        # Ne tourner que sur nos propres fichiers : une copie posée à la main
+        # par un opérateur (`colver-avant-restauration.db`) ne doit ni compter
+        # dans la rétention ni disparaître.
+        ours = [p for p in dest_dir.glob("colver-*.db")
+                if re.fullmatch(r"colver-\d{8}-\d{6}\.db", p.name)]
+        for old in sorted(ours)[:-keep]:
+            old.unlink()
+    return dest
 
 
 def _now():
