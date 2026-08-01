@@ -23,6 +23,12 @@ services:
       # IP de LAN en dur enverrait les requêtes de n'importe quel cloneur
       # vers une machine au hasard de *son* réseau.
       - COLVER_PLAYGEN_GPU_URL=${COLVER_PLAYGEN_GPU_URL:-}
+      # Ce déploiement *attend* un sidecar : sans ce drapeau, « pas de playgen »
+      # est indiscernable d'un choix (une machine de dev sans GPU est normale),
+      # et /health n'a aucune raison de s'en émouvoir. Avec, un sidecar absent
+      # ou injoignable passe le service en `degraded`. La prod a tourné plus
+      # d'un jour sur des mondes uniformes faute de cette distinction.
+      - COLVER_REQUIRE_SIDECAR=${COLVER_REQUIRE_SIDECAR:-}
       # IP (ou CIDR) du reverse-proxy autorisé à poser X-Forwarded-* : en
       # Docker, Caddy n'arrive pas en 127.0.0.1 mais par la passerelle du
       # bridge. Sans ça, toutes les limites par IP retombent sur l'IP du proxy.
@@ -31,6 +37,22 @@ services:
       # en trusted_proxies) et ajouter ces plages ici — sinon les limites par
       # IP comptent par edge Cloudflare, partagé entre visiteurs.
       - COLVER_FORWARDED_ALLOW_IPS=${COLVER_FORWARDED_ALLOW_IPS:-172.16.0.0/12}
+      # Origine publique : c'est elle qui fabrique les liens de réinitialisation
+      # de mot de passe, **jamais** `request.url` — derrière Cloudflare puis
+      # Caddy, ce serait `localhost:8000` et le lien ne mènerait nulle part.
+      - COLVER_PUBLIC_URL=${COLVER_PUBLIC_URL:-https://colver.net}
+      # Envoi de courriel (réinitialisation de mot de passe). Valeurs dans le
+      # `.env` du déploiement, comme l'URL du sidecar — une clé SMTP n'a rien à
+      # faire dans un dépôt public. Vide = pas d'envoi : `mail.send` journalise
+      # alors le lien au lieu de l'expédier, et la demande aboutit quand même
+      # (cf. `web/mail.py`), ce qui garde la fonctionnalité utilisable en
+      # développement et rend une vraie panne d'envoi visible.
+      - COLVER_SMTP_HOST=${COLVER_SMTP_HOST:-}
+      - COLVER_SMTP_PORT=${COLVER_SMTP_PORT:-587}
+      - COLVER_SMTP_USER=${COLVER_SMTP_USER:-}
+      - COLVER_SMTP_PASSWORD=${COLVER_SMTP_PASSWORD:-}
+      - COLVER_SMTP_TLS=${COLVER_SMTP_TLS:-starttls}
+      - COLVER_MAIL_FROM=${COLVER_MAIL_FROM:-}
     restart: unless-stopped
 
 volumes:
