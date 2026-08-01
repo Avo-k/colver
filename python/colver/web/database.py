@@ -174,6 +174,22 @@ MIGRATIONS = [
     DELETE FROM agent_review WHERE game_id IN
         (SELECT id FROM games WHERE is_complete = 0);
     """,
+    # v10 — mise en quarantaine des donnes dont le journal ne se rejoue pas.
+    # Des donnes enregistrées décrivent une partie impossible (une carte jouée
+    # deux fois, une autre jamais) : `env.step()` ne valide pas la légalité, et
+    # le gestionnaire `play` du solo lui passait l'action reçue telle quelle.
+    # Le trou est bouché en écriture (`game_manager.check_legal`) ; ces deux
+    # colonnes servent à écarter ce qui est déjà là. `checked_at` dit qu'une
+    # ligne a été examinée (donc chacune ne l'est qu'une fois, cf.
+    # `integrity.scan`), `invalid` ce que l'examen a conclu. On marque au lieu
+    # d'effacer : une donne fausse est un incident, et sa trace vaut mieux que
+    # sa disparition.
+    """
+    ALTER TABLE games ADD COLUMN invalid INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE games ADD COLUMN checked_at TEXT;
+    ALTER TABLE games ADD COLUMN invalid_reason TEXT;
+    CREATE INDEX idx_games_unchecked ON games(checked_at) WHERE checked_at IS NULL;
+    """,
 ]
 
 
@@ -585,7 +601,41 @@ async def get_match(match_id):
     return match
 
 
-async def get_game(game_id, include_incomplete=False):
+async def mark_game_checked(game_id, reason=None):
+    """Consigner le verdict d'`integrity.check_deal` sur une donne.
+
+    Écrit toujours `checked_at`, y compris quand la donne est saine : c'est lui
+    qui empêche de la réexaminer à chaque démarrage. Une donne écartée voit ses
+    analyses en cache partir avec elle — elles ont été calculées depuis un état
+    impossible, et `get_or_compute` sert le cache avant de relire la donne (même
+    raison qu'à la migration v9).
+    """
+    db = await get_db()
+    await db.execute(
+        "UPDATE games SET checked_at = ?, invalid = ?, invalid_reason = ? "
+        "WHERE id = ?",
+        (_now(), 0 if reason is None else 1, reason, game_id),
+    )
+    if reason is not None:
+        await db.execute("DELETE FROM analysis WHERE game_id = ?", (game_id,))
+        await db.execute("DELETE FROM agent_review WHERE game_id = ?", (game_id,))
+    await db.commit()
+
+
+async def list_invalid_games(limit=100):
+    """Les donnes écartées, pour l'exploitant — rien ne les montre ailleurs."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT id, mode, created_at, checked_at, invalid_reason FROM games "
+        "WHERE invalid = 1 ORDER BY created_at DESC LIMIT ?", (limit,))
+    return [
+        {"id": r[0], "mode": r[1], "created_at": r[2],
+         "checked_at": r[3], "reason": r[4]}
+        for r in rows
+    ]
+
+
+async def get_game(game_id, include_incomplete=False, include_invalid=False):
     """Une donne enregistrée — par défaut, seulement si elle est terminée.
 
     Une ligne `games` porte les quatre mains en clair (`hands`), et son
@@ -598,9 +648,17 @@ async def get_game(game_id, include_incomplete=False):
     besoin d'une donne en cours (rapport de bug, donne personnalisée à
     regarder) le disent avec `include_incomplete=True` — à charge pour eux
     de n'en rien divulguer.
+
+    Une donne écartée (`invalid = 1`, cf. `integrity`) n'est pas rendue non
+    plus : son journal ne décrit pas une partie jouable, donc Rejouer y montre
+    des cartes en double et son analyse part d'un état impossible. Seul le scan
+    d'intégrité lui-même passe outre (`include_invalid=True`), pour pouvoir la
+    relire.
     """
     db = await get_db()
     where = "" if include_incomplete else " AND is_complete = 1"
+    if not include_invalid:
+        where += " AND invalid = 0"
     rows = await db.execute_fetchall(
         f"SELECT * FROM games WHERE id = ?{where}", (game_id,))
     if not rows:
@@ -668,7 +726,7 @@ async def random_user_game(user_id, exclude=()):
     db = await get_db()
     exclude = [str(g) for g in list(exclude)[:20]]
     holes = ",".join("?" * len(exclude))
-    where = ("WHERE mode IN ('play', 'multi') AND is_complete = 1"
+    where = ("WHERE mode IN ('play', 'multi') AND is_complete = 1 AND invalid = 0"
              " AND (user_id = ? OR id IN"
              " (SELECT game_id FROM game_players WHERE user_id = ?))")
     params = [user_id, user_id]
@@ -684,7 +742,7 @@ async def random_user_game(user_id, exclude=()):
 
 async def list_games(limit=50, offset=0, user_id=None):
     db = await get_db()
-    where = "WHERE mode IN ('play', 'multi') AND is_complete = 1"
+    where = "WHERE mode IN ('play', 'multi') AND is_complete = 1 AND invalid = 0"
     seat_col = "human_seat AS user_seat, NULL AS elo_delta"
     params = []
     if user_id is not None:
@@ -737,14 +795,15 @@ async def user_game_stats(user_id):
                           OR (human_seat % 2 = 1 AND points_ew > points_ns)
                    THEN 1 ELSE 0 END AS win
             FROM games
-            WHERE mode = 'play' AND is_complete = 1 AND user_id = ?
+            WHERE mode = 'play' AND is_complete = 1 AND invalid = 0 AND user_id = ?
                   AND human_seat IS NOT NULL
             UNION ALL
             SELECT CASE WHEN (gp.seat % 2 = 0 AND g.points_ns > g.points_ew)
                           OR (gp.seat % 2 = 1 AND g.points_ew > g.points_ns)
                    THEN 1 ELSE 0 END
             FROM games g JOIN game_players gp ON gp.game_id = g.id
-            WHERE g.mode = 'multi' AND g.is_complete = 1 AND gp.user_id = ?
+            WHERE g.mode = 'multi' AND g.is_complete = 1 AND g.invalid = 0
+                  AND gp.user_id = ?
         )
         """,
         (user_id, user_id),

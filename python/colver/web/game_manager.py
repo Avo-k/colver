@@ -18,6 +18,48 @@ logger = logging.getLogger(__name__)
 BID_PASS = 0
 
 
+class IllegalAction(ValueError):
+    """Un coup que le moteur n'aurait pas accepté — refusé avant d'entrer.
+
+    Sous-classe de `ValueError` : les appelants qui attrapaient déjà celle-ci
+    (la reprise d'une donne, cf. `PlaySession.replay`) n'ont rien à changer.
+    """
+
+
+def check_legal(env, action):
+    """Le garde-fou de tout ce qui entre dans une session. Rend l'action.
+
+    **`env.step()` ne valide pas** — c'est le contrat d'un moteur RL, où le
+    contrôle est à la charge de l'appelant — donc une carte absente de la main
+    est avalée sans erreur : elle s'ajoute au pli sans être retirée nulle part,
+    la donne se joue jusqu'au bout, et son journal décrit une donne impossible
+    (une carte deux fois, une autre jamais, 149 points cartes au lieu de 152).
+
+    Ce n'est pas une hypothèse : des donnes dans cet état existent en base, et
+    la page de comptage les a trouvées avant qu'on sache d'où elles venaient
+    (cf. `docs/web_todo.md` §4.5). La cause était ici — le gestionnaire `play`
+    du solo prend `data["action"]` sur la socket et ne vérifiait que le tour du
+    joueur, jamais la légalité du coup. Un client modifié, un double-clic mal
+    tombé ou un message malformé suffisait donc à écrire une donne fausse.
+
+    D'où la place de ce test : sur le chemin unique par lequel une action entre
+    dans une session (`PlaySession._record_action`), donc valable pour le clic
+    humain, le coup de bot et le rejeu d'une donne reprise, en solo comme en
+    salon. Un coup illégal doit être une erreur bruyante, jamais une ligne en
+    base.
+    """
+    action = int(action)
+    if env.is_terminal():
+        raise IllegalAction(f"donne terminée, action {action} refusée")
+    if action not in list(env.legal_actions()):
+        phase = int(env.phase())
+        raise IllegalAction(
+            f"action {action} ({colver.Env.action_name(action, phase)}) illégale "
+            f"pour le siège {int(env.current_player())} "
+            f"(phase {phase}, cfn {env.to_cfn()})")
+    return action
+
+
 def only_pass_is_legal(env) -> bool:
     """Passing is the current player's only legal bid — nothing to decide.
 
@@ -364,8 +406,11 @@ class PlaySession(TrickTracker):
         """Jouer un coup et en tenir tous les registres — sans rendre d'état.
 
         C'est le seul chemin par lequel une action entre dans la session, qu'elle
-        vienne d'un clic, d'un bot ou du journal d'une donne reprise.
+        vienne d'un clic, d'un bot ou du journal d'une donne reprise. C'est donc
+        ici, et une seule fois, que la légalité se vérifie (`check_legal`) : en
+        aval l'action part en base, et le moteur, lui, ne dira rien.
         """
+        action = check_legal(self.env, action)
         player = self.env.current_player()
         phase = self.env.phase()
         belote_before = list(self.env.get_belote())
@@ -398,12 +443,11 @@ class PlaySession(TrickTracker):
         derrière un état qui n'est pas le leur. L'appelant retombe alors sur une
         donne neuve.
 
-        Le test de légalité n'est pas décoratif : **`env.step()` ne valide pas**
-        (c'est le contrat d'un moteur RL, le contrôle est à l'appelant), donc
-        sans lui une carte absente de la main serait avalée sans erreur et la
-        donne se rejouerait jusqu'au bout avec un décompte faux. Des donnes
-        enregistrées dans cet état existent bel et bien, cause inconnue — cf.
-        `docs/web_todo.md` §4.5.
+        Le test de légalité vit désormais dans `_record_action` (`check_legal`),
+        donc il vaut pour le rejeu comme pour le jeu — c'est ce qui empêche
+        d'écrire en base la donne fausse que ce rejeu, lui, se contentait de
+        refuser. On n'ajoute ici que le rang du coup fautif, que seul le rejeu
+        connaît.
 
         Deux réserves sur ce que ce garde-fou couvre. Il attrape ce qui ne se
         joue pas, pas tout désaccord : un journal amputé d'un coup *au milieu*
@@ -415,10 +459,10 @@ class PlaySession(TrickTracker):
         """
         for entry in actions:
             action = int(entry["action"] if isinstance(entry, dict) else entry)
-            if self.env.is_terminal() or action not in list(self.env.legal_actions()):
-                raise ValueError(
-                    f"action {action} illégale au coup {len(self.history) + 1}")
-            self._record_action(action)
+            try:
+                self._record_action(action)
+            except IllegalAction as e:
+                raise IllegalAction(f"coup {len(self.history) + 1} : {e}") from e
         # Le client reçoit une position, pas un coup : ni pli à faire clignoter,
         # ni belote à annoncer une seconde fois.
         self.trick_just_completed = False
@@ -579,6 +623,11 @@ class WatchSession(TrickTracker):
 
     def apply_action(self, action):
         """Apply an action, track trick completion and history."""
+        # Watch mode writes to `games.actions` too, donc le même garde-fou
+        # qu'en jeu (`check_legal`) : les coups viennent de bots, mais rien dans
+        # le type ne le dit, et une donne fausse enregistrée ici se rejoue et
+        # s'analyse comme les autres.
+        action = check_legal(self.env, action)
         player = int(self.env.current_player())
         phase = int(self.env.phase())
         belote_before = list(self.env.get_belote())

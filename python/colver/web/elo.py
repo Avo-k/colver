@@ -145,7 +145,8 @@ async def backfill():
     """Rate every completed game not yet in elo_history, oldest first."""
     conn = await db.get_db()
     rows = await conn.execute_fetchall(
-        "SELECT id FROM games WHERE is_complete = 1 AND mode IN ('play', 'multi') "
+        "SELECT id FROM games WHERE is_complete = 1 AND invalid = 0 "
+        "AND mode IN ('play', 'multi') "
         "AND id NOT IN (SELECT DISTINCT game_id FROM elo_history) "
         "ORDER BY created_at",
     )

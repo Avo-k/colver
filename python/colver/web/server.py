@@ -14,12 +14,13 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, CountingSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, CountingSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot, check_legal, IllegalAction
 from colver.web import playgen_gpu as _playgen_gpu
 from colver.web import game_notation
 import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
+import colver.web.integrity as integrity
 import colver.web.rooms as rooms
 import colver.web.pacing as pacing
 import colver.web.match_state as match_state
@@ -410,16 +411,23 @@ async def health():
     fichier : l'ordre d'enregistrement des routes fait foi.
     """
     db_ok = True
+    # Donnes écartées par le scan d'intégrité : rien d'autre ne les montre (par
+    # construction — elles sont retirées de tous les listings), donc si le
+    # compteur remonte, c'est ici qu'on le verra.
+    invalid_deals = None
     try:
         conn = await db.get_db()
         cur = await conn.execute("SELECT 1")
         await cur.fetchone()
+        cur = await conn.execute("SELECT COUNT(*) FROM games WHERE invalid = 1")
+        invalid_deals = (await cur.fetchone())[0]
     except Exception:
         logger.exception("health : SELECT 1 en échec")
         db_ok = False
     payload = {
         "status": "ok" if db_ok else "degraded",
         "db": db_ok,
+        "invalid_deals": invalid_deals,
         "version": _colver_pkg.__version__,
         "uptime_s": round(time.monotonic() - _START_TIME, 1),
         "models": {
@@ -449,9 +457,26 @@ async def api_get_game(game_id: str):
     return JSONResponse(game)
 
 
+async def _check_then_rate():
+    """Écarter les donnes irrejouables, puis noter celles qui restent.
+
+    Dans cet ordre, et sur la même tâche : une donne dont le journal ne se
+    rejoue pas ne doit pas entrer dans l'Elo, et `elo.backfill` ne la voit
+    déjà plus une fois `invalid = 1` posé. En parallèle, la course se jouerait
+    à la milliseconde près. (Les donnes fausses notées *avant* ce correctif
+    gardent leur ligne d'`elo_history` : l'Elo est séquentiel, le défaire
+    coûterait un recalcul complet pour un effet de deux donnes.)
+    """
+    try:
+        await integrity.scan()
+    except Exception:
+        logger.exception("scan d'intégrité interrompu")
+    await elo.backfill()
+
+
 @app.on_event("startup")
 async def _elo_backfill():
-    _spawn(elo.backfill())
+    _spawn(_check_then_rate())
 
 
 # ===== Sauvegarde périodique de la base =====
@@ -1790,6 +1815,19 @@ async def _websocket_session(ws: WebSocket):
                 # après que le serveur ait joué la carte à notre place.
                 if (play_session.env.is_terminal()
                         or play_session.env.current_player() != human_seat):
+                    continue
+
+                # Le siège est le bon ; reste à savoir si le coup existe. C'était
+                # le trou : `data["action"]` partait tel quel en base et dans le
+                # moteur, qui ne valide pas (cf. `game_manager.check_legal`) —
+                # d'où des donnes enregistrées avec une carte jouée deux fois.
+                # Le refus est silencieux côté table (un renvoi d'état suffit à
+                # remettre le client d'aplomb) mais bruyant au journal.
+                try:
+                    action = check_legal(play_session.env, action)
+                except (IllegalAction, TypeError, ValueError) as e:
+                    logger.warning("coup refusé (donne %s) : %s", play_game_id, e)
+                    await ws.send_json(_play_state_msg())
                     continue
 
                 state = play_session.play_action(action)
