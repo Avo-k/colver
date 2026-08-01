@@ -13,6 +13,7 @@ import {
     detectTrickCompletion, animateTrickFlush
 } from './cards.js';
 import { setGameId as setBugReportGameId, openBugReport } from './bug-report.js';
+import { botLabel } from './agents.js';
 import { createSuitPicker } from './suits.js';
 import { renderAuctionTable, renderBidEntries, renderTrickHistory } from './panels.js';
 
@@ -132,7 +133,7 @@ export class GameTable {
         this.sendMove = opts.sendMove;
         this.localEchoBids = opts.localEchoBids !== false;
         this.resultButtons = opts.resultButtons || [];
-        this.seatNames = null;    // display-ordered [N,E,S,W] override
+        this.seatOccupants = null;   // display-ordered [N,E,S,O] : {name, bot}
         this._onKeyDown = (e) => {
             if (e.key === 'Escape' && this._auctionOpen) this.closeAuction();
         };
@@ -195,18 +196,40 @@ export class GameTable {
         document.removeEventListener('keydown', this._onKeyDown);
     }
 
+    /**
+     * Comment nommer un siège en toutes lettres — puces d'enchères, colonnes du
+     * rappel, « … réfléchit », gagnant d'un pli.
+     *
+     * Un bot est nommé par sa **position**, jamais par son nom : en salon les
+     * quatre sièges vides sont tenus par le même bot, et « Dédé 90♠ » puis
+     * « Dédé 110♥ » ne disaient pas s'il s'agissait du même joueur. La position
+     * est la seule chose qui les distingue, et c'est déjà ce que le solo
+     * affiche. Le nom du bot, lui, ne vit plus que sur l'étiquette du siège.
+     */
     playerName(seat) {
-        if (this.seatNames && this.seatNames[seat]) return this.seatNames[seat];
+        const who = this.seatOccupants && this.seatOccupants[seat];
+        if (who && !who.bot && who.name) return who.name;
         return SEAT_NAMES_FR[seat];
     }
 
-    setSeatLabels(names) {
-        // names: display-ordered [N, E, S, W]
-        this.seatNames = names;
+    /**
+     * `seats` : ordre d'affichage [N, E, S, O], entrées `{name, bot}` — même
+     * forme que `db.game_seat_names`. Un humain est nommé par son pseudo, qui
+     * n'indique pas où il est assis : d'où le « (Vous) » / « (Partenaire) »
+     * qui le raccroche à la table. Un bot est déjà nommé par sa position, donc
+     * le suffixe n'ajouterait rien — c'est le nom du bot qui vient en
+     * qualificatif, comme dans Rejouer (« NORD (DÉDÉ) »).
+     */
+    setSeatLabels(seats) {
+        this.seatOccupants = seats;
         const suffixes = ['(Partenaire)', '', '(Vous)', ''];
         for (let d = 0; d < 4; d++) {
             const el = document.getElementById(SEAT_LABEL_ELS[d]);
-            if (el && names[d]) el.textContent = `${names[d]} ${suffixes[d]}`.trim();
+            const who = seats && seats[d];
+            if (!el || !who || !who.name) continue;
+            el.textContent = who.bot
+                ? `${SEAT_NAMES_FR[d]} (${botLabel(who.name)})`
+                : `${who.name} ${suffixes[d]}`.trim();
         }
     }
 

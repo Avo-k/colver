@@ -227,13 +227,24 @@ class Room:
         return state
 
     def _seat_names(self, viewer_seat):
-        """Display-ordered labels: usernames for humans, bot names for bots."""
-        names = []
+        """Qui tient chaque siège, dans l'ordre d'affichage.
+
+        Quatre entrées `{"name", "bot"}`, même forme que `db.game_seat_names`
+        pour Rejouer : `bot` vrai, `name` porte alors la *clé* d'agent
+        (« dede », « doudou ») et c'est à l'affichage de la traduire. La liste
+        de chaînes d'avant ne distinguait pas les deux, or trois sièges tenus
+        par Dédé donnaient trois fois le même libellé — c'est le client qui
+        remplace le nom d'un bot par sa position pour les départager.
+        """
+        seats = []
         for d in range(4):
             p = _phys_seat(d, viewer_seat)
             uid = self.seats[p]
-            names.append(self.username(uid) if uid is not None else self.bot_type)
-        return names
+            if uid is None:
+                seats.append({"name": self.bot_type, "bot": True})
+            else:
+                seats.append({"name": self.username(uid), "bot": False})
+        return seats
 
     async def broadcast_game_state(self, snapshot=False, extra=None):
         for p, uid in enumerate(self.seats):

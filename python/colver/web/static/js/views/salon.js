@@ -201,9 +201,9 @@ function handleGameState(data) {
         show('salon-game');
         table.show();
     }
-    if (data.seat_names) {
-        table.setSeatLabels(data.seat_names.map(n => botLabel(n)));
-    }
+    // Entrées `{name, bot}` : c'est la table qui décide comment rendre un bot
+    // (par sa position) et un humain (par son pseudo).
+    if (data.seat_names) table.setSeatLabels(data.seat_names);
     table.handleGameState(data);
 }
 
