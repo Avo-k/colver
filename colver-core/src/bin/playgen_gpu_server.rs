@@ -1,6 +1,6 @@
 //! Sidecar d'inférence GPU playgen pour la prod colver.
 //!
-//! Tourne sur une machine avec CUDA (la 3090 de l'hôte moxxi) ; le web (VM
+//! Tourne sur une machine avec CUDA (la 3090 de l'hôte) ; le web (VM
 //! Docker sans GPU) l'appelle en HTTP et retombe sur l'inférence CPU locale
 //! (PyO3) en cas d'erreur ou de timeout — le chemin CPU produit des mondes de
 //! la même distribution (forward validé bit-à-bit), le sidecar n'est qu'un

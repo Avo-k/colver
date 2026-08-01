@@ -21,7 +21,7 @@
 //!
 //! Usage:
 //!   cargo run --bin train_bid_cont --features dmc_train --release -- \
-//!     --labels data/bid_labels3/shard_local.ql --labels data/bid_labels3/shard_moxxi.ql \
+//!     --labels data/bid_labels3/shard_local.ql --labels data/bid_labels3/shard_remote.ql \
 //!     --games data/training/labelcorpus_120k.bin --out-dir models/bid_v8_cont --epochs 6
 
 use std::fs;

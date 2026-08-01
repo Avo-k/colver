@@ -267,10 +267,10 @@ the **analysis** pages; it no longer feeds IS-DD.
 > 2026-07-24 while every benchmark used `playgen_v2_final.bin` — the site was
 > playing with a different world sampler than the one being measured. Both are
 > now on `playgen_v2_final.bin` (md5 `ebffd896…`, the v0.8.0 release asset).
-> Deployment details: `moxxi/CONTEXT.md` § *Sidecar playgen GPU*.
+> Deployment details live in the deployment's own private runbook, not here.
 
 ## Next steps
-- [ ] Playgen v2: 10M-game corpus (generating on moxxi), bigger model
+- [ ] Playgen v2: 10M-game corpus (generating on the GPU host), bigger model
       (d=384 L=6?), COLVGM01 merge tool for chunked corpora — better per-world
       quality could flip the time-budget verdict back
 - [ ] Faster inference if needed: explicit SIMD kernels, or distill to a
@@ -317,13 +317,13 @@ wiring unchanged: point `playgen_model` at a COLVPG02 file.
 preds, 0 skipped, 0 false exclusions; perm-equivariance test (tokenizing
 under perm == permuting tokens).
 
-**Training (running):** moxxi RTX 3090 (CUDA 13.3 via
+**Training (running):** remote RTX 3090 (CUDA 13.3 via
 `CUDARC_CUDA_VERSION=13010` override — cudarc 0.19.2 caps at 13.1), corpus
-9M games (8M moxxi seeds 101-108 + 1M local seed 7). d=384 L=6 H=8 =
+9M games (8M remote seeds 101-108 + 1M local seed 7). d=384 L=6 H=8 =
 10.74M params, batch 192 (256 OOMs at 24GB — manual-softmax activations ×
 L=122²), lr 2e-4, warmup 2000, 160K steps ≈ 30.7M game-samples (same budget
 as v1's 60K×512). ~2.2 steps/s ≈ 20h. Checkpoints:
-`moxxi:~/playgen/models/playgen_v2/`, log `~/playgen/logs/train_v2.log`.
+`~/playgen/models/playgen_v2/` on the GPU host, log `~/playgen/logs/train_v2.log`.
 Local 4090 smoke (300 steps): loss 2.20→1.49, play-acc 0.40, bid-acc 0.61.
 
 **After training:** rsync checkpoint → `export_playgen --v2 --d-model 384

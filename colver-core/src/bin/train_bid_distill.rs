@@ -17,7 +17,7 @@
 //!
 //! Usage:
 //!   cargo run --bin train_bid_distill --features dmc_train --release -- \
-//!     --labels data/bid_labels/shard_local.ql --labels data/bid_labels/shard_moxxi.ql \
+//!     --labels data/bid_labels/shard_local.ql --labels data/bid_labels/shard_remote.ql \
 //!     --games data/training/labelcorpus_120k.bin \
 //!     --init models/bid_v6_isdd_resume/bid_nn_final.safetensors \
 //!     --frozen models/bid_v6_isdd_resume/bid_nn_final.bin \

@@ -190,7 +190,7 @@ Pièges repérés :
 - **Timeout obligatoire**, et compter l'*activité*, pas la connexion : un onglet
   laissé ouvert sur une donne jamais jouée bloquerait le déploiement.
 - **Deux processus à coordonner** : le web et le sidecar playgen
-  (`playgen-gpu.service` sur moxxi). Redéployer le sidecar coupe IS-DD en pleine
+  (`playgen-gpu.service` sur l'hôte GPU). Redéployer le sidecar coupe IS-DD en pleine
   recherche — le drain du web ne protège rien si le sidecar tombe pendant.
 - Les tâches d'analyse (`agent_review` qui streame, `annonces_sim`,
   `card_analysis`) sont à **annuler**, pas à drainer : elles sont recalculables

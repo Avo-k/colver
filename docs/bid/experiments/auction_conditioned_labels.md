@@ -45,7 +45,7 @@ Belote is stored per world too: v6's reward credits Q+K of trump (+20) and it la
 on some team in ~23% of (world, suit) pairs, and it is a property of the sampled
 hands so it cannot be recovered from the points.
 
-**Data:** 107,990 bid positions (40k deals local + 14k on moxxi, 8 worlds each,
+**Data:** 107,990 bid positions (40k deals local + 14k on the GPU host, 8 worlds each,
 ~2h45 wall across both machines). Corpus: 120k fresh v6/DouDou50 games, seed 77001.
 
 ## Results
@@ -153,7 +153,7 @@ cargo run --bin gen_bid_labels --release --features parallel -- \
   --offset 0 --deals 40000 --per-deal 2 --worlds 8 --seed 4242
 
 cargo run --bin train_bid_distill --features dmc_train --release -- \
-  --labels data/bid_labels/shard_local.ql --labels data/bid_labels/shard_moxxi.ql \
+  --labels data/bid_labels/shard_local.ql --labels data/bid_labels/shard_remote.ql \
   --games data/training/labelcorpus_120k.bin \
   --out-dir models/bid_v7_pl --epochs 6 --lr 5e-5 --recenter-per-level
 
