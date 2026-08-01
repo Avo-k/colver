@@ -24,7 +24,10 @@ images/real_hands/
 *:Zone.Identifier
 
 # Secrets
+# `*.env` et pas seulement `.env` : les fichiers de secrets arrivent souvent
+# nommés par leur usage (smtp.env, deploy.env…), et le dépôt est public.
 .env
+*.env
 
 # Private strategy documents
 docs/enchere_cannes_roro.md
