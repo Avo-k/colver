@@ -8,7 +8,7 @@
 
 Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Moteur Rust avec bindings Python.
 
-**Demo en ligne : [colver.net](https://colver.net)** — tourne sur un Raspberry Pi.
+**Jouer en ligne : [colver.net](https://colver.net)** — un site public auto-heberge : parties solo ou multijoueur, comptes, classement et analyse.
 
 ## Caracteristiques
 
@@ -279,7 +279,7 @@ probs = analyst.marginals(env, n_worlds=50)
 
 ## Docker
 
-L'image Docker permet de deployer l'interface web sur n'importe quelle machine, y compris un Raspberry Pi (ARM64).
+L'image Docker permet de deployer l'interface web sur n'importe quelle machine, x86-64 ou ARM64.
 
 ```bash
 # Build et lancement
@@ -289,7 +289,7 @@ docker run -p 8000:8000 colver
 # Ou avec Docker Compose
 docker compose up -d
 
-# Cross-build pour Raspberry Pi (ARM64)
+# Cross-build pour ARM64
 docker buildx build --platform linux/arm64 -t colver .
 ```
 

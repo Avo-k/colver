@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?color=blue" alt="PyPI"></a>
   <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/pyversions/colver" alt="Python"></a>
-  <a href="https://colver.net/"><img src="https://img.shields.io/badge/demo-colver.net-green" alt="Live Demo"></a>
+  <a href="https://colver.net/"><img src="https://img.shields.io/badge/play-colver.net-green" alt="colver.net"></a>
   <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/pypi/l/colver" alt="License"></a>
 </p>
 
@@ -15,7 +15,7 @@
 
 Fast Belote Contree game environment for reinforcement learning. Rust core with Python bindings.
 
-**Live demo: [colver.net](https://colver.net)** — running on a Raspberry Pi.
+**Play online: [colver.net](https://colver.net)** — a self-hosted public site: solo or multiplayer games, accounts, ratings and analysis.
 
 ## Features
 
@@ -286,7 +286,7 @@ probs = analyst.marginals(env, n_worlds=50)
 
 ## Docker
 
-The Docker image lets you deploy the web interface on any machine, including a Raspberry Pi (ARM64).
+The Docker image lets you deploy the web interface on any machine, x86-64 or ARM64.
 
 ```bash
 # Build and run
@@ -296,7 +296,7 @@ docker run -p 8000:8000 colver
 # Or with Docker Compose
 docker compose up -d
 
-# Cross-build for Raspberry Pi (ARM64)
+# Cross-build for ARM64
 docker buildx build --platform linux/arm64 -t colver .
 ```
 
