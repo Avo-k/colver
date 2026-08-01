@@ -30,11 +30,14 @@ cannot pile searches onto the playgen sidecar.
 
 import asyncio
 import json
+import logging
 import os
 
 import colver
 import colver.web.agents as agents
 import colver.web.database as db
+
+logger = logging.getLogger(__name__)
 
 # v2 : même purge que ANALYSIS_VERSION v5 — invalide les revues calculées en
 # pleine donne avant le filtre `get_game` (2026-08-01).
@@ -56,7 +59,7 @@ def _build(kind, seat, **kw):
     try:
         return colver.Agent(agents.spec_for(kind, **kw), seat)
     except Exception as e:  # noqa: BLE001 — a missing model must not kill the review
-        print(f"[agent_review] {kind} seat {seat} unavailable: {e}")
+        logger.warning("%s seat %s unavailable: %s", kind, seat, e)
         return None
 
 
@@ -65,7 +68,7 @@ def _ask(agent, env):
     try:
         return int(agent.decide(env)["action"])
     except Exception as e:  # noqa: BLE001 — one bad move must not lose the review
-        print(f"[agent_review] decide failed: {e}")
+        logger.warning("decide failed: %s", e)
         return None
 
 

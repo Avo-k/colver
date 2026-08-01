@@ -36,6 +36,7 @@ Points are always reported **from Nord-Sud's side** (as the Oracle panel of the
 annonces page does); only the regret is oriented towards the acting team.
 """
 
+import logging
 import os
 import random
 import threading
@@ -43,6 +44,8 @@ import threading
 import colver
 import colver.web.agents as agents
 import colver.web.playgen_gpu as playgen_gpu
+
+logger = logging.getLogger(__name__)
 
 # Worlds solved by the Oracle, keyed by cards left in a hand. A solve gets
 # cheaper fast as the deal empties, so the count rises instead of the cost.
@@ -189,7 +192,7 @@ def opinions(dealer, initial_hands, actions, upto, seat,
         try:
             out[key] = int(agent.decide(env)["action"])
         except Exception as e:  # noqa: BLE001 — sidecar down must not lose the page
-            print(f"[card_analysis] {key} failed: {e}")
+            logger.warning("%s failed: %s", key, e)
     try:
         out["oracle"] = int(env.action_oracle_dd())
     except Exception:  # noqa: BLE001
@@ -201,7 +204,7 @@ def _agent(kind, seat, **kw):
     try:
         return colver.Agent(agents.spec_for(kind, **kw), seat)
     except Exception as e:  # noqa: BLE001 — a missing model must not kill the page
-        print(f"[card_analysis] {kind} seat {seat} unavailable: {e}")
+        logger.warning("%s seat %s unavailable: %s", kind, seat, e)
         return None
 
 
@@ -236,7 +239,7 @@ def sample_worlds(dealer, initial_hands, actions, upto, observer, n_worlds,
             if worlds:
                 return worlds, "playgen"
         except BaseException as e:  # noqa: BLE001 — a Rust panic is a BaseException
-            print(f"[card_analysis] local playgen failed: {e}")
+            logger.warning("local playgen failed: %s", e)
 
     return _uniform_worlds(dealer, initial_hands, actions, upto, observer, n_worlds), "uniform"
 

@@ -15,9 +15,12 @@ samplers in sync with the game — so `AgentTable.observe()` must be called
 before `env.step()` for **all** moves, human ones included.
 """
 
+import logging
 import os
 
 import colver
+
+logger = logging.getLogger(__name__)
 
 # Per-move IS-DD budget, in ms, when the session does not set one.
 DEFAULT_TIME_MS = 1000
@@ -114,7 +117,7 @@ class AgentTable:
                 self.agents[int(seat)] = colver.Agent(spec, int(seat))
             except Exception as e:  # noqa: BLE001 — a bad model must not kill the session
                 self.errors[int(seat)] = str(e)
-                print(f"[agents] seat {seat} ({kind}) unavailable: {e}")
+                logger.warning("seat %s (%s) unavailable: %s", seat, kind, e)
 
     def __bool__(self):
         return bool(self.agents)

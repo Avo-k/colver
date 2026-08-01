@@ -11,6 +11,7 @@ only at broadcast time.
 """
 
 import asyncio
+import logging
 import random
 import time
 
@@ -19,6 +20,8 @@ import colver.web.match_state as match_state
 import colver.web.pacing as pacing
 from colver.web.game_manager import (
     PlaySession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot)
+
+logger = logging.getLogger(__name__)
 
 ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
@@ -449,8 +452,8 @@ class Room:
             await self.broadcast_lobby()
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            print(f"[room {self.code}] driver crashed: {e!r}")
+        except Exception:
+            logger.exception("room %s : driver crashed", self.code)
             self.status = "finished"
             self.awaiting_next_deal = False
             for m in self.connected_members():

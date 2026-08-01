@@ -1,6 +1,8 @@
 """FastAPI server for Colver web UI."""
 
 import asyncio
+import json
+import logging
 import os
 import time
 
@@ -24,6 +26,41 @@ ROOT_PATH = os.environ.get("ROOT_PATH", "/")
 if not ROOT_PATH.endswith("/"):
     ROOT_PATH += "/"
 
+# Journalisation applicative. `basicConfig` ne touche que le logger racine et
+# ne fait rien s'il est déjà configuré ; uvicorn garde ses propres loggers
+# (`uvicorn`, `uvicorn.access`, propagate=False), donc rien n'est écrit deux
+# fois. L'access log uvicorn tient lieu de journal de requêtes — pas de
+# middleware à nous. Niveaux valides : DEBUG / INFO / WARNING / ERROR.
+_log_level = (os.environ.get("COLVER_LOG_LEVEL") or "INFO").upper()
+if _log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+    _log_level = "INFO"  # une coquille d'env ne doit pas empêcher le démarrage
+logging.basicConfig(
+    level=_log_level,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+if _log_level != (os.environ.get("COLVER_LOG_LEVEL") or "INFO").upper():
+    logger.warning("COLVER_LOG_LEVEL=%r invalide — repli sur INFO",
+                   os.environ.get("COLVER_LOG_LEVEL"))
+
+# Sentry optionnel : SENTRY_DSN non vide + sentry-sdk importable. Il n'est
+# volontairement pas dans les dépendances — l'installer suffit à l'activer.
+# L'observabilité ne doit jamais coûter la disponibilité : un DSN malformé
+# (BadDsn) dégrade en warning, comme le SDK absent.
+if os.environ.get("SENTRY_DSN"):
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(dsn=os.environ["SENTRY_DSN"])
+        logger.info("Sentry actif")
+    except ImportError:
+        logger.warning("SENTRY_DSN défini mais sentry-sdk non installé — remontée d'erreurs désactivée")
+    except Exception:
+        logger.exception("SENTRY_DSN invalide — remontée d'erreurs désactivée")
+
+# Instant de démarrage, pour l'uptime de /health.
+_START_TIME = time.monotonic()
+
 app = FastAPI(title="Colver")
 
 # Locate static assets bundled in the package
@@ -37,19 +74,19 @@ import colver as _colver_pkg
 _model = _colver_pkg.model_path()
 if _model is None:
     # Auto-download model if not found
-    print("[server] No DouDou50 model found, downloading...")
+    logger.info("No DouDou50 model found, downloading...")
     try:
         _model = _colver_pkg.download_model()
     except Exception as e:
-        print(f"[server] Download failed: {e}")
+        logger.warning("Download failed: %s", e)
         _model = None
 
 DMC_MODEL_PATH = str(_model) if _model else None
 doudou_available = _model is not None
 if doudou_available:
-    print(f"[server] DouDou50 model available at {DMC_MODEL_PATH} (Rust inference)")
+    logger.info("DouDou50 model available at %s (Rust inference)", DMC_MODEL_PATH)
 else:
-    print("[server] No DouDou50 model found and download failed")
+    logger.warning("No DouDou50 model found and download failed")
 
 # Bid NN model path
 _bid_model = _colver_pkg.bid_model_path()
@@ -57,14 +94,14 @@ if _bid_model is None:
     try:
         _bid_model = _colver_pkg.download_bid_model()
     except Exception as e:
-        print(f"[server] Bid model download failed: {e}")
+        logger.warning("Bid model download failed: %s", e)
         _bid_model = None
 
 BID_MODEL_PATH = str(_bid_model) if _bid_model else None
 if _bid_model:
-    print(f"[server] Bid model available at {BID_MODEL_PATH}")
+    logger.info("Bid model available at %s", BID_MODEL_PATH)
 else:
-    print("[server] No bid model found, using improved_v2 fallback")
+    logger.warning("No bid model found, using improved_v2 fallback")
 
 # Belief net model path (NN-based card location prediction for IS-DD)
 _belief_model = _colver_pkg.belief_model_path()
@@ -72,14 +109,14 @@ if _belief_model is None:
     try:
         _belief_model = _colver_pkg.download_belief_model()
     except Exception as e:
-        print(f"[server] Belief model download failed: {e}")
+        logger.warning("Belief model download failed: %s", e)
         _belief_model = None
 
 BELIEF_MODEL_PATH = str(_belief_model) if _belief_model else None
 if _belief_model:
-    print(f"[server] Belief net model available at {BELIEF_MODEL_PATH}")
+    logger.info("Belief net model available at %s", BELIEF_MODEL_PATH)
 else:
-    print("[server] No belief net model found, using heuristic beliefs")
+    logger.warning("No belief net model found, using heuristic beliefs")
 
 # Playgen world-sampler model (transformer, MC belief marginals)
 _playgen_model = _colver_pkg.playgen_model_path()
@@ -87,16 +124,16 @@ if _playgen_model is None:
     try:
         _playgen_model = _colver_pkg.download_playgen_model()
     except Exception as e:
-        print(f"[server] Playgen model download failed: {e}")
+        logger.warning("Playgen model download failed: %s", e)
         _playgen_model = None
 
 PLAYGEN_MODEL_PATH = str(_playgen_model) if _playgen_model else None
 if _playgen_model:
-    print(f"[server] Playgen model available at {PLAYGEN_MODEL_PATH}")
+    logger.info("Playgen model available at %s", PLAYGEN_MODEL_PATH)
 else:
-    print("[server] No playgen model found, playgen beliefs disabled")
+    logger.warning("No playgen model found, playgen beliefs disabled")
 
-print(f"[server] ROOT_PATH={ROOT_PATH}")
+logger.info("ROOT_PATH=%s", ROOT_PATH)
 
 
 def _serve_index():
@@ -144,6 +181,39 @@ async def cache_control(request: Request, call_next):
 
 
 # ===== REST API =====
+
+@app.get("/health")
+async def health():
+    """État du service : base, version, uptime, modèles.
+
+    Déclarée ici, au niveau module — donc avant le catch-all SPA de fin de
+    fichier : l'ordre d'enregistrement des routes fait foi.
+    """
+    db_ok = True
+    try:
+        conn = await db.get_db()
+        cur = await conn.execute("SELECT 1")
+        await cur.fetchone()
+    except Exception:
+        logger.exception("health : SELECT 1 en échec")
+        db_ok = False
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "db": db_ok,
+        "version": _colver_pkg.__version__,
+        "uptime_s": round(time.monotonic() - _START_TIME, 1),
+        "models": {
+            "doudou": doudou_available,
+            "bid": BID_MODEL_PATH is not None,
+            "belief": BELIEF_MODEL_PATH is not None,
+            "playgen": PLAYGEN_MODEL_PATH is not None,
+            # URL du sidecar configurée — pas une sonde : /health doit rester
+            # instantané.
+            "sidecar_configured": _playgen_gpu.enabled(),
+        },
+    }
+    return JSONResponse(payload, status_code=200 if db_ok else 503)
+
 
 @app.get("/api/games")
 async def api_list_games(limit: int = 50, offset: int = 0):
@@ -608,6 +678,8 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
     except asyncio.CancelledError:
         return
     except Exception as e:
+        # L'erreur part au client, mais elle doit aussi laisser une trace ici.
+        logger.exception("annonces_sim : simulation en échec")
         try:
             await ws.send_json({"type": "annonces_sim_update", "req_id": req_id,
                                 "error": str(e)})
@@ -766,6 +838,7 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
     except asyncio.CancelledError:
         return
     except Exception as e:
+        logger.exception("card_analysis : simulation en échec")
         try:
             await ws.send_json(_err(str(e)))
         except Exception:
@@ -848,6 +921,7 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
     except asyncio.CancelledError:
         return
     except Exception as e:
+        logger.exception("annonces_doudou : simulation en échec")
         try:
             await ws.send_json({"type": "annonces_doudou_update", "req_id": req_id,
                                 "error": str(e)})
@@ -1115,6 +1189,7 @@ async def websocket_endpoint(ws: WebSocket):
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
+            logger.exception("agent_review : revue en échec (game %s)", game_id)
             try:
                 await wsend({"type": "agent_review_error",
                              "game_id": game_id, "msg": str(e)})
@@ -1150,23 +1225,34 @@ async def websocket_endpoint(ws: WebSocket):
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            logger.exception("belief : pré-calcul playgen en échec")
             try:
                 await wsend({"type": "error", "msg": f"Pré-calcul playgen : {e}"})
             except Exception:
                 pass
 
+    msg_type = None  # dernier type traité — contexte de la trace d'erreur
     try:
         while True:
-            if deferred:
-                data = deferred.pop(0)
-            elif pending_recv is not None:
-                # Lecture engagée par la course du dernier pli et jamais
-                # annulée : c'est elle qui porte le message suivant.
-                recv, pending_recv = pending_recv, None
-                data = await recv
-            else:
-                data = await ws.receive_json()
-            msg_type = data.get("type")
+            try:
+                if deferred:
+                    data = deferred.pop(0)
+                elif pending_recv is not None:
+                    # Lecture engagée par la course du dernier pli et jamais
+                    # annulée : c'est elle qui porte le message suivant.
+                    recv, pending_recv = pending_recv, None
+                    data = await recv
+                else:
+                    data = await ws.receive_json()
+            except json.JSONDecodeError:
+                # Frame illisible : au client de se corriger — pas de traceback
+                # ERROR (ni d'événement Sentry) pour du bruit d'entrée.
+                logger.warning("frame WS ignorée (JSON invalide)")
+                continue
+            if not isinstance(data, dict) or not isinstance(data.get("type"), str):
+                logger.warning("frame WS ignorée (payload non conforme) : %.80r", data)
+                continue
+            msg_type = data["type"]
 
             if msg_type and msg_type.startswith("room_"):
                 await rooms.handle_message(ws_user, ws, data, {
@@ -1803,6 +1889,19 @@ async def websocket_endpoint(ws: WebSocket):
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})
 
     except WebSocketDisconnect:
+        if sim_task and not sim_task.done():
+            sim_task.cancel()
+        if belief_precompute_task and not belief_precompute_task.done():
+            belief_precompute_task.cancel()
+        if agent_review_task and not agent_review_task.done():
+            agent_review_task.cancel()
+    except Exception:
+        # Une exception imprévue tue le socket. uvicorn la loggerait sans
+        # contexte (« Exception in ASGI application ») et les tâches de fond
+        # resteraient orphelines : on la trace avec le dernier msg_type traité
+        # et on annule comme à la déconnexion.
+        logger.exception(
+            "_websocket_session : exception non gérée (dernier msg_type=%r)", msg_type)
         if sim_task and not sim_task.done():
             sim_task.cancel()
         if belief_precompute_task and not belief_precompute_task.done():

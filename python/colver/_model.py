@@ -1,9 +1,13 @@
 """Model weight download and discovery."""
 
+import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 from urllib.request import urlretrieve
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_URL = "https://github.com/Avo-k/colver/releases/download/v0.4.0/dmc_50.bin"
 _DEFAULT_BID_URL = "https://github.com/Avo-k/colver/releases/download/v0.7.0/bid_v6_isdd.bin"
@@ -57,7 +61,9 @@ def bid_model_path(name: str = "bid_v6_isdd.bin") -> Path | None:
 
 
 def _progress_hook(block_num: int, block_size: int, total_size: int) -> None:
-    if total_size > 0:
+    # La barre `\r` n'a de sens que sur un terminal : dans un collecteur de
+    # logs ligne à ligne (docker logs), elle s'accumulerait en une ligne géante.
+    if total_size > 0 and sys.stdout.isatty():
         pct = min(100, block_num * block_size * 100 // total_size)
         mb = block_num * block_size / 1_048_576
         total_mb = total_size / 1_048_576
@@ -77,22 +83,23 @@ def download_model(
     """
     dest = _CACHE_DIR / name
     if dest.is_file() and not force:
-        print(f"Model already cached at {dest}")
+        logger.info("Model already cached at %s", dest)
         return dest
 
     url = url or _DEFAULT_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {url}")
+    logger.info("Downloading %s", url)
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
     os.close(fd)
     try:
         urlretrieve(url, tmp, reporthook=_progress_hook)
-        print()  # newline after progress
+        if sys.stdout.isatty():
+            print()  # newline after progress
         os.replace(tmp, dest)
     except Exception:
         os.unlink(tmp)
         raise
-    print(f"Saved to {dest}")
+    logger.info("Saved to %s", dest)
     return dest
 
 
@@ -107,22 +114,23 @@ def download_bid_model(
     """
     dest = _CACHE_DIR / name
     if dest.is_file() and not force:
-        print(f"Bid model already cached at {dest}")
+        logger.info("Bid model already cached at %s", dest)
         return dest
 
     url = url or _DEFAULT_BID_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {url}")
+    logger.info("Downloading %s", url)
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
     os.close(fd)
     try:
         urlretrieve(url, tmp, reporthook=_progress_hook)
-        print()  # newline after progress
+        if sys.stdout.isatty():
+            print()  # newline after progress
         os.replace(tmp, dest)
     except Exception:
         os.unlink(tmp)
         raise
-    print(f"Saved to {dest}")
+    logger.info("Saved to %s", dest)
     return dest
 
 
@@ -158,22 +166,23 @@ def download_belief_model(
     """
     dest = _CACHE_DIR / name
     if dest.is_file() and not force:
-        print(f"Belief model already cached at {dest}")
+        logger.info("Belief model already cached at %s", dest)
         return dest
 
     url = url or _DEFAULT_BELIEF_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {url}")
+    logger.info("Downloading %s", url)
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
     os.close(fd)
     try:
         urlretrieve(url, tmp, reporthook=_progress_hook)
-        print()  # newline after progress
+        if sys.stdout.isatty():
+            print()  # newline after progress
         os.replace(tmp, dest)
     except Exception:
         os.unlink(tmp)
         raise
-    print(f"Saved to {dest}")
+    logger.info("Saved to %s", dest)
     return dest
 
 
@@ -210,20 +219,21 @@ def download_playgen_model(
     """
     dest = _CACHE_DIR / name
     if dest.is_file() and not force:
-        print(f"Playgen model already cached at {dest}")
+        logger.info("Playgen model already cached at %s", dest)
         return dest
 
     url = url or _DEFAULT_PLAYGEN_URL
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Downloading {url}")
+    logger.info("Downloading %s", url)
     fd, tmp = tempfile.mkstemp(dir=_CACHE_DIR, suffix=".tmp")
     os.close(fd)
     try:
         urlretrieve(url, tmp, reporthook=_progress_hook)
-        print()  # newline after progress
+        if sys.stdout.isatty():
+            print()  # newline after progress
         os.replace(tmp, dest)
     except Exception:
         os.unlink(tmp)
         raise
-    print(f"Saved to {dest}")
+    logger.info("Saved to %s", dest)
     return dest

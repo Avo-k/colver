@@ -7,6 +7,7 @@ Migration 1 is idempotent (IF NOT EXISTS) so pre-migration prod databases
 
 import asyncio
 import json
+import logging
 import os
 import random
 import string
@@ -14,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_DIR = Path.home() / ".local" / "share" / "colver"
 DB_PATH = os.environ.get(
@@ -181,7 +184,7 @@ async def _migrate(db):
         await db.executescript(script)
         await db.execute(f"PRAGMA user_version = {i}")
         await db.commit()
-        print(f"[database] Applied migration v{i}")
+        logger.info("Applied migration v%d", i)
 
 
 async def get_db():
@@ -198,7 +201,7 @@ async def get_db():
         await conn.commit()
         await _migrate(conn)
         _db = conn
-        print(f"[database] Connected to {DB_PATH}")
+        logger.info("Connected to %s", DB_PATH)
     return _db
 
 

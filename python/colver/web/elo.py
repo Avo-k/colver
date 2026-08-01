@@ -16,9 +16,12 @@ makes the startup backfill safe to run on every boot.
 """
 
 import asyncio
+import logging
 
 import colver
 import colver.web.database as db
+
+logger = logging.getLogger(__name__)
 
 START_ELO = 1000.0
 K_USER = 32.0
@@ -70,8 +73,8 @@ async def rate_game(game_id):
     try:
         async with _lock:
             return await _rate_game_locked(game_id)
-    except Exception as e:
-        print(f"[elo] rating of {game_id} failed: {e!r}")
+    except Exception:
+        logger.exception("rating of %s failed", game_id)
         return False
 
 
@@ -151,7 +154,7 @@ async def backfill():
         if await rate_game(game_id):
             rated += 1
     if rated:
-        print(f"[elo] backfill: rated {rated} game(s)")
+        logger.info("backfill: rated %d game(s)", rated)
 
 
 async def get_rating(kind, ref):

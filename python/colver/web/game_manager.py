@@ -1,5 +1,6 @@
 """Game session management for Colver web UI."""
 
+import logging
 import os
 import random
 import time
@@ -9,6 +10,8 @@ import colver
 from colver.web import game_notation
 from colver.web import playgen_gpu
 from colver.web.agents import AGENT_NAMES, AgentTable, decision_stats
+
+logger = logging.getLogger(__name__)
 
 
 BID_PASS = 0
@@ -129,7 +132,7 @@ def _safe_playgen(fn, *args, **kwargs):
     except (KeyboardInterrupt, SystemExit):
         raise
     except BaseException as e:  # noqa: BLE001 — includes pyo3 PanicException
-        print(f"[belief] playgen call failed ({type(e).__name__}): {e}")
+        logger.warning("playgen call failed (%s): %s", type(e).__name__, e)
         return None
 
 
@@ -139,6 +142,9 @@ class TrickTracker:
     # Card point values: [7, 8, 9, J, Q, K, 10, A]
     PLAIN_POINTS = [0, 0, 0, 2, 3, 4, 10, 11]
     TRUMP_POINTS = [0, 0, 14, 20, 3, 4, 10, 11]
+    # Ordre de force à l'atout, indexé par rang — J > 9 > A > 10 > R > D > 8 > 7.
+    # Copie de `card.rs::TRUMP_STRENGTH`, comme les deux barèmes ci-dessus.
+    TRUMP_STRENGTH = [0, 1, 6, 7, 2, 3, 4, 5]
 
     def _init_trick_tracking(self):
         self.last_trick = None
@@ -148,6 +154,7 @@ class TrickTracker:
         self.completed_tricks = []  # list of {cards, winner, points, lead}
         self._trick_just_completed = False
         self._current_trick_lead = None  # lead of the trick in progress
+        self._last_trick_trump = 0  # atout au moment où le pli s'est fermé
         self._belote_event = None  # "belote" or "rebelote" after an action
         self._belote_player = None  # seat that triggered it
         self.trick_just_completed = False  # set after each trick, cleared by caller
@@ -161,6 +168,42 @@ class TrickTracker:
 
     def _trick_points(self, trick, trump_suit):
         return sum(self._card_points(c, trump_suit) for c in trick if 0 <= c < 32)
+
+    def _trick_winner(self, trick, lead, trump_suit):
+        """Le siège qui ramasse — recalculé, pas lu sur le moteur.
+
+        `env.current_player()` after a `step` *is* the winner, but only for
+        tricks 1 à 7 : `play.rs::resolve_trick` ne réaffecte `current_player`
+        que dans la branche « il reste des plis ». Sur la 8e levée il garde donc
+        le siège qui vient de poser la 4e carte, soit `(lead + 3) % 4` — mesuré
+        faux sur 164 donnes /200 (127 fois même le camp était faux). Toute la
+        chaîne d'affichage en héritait : vainqueur du dernier pli dans l'histo-
+        rique, et `trick_snapshot` qui décrémentait le mauvais camp.
+
+        Portage de `colver-core/src/engine/trick.rs::trick_winner`.
+        """
+        lead_card = trick[lead]
+        lead_suit = lead_card >> 3
+        best_trump_seat = None
+        best_trump_strength = 0
+        best_lead_seat = lead
+        best_lead_rank = lead_card & 7
+        if lead_suit == trump_suit:
+            best_trump_seat = lead
+            best_trump_strength = self.TRUMP_STRENGTH[lead_card & 7]
+        for i in range(1, 4):
+            seat = (lead + i) % 4
+            card = trick[seat]
+            suit, rank = card >> 3, card & 7
+            if suit == trump_suit:
+                strength = self.TRUMP_STRENGTH[rank]
+                if best_trump_seat is None or strength > best_trump_strength:
+                    best_trump_strength = strength
+                    best_trump_seat = seat
+            elif suit == lead_suit and rank > best_lead_rank:
+                best_lead_rank = rank
+                best_lead_seat = seat
+        return best_trump_seat if best_trump_seat is not None else best_lead_seat
 
     def _check_trick_completion(self, action):
         self._trick_just_completed = False
@@ -178,6 +221,7 @@ class TrickTracker:
             contract = self.env.get_contract()
             trump = contract.get("trump", 0)
             self.last_trick_points = self._trick_points(trick, trump)
+            self._last_trick_trump = trump
             self._trick_just_completed = True
 
     def _detect_belote(self, player_before, belote_before):
@@ -196,7 +240,8 @@ class TrickTracker:
 
     def _finalize_trick_completion(self):
         if self._trick_just_completed:
-            self.last_trick_winner = int(self.env.current_player())
+            self.last_trick_winner = self._trick_winner(
+                self.last_trick, self.last_trick_lead, self._last_trick_trump)
             self.completed_tricks.append({
                 "cards": self.last_trick[:],
                 "winner": self.last_trick_winner,
@@ -937,7 +982,7 @@ class BeliefSession:
                 self.playgen_model_path, self.dealer, self.initial_hands, actions, observer,
             )
         except Exception as e:  # noqa: BLE001 — playgen is best-effort here
-            print(f"[belief] analyst unavailable: {e}")
+            logger.warning("playgen analyst unavailable: %s", e)
             return None
 
     @staticmethod
