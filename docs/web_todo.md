@@ -169,6 +169,34 @@ lise cette latence comme un bot qui réfléchit, et pas comme un serveur bloqué
 Sans le signal, inverser le budget échange une dégradation invisible contre une
 autre.
 
+**L'étape (2) est faite pour le repli de mondes** (2026-08-02), après que la
+prod a tourné plus d'un jour sans `COLVER_PLAYGEN_GPU_URL` — Dédé jouait sur des
+mondes uniformes, plus faiblement qu'annoncé, sans que rien ne le dise. Trois
+silences, tous fermés :
+
+- **au démarrage** : `agents.log_startup_state()` nomme la source de mondes à
+  chaque boot (WARNING sans sidecar, ERROR s'il est pourtant exigé) ;
+- **dans `/health`** : `sidecar_configured` valait `bool(os.environ[…])`, donc
+  aurait dit `true` devant un sidecar mort. `playgen_gpu.probe()` interroge
+  vraiment son `/health` (1,5 s max, en cache 30 s, dans un thread) et rend
+  `reachable` **et pourquoi pas** ;
+- **par décision** : `worlds_source` partait au client et jamais au journal.
+  `AgentTable.decide` le journalise, plafonné à une ligne par minute avec le
+  compte courant (~24 coups de bot par donne : sans plafond, une panne noierait
+  le journal au lieu de le renseigner).
+
+Ce qui rend le cas initial *détectable* est `COLVER_REQUIRE_SIDECAR` : sans lui,
+« pas de playgen » est indiscernable d'un choix légitime (une machine de dev n'a
+pas de GPU). Avec, le déploiement déclare son attente et `/health` passe en
+`degraded` quand la réalité diverge — le code HTTP reste 200, un sidecar absent
+affaiblit le jeu mais n'empêche pas de jouer. Généraliser ce principe est
+probablement la bonne forme pour le reste du §2.2 : **ce qu'on attend se
+déclare, et la sonde compare.**
+
+Reste de l'étape (2) : `elapsed` et `determinizations` par coup, qui n'ont de
+sens qu'une fois le budget inversé (ils mesurent alors ce que le plafond a
+coûté).
+
 ### 2.3 File d'attente visible pour `agent_review` (1 j, UX sous charge)
 
 `_gate = asyncio.Semaphore(1)` (`agent_review.py`) sérialise la revue à
@@ -573,17 +601,35 @@ moteur RL, où le contrôle est à la charge de l'appelant — donc le moteur av
 une carte absente de la main : elle s'ajoute au pli sans être retirée nulle
 part. La donne se rejoue jusqu'au bout, sans erreur, avec un décompte faux.
 
-**La cause était le gestionnaire `play` du solo** (`server.py`). Il prenait
-`data["action"]` sur la socket et ne vérifiait que deux choses — donne non
-terminale, et c'est bien le tour de ce siège — jamais que le coup existait. Le
-salon validait déjà (`rooms._await_human_action`) ; le solo, non. Un client
-modifié, un double-clic mal tombé ou un message malformé suffisait donc à écrire
-une donne fausse.
+**Deux causes, pas une** — mesuré sur la prod le 2026-08-02, 6 donnes écartées
+sur 822 terminées (0,7 %) :
 
-Ce qui l'a confirmé : le scan d'intégrité trouve **2 donnes** dans la base de
-dev (`tpzx`, `x2to`, toutes deux du 2026-07-24, `mode = 'play'`), et dans les
-deux cas la carte illégale est jouée par le **siège 2 — le siège humain en
-solo**. C'est la signature exacte de ce chemin.
+| donne | mode | date | diagnostic |
+|---|---|---|---|
+| `jmp2` `41ec` `9ru7` `pjaf` `qqy9` | play | 02-19 → 08-01 | **carte déjà jouée**, rejouée 4 à 6 coups plus tard |
+| `ao9e` | watch | 02-18 | **carte jamais jouée** — coup illégal d'un bot |
+
+1. **Le gestionnaire `play` du solo** (5 cas sur 6). Il prenait `data["action"]`
+   sur la socket et ne vérifiait que deux choses — donne non terminale, et c'est
+   bien le tour de ce siège — jamais que le coup existait. Or dans les cinq cas
+   la carte avait *déjà été jouée* par ce même siège un ou deux plis plus tôt, et
+   au moment du renvoi c'était bel et bien son tour : le seul garde-fou en place
+   ne pouvait rien voir. Un client qui renvoie une carte déjà posée (double-clic,
+   message rejoué) suffisait donc à écrire une donne fausse. Le salon validait
+   déjà (`rooms._await_human_action`) ; le solo, non.
+2. **Un bot qui rend un coup illégal** (`ao9e`, `mode = 'watch'`, quatre sièges
+   tenus par DouDou50 — aucun humain à la table). Le siège 2 avait JS, 10S, AS à
+   l'atout pique, 9S entamé et JH déjà coupé : seul JS est jouable (obligation de
+   surcouper), le bot a posé 10S. C'est pour ça que `WatchSession.apply_action`
+   est gardé lui aussi. Ça date de février et n'est pas réapparu depuis.
+
+Signature commune, et ce qui rendait le diagnostic trompeur : **les six sont au
+siège 2**. Pour les cinq donnes solo c'est le siège humain par défaut, donc
+c'est bien la marque du chemin fautif ; pour `ao9e` c'est une coïncidence.
+
+**Depuis le déploiement du garde-fou** (2026-08-01 21:56 UTC) : 17 donnes
+terminées, **0 écartée**. Échantillon mince, mais le chemin d'écriture rend
+désormais le cas structurellement impossible.
 
 **Le correctif, en deux moitiés du même prédicat** :
 
@@ -600,6 +646,12 @@ solo**. C'est la signature exacte de ce chemin.
   en parallèle la course se jouerait à la milliseconde). Chaque ligne n'est
   examinée qu'une fois (`checked_at`), donc le coût est borné par les donnes
   terminées depuis le dernier lancement. `/health` publie `invalid_deals`.
+  - **Conséquence à connaître : `invalid_deals` est en retard d'un
+    redémarrage.** Une donne jouée après le démarrage n'est scannée qu'au
+    lancement suivant (17 en attente au moment de la mesure). C'est assumé —
+    le garde-fou en écriture rend le cas impossible en amont, le scan n'est
+    qu'un filet — mais ça veut dire qu'on ne peut pas lire ce compteur comme
+    une surveillance temps réel.
 
 **Le prédicat, et pourquoi il suffit** : une donne est saine si, partant de
 `hands` et `dealer`, chaque action est légale à son tour et la dernière rend la
