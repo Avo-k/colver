@@ -13,7 +13,7 @@ services:
     environment:
       - ROOT_PATH=${ROOT_PATH:-/}
       - COLVER_UPDATE_MODEL=1
-      - COLVER_MODEL_PATH=/app/models/dmc_35.bin
+      - COLVER_MODEL_PATH=/app/models/dmc_50.bin
       - COLVER_DB_PATH=/data/colver/colver.db
       - COLVER_BACKUP_DIR=/backups
       # Sidecar d'inférence GPU playgen (3090 de l'hôte moxxi). Fallback CPU
