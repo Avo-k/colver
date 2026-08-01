@@ -126,7 +126,7 @@ parallel = true        # fan DD solves across the rayon pool
 
 [worlds]
 source = "sidecar"     # sidecar|playgen|uniform      (default: sidecar)
-url = "http://192.168.1.23:8003"   # or $COLVER_PLAYGEN_GPU_URL
+url = "http://gpu-host:8003"   # or $COLVER_PLAYGEN_GPU_URL
 temperature = 0.8
 batch = 128            # worlds per refill under a time budget
 fallback = "strict"    # strict|uniform

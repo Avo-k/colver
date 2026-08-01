@@ -19,7 +19,7 @@
 //!
 //! [worlds]
 //! source = "sidecar"              # sidecar|playgen|uniform  (default: sidecar)
-//! url = "http://192.168.1.23:8003"   # or the COLVER_PLAYGEN_GPU_URL env var
+//! url = "http://gpu-host:8003"   # or the COLVER_PLAYGEN_GPU_URL env var
 //! temperature = 0.8
 //! fallback = "strict"             # strict|uniform
 //!

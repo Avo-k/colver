@@ -16,9 +16,13 @@ services:
       - COLVER_MODEL_PATH=/app/models/dmc_50.bin
       - COLVER_DB_PATH=/data/colver/colver.db
       - COLVER_BACKUP_DIR=/backups
-      # Sidecar d'inférence GPU playgen (3090 de l'hôte moxxi). Fallback CPU
-      # automatique si absent/injoignable — vide = désactivé.
-      - COLVER_PLAYGEN_GPU_URL=${COLVER_PLAYGEN_GPU_URL:-http://192.168.1.23:8003}
+      # Sidecar d'inférence GPU playgen (`playgen_gpu_server` sur une machine
+      # CUDA). Vide par défaut = désactivé : IS-DD échantillonne alors des
+      # mondes contraints-uniformes et le dit dans ses stats. Renseigner
+      # l'URL du sidecar dans le `.env` du déploiement — surtout pas ici, une
+      # IP de LAN en dur enverrait les requêtes de n'importe quel cloneur
+      # vers une machine au hasard de *son* réseau.
+      - COLVER_PLAYGEN_GPU_URL=${COLVER_PLAYGEN_GPU_URL:-}
       # IP (ou CIDR) du reverse-proxy autorisé à poser X-Forwarded-* : en
       # Docker, Caddy n'arrive pas en 127.0.0.1 mais par la passerelle du
       # bridge. Sans ça, toutes les limites par IP retombent sur l'IP du proxy.

@@ -11,7 +11,7 @@ fonctions retournent ``None`` en cas d'indisponibilité (sidecar éteint,
 timeout, GPU occupé) — l'appelant retombe alors sur le chemin CPU PyO3.
 
 Activation : variable d'environnement ``COLVER_PLAYGEN_GPU_URL``
-(ex. ``http://192.168.1.23:8003``). Non définie = désactivé, zéro overhead.
+(ex. ``http://gpu-host:8003``). Non définie = désactivé, zéro overhead.
 """
 
 import json

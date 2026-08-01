@@ -145,7 +145,7 @@ determinizations = 240     # used when time_ms = 0
 
 [worlds]                   # where the determinized worlds come from
 source = "sidecar"         # sidecar (playgen on GPU, default) | playgen (CPU) | uniform
-url = "http://192.168.1.23:8003"   # or $COLVER_PLAYGEN_GPU_URL
+url = "http://gpu-host:8003"   # or $COLVER_PLAYGEN_GPU_URL
 
 [belief]
 model = "models/belief_v4_fix_v2.bin"   # optional soft predictions

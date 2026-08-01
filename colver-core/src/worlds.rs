@@ -222,7 +222,7 @@ impl rand::RngCore for RngAdapter<'_> {
 /// several seconds on CPU, which is what makes 100%-playgen worlds affordable
 /// inside a per-move budget.
 pub struct SidecarWorldSource {
-    /// Base URL, e.g. `http://192.168.1.23:8003`, without a trailing slash.
+    /// Base URL, e.g. `http://gpu-host:8003`, without a trailing slash.
     url: String,
     timeout: Duration,
     temperature: f32,
