@@ -190,6 +190,30 @@ MIGRATIONS = [
     ALTER TABLE games ADD COLUMN invalid_reason TEXT;
     CREATE INDEX idx_games_unchecked ON games(checked_at) WHERE checked_at IS NULL;
     """,
+    # v11 — cycle de vie du compte : adresse e-mail et réinitialisation.
+    # `email` est facultative et unique — un compte sans adresse reste
+    # parfaitement jouable, il n'a simplement aucun recours en cas d'oubli, et
+    # c'est à l'interface de le dire. L'unicité est `COLLATE NOCASE` comme le
+    # pseudo : deux comptes sur la même adresse rendraient le « qui suis-je »
+    # d'un lien de réinitialisation ambigu.
+    #
+    # Les jetons sont stockés **hachés**, comme les sessions : une fuite de la
+    # base ne doit pas donner de quoi prendre un compte. `used_at` les rend à
+    # usage unique — sans lui, un lien qui traîne dans une boîte mail reste une
+    # clé valable pendant toute sa durée de vie.
+    """
+    ALTER TABLE users ADD COLUMN email TEXT COLLATE NOCASE;
+    CREATE UNIQUE INDEX idx_users_email ON users(email) WHERE email IS NOT NULL;
+
+    CREATE TABLE password_resets (
+        token_hash  TEXT PRIMARY KEY,
+        user_id     INTEGER NOT NULL REFERENCES users(id),
+        created_at  TEXT NOT NULL,
+        expires_at  TEXT NOT NULL,
+        used_at     TEXT
+    );
+    CREATE INDEX idx_password_resets_user ON password_resets(user_id);
+    """,
 ]
 
 
@@ -306,6 +330,54 @@ async def get_user_by_id(user_id):
     return dict(rows[0]) if rows else None
 
 
+async def get_user_by_email(email):
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT * FROM users WHERE email = ?", (email,))
+    return dict(rows[0]) if rows else None
+
+
+async def set_user_email(user_id, email):
+    """Poser (ou retirer, avec None) l'adresse d'un compte.
+
+    Rend False si l'adresse est déjà prise : l'index unique est la seule
+    autorité là-dessus — un « SELECT puis INSERT » laisserait passer deux
+    inscriptions simultanées sur la même adresse.
+    """
+    db = await get_db()
+    try:
+        await db.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+        await db.commit()
+        return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def set_password(user_id, password_hash):
+    db = await get_db()
+    await db.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                     (password_hash, user_id))
+    await db.commit()
+
+
+async def delete_user_sessions(user_id, keep_token_hash=None):
+    """Révoquer les sessions d'un compte, sauf éventuellement celle en cours.
+
+    Tout changement d'identifiant les fait tomber : après un mot de passe
+    changé, une session ouverte ailleurs est exactement ce dont on voulait se
+    débarrasser. On garde la sienne pour ne pas se déconnecter soi-même en se
+    protégeant.
+    """
+    db = await get_db()
+    if keep_token_hash:
+        await db.execute(
+            "DELETE FROM sessions WHERE user_id = ? AND token_hash != ?",
+            (user_id, keep_token_hash))
+    else:
+        await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    await db.commit()
+
+
 async def create_session(token_hash, user_id, expires_at):
     db = await get_db()
     await db.execute(
@@ -333,6 +405,88 @@ async def delete_session(token_hash):
     db = await get_db()
     await db.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
     await db.commit()
+
+
+# ===== Réinitialisation du mot de passe =====
+
+async def create_password_reset(token_hash, user_id, expires_at):
+    """Ouvrir un jeton de réinitialisation, en annulant les précédents.
+
+    Un seul jeton vivant par compte : redemander un lien doit invalider le
+    précédent, sinon chaque demande laisse derrière elle une clé de plus, et un
+    ancien courriel resterait exploitable.
+    """
+    db = await get_db()
+    await db.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+    await db.execute(
+        "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?)",
+        (token_hash, user_id, _now(), expires_at),
+    )
+    # Ménage opportuniste, comme pour les sessions.
+    await db.execute("DELETE FROM password_resets WHERE expires_at < ?", (_now(),))
+    await db.commit()
+
+
+async def get_password_reset(token_hash):
+    """Le compte visé par un jeton encore valable, ou None.
+
+    « Valable » = non expiré **et** jamais consommé : un lien de
+    réinitialisation qui traîne dans une boîte mail ne doit servir qu'une fois.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT u.* FROM password_resets r JOIN users u ON u.id = r.user_id "
+        "WHERE r.token_hash = ? AND r.expires_at >= ? AND r.used_at IS NULL",
+        (token_hash, _now()),
+    )
+    return dict(rows[0]) if rows else None
+
+
+async def consume_password_reset(token_hash):
+    """Marquer un jeton comme utilisé. Rend False s'il ne l'était pas déjà pas.
+
+    Le `used_at IS NULL` dans le UPDATE est ce qui rend l'usage unique
+    atomique : deux requêtes concurrentes sur le même lien, une seule change
+    une ligne.
+    """
+    db = await get_db()
+    cur = await db.execute(
+        "UPDATE password_resets SET used_at = ? "
+        "WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?",
+        (_now(), token_hash, _now()),
+    )
+    await db.commit()
+    return cur.rowcount > 0
+
+
+async def delete_account(user_id):
+    """Effacer un compte en gardant ses donnes, détachées de lui.
+
+    Une donne de salon appartient à quatre joueurs : l'effacer prendrait la
+    partie des trois autres avec elle. On efface donc la *personne* — compte,
+    sessions, jetons, classement — et on anonymise ce qu'elle laisse : la donne
+    reste rejouable, le siège devient « Invité » (c'est déjà ce que
+    `game_seat_names` affiche pour un `user_id` absent).
+
+    L'Elo part avec le compte : une ligne de classement est une identité. Les
+    lignes d'`elo_history` restent, rattachées à des donnes qui existent encore
+    — les effacer ne rendrait pas leurs points aux adversaires, ça retirerait
+    juste la trace de parties qu'ils ont bien jouées.
+    """
+    db = await get_db()
+    await db.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM game_players WHERE user_id = ?", (user_id,))
+    await db.execute("UPDATE games SET user_id = NULL WHERE user_id = ?", (user_id,))
+    await db.execute("UPDATE matches SET user_id = NULL WHERE user_id = ?", (user_id,))
+    await db.execute("DELETE FROM elo_ratings WHERE kind = 'user' AND ref = ?",
+                     (str(user_id),))
+    await db.execute("DELETE FROM elo_history WHERE kind = 'user' AND ref = ?",
+                     (str(user_id),))
+    cur = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+    return cur.rowcount > 0
 
 
 # ===== Games =====

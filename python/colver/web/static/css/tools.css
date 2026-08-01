@@ -3416,6 +3416,77 @@
 .compte-games .history-row { font-size: var(--fs-sm); padding: 6px 8px; }
 .compte-games .history-empty a { color: var(--c-accent); }
 
+/* ---- Réglages du compte (repliés) ---- */
+
+.compte-settings > .compte-summary {
+    cursor: pointer;
+    margin-bottom: 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.compte-settings > .compte-summary::-webkit-details-marker { display: none; }
+/* Le chevron dit dans quel sens ça s'ouvre ; `details[open]` le retourne. */
+.compte-settings > .compte-summary::before {
+    content: '▸';
+    font-size: 0.8em;
+    transition: transform 0.15s;
+}
+.compte-settings[open] > .compte-summary::before { transform: rotate(90deg); }
+
+.compte-section {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.compte-section-title {
+    color: #ddd;
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+.compte-hint {
+    color: #999;
+    font-size: var(--fs-xs);
+    line-height: 1.45;
+    margin-bottom: 0.5rem;
+}
+/* Un compte sans adresse n'a aucun recours : ça doit se voir, pas se lire. */
+.compte-hint-warn {
+    color: var(--c-danger-txt);
+}
+
+.compte-ok {
+    color: var(--c-accent);
+    font-size: var(--fs-xs);
+    padding: 4px 0;
+}
+
+.compte-danger .compte-section-title { color: var(--c-danger-txt); }
+.compte-submit-danger {
+    background: var(--c-danger-txt);
+    color: #1a1a1a;
+}
+
+/* Pied des cartes de récupération : « mot de passe oublié », « retour ». */
+.mdp-intro {
+    color: #bbb;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    margin-bottom: 1rem;
+}
+.mdp-muted { color: #888; font-size: var(--fs-xs); }
+.mdp-foot {
+    margin-top: 1rem;
+    text-align: center;
+    font-size: var(--fs-xs);
+}
+.mdp-foot a { color: var(--c-accent); text-decoration: none; }
+.mdp-foot a:hover { text-decoration: underline; }
+
 .nav-account {
     color: var(--c-accent);
 }
@@ -4209,4 +4280,18 @@
     color: var(--c-accent);
     border-color: var(--c-accent);
     background: var(--c-accent-a10);
+}
+
+/* Champ pseudo des formulaires à mot de passe : présent pour les gestionnaires
+   de mots de passe (et pour Chrome, qui avertit sans lui), invisible à l'écran.
+   `display: none` suffirait mais certains gestionnaires ignorent alors le
+   champ — on le sort du flux sans le retirer du rendu. */
+.compte-hidden-user {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
 }

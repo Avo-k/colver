@@ -229,6 +229,19 @@ _ROUTE_META = {
         "description": "Vos parties terminées, vos parties en cours et votre "
                        "classement.",
     },
+    # Les deux pages de récupération portent `noindex` : elles n'ont rien à
+    # faire dans un moteur de recherche, et la seconde ne s'atteint que par un
+    # lien reçu par courriel.
+    "/mot-de-passe/oublie": {
+        "title": "Mot de passe oublié — Colver",
+        "description": "Recevoir un lien pour choisir un nouveau mot de passe.",
+        "noindex": True,
+    },
+    "/mot-de-passe/nouveau": {
+        "title": "Nouveau mot de passe — Colver",
+        "description": "Choisir un nouveau mot de passe.",
+        "noindex": True,
+    },
     "/classement": {
         "title": "Classement — Colver",
         "description": "Le classement Elo des joueurs et des IA de Colver, mis à "
@@ -295,7 +308,9 @@ def _serve_index(path="/", meta=None):
         f'    <meta property="og:image" content="{PUBLIC_URL}/static/og-image.png">\n'
         f'    <meta property="og:image:width" content="1024">\n'
         f'    <meta property="og:image:height" content="1024">\n'
-        f'    <meta property="og:site_name" content="Colver">',
+        f'    <meta property="og:site_name" content="Colver">'
+        + ('\n    <meta name="robots" content="noindex, nofollow">'
+           if meta.get("noindex") else ""),
     )
     return HTMLResponse(html)
 
@@ -2826,6 +2841,10 @@ async def robots_txt():
         "User-agent: *\n"
         "Disallow: /api/\n"
         "Disallow: /ws\n"
+        # Récupération de compte : rien à indexer, et le second ne s'atteint
+        # que par un lien reçu par courriel. Le `noindex` de la page reste la
+        # vraie garantie — ceci n'évite qu'une visite inutile.
+        "Disallow: /mot-de-passe/\n"
         "\n"
         f"Sitemap: {PUBLIC_URL}/sitemap.xml\n"
     )
