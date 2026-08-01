@@ -202,7 +202,10 @@ async def api_bug_report(game_id: str, request: Request):
     message = body.get("message", "").strip()
     if not message:
         return JSONResponse({"error": "Message required"}, status_code=400)
-    game = await db.get_game(game_id)
+    # Un bug se signale aussi en pleine donne (le bouton vit sur la table de
+    # jeu) : on accepte les donnes en cours — rien de la donne n'est renvoyé,
+    # l'appel ne vérifie que l'existence de l'identifiant.
+    game = await db.get_game(game_id, include_incomplete=True)
     if not game:
         return JSONResponse({"error": "Game not found"}, status_code=404)
     action_idx = body.get("action_idx")
@@ -1597,8 +1600,13 @@ async def websocket_endpoint(ws: WebSocket):
 
             elif msg_type == "watch_custom":
                 game_id = data.get("game_id", "").strip().lower()
-                game_data = await db.get_game(game_id)
-                if not game_data:
+                # Une donne personnalisée fraîchement enregistrée n'est pas
+                # encore `is_complete` : c'est le seul cas où une donne en
+                # cours peut être regardée ici — en servir une autre (donne
+                # solo ou salon en train de se jouer) montrerait les mains.
+                game_data = await db.get_game(game_id, include_incomplete=True)
+                if not game_data or (not game_data["is_complete"]
+                                     and game_data["mode"] != "custom"):
                     await ws.send_json({"type": "error", "msg": f"Partie '{game_id}' introuvable"})
                     continue
                 # Client may override agents (e.g. from Watch tab's dropdowns)
@@ -1616,7 +1624,12 @@ async def websocket_endpoint(ws: WebSocket):
                     dede_time_ms=max(1000, min(15000, int(data.get("dede_time_ms", 5000)))),
                 )
                 replay_session = None
-                watch_game_id = game_id
+                # N'écrire en base que pour la donne custom en cours de
+                # composition : rejouer une donne déjà terminée dans Regarder
+                # ne doit pas concaténer une seconde trajectoire dans son
+                # enregistrement (watch_step append dans games.actions, et la
+                # fin réécrirait ses points). Session éphémère, comme watch_cfn.
+                watch_game_id = game_id if not game_data["is_complete"] else None
 
                 custom_started_msg = {
                     "type": "watch_started",

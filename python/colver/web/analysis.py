@@ -21,7 +21,10 @@ import json
 import colver
 import colver.web.database as db
 
-ANALYSIS_VERSION = 4
+# v5 : invalide tout cache antérieur au filtre `get_game` (2026-08-01) — une
+# analyse calculée en pleine donne sur une donne terminée depuis est partielle,
+# indiscernable d'une complète, et la migration v9 ne peut pas l'identifier.
+ANALYSIS_VERSION = 5
 
 # Cost thresholds (card points) -> category label
 CATEGORIES = [

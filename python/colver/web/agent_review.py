@@ -36,7 +36,9 @@ import colver
 import colver.web.agents as agents
 import colver.web.database as db
 
-REVIEW_VERSION = 1
+# v2 : même purge que ANALYSIS_VERSION v5 — invalide les revues calculées en
+# pleine donne avant le filtre `get_game` (2026-08-01).
+REVIEW_VERSION = 2
 
 # Per-card IS-DD budget for the review. Lower than the 1000ms the web plays at:
 # a full deal is ~24 decisions and someone is watching them land.

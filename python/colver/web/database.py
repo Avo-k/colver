@@ -157,6 +157,18 @@ MIGRATIONS = [
     ALTER TABLE matches ADD COLUMN abandoned INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX idx_matches_open ON matches(user_id, is_complete);
     """,
+    # v9 — purge des caches d'analyse calculés sur des donnes non terminées.
+    # `/api/games/{id}/analysis` et `/agents` acceptaient les donnes en cours ;
+    # or `get_or_compute` sert le cache *avant* de relire la donne : une
+    # analyse partielle déjà écrite serait servie pour toujours (une donne
+    # abandonnée reste `is_complete = 0`). `get_game` filtre désormais, mais
+    # les lignes déjà en base doivent partir.
+    """
+    DELETE FROM analysis WHERE game_id IN
+        (SELECT id FROM games WHERE is_complete = 0);
+    DELETE FROM agent_review WHERE game_id IN
+        (SELECT id FROM games WHERE is_complete = 0);
+    """,
 ]
 
 
@@ -469,9 +481,24 @@ async def get_match(match_id):
     return match
 
 
-async def get_game(game_id):
+async def get_game(game_id, include_incomplete=False):
+    """Une donne enregistrée — par défaut, seulement si elle est terminée.
+
+    Une ligne `games` porte les quatre mains en clair (`hands`), et son
+    identifiant est public : le salon le diffuse à tous dans chaque
+    `room_game_state`, et quatre caractères s'énumèrent de toute façon.
+    Servir une donne en cours reviendrait donc à montrer le jeu des
+    adversaires — même politique que `list_games`, qui filtre déjà
+    `is_complete = 1`. Une donne abandonnée reste `is_complete = 0` pour
+    toujours : elle n'est jamais rendue. Les appelants qui ont réellement
+    besoin d'une donne en cours (rapport de bug, donne personnalisée à
+    regarder) le disent avec `include_incomplete=True` — à charge pour eux
+    de n'en rien divulguer.
+    """
     db = await get_db()
-    rows = await db.execute_fetchall("SELECT * FROM games WHERE id = ?", (game_id,))
+    where = "" if include_incomplete else " AND is_complete = 1"
+    rows = await db.execute_fetchall(
+        f"SELECT * FROM games WHERE id = ?{where}", (game_id,))
     if not rows:
         return None
     return _row_to_dict(rows[0])
