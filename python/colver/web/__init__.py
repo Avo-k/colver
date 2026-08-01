@@ -8,10 +8,12 @@ def main() -> None:
     try:
         import uvicorn  # noqa: F401
     except ImportError:
+        # `from None` : l'ImportError technique n'apprend rien de plus que
+        # le message, et son traceback noierait la seule ligne utile.
         raise SystemExit(
             "Web dependencies not installed. Run:\n"
             "  pip install colver[web]"
-        )
+        ) from None
     # L'import du serveur configure la journalisation applicative
     # (basicConfig) avant le téléchargement des modèles — leurs messages
     # passent donc déjà par elle.

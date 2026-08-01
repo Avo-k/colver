@@ -935,7 +935,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                         continue  # consumed at the top of the loop
                     pending.discard(fut)
                     result = fut.result()
-                    for suit_idx, (ns, ew) in enumerate(result["suits"]):
+                    for suit_idx, (ns, _ew) in enumerate(result["suits"]):
                         oracle_ns_sums[suit_idx] += ns
                         oracle_ns_vals[suit_idx].append(ns)
                         for t_idx, thr in enumerate(THRESHOLDS):

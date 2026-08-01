@@ -161,7 +161,7 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None):
                 })
             else:
                 result = env.solve_scores()
-                scores = {c: ns for c, ns in result["scores"]}
+                scores = dict(result["scores"])
                 team = player % 2
                 played_ns = scores[action]
                 best_ns = max(scores.values()) if team == 0 else min(scores.values())

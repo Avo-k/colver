@@ -57,6 +57,19 @@ class RateLimiter:
         if hits:
             hits.pop()
 
+    def reset(self, key=None):
+        """Oublier les passages d'une clé, ou de toutes.
+
+        Le limiteur est un objet de module partagé par tout le processus : sans
+        remise à zéro, un test qui épuise le budget le laisse épuisé pour les
+        suivants (ils viennent tous de la même « IP »). Utile aussi à un
+        exploitant qui débloque un joueur à la main.
+        """
+        if key is None:
+            self._hits.clear()
+        else:
+            self._hits.pop(key, None)
+
     def _prune(self, now):
         dead = [k for k, h in self._hits.items() if not h or now - h[-1] > self.window]
         for k in dead:

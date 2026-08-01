@@ -1,7 +1,6 @@
 """Game session management for Colver web UI."""
 
 import logging
-import os
 import random
 import threading
 import time
@@ -896,7 +895,7 @@ class BeliefSession:
             env.load_bid_model(self.bid_model_path)
 
         bots = AgentTable(
-            {seat: "dede" for seat in range(4)},
+            dict.fromkeys(range(4), "dede"),
             bid_model=self.bid_model_path,
             belief_model=self.belief_model_path,
             time_ms=self.GEN_PLAY_TIME_MS,

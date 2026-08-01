@@ -689,7 +689,7 @@ async def handle_disconnect(ws):
     """Mark any member using this socket as disconnected."""
     for room in list(ROOMS.values()):
         changed = False
-        for uid, m in room.members.items():
+        for m in room.members.values():
             if m["ws"] is ws:
                 m["ws"] = None
                 changed = True

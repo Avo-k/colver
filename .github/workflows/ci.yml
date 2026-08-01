@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un push qui en remplace un autre annule la course précédente : sur une
+# branche active, seule la dernière compte.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust — check & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+      # Sans `--release` : les tests du noyau tiennent en quelques minutes en
+      # debug, et une CI qui compile en LTO fat coûterait dix fois plus cher
+      # pour le même verdict.
+      - run: cargo test -p colver-core
+
+  python:
+    name: Python — lint & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # `--group test` et pas le groupe `dev` : la suite web n'a besoin ni de
+      # torch ni de scikit-learn, qui pèsent des gigaoctets pour rien ici.
+      - name: Install
+        run: uv sync --no-default-groups --group test
+
+      - name: Lint
+        run: uv run ruff check python/colver tests
+
+      # Les modèles ne sont pas dans le dépôt et `conftest.py` neutralise leur
+      # téléchargement : la suite tourne donc sans poids, avec les bots repliés
+      # sur les règles du moteur. Aucun test ne doit dépendre d'un modèle — si
+      # l'un se met à échouer seulement ici, c'est ça qu'il faut regarder.
+      - name: Tests
+        run: uv run pytest tests -q

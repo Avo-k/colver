@@ -60,4 +60,47 @@ dev = [
     "xgboost>=3.2.0",
     "shap>=0.49.1",
     "matplotlib>=3.10.8",
+    {include-group = "test"},
 ]
+# Séparé de `dev` : la CI installe *ce* groupe, pas torch et scikit-learn.
+test = [
+    "colver[web]",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",       # requis par fastapi.testclient
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Les tests du serveur sont asynchrones de bout en bout ; sans ce mode il
+# faudrait décorer chaque coroutine, et un décorateur oublié fait *passer* le
+# test sans rien exécuter — le pire mode d'échec possible pour une suite.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# Pas de warnings-as-errors pour l'instant : `server.py` utilise encore
+# `@app.on_event`, déprécié par FastAPI (le passage à `lifespan` est prévu avec
+# le drain, cf. docs/web_todo.md §2.6). Une règle qui échoue dès l'import ne
+# dirait rien de plus que ce qui est déjà noté.
+
+[tool.ruff]
+# Le code du site est écrit large (chaînes SQL, messages en clair) ; on cadre
+# sans reformater l'existant.
+line-length = 110
+target-version = "py310"
+extend-exclude = ["scripts", "python/colver/_colver.pyi"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "C4"]
+ignore = [
+    "E501",   # longueur de ligne : le linter la mesure, il ne la corrige pas
+    "B008",   # Depends() en valeur par défaut, l'idiome FastAPI
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `server.py` résout ses modèles au niveau module, entre deux blocs de
+# configuration commentés : l'ordre est le sujet, pas un oubli.
+"python/colver/web/server.py" = ["E402"]
+# `conftest.py` neutralise les téléchargements de modèles *avant* d'importer
+# quoi que ce soit du site — c'est tout l'intérêt du placement.
+"tests/conftest.py" = ["E402"]
