@@ -14,7 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
-from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot
+from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, CountingSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot
 from colver.web import playgen_gpu as _playgen_gpu
 from colver.web import game_notation
 import colver.web.card_analysis as _card_analysis
@@ -592,6 +592,12 @@ import threading as _threading
 
 _DD_EXECUTOR = _cf.ThreadPoolExecutor(
     max_workers=min(16, os.cpu_count() or 4), thread_name_prefix="dd-solve")
+
+# Pool dédié, volontairement étroit, pour la page de comptage. Sa session garde
+# un `Env` par thread avec DouDou50 chargé (~10 Mo) : sur l'exécuteur par défaut
+# d'asyncio, qui monte à 32 threads, ça ferait autant de copies des poids pour
+# une tâche qui coûte 20 ms. Deux fils suffisent à servir ~100 donnes/seconde.
+_COUNT_EXECUTOR = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="count-gen")
 
 # Per-thread Env cache for Dédé sims: model loading (~10MB from disk) happens
 # once per worker thread instead of once per simulated world.
@@ -2218,6 +2224,43 @@ async def _websocket_session(ws: WebSocket):
                     await wsend({"type": "belief_weights", **result})
                 except Exception as e:
                     await wsend({"type": "error", "msg": f"Erreur croyances : {e}"})
+
+            elif msg_type == "count_generate":
+                # Entraînement au comptage : une donne entière, en un aller-retour.
+                # Le client reçoit les huit plis et corrige lui-même — il n'y a
+                # rien à cacher dans un exercice, et « Problème suivant » doit
+                # être instantané.
+                loop = asyncio.get_event_loop()
+                session = CountingSession(
+                    bid_model_path=BID_MODEL_PATH,
+                    dmc_model_path=DMC_MODEL_PATH if doudou_available else None,
+                )
+                wanted_mine = data.get("source") == "mes"
+                try:
+                    result = None
+                    if wanted_mine and ws_user is not None:
+                        game = await db.random_user_game(
+                            ws_user["id"], data.get("seen") or [])
+                        if game is not None:
+                            try:
+                                result = await loop.run_in_executor(
+                                    _COUNT_EXECUTOR, session.from_game, game)
+                            except Exception:
+                                # Donne enregistrée inexploitable (tronquée,
+                                # décompte incohérent) : on génère plutôt que
+                                # de renvoyer une erreur au joueur.
+                                logger.info("comptage : donne %s inutilisable",
+                                            game.get("id"), exc_info=True)
+                    degraded = wanted_mine and result is None
+                    if result is None:
+                        result = await loop.run_in_executor(
+                            _COUNT_EXECUTOR, session.generate)
+                    await ws.send_json({"type": "count_ready",
+                                        "req_id": data.get("req_id"),
+                                        "source_degraded": degraded, **result})
+                except Exception as e:
+                    await ws.send_json({"type": "error",
+                                        "msg": f"Génération échouée : {e}"})
 
             else:
                 await ws.send_json({"type": "error", "msg": f"Unknown type: {msg_type}"})

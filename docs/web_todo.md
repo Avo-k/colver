@@ -442,3 +442,60 @@ Pièges :
 - Message d'un type nouveau sur une socket dont le client attend des paires
   état/coup — vérifier que les vues l'ignorent proprement si elles ne le
   connaissent pas.
+
+### 4.5 Donnes enregistrées dont les `actions` ne collent pas aux `hands` (détecté 2026-08-01)
+
+**2 des 17 donnes terminées de la base de dev sont incohérentes** : en les
+rejouant, certaines cartes sortent deux fois et d'autres jamais. Exemple `i2aj`
+— le siège 2 joue le 7♠ au 4ᵉ pli *et* au 5ᵉ, tandis que la Dame et l'As de
+carreau ne sont jamais joués ; total cartes 149 au lieu de 152. `e96z` a trois
+doublons.
+
+`env.step()` **ne valide pas la légalité** — c'est le comportement attendu d'un
+moteur RL, où le contrôle est à la charge de l'appelant — donc le moteur avale
+une carte absente de la main : elle s'ajoute au pli sans être retirée nulle
+part. La donne se rejoue jusqu'au bout, sans erreur, avec un décompte faux.
+
+**Conséquences aujourd'hui** : Rejouer affiche ces donnes avec des cartes en
+double ; leur analyse DD et leur revue d'agents partent d'un état impossible ;
+`games.points_ns/ew` ne correspond pas aux plis. La page de comptage
+(`/problemes/compter`) les rejette et journalise, c'est elle qui les a
+trouvées.
+
+**Reproduire** :
+
+```bash
+uv run python -c "
+import sys, json, sqlite3, os
+sys.path.insert(0, 'python')
+from colver.web.game_manager import CountingSession
+db = sqlite3.connect(os.path.expanduser('~/.local/share/colver/colver.db'))
+db.row_factory = sqlite3.Row
+for r in db.execute(\"SELECT * FROM games WHERE is_complete=1 AND mode IN ('play','multi')\"):
+    g = dict(r)
+    for k in ('hands', 'actions', 'agents'): g[k] = json.loads(g[k])
+    try:
+        CountingSession().from_game(g)
+    except Exception as e:
+        print(g['id'], g['mode'], '->', e)
+"
+```
+
+L'assertion qui les attrape est dans `CountingSession._payload` : la somme des
+points cartes des plis doit faire 152, et le dix de der lu sur
+`env.get_points()` doit valoir 10 ou 100.
+
+**À trancher** :
+
+1. **D'où vient la corruption** — c'est la vraie question, et elle est ouverte.
+   Un `hands` réécrit après coup ? une donne rejouée sur un `Env` mal remis à
+   zéro ? un `redeal_with_hands` en cours de partie ? Les deux donnes sont en
+   `mode = 'play'` ; regarder leur `created_at` et ce qui tournait alors. Tant
+   que la cause n'est pas connue, rien ne dit que ça ne se reproduit plus.
+2. **Valider à l'écriture** plutôt qu'à la lecture : refuser une action absente
+   des cartes restantes du joueur avant de l'écrire dans `games.actions`
+   (`PlaySession._record_action`, `rooms.py`). Un coup illégal doit être une
+   erreur bruyante, pas une ligne en base.
+3. **Que faire des lignes existantes** — les marquer plutôt que les effacer
+   (une colonne, ou `is_complete = 0`), pour qu'elles cessent d'alimenter
+   Rejouer, l'analyse et les listings sans perdre la trace de l'incident.

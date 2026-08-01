@@ -3,6 +3,7 @@
 import logging
 import os
 import random
+import threading
 import time
 from collections import OrderedDict
 import colver
@@ -1202,3 +1203,181 @@ class ReplaySession(TrickTracker):
         return move, self.get_state(), self.completed_tricks, finished
 
 
+
+
+_counting_tls = threading.local()
+
+
+def _counting_env(bid_model_path, dmc_model_path, dealer, hands):
+    """Un `Env` par thread, modèles chargés une fois pour toutes.
+
+    Recharger DouDou50 (10 Mo) à chaque problème coûterait bien plus cher que
+    de jouer la donne. Même remède que `server._get_doudou_env` :
+    `redeal_with_hands` remet l'état à neuf sans toucher aux poids.
+    """
+    key = (bid_model_path, dmc_model_path)
+    env = getattr(_counting_tls, "env", None)
+    if env is not None and getattr(_counting_tls, "key", None) == key:
+        env.redeal_with_hands(dealer, hands)
+        return env
+    env = colver.Env.deal_with_hands(dealer, hands)
+    if bid_model_path:
+        env.load_bid_model(bid_model_path)
+    if dmc_model_path:
+        env.load_dmc_model(dmc_model_path)
+    _counting_tls.env = env
+    _counting_tls.key = key
+    return env
+
+
+class CountingSession(TrickTracker):
+    """Une donne réelle, découpée en plis, pour l'entraînement au comptage.
+
+    Deux sources, un seul format de sortie. Une donne fraîche jouée par les
+    bots (`generate`), ou une donne rejouée depuis la base (`from_game`) : dans
+    les deux cas des plis *joués*, donc un ordre de cartes plausible et un
+    atout qui est celui d'un vrai contrat — c'est toute la différence avec des
+    plis tirés au hasard, où l'on compterait des situations qu'on ne verra
+    jamais à une table.
+
+    La génération est la source par défaut parce que la base est mince : une
+    trentaine de donnes terminées, quand la page en consomme une toutes les
+    vingt secondes. « Mes parties » reste proposé à qui est connecté, pour
+    recompter ses propres donnes.
+
+    Tout part au client d'un coup, la donne entière : la correction est alors
+    instantanée et locale. Un curieux peut lire la réponse dans la console —
+    c'est un exercice, la seule personne qu'il tromperait est lui-même.
+    """
+
+    # Une donne jouée à l'heuristique coûte des microsecondes ; le seul cas à
+    # rejouer est l'enchère qui meurt sur quatre passes (aucun pli à compter).
+    MAX_ATTEMPTS = 40
+
+    def __init__(self, bid_model_path=None, dmc_model_path=None):
+        self.bid_model_path = bid_model_path
+        self.dmc_model_path = dmc_model_path
+        self.env = None
+
+    # ----- sources ---------------------------------------------------------
+
+    def generate(self) -> dict:
+        """Une donne neuve, enchérie puis jouée par les bots."""
+        for _ in range(self.MAX_ATTEMPTS):
+            deck = list(range(32))
+            random.shuffle(deck)
+            env = _counting_env(
+                self.bid_model_path, self.dmc_model_path,
+                random.randrange(4), [deck[i * 8:(i + 1) * 8] for i in range(4)])
+            self.env = env
+            self._init_trick_tracking()
+
+            while env.phase() == 0 and not env.is_terminal():
+                self._step(self._bid_action(env))
+            if env.is_terminal() or env.phase() != 1:
+                continue  # enchère morte sur quatre passes : rien à compter
+
+            while not env.is_terminal():
+                self._step(self._play_action(env))
+
+            return self._payload(source="generee")
+        raise RuntimeError("Aucune donne jouable générée")
+
+    def from_game(self, game_data) -> dict:
+        """Une donne enregistrée, rejouée coup par coup depuis ses actions."""
+        self.env = colver.Env.deal_with_hands(
+            game_data["dealer"], game_data["hands"])
+        self._init_trick_tracking()
+        for entry in game_data["actions"]:
+            if self.env.is_terminal():
+                break
+            self._step(int(entry["action"]))
+        if len(self.completed_tricks) != 8:
+            raise RuntimeError("Donne enregistrée incomplète")
+        return self._payload(source="base", game_id=game_data["id"])
+
+    # ----- moteur ----------------------------------------------------------
+
+    def _bid_action(self, env):
+        if env.has_bid_model():
+            return int(env.action_bid_nn()["best_action"])
+        return int(env.bid_improved())
+
+    def _play_action(self, env):
+        if env.has_dmc_model():
+            return int(env.action_dmc_with_stats()["best_action"])
+        return int(env.action_heuristic_play())
+
+    def _step(self, action):
+        """Un coup, en tenant à jour les plis et les annonces de belote."""
+        player = int(self.env.current_player())
+        belote_before = list(self.env.get_belote())
+        self._check_trick_completion(action)
+        self.env.step(action)
+        self._finalize_trick_completion()
+        self._detect_belote(player, belote_before)
+        if self._belote_event:
+            self._announces.append({
+                "trick": len(self.completed_tricks) - (1 if self.trick_just_completed else 0),
+                "seat": self._belote_player,
+                "card": action,
+                "event": self._belote_event,
+            })
+        self.trick_just_completed = False
+
+    def _init_trick_tracking(self):
+        super()._init_trick_tracking()
+        self._announces = []
+
+    # ----- sortie ----------------------------------------------------------
+
+    def _payload(self, source, game_id=None) -> dict:
+        """La donne telle que la page la consomme : huit plis dans l'ordre.
+
+        On envoie toujours les huit, jamais un prefixe : c'est le client qui
+        décide combien il en montre selon le niveau, et la correction peut
+        alors dérouler la donne entière une fois la réponse donnée.
+        """
+        contract = self.env.get_contract()
+        trump = contract.get("trump", 0)
+        tricks = []
+        for i, t in enumerate(self.completed_tricks):
+            tricks.append({
+                "no": i + 1,
+                "cards": list(t["cards"]),
+                "lead": t["lead"],
+                "winner": t["winner"],
+                "points": t["points"],
+                "announces": [a for a in self._announces if a["trick"] == i],
+            })
+        # Le dix de der, on le *lit* au lieu de le recoder : `resolve_trick` l'a
+        # déjà versé dans `get_points()` (10, ou 100 si le camp a les 8 plis).
+        # L'écart entre la somme des plis et le moteur est du même coup la
+        # meilleure assertion possible sur le vainqueur du dernier pli — la
+        # seule valeur que cette page ne peut pas se permettre de rater.
+        cards_pts = [0, 0]
+        for t in self.completed_tricks:
+            cards_pts[t["winner"] % 2] += t["points"]
+        engine_pts = list(self.env.get_points())
+        der_team = self.completed_tricks[-1]["winner"] % 2
+        der_value = engine_pts[der_team] - cards_pts[der_team]
+        if (sum(cards_pts) != 152 or der_value not in (10, 100)
+                or engine_pts[1 - der_team] != cards_pts[1 - der_team]):
+            raise RuntimeError(
+                f"décompte incohérent : plis={cards_pts} moteur={engine_pts}")
+
+        belote = list(self.env.get_belote())
+        return {
+            "trump": trump,
+            "contract": contract,
+            "dealer": int(self.env.get_dealer()),
+            "tricks": tricks,
+            # Points *cartes* par camp, dix de der compris — la vérité du moteur.
+            "points": engine_pts,
+            "card_points": cards_pts,          # les mêmes, sans le dix de der
+            "der": {"team": der_team, "value": der_value},
+            # 2 = Roi et Dame d'atout tous deux joués, donc belote annoncée.
+            "belote": [20 if b == 2 else 0 for b in belote],
+            "source": source,
+            "game_id": game_id,
+        }

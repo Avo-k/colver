@@ -602,6 +602,32 @@ async def game_seat_names(game):
     return seats
 
 
+async def random_user_game(user_id, exclude=()):
+    """Une donne terminée du joueur, tirée au hasard — pour l'entraînement.
+
+    `exclude` évite de resservir les dernières : le vivier d'un joueur se
+    compte en dizaines de donnes, donc sans mémoire il rejouerait la même au
+    bout de quelques tirages. La liste vient du client (elle est à lui), et
+    elle est bornée là-bas ; on la borne aussi ici, un `IN (...)` de longueur
+    libre n'a rien à faire dans une requête.
+    """
+    db = await get_db()
+    exclude = [str(g) for g in list(exclude)[:20]]
+    holes = ",".join("?" * len(exclude))
+    where = ("WHERE mode IN ('play', 'multi') AND is_complete = 1"
+             " AND (user_id = ? OR id IN"
+             " (SELECT game_id FROM game_players WHERE user_id = ?))")
+    params = [user_id, user_id]
+    if exclude:
+        where += f" AND id NOT IN ({holes})"
+        params += exclude
+    rows = await db.execute_fetchall(
+        f"SELECT * FROM games {where} ORDER BY RANDOM() LIMIT 1", tuple(params))
+    if not rows:
+        return None
+    return _row_to_dict(rows[0])
+
+
 async def list_games(limit=50, offset=0, user_id=None):
     db = await get_db()
     where = "WHERE mode IN ('play', 'multi') AND is_complete = 1"
