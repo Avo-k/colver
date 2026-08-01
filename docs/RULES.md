@@ -2,6 +2,12 @@
 
 Rules as implemented in Colver, following FFB (Federation Francaise de Belote) official rules.
 
+> **There is no single FFB rulebook.** The federation has published at least four mutually
+> incompatible editions, a rival federation exists (Federation Francaise de Coinche, Saint-Etienne,
+> 1997), and the flagship national tournament follows neither. Which choices below are attested
+> where, and which are unique to Colver: [rules-survey/SYNTHESE.md](rules-survey/SYNTHESE.md)
+> (§6 "Ou tombe Colver").
+
 ## Overview
 
 Belote Contree is a 4-player trick-taking card game played in teams of two. Partners sit across from each other: North-South (team 0) vs East-West (team 1). A match is played to **2000 points** across multiple deals.
@@ -86,9 +92,28 @@ If you cannot follow suit and must trump, but **cannot overtrump** an opponent's
 
 However, if you **only have trump cards** in your hand, you must undertrump.
 
-### Partner Cut Exception
+### Partner Is Winning — No Obligation At All
 
-If your partner has cut (played trump on a non-trump lead) and is winning, and you have non-trump cards, you may play anything. But if you **only have trump cards**, you must overtrump the highest trump on the table if possible.
+If your partner currently holds the trick, you may play **any card, without exception** — whatever they played, and whatever is left in your hand.
+
+That "without exception" is load-bearing in one specific spot: partner **cut** a non-trump lead, and **trump is all you have left**. You may then play a trump *lower* than theirs. FFB contrée §2.3 spells it out — « n'importe quelle carte sans exception (y compris un atout inférieur au sien) » — and the 2015 edition calls it « le seul cas de figure, plutôt rare, où il est permis de jouer un atout inférieur ».
+
+> **BREAKING (2026-08-01): this case used to force an overtrump.** The engine followed the one
+> FFB edition (the "Équipe Ludique" reprint, `docs/règles officielles belote contrée.pdf`) whose
+> article 4 drops the `n'est pas` from that sentence and deletes the clause explaining it. FFB
+> contrée 2015, FFB contrée 2016 and FFB belote 2016 all say the opposite.
+>
+> The fix **enlarges** the legal move set, so it changes the game tree: **DD values, pre-solved
+> pools and any score layer produced before this date are stale**, same class of breakage as the
+> `quick_tricks` removal. Evidence and the four texts side by side:
+> [rules-survey/matrices/jeu-de-la-carte.md](rules-survey/matrices/jeu-de-la-carte.md).
+>
+> **How stale, measured.** Over 20 000 random deals (640 000 play decisions), the case arose
+> **485 times (0.076 % of decisions)**, and the old rule actually removed a legal option in only
+> **91 of them (0.014 %, ~1 decision in 7 000, ~1 deal in 220)** — the rest had no lower trump to
+> choose anyway. So the staleness is real but shallow: regenerating DD pools can be batched with
+> the next breaking change rather than done urgently. Caveat: measured under *random* play, which
+> distributes voids differently from skilled play, so treat it as an order of magnitude.
 
 ### Trick Winner
 
