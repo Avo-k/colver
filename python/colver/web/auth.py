@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import re
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -16,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 import colver.web.database as db
 import colver.web.elo as elo
+from colver.web.ratelimit import RateLimiter
 
 router = APIRouter(prefix="/api")
 
@@ -24,15 +26,50 @@ SESSION_DAYS = 30
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,20}$")
 MIN_PASSWORD_LEN = 8
 
+# bcrypt is deliberately slow (~100ms per call). Run it on its own tiny pool:
+# asyncio.to_thread shares the default executor with the AI turns
+# (server._run_ai_turns), so a login brute-force would also stall the tables.
+_BCRYPT_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="bcrypt")
+
+# One shared budget for login + register — both burn a bcrypt per call.
+_AUTH_LIMITER = RateLimiter(limit=5, window=60.0)
+
+
+async def _bcrypt(fn, *args):
+    return await asyncio.get_running_loop().run_in_executor(_BCRYPT_EXECUTOR, fn, *args)
+
+
+def _rate_limited(request):
+    """429 response when this client has spent its auth budget, else None."""
+    ip = request.client.host if request.client else "?"
+    if _AUTH_LIMITER.allow(ip):
+        return None
+    return JSONResponse(
+        {"error": "Trop de tentatives — réessayez dans une minute"},
+        status_code=429,
+        headers={"Retry-After": str(_AUTH_LIMITER.retry_after(ip))},
+    )
+
+
+def _refund(request):
+    """A successful auth is not brute force: give the token back, so a group
+    behind one NAT (friends joining a salon) doesn't burn the shared budget."""
+    _AUTH_LIMITER.refund(request.client.host if request.client else "?")
+
 
 def _hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _is_secure(request):
-    # Behind Caddy/Cloudflare the app sees plain HTTP; trust the proxy header.
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    return proto == "https"
+    # Behind Caddy/Cloudflare the app sees plain HTTP. With uvicorn's
+    # proxy_headers, request.url.scheme is rewritten from X-Forwarded-Proto
+    # when the connection comes from a trusted proxy; the raw header stays as
+    # a fallback for launches without one. Reading it can only upgrade to
+    # https — a real https scheme always wins — so spoofing it is harmless.
+    if request.url.scheme == "https":
+        return True
+    return request.headers.get("x-forwarded-proto") == "https"
 
 
 async def _start_session(response, request, user_id):
@@ -81,12 +118,16 @@ async def register(request: Request):
             {"error": f"Mot de passe trop court ({MIN_PASSWORD_LEN} caractères minimum)"},
             status_code=400,
         )
-    pw_hash = await asyncio.to_thread(
-        bcrypt.hashpw, password.encode(), bcrypt.gensalt()
-    )
+    # The limiter protects the bcrypt below; the free validation 400s above
+    # shouldn't spend the budget.
+    limited = _rate_limited(request)
+    if limited is not None:
+        return limited
+    pw_hash = await _bcrypt(bcrypt.hashpw, password.encode(), bcrypt.gensalt())
     user_id = await db.create_user(username, pw_hash.decode())
     if user_id is None:
         return JSONResponse({"error": "Ce pseudo est déjà pris"}, status_code=409)
+    _refund(request)
     user = await db.get_user_by_id(user_id)
     response = JSONResponse({"user": _public_user(user)})
     await _start_session(response, request, user_id)
@@ -95,21 +136,21 @@ async def register(request: Request):
 
 @router.post("/auth/login")
 async def login(request: Request):
+    limited = _rate_limited(request)
+    if limited is not None:
+        return limited
     body = await request.json()
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     user = await db.get_user_by_username(username)
     if user is None:
         # Burn comparable time so missing users aren't detectable by timing.
-        await asyncio.to_thread(
-            bcrypt.hashpw, password.encode(), bcrypt.gensalt()
-        )
+        await _bcrypt(bcrypt.hashpw, password.encode(), bcrypt.gensalt())
         return JSONResponse({"error": "Pseudo ou mot de passe incorrect"}, status_code=401)
-    ok = await asyncio.to_thread(
-        bcrypt.checkpw, password.encode(), user["password_hash"].encode()
-    )
+    ok = await _bcrypt(bcrypt.checkpw, password.encode(), user["password_hash"].encode())
     if not ok:
         return JSONResponse({"error": "Pseudo ou mot de passe incorrect"}, status_code=401)
+    _refund(request)
     response = JSONResponse({"user": _public_user(user)})
     await _start_session(response, request, user["id"])
     return response

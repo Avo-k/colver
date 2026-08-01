@@ -19,6 +19,7 @@ import colver.web.elo as elo
 import colver.web.rooms as rooms
 import colver.web.pacing as pacing
 import colver.web.match_state as match_state
+import colver.web.ratelimit as ratelimit
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -931,8 +932,43 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
 
 # ===== WebSocket =====
 
+# Plafond de connexions simultanées : chaque socket peut lancer des simulations
+# coûteuses (une annonces_sim ≈ 200 solves DD sur _DD_EXECUTOR) et une seule
+# tourne à la fois PAR socket — rien ne limitait le nombre de sockets qu'un
+# client anonyme peut ouvrir. Par IP + global, configurables par env.
+_WS_CAP = ratelimit.ConnectionCap(
+    per_key=int(os.environ.get("COLVER_WS_PER_IP", "8")),
+    total=int(os.environ.get("COLVER_WS_TOTAL", "200")),
+)
+
+# Le jour où il faudra distinguer une attaque d'un plafond mal calibré, c'est
+# cette trace qu'on cherchera — une ligne par minute et par IP suffit.
+_WS_REFUSAL_LOG = ratelimit.RateLimiter(limit=1, window=60.0)
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    ip = ws.client.host if ws.client else "?"
+    if not _WS_CAP.acquire(ip):
+        if _WS_REFUSAL_LOG.allow(ip):
+            logger.warning("connexion WS refusée (plafond) pour %s", ip)
+        try:
+            # Accepter d'abord : un refus avant l'accept se traduit par un 403
+            # opaque côté client, alors que 1013 (« try again later ») lui dit
+            # proprement de réessayer plus tard.
+            await ws.accept()
+            await ws.close(code=1013)
+        except Exception:
+            # Client déjà reparti — un refus de routine, pas une erreur ASGI.
+            pass
+        return
+    try:
+        await _websocket_session(ws)
+    finally:
+        _WS_CAP.release(ip)
+
+
+async def _websocket_session(ws: WebSocket):
     await ws.accept()
     ws_user = await user_from_cookies(ws.cookies)
     play_session = None

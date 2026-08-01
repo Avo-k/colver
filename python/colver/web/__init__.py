@@ -1,5 +1,7 @@
 """Colver web UI — ``pip install colver[web]`` to enable."""
 
+import os
+
 
 def main() -> None:
     """Start the Colver web server."""
@@ -27,4 +29,16 @@ def main() -> None:
     LOGGING_CONFIG["formatters"]["access"]["fmt"] = (
         '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s')
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Derrière Caddy : ne croire les en-têtes X-Forwarded-* (IP client, schéma
+    # https) que s'ils viennent du proxy lui-même. En Docker le proxy n'arrive
+    # pas en 127.0.0.1 — passer son IP ou un CIDR (ex. 172.16.0.0/12) via
+    # COLVER_FORWARDED_ALLOW_IPS. Jamais "*" : un client pourrait alors forger
+    # X-Forwarded-For et contourner les limites par IP.
+    forwarded = os.environ.get("COLVER_FORWARDED_ALLOW_IPS", "127.0.0.1")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        proxy_headers=True,
+        forwarded_allow_ips=forwarded,
+    )

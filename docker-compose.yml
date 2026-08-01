@@ -15,6 +15,14 @@ services:
       # Sidecar d'inférence GPU playgen (3090 de l'hôte moxxi). Fallback CPU
       # automatique si absent/injoignable — vide = désactivé.
       - COLVER_PLAYGEN_GPU_URL=${COLVER_PLAYGEN_GPU_URL:-http://192.168.1.23:8003}
+      # IP (ou CIDR) du reverse-proxy autorisé à poser X-Forwarded-* : en
+      # Docker, Caddy n'arrive pas en 127.0.0.1 mais par la passerelle du
+      # bridge. Sans ça, toutes les limites par IP retombent sur l'IP du proxy.
+      # Derrière Cloudflare en mode proxy, il faut EN PLUS que Caddy transmette
+      # la vraie IP cliente (CF-Connecting-IP → X-Forwarded-For, ou plages CF
+      # en trusted_proxies) et ajouter ces plages ici — sinon les limites par
+      # IP comptent par edge Cloudflare, partagé entre visiteurs.
+      - COLVER_FORWARDED_ALLOW_IPS=${COLVER_FORWARDED_ALLOW_IPS:-172.16.0.0/12}
     restart: unless-stopped
 
 volumes:

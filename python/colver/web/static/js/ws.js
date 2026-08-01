@@ -13,9 +13,14 @@ function connect() {
         console.log('Connecte');
         for (const handler of openHandlers) handler();
     };
-    ws.onclose = () => {
-        console.log('Deconnecte, reconnexion...');
-        setTimeout(connect, 1000);
+    ws.onclose = (evt) => {
+        // 1013 = plafond de connexions atteint côté serveur : marteler toutes
+        // les secondes ne ferait qu'entretenir la saturation — on attend.
+        const delay = evt.code === 1013 ? 15000 : 1000;
+        console.log(evt.code === 1013
+            ? 'Serveur sature, nouvelle tentative dans 15s'
+            : 'Deconnecte, reconnexion...');
+        setTimeout(connect, delay);
     };
     ws.onmessage = (evt) => {
         const data = JSON.parse(evt.data);
