@@ -76,6 +76,22 @@ def resolve(mode, doudou_available=True):
     return bot, spec["think_ms"], False
 
 
+def mode_for_bot(bot):
+    """Bot déjà assis -> mode qui va avec. L'inverse de `resolve`.
+
+    Une donne interrompue enregistre le bot qui tenait les sièges
+    (`games.agents`), jamais le mode qui l'avait choisi — hors partie il n'y a
+    pas de `matches.pacing` où le lire. Or la reprise a besoin du tempo autant
+    que du bot : sans lui une donne « rapide » repartirait derrière celui de
+    Dédé. Le repli dégradé se relit donc en `standard`, qui est bien le tempo
+    qu'il avait.
+    """
+    for name, spec in MODES.items():
+        if spec["bot"] == bot:
+            return name
+    return DEFAULT_MODE
+
+
 def _taper(bounds, trick_idx):
     start, floor = bounds
     t = max(0, min(_LAST_TRICK, int(trick_idx)))

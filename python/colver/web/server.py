@@ -1397,7 +1397,12 @@ async def _websocket_session(ws: WebSocket):
             "state": play_session.get_state(human_seat),
             "doudou_available": doudou_available,
             "game_id": play_game_id,
-            "initial_hands": play_session.initial_hands,
+            # Pas de `initial_hands` ici : ce sont les quatre mains en clair, et
+            # le client ne les affiche qu'en fin de donne (`showEndOfGameReview`).
+            # Les envoyer dès la distribution, c'était donner le jeu des trois
+            # autres à qui ouvre la console. `_enrich_terminal_msg` les joint à
+            # l'état terminal, au moment où elles se montrent — le salon garde
+            # déjà cette règle (`rooms.py`, `if state["is_terminal"]`).
             "mode": cfg["mode"],
             "bot": bot,
             "mode_degraded": cfg["degraded"],
@@ -1421,7 +1426,8 @@ async def _websocket_session(ws: WebSocket):
             "state": play_session.get_state(human_seat),
             "doudou_available": doudou_available,
             "game_id": play_game_id,
-            "initial_hands": play_session.initial_hands,
+            # `initial_hands` seulement si la donne est finie : cf. `_begin_deal`.
+            # C'est `_enrich_terminal_msg`, plus bas, qui les ajoute alors.
             "mode": cfg.get("mode", play_mode),
             "bot": cfg.get("bot"),
             "mode_degraded": cfg.get("degraded", False),
@@ -1430,23 +1436,73 @@ async def _websocket_session(ws: WebSocket):
         }
         return _enrich_terminal_msg(msg, play_session, play_match)
 
+    async def _resume_deal(row):
+        """Remettre en jeu la donne interrompue `row`, à son coup près.
+
+        Rend False si son journal ne se rejoue pas — l'appelant retombe alors
+        sur une donne neuve, c'est-à-dire sur l'ancien comportement.
+
+        `play_cfg` doit être posé avant l'appel (mode, bot, budget) ; le siège
+        humain, lui, se lit sur la donne : c'est *elle* qui a été jouée depuis
+        ce siège, et il vaut aussi pour les donnes suivantes de la partie.
+        """
+        nonlocal play_session, play_game_id
+        if row["human_seat"] is not None:
+            play_cfg["human_seat"] = int(row["human_seat"])
+        try:
+            session = await asyncio.to_thread(
+                _rebuild_session, row, play_cfg["human_seat"], play_cfg["bot"],
+                play_cfg["time_ms"],
+                play_match.totals if play_match is not None else None)
+        except Exception:
+            # Journal et donne qui ne se correspondent pas : irrécupérable, et
+            # la reproposer à chaque passage sur Jouer ne ferait qu'échouer plus
+            # souvent. On l'efface — elle n'était comptée nulle part.
+            logger.warning("donne %s non reprenable", row["id"], exc_info=True)
+            await db.drop_deal(row["id"])
+            return False
+        play_session = session
+        play_game_id = row["id"]
+        # Donne déjà terminée en base (coupure entre le dernier coup et sa
+        # clôture) : on la close *avant* d'envoyer l'état, qui emporte le score
+        # de la partie — même règle qu'en jeu.
+        if play_session.env.is_terminal():
+            await _finish_deal()
+        await ws.send_json(_play_state_msg())
+        await _run_ai_turns(ws, play_session, play_cfg["human_seat"], play_game_id,
+                            mode=play_cfg["mode"], match=play_match,
+                            on_deal_end=_finish_deal, wait_human=_wait_human_card)
+        return True
+
     async def _send_open_matches():
-        """La liste « à reprendre » : parties ouvertes du compte, sauf celle qui
-        est déjà à l'écran — on ne propose pas de reprendre là où on est."""
+        """Ce qu'il reste à reprendre : les parties ouvertes du compte, et la
+        donne interrompue qui n'appartient à aucune.
+
+        Sauf ce qui est déjà à l'écran — on ne propose pas de reprendre là où on
+        est. Une donne hors partie n'a pas de ligne `matches` (`target = 0` n'en
+        crée pas), elle se propose donc à part.
+        """
         matches = await db.list_open_matches(ws_user["id"]) if ws_user else []
         live = play_match.id if play_match is not None else None
+        deal = None
+        if ws_user is not None and play_session is None:
+            row = await db.pending_deal(ws_user["id"])
+            if row is not None:
+                deal = {"game_id": row["id"], "created_at": row["created_at"],
+                        "moves": len(row["actions"])}
         await ws.send_json({
             "type": "play_open",
             "matches": [m for m in matches if m["id"] != live],
+            "deal": deal,
         })
 
     async def _resume_match(match_id):
-        """Reprendre une partie interrompue, à la donne suivante.
+        """Reprendre une partie interrompue, là où elle s'est arrêtée.
 
-        La donne en cours au moment de la coupure n'est pas rejouable : les bots
-        n'ont pas d'état persistant, et rejouer la donne depuis ses actions ne
-        leur rendrait pas le leur. Elle est donc abandonnée et la partie repart
-        sur une donne neuve, au score acquis — c'est le prix affiché du bouton.
+        La donne qui était en cours se rejoue depuis son journal (`_resume_deal`)
+        et n'est perdue que si celui-ci ne se recolle pas à elle ; sinon la
+        partie repart sur une donne neuve, redonnée par le même joueur — une
+        donne abandonnée n'a pas eu lieu.
         """
         nonlocal play_match, play_cfg, play_mode
         if ws_user is None:
@@ -1459,12 +1515,13 @@ async def _websocket_session(ws: WebSocket):
                                 "msg": "Partie introuvable ou déjà terminée"})
             return
         deals = row["deals"]
-        if deals:
-            # Le donneur passe à gauche après une donne jouée…
+        pending = await db.pending_deal(ws_user["id"], match_id=row["id"])
+        if pending is not None:
+            # Une donne en plan : c'est elle qu'on reprend, donc son donneur.
+            dealer = int(pending["dealer"])
+        elif deals:
+            # Le donneur passe à gauche après une donne jouée.
             dealer = (int(deals[-1]["dealer"]) + 1) % 4
-        elif row["pending_dealer"] is not None:
-            # …mais une donne abandonnée n'a pas eu lieu : le même redonne.
-            dealer = int(row["pending_dealer"])
         else:
             dealer = None  # partie sans aucune donne : tirage au sort
         play_match = match_state.Match.restore(
@@ -1479,7 +1536,42 @@ async def _websocket_session(ws: WebSocket):
             "time_ms": dede_time_ms,
             "degraded": degraded,
         }
+        if pending is not None and await _resume_deal(pending):
+            return
         await _begin_deal()
+
+    async def _resume_lone_deal():
+        """Reprendre une donne interrompue qui n'appartient à aucune partie.
+
+        C'est le cas par défaut du site (`target = 0`), et le seul où le mode ne
+        se lit nulle part : sans `matches`, il se déduit du bot assis
+        (`games.agents`), cf. `pacing.mode_for_bot`.
+        """
+        nonlocal play_match, play_cfg, play_mode
+        if ws_user is None:
+            await ws.send_json({"type": "error",
+                                "msg": "Connectez-vous pour reprendre une donne"})
+            return
+        row = await db.pending_deal(ws_user["id"])
+        if row is None:
+            await ws.send_json({"type": "error", "msg": "Aucune donne à reprendre"})
+            return
+        seated = next((v for v in (row["agents"] or {}).values() if v != "human"),
+                      None)
+        play_mode = pacing.mode_for_bot(seated)
+        bot, dede_time_ms, degraded = pacing.resolve(play_mode, doudou_available)
+        play_match = match_state.Match(0, dealer=int(row["dealer"]))
+        play_cfg = {
+            "human_seat": 2 if row["human_seat"] is None else int(row["human_seat"]),
+            "mode": play_mode,
+            "bot": bot,
+            "time_ms": dede_time_ms,
+            "degraded": degraded,
+        }
+        if not await _resume_deal(row):
+            play_match = None
+            await ws.send_json({"type": "error",
+                                "msg": "Cette donne n'a pas pu être reprise"})
 
     async def _cancel_sim_task():
         nonlocal sim_task
@@ -1603,6 +1695,13 @@ async def _websocket_session(ws: WebSocket):
                 continue
 
             if msg_type == "start_game":
+                # Demander une donne neuve, c'est renoncer à celle qu'on avait
+                # laissée en plan : sans ça elle serait reproposée sans fin, et
+                # chaque nouvelle donne abandonnée en empilerait une de plus.
+                if ws_user is not None:
+                    stale = await db.pending_deal(ws_user["id"])
+                    if stale is not None:
+                        await db.drop_deal(stale["id"])
                 play_mode = pacing.normalize(data.get("mode"))
                 # One mode picks both the tempo and the bot, and all three AI
                 # seats run that same bot.
@@ -1638,6 +1737,20 @@ async def _websocket_session(ws: WebSocket):
 
             elif msg_type == "resume_match":
                 await _resume_match(str(data.get("match_id") or "").strip().lower())
+                await _send_open_matches()
+
+            elif msg_type == "resume_deal":
+                await _resume_lone_deal()
+                await _send_open_matches()
+
+            elif msg_type == "drop_deal":
+                # Renoncer explicitement à une donne interrompue hors partie.
+                # Elle n'était comptée nulle part (ni score, ni Elo) : l'effacer
+                # ne retire donc rien, ça arrête juste de la proposer.
+                if ws_user is not None:
+                    row = await db.pending_deal(ws_user["id"])
+                    if row is not None:
+                        await db.drop_deal(row["id"])
                 await _send_open_matches()
 
             elif msg_type == "abandon_match":
@@ -2309,6 +2422,27 @@ def _enrich_terminal_msg(msg, play_session, match=None):
         if match is not None:
             msg["match"] = match.payload()
     return msg
+
+
+def _rebuild_session(row, human_seat, bot, time_ms, scores):
+    """Reconstruire la session d'une donne interrompue, à son coup près.
+
+    Tourne dans un thread : la construction charge les modèles et le préfixe
+    passe par les bots (`observe`), comme au premier tour. Lève si le journal
+    ne colle pas à la donne — c'est `_resume_deal` qui décide quoi en faire.
+    """
+    session = PlaySession(
+        ai_types={s: bot for s in range(4) if s != human_seat},
+        human_seat=human_seat,
+        dmc_model_path=DMC_MODEL_PATH if bot == "doudou" else None,
+        bid_model_path=BID_MODEL_PATH,
+        belief_model_path=BELIEF_MODEL_PATH,
+        dede_time_ms=time_ms,
+        dealer=int(row["dealer"]),
+        hands=row["hands"],
+        scores=scores,
+    )
+    return session.replay(row["actions"])
 
 
 async def _complete_game(game_id, session):

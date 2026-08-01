@@ -485,6 +485,60 @@ async def load_open_match(match_id, user_id):
     return match
 
 
+async def pending_deal(user_id, match_id=None):
+    """La donne solo interrompue de ce joueur, avec de quoi la rejouer.
+
+    Une donne coupée en plein milieu (rechargement, socket tuée, déploiement)
+    reste `is_complete = 0` pour toujours. Elle porte pourtant tout ce qu'il
+    faut pour la reprendre : `hands` et `dealer` écrits à la création,
+    `actions` à chaque coup. C'est cette ligne-là que `game_manager.PlaySession`
+    rejoue.
+
+    Deux formes de donne interrompue, une seule requête : celle d'une partie
+    (`match_id`, propriété vérifiée sur la partie) et celle qui n'appartient à
+    aucune (le cas par défaut du site — `target = 0` ne crée pas de `matches`).
+    Restreint à `mode = 'play'` : en salon c'est le pilote qui tient la donne,
+    et il survit à la déconnexion d'un joueur.
+
+    Renvoie la ligne entière, **mains comprises** — au seul appelant qui a
+    prouvé qu'il en est le propriétaire, et à charge pour lui de n'en montrer
+    que le siège du joueur (cf. `get_game`).
+    """
+    if not user_id:
+        return None
+    db = await get_db()
+    if match_id:
+        sql = ("SELECT g.* FROM games g JOIN matches m ON m.id = g.match_id "
+               "WHERE g.match_id = ? AND m.user_id = ? AND m.is_complete = 0 "
+               "  AND g.mode = 'play' AND g.is_complete = 0 "
+               "ORDER BY g.deal_no DESC LIMIT 1")
+        params = (match_id, user_id)
+    else:
+        sql = ("SELECT * FROM games "
+               "WHERE user_id = ? AND match_id IS NULL "
+               "  AND mode = 'play' AND is_complete = 0 "
+               "ORDER BY created_at DESC LIMIT 1")
+        params = (user_id,)
+    rows = await db.execute_fetchall(sql, params)
+    if not rows:
+        return None
+    return _row_to_dict(rows[0])
+
+
+async def drop_deal(game_id):
+    """Effacer une donne interrompue devenue irrejouable.
+
+    Sert quand la reprise échoue (journal et donne qui ne se correspondent
+    pas) : sans ça la ligne serait reproposée à chaque passage sur Jouer, et
+    échouerait à chaque fois. Une donne jamais terminée n'est comptée nulle
+    part — ni score de partie, ni Elo, ni listing — donc rien ne la pleure.
+    """
+    db = await get_db()
+    await db.execute("DELETE FROM games WHERE id = ? AND is_complete = 0",
+                     (game_id,))
+    await db.commit()
+
+
 async def abandon_match(match_id, user_id):
     """Concéder une partie : close, mais sans vainqueur.
 

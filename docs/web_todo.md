@@ -13,6 +13,10 @@ rename `dmc_50.bin`) a été **implémenté le 2026-08-01** et retiré d'ici —
 les commits de ce jour-là. La numérotation des blocs restants est conservée
 pour que les renvois (§2.2, §3.1…) restent stables.
 
+**§2.7 est fait le même jour** (la donne en cours se reprend), et sa section est
+gardée pour ce qu'elle apprend : l'hypothèse qui la bloquait était fausse. Ce
+qu'il en reste à faire est en §2.8.
+
 Un fil relie plusieurs entrées : **l'état d'une partie solo ne vit que dans les
 locales de `_websocket_session`** (le corps du gestionnaire WebSocket,
 extrait de `websocket_endpoint` le 2026-08-01 sans changer sa structure).
@@ -38,6 +42,12 @@ La suppression n'est pas qu'un confort : on stocke un pseudo, un bcrypt et
 l'historique de jeu de personnes réelles, sans mentions légales ni politique de
 confidentialité. Décider aussi ce que devient une donne quand son joueur part
 (anonymiser `games.user_id` plutôt que casser les parties de salon).
+
+S'y raccroche depuis le §2.7 : **un joueur anonyme garde la redonne gratuite**,
+et il n'y a rien à corriger côté reprise — sans compte, aucune identité à
+laquelle rattacher une donne (`pending_deal` exige un `user_id`). Sans effet sur
+l'Elo, qui ne note que des joueurs identifiés, mais c'est bien le compte qui
+ferme ce trou-là, pas la reprise.
 
 ### 2.2 Dédé : inverser le budget — qualité fixe, latence bornée (1-2 j, qualité de jeu)
 
@@ -132,9 +142,11 @@ sur le chemin nominal.
 
 Tout est en `data.get(...)` brut, avec des `int()` non vérifiés
 (`int(data.get("human_seat", 2))` et compagnie). Une exception dans la boucle
-**tue le socket**, donc tue la donne en cours (qui n'est pas reprenable). Un
-modèle Pydantic par type de message supprime toute une classe de plantages et
-documente le protocole au passage — c'est le même travail.
+**tue le socket**, donc interrompt la donne en cours — moins grave depuis le
+§2.7, qui la rend reprenable, mais le joueur se prend quand même la coupure
+sans explication. Un modèle Pydantic par type de message supprime toute une
+classe de plantages et documente le protocole au passage — c'est le même
+travail.
 
 ### 2.5 Premiers tests Python et CI qui teste (2-3 j, dette)
 
@@ -149,6 +161,22 @@ idempotent, `finished` à égalité), la reprise (`load_open_match` → `restore
 et le fait que le score marqué ne se reconstitue pas en sommant les donnes), le
 passe forcé, `pacing.resolve` dégradé.
 
+Le §2.7 a déjà écrit ces tests, mais en scripts jetables — à reprendre tels
+quels comme premiers fichiers pytest. Ce qu'ils couvrent : (1) fidélité du
+rejeu, une donne coupée à 0/1/3/6/13/20/31 coups × 4 tirages × DouDou50 et
+Dédé, position et registres comparés terme à terme ; (2) `pending_deal` /
+`drop_deal`, isolation entre comptes, donne d'une partie contre donne isolée,
+donne terminale en base jamais close, journaux incohérents ; (3) un aller-retour
+complet sur le vrai WebSocket via `fastapi.testclient` — couper, revenir,
+reprendre, finir. Le (3) montre au passage l'outil qui manquait : **TestClient
+suffit à piloter le protocole WS de bout en bout**, sans serveur à lancer.
+
+Piège rencontré en l'écrivant, qui vaut pour tout test de ce protocole : le
+premier `game_state` d'une donne **peut déjà être le tour du joueur** (le
+donneur est tiré au sort), donc un harnais qui lit un message de plus « pour
+attendre son tour » se bloque une fois sur quatre, sur une donne sur laquelle
+le serveur, lui, attend.
+
 ### 2.6 Déployer en fin de donne, pas au milieu (drain)
 
 Aujourd'hui un déploiement, c'est `docker compose up -d --build` : le conteneur
@@ -157,16 +185,19 @@ entre les deux échelles de jeu :
 
 - La **partie** survit — le score cumulé est en base (`matches.points_ns/ew`) et
   un joueur connecté la reprend via `_resume_match`.
-- La **donne en cours est perdue pour de bon** : les bots n'ont aucun état
-  persistant (IS-DD, sources de mondes), rejouer les actions ne le leur rendrait
-  pas. C'est exactement pour ça que « Reprendre » concède la donne courante. Un
-  déploiement pendant qu'on joue inflige ça sans prévenir, et un joueur anonyme
-  (pas de `matches.user_id`) perd tout, pas seulement la donne.
+- La **donne en cours** survit aussi depuis le §2.7 : elle se rejoue depuis
+  `games.actions`, et un joueur connecté la retrouve à son coup près. Ce qu'il
+  perd, c'est le fil — la coupure arrive sans prévenir et il faut revenir.
+- Le **joueur anonyme**, lui, perd tout : rien en base ne le rattache ni à la
+  donne ni à la partie.
 
-Donc : attendre la fin des donnes actives avant de couper. Fin de **donne**
-suffit, pas fin de partie — c'est la seule granularité qui soit à la fois
-nécessaire et bornée (~42 s en standard, ~16 s en rapide ; une partie en 2000
-points, elle, n'a pas de durée maximale).
+Donc : attendre la fin des donnes actives avant de couper. Ça reste utile — une
+coupure au milieu d'un pli est brutale même quand elle est réparable, et le
+joueur anonyme n'a rien à reprendre — mais ce n'est plus une perte sèche, donc
+ça passe derrière §2.7 dans l'ordre d'urgence. Fin de **donne** suffit, pas fin
+de partie — c'est la seule granularité qui soit à la fois nécessaire et bornée
+(~42 s en standard, ~16 s en rapide ; une partie en 2000 points, elle, n'a pas
+de durée maximale).
 
 Forme envisagée :
 
@@ -196,39 +227,61 @@ Pièges repérés :
   `card_analysis`) sont à **annuler**, pas à drainer : elles sont recalculables
   et déjà annulables.
 
-### 2.7 Recharger la page efface une donne mal engagée (1-3 j, équité)
+### 2.7 Recharger la page efface une donne mal engagée — FAIT (2026-08-01), sauf le garde-fou
 
 Signalé par un joueur : en pleine donne, quitter la page (retour navigateur,
-rechargement) puis revenir suffit à faire disparaître la donne en cours et à en
-obtenir une neuve. Vérifié — c'est même le comportement *documenté* de la
-reprise (`_resume_match`, `server.py:1348`) : « une donne abandonnée n'a pas eu
-lieu », le même donneur redistribue, au score acquis. Or elle ne coûte rien
-nulle part : la ligne `games` reste `is_complete = 0`, donc ni les points de la
-partie (`Match.record` n'est jamais atteint), ni l'Elo (`rate_game` exige
-`is_complete = 1`, `elo.py:89`) ne la voient.
+rechargement) puis revenir suffisait à faire disparaître la donne en cours et à
+en obtenir une neuve. C'était même le comportement *documenté* de la reprise :
+« une donne abandonnée n'a pas eu lieu ». Or elle ne coûtait rien nulle part —
+la ligne `games` reste `is_complete = 0`, donc ni les points de la partie
+(`Match.record` jamais atteint), ni l'Elo (`rate_game` exige `is_complete = 1`)
+ne la voyaient. Contrat mal engagé → F5 → redonne gratuite, répétable.
 
-L'exploit : contrat coincé ou mal engagé → F5 → « Reprendre » → redonne
-gratuite, répétable à volonté. En partie de 1000, on ne perd que les donnes
-qu'on choisit de finir. Même mécanique hors partie pour l'Elo : recharger avant
-l'état terminal et la donne n'est jamais notée. Le salon n'est pas touché (le
-driver continue, la reconnexion rebranche le siège).
+**Ce qui est fait : la donne en cours se reprend à son coup près**, en partie
+comme hors partie (le cas par défaut, `target = 0`, qui n'avait aucune reprise
+du tout et était donc le trou le plus large). `db.pending_deal` →
+`PlaySession(hands=…)` + `replay(actions)` → `server._resume_deal`, plus les
+entrées côté Jouer (`play_open.deal`, messages `resume_deal` / `drop_deal`).
 
-La vraie sortie : **reprendre la donne en cours**, pas seulement la partie.
-§2.6 affirme que « rejouer les actions ne rendrait pas leur état aux bots »,
-mais c'est plus vrai en principe qu'en pratique avec les bots actuels :
-DouDou50 est sans état, et Dédé reconstruit ses mondes à chaque coup depuis le
-préfixe visible, que ses sources suivent via `init_deal`/`observe` — préfixe
-entièrement rejouable, puisque `games.hands` est écrit à la création et
-`games.actions` à chaque coup (`database.py::append_action`). Reconstruire une
-`PlaySession` depuis la base et rejouer les actions (env + `observe` des
-agents) semble donc faisable. Bénéfice collatéral : ça rendrait indolores le
-déploiement en pleine donne (§2.6) et le socket tué par un message malformé
-(§2.4).
+L'hypothèse à retenir, parce qu'elle était fausse dans les deux docs :
+« rejouer les actions ne rendrait pas leur état aux bots ». Les bots n'ont pas
+d'état à restaurer, ils en ont un qui **se déduit** du préfixe visible — le
+rejeu passe par `_record_action`, donc par `AgentTable.observe`, exactement
+comme le jeu. Vérifié bit à bit (position, enchères, plis, mains d'origine) à
+toutes les coupures, DouDou50 comme Dédé.
 
-En garde-fou résiduel (ou en attendant) : une donne abandonnée en partie ne
-doit pas être gratuite — à trancher entre la marquer chutée pour l'abandonneur
-et n'en compter que les points cartes déjà pris par l'adversaire. À couvrir par
-§2.5 : la reprise est déjà en tête de la liste des tests à écrire.
+Ce qui reste est passé en **§2.8** (le garde-fou), §2.1 (le cas anonyme) et
+§2.5 (les tests). Bénéfice collatéral à encaisser quand §2.6 et §2.4 se feront :
+un déploiement en pleine donne et un socket tué par un message malformé ne
+coûtent plus la donne, il suffit de revenir.
+
+### 2.8 Renoncer à une donne devrait coûter quelque chose (1 j, équité)
+
+Reste du §2.7, et la moitié qui demande une décision plutôt que du code.
+Reprendre une donne interrompue est désormais le chemin par défaut, mais y
+**renoncer** est encore gratuit, par deux portes : le bouton « Abandonner » de
+la ligne de reprise (`drop_deal`) et le simple fait de démarrer une donne neuve
+(`start_game` efface celle en plan, sinon elle serait reproposée sans fin et
+chaque abandon en empilerait une de plus).
+
+L'exploit n'est donc plus ni silencieux ni accidentel — il demande deux clics
+et s'annonce — mais il n'est toujours pas payant : contrat mal engagé →
+Abandonner → donne neuve, au score acquis.
+
+À trancher, et c'est un choix de règle avant d'être du code :
+
+- **Marquer la donne chutée pour le camp qui abandonne** — l'adversaire marque
+  comme s'il avait gagné la donne. Simple, symétrique des règles, et
+  `Match.record` prend déjà des rewards ; c'est la piste recommandée.
+- **Ne compter que les points cartes déjà pris** par l'adversaire — plus doux,
+  mais suppose une règle de marque qui n'existe pas dans le moteur, et récompense
+  d'abandonner tôt.
+
+Deux détails que la décision devra couvrir : une donne abandonnée **avant tout
+contrat** (enchère non conclue) ne met rien en jeu et devrait rester gratuite ;
+et le résultat doit-il compter pour l'Elo, ou seulement pour le score de la
+partie ? (Aujourd'hui `rate_game` exige `is_complete = 1`, donc une donne
+abandonnée n'est jamais notée.)
 
 ---
 
@@ -460,7 +513,9 @@ part. La donne se rejoue jusqu'au bout, sans erreur, avec un décompte faux.
 double ; leur analyse DD et leur revue d'agents partent d'un état impossible ;
 `games.points_ns/ew` ne correspond pas aux plis. La page de comptage
 (`/problemes/compter`) les rejette et journalise, c'est elle qui les a
-trouvées.
+trouvées. Depuis le §2.7, la reprise d'une donne les rejette aussi, et plus tôt
+— action par action plutôt que sur le total des plis — et efface la ligne
+(`drop_deal`) plutôt que de reprendre une donne fausse.
 
 **Reproduire** :
 
@@ -495,7 +550,10 @@ points cartes des plis doit faire 152, et le dix de der lu sur
 2. **Valider à l'écriture** plutôt qu'à la lecture : refuser une action absente
    des cartes restantes du joueur avant de l'écrire dans `games.actions`
    (`PlaySession._record_action`, `rooms.py`). Un coup illégal doit être une
-   erreur bruyante, pas une ligne en base.
+   erreur bruyante, pas une ligne en base. Le prédicat est déjà écrit :
+   `PlaySession.replay` (§2.7) teste `action in env.legal_actions()` avant
+   chaque coup — il suffit de le remonter dans `_record_action`, où il vaudra
+   pour le jeu comme pour le rejeu.
 3. **Que faire des lignes existantes** — les marquer plutôt que les effacer
    (une colonne, ou `is_complete = 0`), pour qu'elles cessent d'alimenter
    Rejouer, l'analyse et les listings sans perdre la trace de l'incident.

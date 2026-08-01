@@ -96,17 +96,35 @@ function matchDate(iso) {
         + ` à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function renderOpenMatches(matches) {
+// Une donne laissée en plan, hors partie. Elle se reprend au coup près, donc
+// elle se présente comme les parties : le même bandeau, la même paire de
+// boutons — sauf qu'ici « Abandonner » n'efface qu'une donne.
+function lonePendingRow(deal) {
+    const moves = deal.moves > 0
+        ? `${deal.moves} coup${deal.moves > 1 ? 's' : ''} joué${deal.moves > 1 ? 's' : ''}`
+        : 'à peine commencée';
+    return `
+    <div class="resume-row resume-deal" data-deal="${deal.game_id}">
+        <span class="resume-score"><b>Donne</b></span>
+        <span class="resume-meta">${moves} · ${matchDate(deal.created_at)}</span>
+        <button type="button" class="resume-go">Reprendre</button>
+        <button type="button" class="resume-drop">Abandonner</button>
+    </div>`;
+}
+
+function renderOpenMatches(matches, deal) {
     const el = document.getElementById('play-resume');
     if (!el) return;
-    if (gameOnScreen || !matches || matches.length === 0) {
+    const nothing = (!matches || matches.length === 0) && !deal;
+    if (gameOnScreen || nothing) {
         el.classList.add('hidden');
         el.innerHTML = '';
         return;
     }
     el.classList.remove('hidden');
     el.innerHTML = '<span class="config-group-label">Reprendre</span>'
-        + matches.map(m => {
+        + (deal ? lonePendingRow(deal) : '')
+        + (matches || []).map(m => {
             // Le score est lu du côté du joueur, comme le bandeau de la table.
             const us = (m.human_seat ?? 2) % 2 === 0 ? m.points_ns : m.points_ew;
             const them = (m.human_seat ?? 2) % 2 === 0 ? m.points_ew : m.points_ns;
@@ -119,23 +137,27 @@ function renderOpenMatches(matches) {
         </span>
         <span class="resume-meta">objectif ${m.target} · ${deals} · ${matchDate(m.created_at)}${
             m.pending ? '<br><span class="resume-warn">une donne était en cours :'
-                + ' elle sera abandonnée</span>' : ''}</span>
+                + ' elle reprend où elle s\'est arrêtée</span>' : ''}</span>
         <button type="button" class="resume-go">Reprendre</button>
         <button type="button" class="resume-drop">Abandonner</button>
     </div>`;
         }).join('');
 
     for (const row of el.querySelectorAll('.resume-row')) {
+        // Une ligne porte soit une partie (`data-id`), soit la donne isolée
+        // (`data-deal`) : deux messages, un seul câblage.
         const id = row.dataset.id;
         row.querySelector('.resume-go').addEventListener('click', () => {
-            send({ type: 'resume_match', match_id: id });
+            send(id ? { type: 'resume_match', match_id: id }
+                    : { type: 'resume_deal' });
         });
-        // Concéder est irréversible : le bouton demande confirmation sur place
+        // Abandonner est irréversible : le bouton demande confirmation sur place
         // plutôt que d'ouvrir une boîte de dialogue du navigateur.
         const drop = row.querySelector('.resume-drop');
         drop.addEventListener('click', () => {
             if (drop.dataset.armed) {
-                send({ type: 'abandon_match', match_id: id });
+                send(id ? { type: 'abandon_match', match_id: id }
+                        : { type: 'drop_deal' });
                 return;
             }
             drop.dataset.armed = '1';
@@ -149,7 +171,7 @@ function handleOpenMatches(data) {
     // La réponse prouve que la demande est passée : `play_status` répond
     // toujours par la liste, même quand il reprend une partie au passage.
     resumeWanted = null;
-    renderOpenMatches(data.matches);
+    renderOpenMatches(data.matches, data.deal);
 }
 
 function probeStatus() {

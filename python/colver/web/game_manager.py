@@ -256,11 +256,13 @@ class TrickTracker:
 class PlaySession(TrickTracker):
     """Wraps a colver.Env for human vs AI play."""
 
-    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dede_time_ms=None, dealer=None, scores=None):
+    def __init__(self, ai_types=None, human_seat=2, dmc_model_path=None, bid_model_path=None, belief_model_path=None, dede_time_ms=None, dealer=None, scores=None, hands=None):
         # ai_types: dict mapping seat -> ai_type (for non-human seats)
         # If not provided, default all AI seats to "dede"
         # dealer: siège qui donne (None = tirage au sort, comme une donne isolée)
         # scores: score cumulé de la partie [NS, EW], vu par les bots
+        # hands: donne imposée — la reprise d'une donne interrompue rejoue *sa*
+        #   distribution, elle ne peut pas en tirer une nouvelle (cf. `replay`)
         self.human_seat = human_seat
         if ai_types is None:
             ai_types = {}
@@ -270,7 +272,9 @@ class PlaySession(TrickTracker):
         self.history = []
         self.bid_history = []
         self._init_trick_tracking()
-        if dealer is None:
+        if hands is not None:
+            self.env.redeal_with_hands(int(dealer) % 4, [list(h) for h in hands])
+        elif dealer is None:
             self.env.reset()
         else:
             # `Env.reset()` tire le donneur au hasard ; en partie il tourne d'une
@@ -356,7 +360,12 @@ class PlaySession(TrickTracker):
                 state["best_trump_suit"] = int(eval_result["best_suit"])
         return state
 
-    def play_action(self, action):
+    def _record_action(self, action):
+        """Jouer un coup et en tenir tous les registres — sans rendre d'état.
+
+        C'est le seul chemin par lequel une action entre dans la session, qu'elle
+        vienne d'un clic, d'un bot ou du journal d'une donne reprise.
+        """
         player = self.env.current_player()
         phase = self.env.phase()
         belote_before = list(self.env.get_belote())
@@ -367,7 +376,55 @@ class PlaySession(TrickTracker):
         self._check_trick_completion(action)
         self._apply(action)
         self._detect_belote(player, belote_before)
+
+    def play_action(self, action):
+        self._record_action(action)
         return self.get_state()
+
+    def replay(self, actions):
+        """Rejouer le préfixe d'une donne interrompue, coup par coup.
+
+        Rien à restaurer côté bots : ils n'ont pas d'état à eux qui survive au
+        processus, ils en ont un qui se **déduit** du préfixe visible. DouDou50
+        est sans état, et Dédé redemande ses mondes à chaque coup à partir de ce
+        que ses sources ont vu passer (`init_deal` puis `observe`, cf.
+        `agents.AgentTable`). Rejouer les actions dans l'ordre les remet donc
+        exactement là où la coupure les a laissés — c'est `_record_action`, le
+        même chemin qu'en jeu, qui s'en charge.
+
+        Tout ou rien : une action illégale veut dire que le journal et la donne
+        ne se correspondent pas, et un préfixe à moitié rejoué serait pire que
+        pas de reprise du tout — les coups suivants s'ajouteraient en base
+        derrière un état qui n'est pas le leur. L'appelant retombe alors sur une
+        donne neuve.
+
+        Le test de légalité n'est pas décoratif : **`env.step()` ne valide pas**
+        (c'est le contrat d'un moteur RL, le contrôle est à l'appelant), donc
+        sans lui une carte absente de la main serait avalée sans erreur et la
+        donne se rejouerait jusqu'au bout avec un décompte faux. Des donnes
+        enregistrées dans cet état existent bel et bien, cause inconnue — cf.
+        `docs/web_todo.md` §4.5.
+
+        Deux réserves sur ce que ce garde-fou couvre. Il attrape ce qui ne se
+        joue pas, pas tout désaccord : un journal amputé d'un coup *au milieu*
+        peut rester entièrement légal et décrire une autre donne. Et le coup
+        perdu **en fin** de journal — le cas réaliste, à la seconde de la
+        coupure — n'est pas une corruption du tout : le journal est alors un
+        préfixe, donc une position antérieure cohérente, qu'on reprend
+        simplement un coup plus tôt.
+        """
+        for entry in actions:
+            action = int(entry["action"] if isinstance(entry, dict) else entry)
+            if self.env.is_terminal() or action not in list(self.env.legal_actions()):
+                raise ValueError(
+                    f"action {action} illégale au coup {len(self.history) + 1}")
+            self._record_action(action)
+        # Le client reçoit une position, pas un coup : ni pli à faire clignoter,
+        # ni belote à annoncer une seconde fois.
+        self.trick_just_completed = False
+        self._belote_event = None
+        self._belote_player = None
+        return self
 
     def _apply(self, action):
         """Show the move to every bot, then advance the game."""
@@ -389,17 +446,12 @@ class PlaySession(TrickTracker):
         return int(decision["action"])
 
     def play_ai_turn(self):
-        player = self.env.current_player()
+        # `phase` avant le coup : c'est elle qui nomme l'action (une annonce et
+        # une carte partagent les mêmes indices).
         phase = self.env.phase()
-        belote_before = list(self.env.get_belote())
         action = self.get_ai_action()
         name = colver.Env.action_name(action, phase)
-        self.history.append({"player": int(player), "action": action, "phase": int(phase)})
-        if phase == 0:
-            self.bid_history.append({"player": int(player), "action": action, "name": name})
-        self._check_trick_completion(action)
-        self._apply(action)
-        self._detect_belote(player, belote_before)
+        self._record_action(action)
         return action, name, self.get_state()
 
 

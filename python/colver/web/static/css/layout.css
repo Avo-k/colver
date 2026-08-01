@@ -276,8 +276,10 @@ nav {
     line-height: var(--lh-snug);
     color: var(--c-text-dim);
 }
-/* Reprendre coûte la donne interrompue : le dire sur la ligne, pas ailleurs. */
-.resume-warn { color: var(--c-warn); }
+/* La donne interrompue reprend où elle s'est arrêtée : le dire sur la ligne,
+   pas ailleurs. Ce n'était un avertissement (`--c-warn`) que tant que reprendre
+   la coûtait — c'est une promesse maintenant, pas une mise en garde. */
+.resume-warn { color: var(--c-text); }
 .resume-go, .resume-drop {
     padding: var(--sp-1) var(--sp-3);
     font-size: var(--fs-sm);
