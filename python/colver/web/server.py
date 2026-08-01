@@ -5,10 +5,11 @@ import json
 import logging
 import os
 import time
+from html import escape as _html_escape
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot
 from colver.web import playgen_gpu as _playgen_gpu
@@ -136,19 +137,234 @@ else:
 
 logger.info("ROOT_PATH=%s", ROOT_PATH)
 
+# URL publique du site — URL canoniques, Open Graph, sitemap. Derrière un
+# reverse proxy avec préfixe (ROOT_PATH), inclure le préfixe dans la valeur.
+PUBLIC_URL = os.environ.get("COLVER_PUBLIC_URL", "https://colver.net").rstrip("/")
 
-def _serve_index():
+# ===== Métadonnées SEO par route =====
+# Le catch-all sert le même index.html pour toutes les routes du SPA : sans
+# injection côté serveur, tout le site partage un seul <title> et un lien
+# partagé s'affiche vide. Table alignée sur static/js/router.js.
+_SUIT_SYMBOLS = "♠♥♦♣"  # ordre moteur : 0=♠ 1=♥ 2=♦ 3=♣ (cf. shared/suits.js)
+_TEAM_NAMES = ["Nord-Sud", "Est-Ouest"]
+
+_ROUTE_META = {
+    "/": {
+        "title": "Colver — Belote contrée en ligne contre des IA",
+        "description": "Jouez à la belote contrée en ligne contre des IA fortes, "
+                       "en solo ou en salon entre amis. Entraînez vos annonces et "
+                       "analysez vos donnes carte par carte.",
+    },
+    "/jouer/humain": {
+        "title": "Jouer contre l'IA — Colver",
+        "description": "Une table de belote contrée en solo : trois sièges tenus "
+                       "par l'IA, parties en une donne, 1000 ou 2000 points.",
+    },
+    "/jouer/salon": {
+        "title": "Salon multijoueur — Colver",
+        "description": "Créez un salon de belote contrée et invitez vos amis avec "
+                       "un code à quatre lettres — les sièges vides sont tenus par l'IA.",
+    },
+    "/jouer/ia": {
+        "title": "Regarder l'IA jouer — Colver",
+        "description": "Observez des parties de belote contrée entre IA, avec les "
+                       "statistiques du moteur en temps réel.",
+    },
+    "/analyse/rejouer": {
+        "title": "Rejouer une partie — Colver",
+        "description": "Rejouez une donne de belote contrée coup par coup, avec "
+                       "l'avis de l'Oracle et des IA sur chaque carte.",
+    },
+    "/analyse/annonces": {
+        "title": "Analyser une annonce — Colver",
+        "description": "Composez une main et évaluez chaque annonce : réseau "
+                       "d'enchères, jeu parfait et simulations de donnes.",
+    },
+    "/analyse/jeu": {
+        "title": "Analyser le jeu de la carte — Colver",
+        "description": "Comparez les cartes jouables d'une position de belote "
+                       "contrée : valeur exacte à l'Oracle et taux de réussite simulé.",
+    },
+    "/analyse/croyances": {
+        "title": "Croyances de l'IA — Colver",
+        "description": "Visualisez ce que l'IA déduit des mains cachées au fil "
+                       "d'une donne de belote contrée.",
+    },
+    "/problemes/annonce": {
+        "title": "Problèmes d'annonce — Colver",
+        "description": "Entraînez vos enchères à la belote contrée sur des donnes "
+                       "générées, avec la correction de l'IA.",
+    },
+    "/problemes/jeu": {
+        "title": "Problèmes de jeu — Colver",
+        "description": "Entraînez votre jeu de la carte : trouvez la meilleure "
+                       "carte de la position, l'Oracle corrige.",
+    },
+    "/aide": {
+        "title": "Aide-mémoire de la belote contrée — Colver",
+        "description": "Les règles essentielles de la belote contrée : ordre et "
+                       "valeur des cartes, enchères, coinche, belote.",
+    },
+    "/annoncer": {
+        "title": "Guide des annonces — Colver",
+        "description": "Que demander avec sa main : des repères simples pour "
+                       "annoncer juste à la belote contrée.",
+    },
+    "/score": {
+        "title": "Marquer les points — Colver",
+        "description": "Compter et marquer les points à la belote contrée : "
+                       "contrats, coinche, surcoinche, belote et capot.",
+    },
+    "/about": {
+        "title": "À propos — Colver",
+        "description": "Colver : un moteur de belote contrée open source et des "
+                       "IA entraînées par apprentissage par renforcement.",
+    },
+    "/compte": {
+        "title": "Mon compte — Colver",
+        "description": "Vos parties terminées, vos parties en cours et votre "
+                       "classement.",
+    },
+    "/classement": {
+        "title": "Classement — Colver",
+        "description": "Le classement Elo des joueurs et des IA de Colver, mis à "
+                       "jour à chaque donne.",
+    },
+}
+
+# Pages publiques de contenu : ni /compte (espace personnel), ni /analyse/jeu
+# (vide tant qu'on n'y colle pas une position).
+_SITEMAP_ROUTES = [
+    "/", "/jouer/humain", "/jouer/salon", "/jouer/ia",
+    "/analyse/rejouer", "/analyse/annonces", "/analyse/croyances",
+    "/problemes/annonce", "/problemes/jeu",
+    "/aide", "/annoncer", "/score", "/classement", "/about",
+]
+
+
+# L'injection SEO entière repose sur ce remplacement de chaîne : si le <title>
+# d'index.html change d'un octet, tout devient un no-op silencieux. Le contrôle
+# au démarrage transforme cette mort silencieuse en erreur visible.
+_TITLE_ANCHOR = "<title>Colver - Belote Contree</title>"
+try:
+    with open(os.path.join(FRONTEND_DIR, "index.html")) as _f:
+        if _TITLE_ANCHOR not in _f.read():
+            logger.error(
+                "index.html ne contient plus l'ancre %r — l'injection SEO "
+                "(title/description/OG) est morte, remettre le <title> en phase",
+                _TITLE_ANCHOR)
+except OSError:
+    pass
+
+
+def _route_meta(path):
+    """Métadonnées d'une route du SPA. Route inconnue → celles de l'accueil,
+    avec la canonique forcée sur `/` (le routeur client y redirige aussi)."""
+    meta = _ROUTE_META.get(path)
+    if meta is None:
+        meta = dict(_ROUTE_META["/"], canonical=PUBLIC_URL + "/")
+    return meta
+
+
+def _serve_index(path="/", meta=None):
     html_path = os.path.join(FRONTEND_DIR, "index.html")
     with open(html_path) as f:
         html = f.read()
     # Inject the correct base href for reverse proxy support
     html = html.replace('<base href="/">', f'<base href="{ROOT_PATH}">')
+    # Le <title> du fichier sert d'ancre : il est remplacé par le bloc complet
+    # (title, description, canonique, Open Graph). Tout est échappé — les
+    # métadonnées d'une donne partagée viennent de la base.
+    meta = meta or _route_meta(path)
+    title = _html_escape(meta["title"])
+    desc = _html_escape(meta["description"])
+    canon = _html_escape(meta.get("canonical") or PUBLIC_URL + path)
+    html = html.replace(
+        _TITLE_ANCHOR,
+        f"<title>{title}</title>\n"
+        f'    <meta name="description" content="{desc}">\n'
+        f'    <link rel="canonical" href="{canon}">\n'
+        f'    <meta property="og:title" content="{title}">\n'
+        f'    <meta property="og:description" content="{desc}">\n'
+        f'    <meta property="og:type" content="website">\n'
+        f'    <meta property="og:url" content="{canon}">\n'
+        f'    <meta property="og:image" content="{PUBLIC_URL}/static/og-image.png">\n'
+        f'    <meta property="og:image:width" content="1024">\n'
+        f'    <meta property="og:image:height" content="1024">\n'
+        f'    <meta property="og:site_name" content="Colver">',
+    )
     return HTMLResponse(html)
+
+
+async def _replay_meta(game_id):
+    """Métadonnées OG d'une donne partagée, ou None → celles de la route.
+
+    Le contrat stocké ne dit pas si la donne est réussie : `games.points_ns/ew`
+    sont les points *cartes* et la belote n'est pas en base. On rejoue donc les
+    actions (même idiome que `elo._replay_rewards`) — quelques microsecondes
+    côté Rust. Donne inconnue, incomplète ou passée → None.
+    """
+    try:
+        game = await db.get_game(game_id)
+    except Exception:
+        return None
+    if not game or not game["is_complete"]:
+        return None
+    contract = game.get("contract")
+    if not contract or not contract.get("value"):
+        return None  # donne passée (4 passes)
+    try:
+        env = _colver_pkg.Env.deal_with_hands(game["dealer"], game["hands"])
+        for entry in game["actions"]:
+            if env.is_terminal():
+                break
+            env.step(int(entry["action"]))
+        if not env.is_terminal():
+            return None
+        rewards = list(env.rewards())
+        points = list(env.get_points())
+        belote = list(env.get_belote())
+    except Exception:
+        return None
+
+    value = contract["value"]
+    taker = contract.get("team", 0)
+    made = rewards[taker] > 0  # même idiome que `contract_made` (game_manager)
+    attack = points[taker] + (20 if belote[taker] == 2 else 0)
+    sym = _SUIT_SYMBOLS[contract.get("trump", 0)]
+    # « 160♥ coinchée chutée » mais « Capot ♥ coinché chuté » : le capot est
+    # masculin, l'annonce en points est féminine.
+    fem = value != 250
+    e = "e" if fem else ""
+    label = f"{value}{sym}" if fem else f"Capot {sym}"
+    coinche = {1: f" coinché{e}", 2: f" surcoinché{e}"}.get(contract.get("coinche", 0), "")
+    # Un capot chute sur les plis, pas sur les points : « chuté de N » n'a de
+    # sens que pour un contrat en points.
+    if made:
+        outcome = f"réussi{e}"
+    elif fem:
+        outcome = f"chuté{e} de {max(1, value - attack)}"
+    else:
+        outcome = "chuté"
+    verb = "réussit" if made else "chute"
+    description = (
+        f"{_TEAM_NAMES[taker]} joue {label}{coinche} et {verb} "
+        f"({points[taker]} points cartes contre {points[1 - taker]}). "
+        f"Rejouez la donne carte par carte, avec l'avis de l'Oracle "
+        f"et des IA de Colver."
+    )
+    return {
+        "title": f"{label}{coinche} {outcome} — rejouez la donne sur Colver",
+        "description": description,
+        # `i` (position dans la donne) est volontairement absent : toutes les
+        # positions d'une donne se replient sur la même page canonique.
+        "canonical": f"{PUBLIC_URL}/analyse/rejouer?game={game['id']}",
+    }
 
 
 @app.get("/")
 async def index():
-    return _serve_index()
+    return _serve_index("/")
 
 
 app.mount("/cards", StaticFiles(directory=CARDS_DIR), name="cards")
@@ -2305,8 +2521,41 @@ def _run_single_doudou_sim(hand, remaining, bid_model_path, dmc_model_path,
     return {"doudou": doudou}
 
 
+# robots.txt / sitemap.xml — déclarés AVANT le catch-all, qui les servirait
+# sinon en HTML. Robots : tout est permis sauf l'API et le WebSocket.
+@app.get("/robots.txt")
+async def robots_txt():
+    return PlainTextResponse(
+        "User-agent: *\n"
+        "Disallow: /api/\n"
+        "Disallow: /ws\n"
+        "\n"
+        f"Sitemap: {PUBLIC_URL}/sitemap.xml\n"
+    )
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    urls = "\n".join(
+        f"  <url><loc>{PUBLIC_URL}{p}</loc></url>" for p in _SITEMAP_ROUTES)
+    return Response(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        "</urlset>\n",
+        media_type="application/xml",
+    )
+
+
 # Catch-all for client-side routes (pushState).
 # Must be registered AFTER all API/WS/static mounts.
 @app.get("/{full_path:path}")
-async def spa_catchall(full_path: str):
-    return _serve_index()
+async def spa_catchall(full_path: str, request: Request):
+    path = "/" + full_path
+    # Une donne partagée mérite de vraies métadonnées : titre et description
+    # composés depuis la donne elle-même quand elle existe et est terminée.
+    if path == "/analyse/rejouer" and request.query_params.get("game"):
+        meta = await _replay_meta(request.query_params["game"])
+        if meta is not None:
+            return _serve_index(path, meta)
+    return _serve_index(path)
