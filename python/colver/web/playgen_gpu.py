@@ -15,15 +15,61 @@ Activation : variable d'environnement ``COLVER_PLAYGEN_GPU_URL``
 """
 
 import json
+import logging
 import os
+import time
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 GPU_URL = os.environ.get("COLVER_PLAYGEN_GPU_URL", "").rstrip("/")
 TIMEOUT = float(os.environ.get("COLVER_PLAYGEN_GPU_TIMEOUT", "6"))
 
+# Sonde de disponibilité : court, et mis en cache. `/health` doit rester
+# instantané, mais « une URL est configurée » n'est pas « le sidecar répond » —
+# c'est justement l'écart qui a laissé la prod tourner sans playgen sans que
+# rien ne le dise. On sonde donc pour de vrai, avec un délai serré et un cache
+# assez court pour être utile et assez long pour qu'un tableau de bord qui
+# rafraîchit ne martèle pas le GPU.
+PROBE_TIMEOUT = float(os.environ.get("COLVER_PLAYGEN_GPU_PROBE_TIMEOUT", "1.5"))
+PROBE_TTL = float(os.environ.get("COLVER_PLAYGEN_GPU_PROBE_TTL", "30"))
+
+_probe_cache = None  # (instant monotone, résultat)
+
 
 def enabled() -> bool:
     return bool(GPU_URL)
+
+
+def probe(force=False):
+    """État réel du sidecar : `{configured, reachable, detail, age_s}`.
+
+    Synchrone et bornée par `PROBE_TIMEOUT` — appelable depuis la boucle
+    asyncio sans la bloquer plus longtemps que ça, mais préférer
+    `asyncio.to_thread` sur un chemin sensible à la latence.
+    """
+    global _probe_cache
+    if not GPU_URL:
+        return {"configured": False, "reachable": False,
+                "detail": "COLVER_PLAYGEN_GPU_URL non définie", "age_s": 0.0}
+    now = time.monotonic()
+    if not force and _probe_cache is not None and now - _probe_cache[0] < PROBE_TTL:
+        cached = dict(_probe_cache[1])
+        cached["age_s"] = round(now - _probe_cache[0], 1)
+        return cached
+    try:
+        with urllib.request.urlopen(GPU_URL + "/health", timeout=PROBE_TIMEOUT) as resp:
+            body = json.loads(resp.read())
+        result = {"configured": True, "reachable": True,
+                  "detail": f"model {body.get('model')}, "
+                            f"max_worlds {body.get('max_worlds')}"}
+    except Exception as e:  # noqa: BLE001 — toute panne se rapporte pareil
+        result = {"configured": True, "reachable": False,
+                  "detail": f"{type(e).__name__}: {e}"}
+    _probe_cache = (now, result)
+    out = dict(result)
+    out["age_s"] = 0.0
+    return out
 
 
 def _post(path: str, payload: dict):

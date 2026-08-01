@@ -17,6 +17,7 @@ before `env.step()` for **all** moves, human ones included.
 
 import logging
 import os
+import time
 
 import colver
 
@@ -37,6 +38,69 @@ ISDD_WORLD_BATCH = int(os.environ.get("COLVER_ISDD_PLAYGEN_WORLDS", "256"))
 # Playgen GPU sidecar. Empty = no sidecar configured, in which case IS-DD bots
 # sample constraint-uniform worlds and say so in their stats.
 SIDECAR_URL = os.environ.get("COLVER_PLAYGEN_GPU_URL", "").rstrip("/")
+
+# Le déploiement *déclare* qu'il attend un sidecar. Sans ça, « pas de sidecar »
+# est indiscernable d'un choix : une machine de dev sans GPU est parfaitement
+# normale, une prod sans playgen ne l'est pas. La prod a tourné plus d'un jour
+# sur des mondes uniformes sans que rien ne l'annonce, parce que la seule
+# différence entre les deux cas vivait dans la tête de l'exploitant.
+REQUIRE_SIDECAR = os.environ.get("COLVER_REQUIRE_SIDECAR", "").strip().lower() \
+    in ("1", "true", "yes", "on")
+
+# Journalisation des décisions dégradées : au plus une ligne par fenêtre, avec
+# le compte. Un coup de bot par siège et par pli, c'est ~24 par donne — sans
+# plafond, une panne de sidecar noierait le journal au lieu de le renseigner.
+_DEGRADED_LOG_WINDOW = 60.0
+_degraded = {"since": 0.0, "count": 0}
+
+
+def sidecar_expected() -> bool:
+    return REQUIRE_SIDECAR
+
+
+def log_startup_state():
+    """Dire, au démarrage, avec quels mondes Dédé va jouer.
+
+    `[worlds] fallback = "uniform"` est un choix délibéré — le web préfère finir
+    la donne à être exactement aussi fort que le banc d'essai — mais un repli
+    silencieux est un repli qu'on découvre des semaines plus tard, à la force de
+    jeu. Une ligne au démarrage coûte zéro et ferme ce trou-là.
+    """
+    if SIDECAR_URL:
+        logger.info("IS-DD : mondes playgen via le sidecar %s "
+                    "(repli uniforme si indisponible)", SIDECAR_URL)
+        return
+    message = ("IS-DD : aucun sidecar playgen configuré "
+               "(COLVER_PLAYGEN_GPU_URL vide) — Dédé échantillonne des mondes "
+               "contraints-uniformes et joue donc plus faiblement qu'attendu")
+    if REQUIRE_SIDECAR:
+        logger.error("%s ; COLVER_REQUIRE_SIDECAR est pourtant activé", message)
+    else:
+        logger.warning(message)
+
+
+def _note_degraded(seat, stats):
+    """Compter, et dire de temps en temps, qu'une décision s'est repliée.
+
+    `worlds_source` était déjà calculé — mais envoyé au *client*, jamais au
+    journal. Personne ne regarde une interface à trois heures du matin ; c'est
+    exactement la deuxième dégradation silencieuse que le backlog signale
+    (docs/web_todo.md §2.2).
+    """
+    if not SIDECAR_URL or stats.get("worlds_source") == "playgen-gpu":
+        return
+    now = time.monotonic()
+    _degraded["count"] += 1
+    if now - _degraded["since"] < _DEGRADED_LOG_WINDOW:
+        return
+    logger.warning(
+        "IS-DD dégradé : %d décision(s) sans mondes playgen depuis %.0f s "
+        "(dernière : siège %s, source %s, %s mondes) — sidecar %s injoignable ?",
+        _degraded["count"], now - _degraded["since"] if _degraded["since"] else 0,
+        seat, stats.get("worlds_source"), stats.get("determinizations"),
+        SIDECAR_URL)
+    _degraded["since"] = now
+    _degraded["count"] = 0
 
 AGENT_NAMES = {
     "dede": "Dédé (IS-DD)",
@@ -152,11 +216,19 @@ class AgentTable:
         return AGENT_NAMES.get(self.kind(seat), self.kind(seat))
 
     def decide(self, env, seat):
-        """Full decision dict for `seat`, or `None` if that seat has no bot."""
+        """Full decision dict for `seat`, or `None` if that seat has no bot.
+
+        Point de passage unique de tout coup de bot, solo comme salon : c'est
+        donc ici qu'on remarque qu'une décision s'est jouée sans les mondes
+        qu'on croyait (`_note_degraded`).
+        """
         agent = self.agents.get(int(seat))
         if agent is None:
             return None
-        return agent.decide(env)
+        decision = agent.decide(env)
+        if decision is not None and decision.get("source") == "isdd":
+            _note_degraded(seat, decision_stats(self.kind(seat), decision))
+        return decision
 
 
 def decision_stats(kind, decision, error=None):

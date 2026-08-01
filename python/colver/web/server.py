@@ -21,6 +21,9 @@ import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.integrity as integrity
+# Alias `_agents` et pas `agents` : plusieurs gestionnaires WS utilisent
+# déjà `agents` comme variable locale (la table des bots d'une donne).
+from colver.web import agents as _agents
 import colver.web.rooms as rooms
 import colver.web.pacing as pacing
 import colver.web.match_state as match_state
@@ -439,8 +442,23 @@ async def health():
     except Exception:
         logger.exception("health : SELECT 1 en échec")
         db_ok = False
+    # Le sidecar est **sondé**, pas seulement lu dans la configuration : une URL
+    # renseignée ne dit pas qu'un serveur répond au bout. La sonde est bornée à
+    # ~1,5 s et mise en cache 30 s (cf. `playgen_gpu.probe`), donc /health reste
+    # instantané en pratique ; elle part dans un thread pour que même ce
+    # délai-là ne tienne pas la boucle d'événements.
+    sidecar = await asyncio.to_thread(_playgen_gpu.probe)
+
+    # « Dégradé » veut dire : la réalité ne correspond pas à ce que ce
+    # déploiement a déclaré attendre. Sans `COLVER_REQUIRE_SIDECAR`, tourner
+    # sans GPU est un choix légitime (une machine de dev) et non une panne ;
+    # avec, c'est une alerte. Ce drapeau est ce qui distingue les deux, et son
+    # absence est la raison pour laquelle la prod a tourné un jour entier sur
+    # des mondes uniformes sans que /health s'en émeuve.
+    sidecar_ok = sidecar["reachable"] or not _agents.sidecar_expected()
+    healthy = db_ok and sidecar_ok
     payload = {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if healthy else "degraded",
         "db": db_ok,
         "invalid_deals": invalid_deals,
         "version": _colver_pkg.__version__,
@@ -450,11 +468,13 @@ async def health():
             "bid": BID_MODEL_PATH is not None,
             "belief": BELIEF_MODEL_PATH is not None,
             "playgen": PLAYGEN_MODEL_PATH is not None,
-            # URL du sidecar configurée — pas une sonde : /health doit rester
-            # instantané.
-            "sidecar_configured": _playgen_gpu.enabled(),
+            "sidecar_configured": sidecar["configured"],
         },
+        "sidecar": {**sidecar, "required": _agents.sidecar_expected()},
     }
+    # 503 seulement si la base est morte : un sidecar absent dégrade la force de
+    # jeu, il n'empêche pas de jouer. Le champ `status` porte l'alerte, le code
+    # HTTP reste réservé à « ce serveur ne peut pas servir ».
     return JSONResponse(payload, status_code=200 if db_ok else 503)
 
 
@@ -491,6 +511,9 @@ async def _check_then_rate():
 
 @app.on_event("startup")
 async def _elo_backfill():
+    # Dire tout de suite avec quels mondes Dédé va jouer : un repli silencieux
+    # ne se découvre autrement qu'à la force de jeu, des semaines plus tard.
+    _agents.log_startup_state()
     _spawn(_check_then_rate())
 
 
