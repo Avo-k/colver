@@ -25,7 +25,7 @@ use colver_core::bid_eval;
 use colver_core::bid_net::BidNet;
 use colver_core::bid_obs::{
     self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
-    BID_OBS_DIM_SCORE_AWARE_V3,
+    BID_OBS_DIM_SCORE_AWARE_V3, BID_OBS_DIM_V7,
 };
 use colver_core::suit_perm;
 use colver_core::bid_train_env::{BidReplayBuffer, DealPool, RewardMode, VecBidEnv};
@@ -135,6 +135,21 @@ fn save_bin_from_floats(path: &str, floats: &[f32]) -> std::io::Result<()> {
         bytes.extend_from_slice(&f.to_le_bytes());
     }
     std::fs::write(path, bytes)
+}
+
+/// The single place the `--sa-features-*` flags become a width. Three call sites read it
+/// — the model, the replay buffer and the env — and a disagreement between them is
+/// silent: every layout is a valid buffer, just not the one the net was built for.
+fn score_aware_dim(args: &Args) -> usize {
+    if args.sa_features_v7 {
+        BID_OBS_DIM_V7
+    } else if args.sa_features_v3 {
+        BID_OBS_DIM_SCORE_AWARE_V3
+    } else if args.sa_features_v2 {
+        BID_OBS_DIM_SCORE_AWARE_V2
+    } else {
+        BID_OBS_DIM_SCORE_AWARE
+    }
 }
 
 /// Opponent bidding strategy for non-self-play environments.
@@ -305,6 +320,14 @@ struct Args {
     /// Implies --sa-features-v2 semantics for the first 5 extras; overrides if both set.
     #[arg(long)]
     sa_features_v3: bool,
+    /// Use v7 features (v3 + 4 per-suit trump scores + 2 auction-conditioned
+    /// reductions → 123-dim obs). Requires --score-aware.
+    ///
+    /// The per-suit scores restate the hand; what is new is `opp_best_other_ts` —
+    /// the best of them *excluding* the suit an opponent is contracting in. See
+    /// `bid_obs::write_bid_observation_v7`.
+    #[arg(long)]
+    sa_features_v7: bool,
     /// Train on the **canonical** suit ordering (v7). Suits are sorted by
     /// (length, rank pattern) descending, ties broken by the auction, so two hands
     /// identical up to renaming become one training sample instead of 24.
@@ -534,13 +557,7 @@ fn main() {
         )
     } else {
         let obs_dim = if args.score_aware {
-            if args.sa_features_v3 {
-                BID_OBS_DIM_SCORE_AWARE_V3
-            } else if args.sa_features_v2 {
-                BID_OBS_DIM_SCORE_AWARE_V2
-            } else {
-                BID_OBS_DIM_SCORE_AWARE
-            }
+            score_aware_dim(&args)
         } else {
             BID_OBS_DIM
         };
@@ -556,6 +573,9 @@ fn main() {
     }
     if args.sa_features_v3 && !args.score_aware {
         panic!("--sa-features-v3 requires --score-aware");
+    }
+    if args.sa_features_v7 && !args.score_aware {
+        panic!("--sa-features-v7 requires --score-aware");
     }
     if args.canonical && !args.score_aware {
         // The canonical path only exists on the score-aware transition type; a plain
@@ -582,13 +602,7 @@ fn main() {
 
     // Initialize replay buffer (obs dim matches model: 117 v3, 113 v2, 110 v1, 108 standard)
     let replay_obs_dim = if args.score_aware {
-        if args.sa_features_v3 {
-            BID_OBS_DIM_SCORE_AWARE_V3
-        } else if args.sa_features_v2 {
-            BID_OBS_DIM_SCORE_AWARE_V2
-        } else {
-            BID_OBS_DIM_SCORE_AWARE
-        }
+        score_aware_dim(&args)
     } else {
         BID_OBS_DIM
     };
@@ -685,13 +699,7 @@ fn main() {
             println!("Score distribution: uniform [0, 2000)");
             Vec::new()
         };
-        let sa_dim = if args.sa_features_v3 {
-            BID_OBS_DIM_SCORE_AWARE_V3
-        } else if args.sa_features_v2 {
-            BID_OBS_DIM_SCORE_AWARE_V2
-        } else {
-            BID_OBS_DIM_SCORE_AWARE
-        };
+        let sa_dim = score_aware_dim(&args);
         vec_env.enable_score_aware_with_dim(sa_dim, &pool_data, args.sa_uniform_ratio);
         if args.reward_clip > 0.0 {
             vec_env.set_reward_clip(Some(args.reward_clip));

@@ -197,8 +197,10 @@ avant d'engager les 87 h. Cf. §2.8.
   [../data_gen/pool_staleness.md](../data_gen/pool_staleness.md)
 - **Jamais de E[Y|X] substitué par échantillon avant un seuil** (erreur de Jensen) :
   on calibre en échantillonnant.
-- **Deux features manquantes identifiées par sonde de couche cachée** — J/9 par
-  couleur, `opp_best_other_ts` — ferment l'écart 77 % → 97 %.
+- **Le 77 % → 97 % de la sonde mesure le *distillat*, pas le réseau** (relu le
+  2026-08-02, §3.4). J/9 par couleur ne manquait qu'à XGBoost : `obs[0:32]` est la main
+  brute. Seul `opp_best_other_ts` — un max sur les couleurs privé de celle qu'un
+  adversaire annonce — est une information que le réseau ne lisait pas directement.
   [interpretability/probe_morning_report.md](interpretability/probe_morning_report.md)
 - **Le modèle joue ses propres enchères** (ε-greedy sur sa politique) ; l'oracle
   supervise la loss, jamais la trajectoire. Sinon on obtient des enchères dégénérées
@@ -607,9 +609,51 @@ essentiellement aucun gradient. Options, à tester dans cet ordre :
 - bonus d'exploration par compte d'action (UCB-like) sur la politique de collecte ;
 - amorçage supervisé : sur les mains capot forcé du pool, un lot de labels durs.
 
-### 3.4 Les deux features manquantes du probe *(coût faible, effet mesuré)*
-J/9 par couleur et `opp_best_other_ts` : 77 % → 97 % d'accord sur la sonde. C'est le
-seul lead de ce document dont l'effet est *déjà* chiffré. À intégrer à l'obs v7.
+### 3.4 Les features du probe — **une seule survit à la relecture** *(fait le 2026-08-02)*
+
+Ce paragraphe disait : « J/9 par couleur et `opp_best_other_ts` : 77 % → 97 % d'accord sur
+la sonde. C'est le seul lead de ce document dont l'effet est *déjà* chiffré. » **Ce n'est
+pas ce que la mesure dit.**
+
+Le 77 % → 97 % est le gain d'un **XGBoost qui distille le réseau** à partir de 17 features
+de main agrégées. Ce n'est pas une mesure sur le réseau, c'est une mesure sur le
+*substitut*. Le rapport le dit lui-même : « le probe linéaire h0 disait que l'info existait
+dans l'obs », et une régression linéaire sur les 512 activations de la couche 0 atteint
+93 % là où XGBoost plafonne à 77 %.
+
+Conséquences, séparément pour les deux familles :
+
+- **J/9 par couleur : rien à ajouter.** `obs[0:32]` est la **main brute** — J♠ est
+  l'indice 3, 9♠ l'indice 2. Les huit bits sont déjà là, exactement. Les rajouter en
+  features, c'est recopier huit entrées du réseau à côté d'elles-mêmes. Ils manquaient au
+  jeu de features du distillat, jamais au réseau.
+- **`opp_best_other_ts` : à garder.** C'est un max sur les couleurs **privé de celle qu'un
+  adversaire annonce** — une interaction main × historique d'enchère, pas une reformulation
+  de la main. C'est aussi ce que l'ablation du rapport isole : ajouter les 12 features
+  per-suit laissait opp80 à 82 %, l'exclusion seule l'a porté à 97 %. Le réseau sait la
+  calculer (h0 le prouve) ; la lui donner explicitement est le même geste que les 5
+  features de score dérivées de v5, qui sont elles aussi dérivables et ont été ajoutées.
+
+**Implémenté** : `BID_OBS_DIM_V7 = 123`, drapeau `--sa-features-v7`, clé TOML inchangée
+(la largeur, elle, se détecte au fichier de poids). Layout :
+
+| indices | contenu | sous renommage |
+|---|---|---|
+| [117:121] | `evaluate_for_trump(main, couleur)/35` | **permute** |
+| [121] | `opp_best_other_ts` | invariant |
+| [122] | `opp_second_other_ts` | invariant |
+
+Les 4 scores par couleur sont gardés malgré le point précédent, pour une raison qui n'est
+pas celle du rapport : la sonde a trouvé dans la dernière couche de v5 **quatre détecteurs
+de qualité-couleur en parallèle** plutôt qu'un agrégat au meilleur. Les exposer nomme ce
+que le réseau construit déjà, et rend l'exclusion de [121] lisible comme un max sur trois
+d'entre eux au lieu d'une fonction du bitmap. C'est un pari sur le biais inductif, pas sur
+l'information — et l'ablation de §5 doit le traiter comme tel.
+
+Deux tests le tiennent : `v7_tail_excludes_only_the_opponents_suit` (l'exclusion ne
+s'applique qu'à un adversaire — si elle dégénérait en « meilleur des quatre », v7 serait v6
+plus six flottants redondants) et `canonical_bid_obs_is_invariant_under_suit_renaming`,
+étendu à 123, qui échoue bien si le bloc [117:121] n'est pas permuté (vérifié par mutation).
 
 ### 3.5 Génération stratifiée, avec poids d'importance conservés *(coût moyen, risque réel)*
 Stratifier **sur l'issue, pas sur la main** : l'espace des mains est saturé (§1.4),
@@ -799,7 +843,8 @@ ne fait rien, et le repli uniforme est silencieux pour qui ne lit pas `probe()`.
    étant qu'une moyenne sur les régimes cache l'essentiel.
 5. §3.1 — canonicalisation de l'obs, avec le flip rate **des trois régimes** comme test
    de non-régression (`bid_equivariance.py --prior`).
-6. §3.4 — les deux features du probe, à intégrer avant de figer l'obs v7.
+6. ~~§3.4 — les deux features du probe~~ **fait** (2026-08-02) : obs v7 à 123, et une
+   seule des deux familles survit à la relecture de la mesure qui la justifiait.
 7. ~~§2.8 — arbitrer donnes contre mondes~~ **tranché** (2026-08-02) : 5M × 20, les
    donnes gagnent. Reste à décider 5M contre 1M à k identique — 87 h contre 17 h.
 8. Regénération du pool (due de toute façon) avec §3.5 dedans.

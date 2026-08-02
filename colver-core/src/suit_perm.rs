@@ -285,8 +285,14 @@ pub fn permute_bid_obs(obs: &mut [f32], perm: &[u8; 4]) {
 pub fn permute_bid_obs_dim(obs: &mut [f32], obs_dim: usize, perm: &[u8; 4]) {
     debug_assert!(obs.len() >= obs_dim);
     permute_bid_obs(&mut obs[..crate::bid_obs::BID_OBS_DIM], perm);
-    if obs_dim == crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 {
-        let off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V2;
+    // Every suit-indexed block past the base obs, in layout order. The two v7 tails
+    // ([121], [122]) are reductions over suits and are invariant, so they stay put.
+    if obs_dim >= crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 {
+        let off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V2; // belote bits
+        permute_suit_onehot(&mut obs[off..off + 4], perm);
+    }
+    if obs_dim >= crate::bid_obs::BID_OBS_DIM_V7 {
+        let off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3; // per-suit trump scores
         permute_suit_onehot(&mut obs[off..off + 4], perm);
     }
 }

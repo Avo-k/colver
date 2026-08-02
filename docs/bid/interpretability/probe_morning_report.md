@@ -2,6 +2,17 @@
 
 > Réponse à la question de minuit : "peut-on sonder directement la couche cachée du NN pour découvrir des features qu'on aurait ratées ?"
 
+> ⚠️ **Relire « 77 % → 97 % » avec sa quantité (note du 2026-08-02).** Ce chiffre est le
+> gain d'un **XGBoost qui distille le réseau** depuis 17 features de main agrégées. Ce
+> n'est **pas** une mesure de ce qui manque au réseau : le probe linéaire sur h0, ci-dessous,
+> atteint déjà 93 % sur le même scénario, donc l'information est dans l'obs. En particulier
+> **« J/9 par couleur » n'a jamais manqué au réseau** — `obs[0:32]` est la main brute, J♠
+> est l'indice 3 et 9♠ l'indice 2 ; les ajouter en features reviendrait à recopier huit
+> entrées. La seule des deux familles qui soit une information nouvelle *pour le réseau*
+> est `opp_best_other_ts`, une interaction main × historique d'enchère. Ce document reste
+> juste sur ce qu'il mesure — l'interprétabilité — et c'est sa transposition à l'obs qui
+> était fausse : [../bid_v7_plan.md](../bid_v7_plan.md) §3.4.
+
 ## TL;DR
 
 **Oui, et la découverte est nette.**

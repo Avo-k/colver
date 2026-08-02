@@ -23,8 +23,7 @@ use rand::{Rng, SeedableRng};
 use crate::bid_eval::BidFunction;
 use crate::bid_net::BidNet;
 use crate::bid_obs::{
-    self, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
-    BID_OBS_DIM_SCORE_AWARE_V3,
+    self, BID_OBS_DIM,
 };
 use crate::state::GameState;
 use crate::suit_perm;
@@ -110,18 +109,7 @@ impl BidNetPolicy {
                 &mut self.obs, 0, state, history, mine, theirs, dim,
             );
         }
-        match dim {
-            BID_OBS_DIM_SCORE_AWARE_V3 => bid_obs::write_bid_observation_score_aware_v3(
-                &mut self.obs, 0, state, history, mine, theirs,
-            ),
-            BID_OBS_DIM_SCORE_AWARE_V2 => bid_obs::write_bid_observation_score_aware_v2(
-                &mut self.obs, 0, state, history, mine, theirs,
-            ),
-            BID_OBS_DIM_SCORE_AWARE => bid_obs::write_bid_observation_score_aware(
-                &mut self.obs, 0, state, history, mine, theirs,
-            ),
-            _ => bid_obs::write_bid_observation(&mut self.obs, 0, state, history),
-        }
+        bid_obs::write_bid_observation_dim(&mut self.obs, 0, state, history, mine, theirs, dim);
         [0, 1, 2, 3]
     }
 }

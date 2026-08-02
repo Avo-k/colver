@@ -20,7 +20,13 @@ pub const BID_OBS_DIM_SCORE_AWARE_V2: usize = 113;
 /// v6: v2 features + 4 self-belote bits (one per suit).
 /// Layout: 113 + [self_has_QK_of_suit_0..3].
 pub const BID_OBS_DIM_SCORE_AWARE_V3: usize = 117;
+/// v7: v3 features + 4 per-suit trump scores + 2 auction-conditioned reductions.
+/// Layout: 117 + [ts_suit_0..3] + [opp_best_other_ts, opp_second_other_ts].
+pub const BID_OBS_DIM_V7: usize = 123;
 pub const BID_MASK_DIM: usize = 43;
+
+/// `evaluate_for_trump` tops out just under this; used to keep the obs in [0, 1].
+const TS_SCALE: f32 = 35.0;
 
 /// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
 /// Fitted from 10k full matches. Mirrors `bid_train_env::win_probability`.
@@ -147,6 +153,74 @@ pub fn write_bid_observation_score_aware_v3(
     }
 }
 
+/// v7 obs (123-dim). v3 layout + 6 floats:
+///   [117:121] `evaluate_for_trump(hand, s) / 35` for each suit — **suit-indexed**,
+///             so it moves under a renaming like the hand block does.
+///   [121]     `opp_best_other_ts`   — best of those, *excluding* the suit an
+///   [122]     `opp_second_other_ts`   opponent currently holds the contract in.
+///
+/// The per-suit block is the net's own concept made explicit: the hidden-layer probe
+/// found four parallel "suit quality detectors" in v5's last layer rather than a single
+/// aggregate ([interpretability/probe_morning_report.md]).
+///
+/// The two reductions are the part that is *not* a restatement of the hand bitmap. They
+/// are a max over suits **minus one named by the auction** — a hand × bid-history
+/// interaction. Both are invariant under renaming (hand and excluded suit move
+/// together), so they sit outside the permuted region by construction.
+///
+/// When no opponent holds the bid — opening, or our own side is contracting — nothing is
+/// excluded and the two floats are the best and second best over all four suits.
+pub fn write_bid_observation_v7(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+) {
+    debug_assert!(buf.len() >= offset + BID_OBS_DIM_V7);
+
+    write_bid_observation_score_aware_v3(buf, offset, state, bid_history, my_score, opp_score);
+
+    let me = state.current_player();
+    let hand = state.hands[me as usize];
+
+    let mut ts = [0.0f32; 4];
+    for suit in 0..4u8 {
+        ts[suit as usize] =
+            crate::bid_eval::evaluate_for_trump(hand, crate::card::Suit::from_u8(suit)) as f32;
+    }
+
+    // Teams are the low bit of the seat, so an opponent is a seat of the other parity.
+    let opp_holds_bid =
+        state.last_bid_value > 0 && (state.last_bidder ^ me) & 1 == 1;
+    let excluded = if opp_holds_bid {
+        state.last_bid_suit as usize
+    } else {
+        usize::MAX
+    };
+
+    let (mut best, mut second) = (0.0f32, 0.0f32);
+    for (suit, &v) in ts.iter().enumerate() {
+        if suit == excluded {
+            continue;
+        }
+        if v > best {
+            second = best;
+            best = v;
+        } else if v > second {
+            second = v;
+        }
+    }
+
+    let base = offset + BID_OBS_DIM_SCORE_AWARE_V3;
+    for (suit, &v) in ts.iter().enumerate() {
+        buf[base + suit] = (v / TS_SCALE).clamp(0.0, 1.0);
+    }
+    buf[base + 4] = (best / TS_SCALE).clamp(0.0, 1.0);
+    buf[base + 5] = (second / TS_SCALE).clamp(0.0, 1.0);
+}
+
 /// Write whichever observation layout `obs_dim` names. One place, so a new
 /// consumer cannot silently pick a different dispatch than the trainer's.
 pub fn write_bid_observation_dim(
@@ -159,6 +233,9 @@ pub fn write_bid_observation_dim(
     obs_dim: usize,
 ) {
     match obs_dim {
+        BID_OBS_DIM_V7 => {
+            write_bid_observation_v7(buf, offset, state, bid_history, my_score, opp_score)
+        }
         BID_OBS_DIM_SCORE_AWARE_V3 => write_bid_observation_score_aware_v3(
             buf, offset, state, bid_history, my_score, opp_score,
         ),
@@ -400,13 +477,20 @@ mod tests {
                     b.step(pb);
                 }
 
-                let dim = BID_OBS_DIM_SCORE_AWARE_V3;
-                let mut oa = vec![0.0f32; dim];
-                let mut ob = vec![0.0f32; dim];
-                let order_a = write_bid_observation_canonical(&mut oa, 0, &a, &ha, 700, 400, dim);
-                let order_b = write_bid_observation_canonical(&mut ob, 0, &b, &hb, 700, 400, dim);
-
-                assert_eq!(oa, ob, "seed {seed}, perm {perm:?}: obs differs after renaming");
+                // Every width, so a new suit-indexed tail cannot be added without
+                // being wired into `permute_bid_obs_dim`.
+                let mut order_a = [0u8; 4];
+                let mut order_b = [0u8; 4];
+                for dim in [BID_OBS_DIM_SCORE_AWARE_V3, BID_OBS_DIM_V7] {
+                    let mut oa = vec![0.0f32; dim];
+                    let mut ob = vec![0.0f32; dim];
+                    order_a = write_bid_observation_canonical(&mut oa, 0, &a, &ha, 700, 400, dim);
+                    order_b = write_bid_observation_canonical(&mut ob, 0, &b, &hb, 700, 400, dim);
+                    assert_eq!(
+                        oa, ob,
+                        "seed {seed}, perm {perm:?}, dim {dim}: obs differs after renaming"
+                    );
+                }
 
                 // The two decode a canonical bid back to the *same* suit — up to a
                 // tie. When two suits hold identical lanes the sort breaks the tie by
@@ -427,6 +511,58 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The v7 tail excludes the suit an **opponent** is contracting in, and only that
+    /// case. The per-suit scores restate the hand, so the exclusion is the one thing in
+    /// §3.4 the net could not already read off `obs[0..32]` — if it silently degraded to
+    /// "best over all four", v7 would be v6 plus six redundant floats.
+    #[test]
+    fn v7_tail_excludes_only_the_opponents_suit() {
+        let ts = |state: &GameState| {
+            let mut o = vec![0.0f32; BID_OBS_DIM_V7];
+            write_bid_observation_v7(&mut o, 0, state, &[], 0, 0);
+            let base = BID_OBS_DIM_SCORE_AWARE_V3;
+            (
+                [o[base], o[base + 1], o[base + 2], o[base + 3]],
+                o[base + 4],
+                o[base + 5],
+            )
+        };
+
+        for seed in 0..48u64 {
+            let hands = deal(seed);
+            let opening = GameState::new(0, hands);
+            let (per_suit, best, second) = ts(&opening);
+
+            // Nobody has bid: no exclusion, so the two reductions are just the top two.
+            let mut sorted = per_suit;
+            sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            assert_eq!(best, sorted[0], "seed {seed}: opening best");
+            assert_eq!(second, sorted[1], "seed {seed}: opening second");
+
+            // The opener bids 100♥; the next seat to speak is an opponent, so ♥ drops out.
+            let opener = opening.current_player();
+            let mut opp = opening;
+            opp.step(crate::bidding::encode_bid(10, 1));
+            assert_eq!((opp.current_player() ^ opener) & 1, 1, "next seat is an opponent");
+            let (per_suit_o, best_o, second_o) = ts(&opp);
+            let mut others: Vec<f32> = (0..4).filter(|&s| s != 1).map(|s| per_suit_o[s]).collect();
+            others.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            assert_eq!(best_o, others[0], "seed {seed}: ♥ should be excluded");
+            assert_eq!(second_o, others[1], "seed {seed}: ♥ should be excluded");
+
+            // One more pass and the speaker is the opener's *partner* — same suit on the
+            // table, but it is now their own side's, so nothing is excluded.
+            let mut partner = opp;
+            partner.step(0);
+            assert_eq!(partner.current_player(), opener ^ 2, "speaker is the opener's partner");
+            let (per_suit_p, best_p, second_p) = ts(&partner);
+            let mut all = per_suit_p;
+            all.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            assert_eq!(best_p, all[0], "seed {seed}: partner's suit must not be excluded");
+            assert_eq!(second_p, all[1], "seed {seed}: partner's suit must not be excluded");
         }
     }
 

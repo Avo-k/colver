@@ -21,6 +21,7 @@ use rand::{Rng, SeedableRng};
 use crate::bid_obs::{
     self, BID_MASK_DIM, BID_OBS_DIM, BID_OBS_DIM_SCORE_AWARE, BID_OBS_DIM_SCORE_AWARE_V2,
     BID_OBS_DIM_SCORE_AWARE_V3,
+    BID_OBS_DIM_V7,
 };
 use crate::rollout;
 use crate::scoring::compute_deal_score;
@@ -1075,8 +1076,9 @@ impl VecBidEnv {
         assert!(
             obs_dim == BID_OBS_DIM_SCORE_AWARE
                 || obs_dim == BID_OBS_DIM_SCORE_AWARE_V2
-                || obs_dim == BID_OBS_DIM_SCORE_AWARE_V3,
-            "score-aware obs dim must be 110, 113, or 117"
+                || obs_dim == BID_OBS_DIM_SCORE_AWARE_V3
+                || obs_dim == BID_OBS_DIM_V7,
+            "score-aware obs dim must be 110, 113, 117, or 123"
         );
         self.obs_dim = obs_dim;
         self.obs_buf = vec![0.0f32; self.envs.len() * self.obs_dim];
