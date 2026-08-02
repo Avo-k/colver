@@ -658,6 +658,165 @@ fn cmd_oracle(args: &Args, deltas: &[i16]) -> io::Result<()> {
     Ok(())
 }
 
+// --------------------------------------------------------------- move-ordering oracle
+
+/// **Ceiling** on move ordering, and specifically on the hard tail.
+///
+/// "The 10 % hardest solves carry 40 % of the nodes, and a tree 20× the median is a signature
+/// of an ordering failure rather than of intrinsic difficulty" has been the standing hypothesis
+/// behind every idea to teach the solver about Contrée. It has never been tested, and § 3 does
+/// not test it — knowing that the generic heuristics remove 71.5 % says the lever works, not
+/// that anything is left in it.
+///
+/// So: solve once recording the best move at every node, then replay with those moves forced
+/// first. Whatever a perfect Contrée-aware rule would achieve, it cannot beat replaying the
+/// answer. A third pass, still recording, shows whether the figure has converged.
+///
+/// The tail split is the actual deliverable. If the hardest decile improves by the same ratio
+/// as the median, its trees are big because the positions are hard, and the whole line dies.
+/// If it improves far more, the hypothesis holds and the ceiling says by how much.
+fn cmd_ordering(args: &Args) -> io::Result<()> {
+    let positions = read_corpus(&args.corpus)?;
+    if !solver::stats_enabled() || !solver::oracle_enabled() {
+        eprintln!(
+            "REFUSING: needs --features \"solver_stats solver_oracle\" (node counts and the \
+             recorded-move map)"
+        );
+        std::process::exit(2);
+    }
+    eprintln!("corpus: {} positions from {}", positions.len(), args.corpus);
+    eprintln!("note: the map is per-thread and unbounded; a hard full deal can hold ~3 M entries\n");
+
+    // (n0, n1, n2, recorded) per position.
+    let solve_one_pos = |p: &Position| -> (u64, u64, u64, usize) {
+        let st = p.rebuild().expect("corpus position must rebuild");
+        let mut tt = solver::new_tt_buffer();
+
+        // The map is keyed per (deal, trump) — carrying it over would feed one position's
+        // moves to another and silently invent an oracle that knows the wrong game.
+        solver::oracle_clear();
+
+        solver::oracle_set_mode(solver::ORACLE_RECORD);
+        let _ = solver::take_nodes();
+        let v0 = solver::solve_reuse_tt(&st, &mut tt);
+        let n0 = solver::take_nodes();
+        let recorded = solver::oracle_len();
+
+        solver::oracle_set_mode(solver::ORACLE_USE_RECORD);
+        let _ = solver::take_nodes();
+        let v1 = solver::solve_reuse_tt(&st, &mut tt);
+        let n1 = solver::take_nodes();
+
+        let _ = solver::take_nodes();
+        let v2 = solver::solve_reuse_tt(&st, &mut tt);
+        let n2 = solver::take_nodes();
+        solver::oracle_set_mode(solver::ORACLE_OFF);
+
+        // Ordering changes the shape of the search, never its result. If this fires, the
+        // hint is being applied to a position it does not describe.
+        assert_eq!(v0, v1, "oracle ordering changed the answer");
+        assert_eq!(v0, v2, "iterated oracle ordering changed the answer");
+        (n0, n1, n2, recorded)
+    };
+
+    let t0 = Instant::now();
+    let res: Vec<(u64, u64, u64, usize)> = if args.threads == 1 {
+        positions.iter().map(solve_one_pos).collect()
+    } else {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(args.threads)
+                .build()
+                .unwrap()
+                .install(|| positions.par_iter().map(solve_one_pos).collect())
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            positions.iter().map(solve_one_pos).collect()
+        }
+    };
+    eprintln!("{:.1}s at {} thread(s)\n", t0.elapsed().as_secs_f64(), args.threads);
+
+    println!(
+        "{:>8} {:>7} {:>13} {:>11} {:>10} {:>10}",
+        "shape", "n", "nodes/pos", "recorded", "oracle", "iterated"
+    );
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let s0: u64 = idx.iter().map(|&i| res[i].0).sum();
+        let s1: u64 = idx.iter().map(|&i| res[i].1).sum();
+        let s2: u64 = idx.iter().map(|&i| res[i].2).sum();
+        let rec: usize = idx.iter().map(|&i| res[i].3).sum();
+        println!(
+            "{:>8} {:>7} {:>13.0} {:>11.0} {:>10.3} {:>10.3}",
+            shape.name(),
+            idx.len(),
+            s0 as f64 / idx.len() as f64,
+            rec as f64 / idx.len() as f64,
+            s1 as f64 / s0 as f64,
+            s2 as f64 / s0 as f64,
+        );
+    }
+
+    // The tail. Buckets are over the baseline node count, which is the only ranking available
+    // before the search runs — the same one a dispatcher would have to use.
+    for shape in [Shape::Full, Shape::Worlds] {
+        let mut idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.len() < 20 {
+            continue;
+        }
+        idx.sort_by_key(|&i| std::cmp::Reverse(res[i].0));
+        let total: u64 = idx.iter().map(|&i| res[i].0).sum();
+        let n = idx.len();
+
+        println!("\n{} — by difficulty (baseline nodes), {} positions:", shape.name(), n);
+        println!(
+            "{:>14} {:>7} {:>13} {:>14} {:>10} {:>10}",
+            "bucket", "n", "nodes/pos", "share of nodes", "oracle", "iterated"
+        );
+        let cuts: [(&str, usize, usize); 4] = [
+            ("hardest 10 %", 0, n / 10),
+            ("next 15 %", n / 10, n / 4),
+            ("middle 50 %", n / 4, n * 3 / 4),
+            ("easiest 25 %", n * 3 / 4, n),
+        ];
+        for (label, lo, hi) in cuts {
+            if hi <= lo {
+                continue;
+            }
+            let part = &idx[lo..hi];
+            let s0: u64 = part.iter().map(|&i| res[i].0).sum();
+            let s1: u64 = part.iter().map(|&i| res[i].1).sum();
+            let s2: u64 = part.iter().map(|&i| res[i].2).sum();
+            println!(
+                "{:>14} {:>7} {:>13.0} {:>13.1}% {:>10.3} {:>10.3}",
+                label,
+                part.len(),
+                s0 as f64 / part.len() as f64,
+                100.0 * s0 as f64 / total as f64,
+                s1 as f64 / s0 as f64,
+                s2 as f64 / s0 as f64,
+            );
+        }
+    }
+
+    println!(
+        "\n`oracle` / `iterated` are the fraction of the baseline search that survives perfect\n\
+         ordering. A tail ratio no better than the median's means those trees are big because\n\
+         the positions are hard, and a Contrée-aware ordering rule has nothing to recover."
+    );
+    Ok(())
+}
+
 /// Interleaved A/B of the epoch TT against the old memset-every-solve behaviour.
 ///
 /// Runs both configurations alternately, `repeats` times each, and reports the **minimum**
@@ -915,6 +1074,10 @@ fn main() {
             let args = Args { corpus, values, json, threads, repeats, ab };
             cmd_oracle(&args, &deltas).expect("oracle");
         }
+        "ordering" => {
+            let args = Args { corpus, values, json, threads, repeats, ab };
+            cmd_ordering(&args).expect("ordering");
+        }
         "diff" => {
             if a.is_empty() || b.is_empty() {
                 eprintln!("diff needs --a and --b");
@@ -923,7 +1086,7 @@ fn main() {
             cmd_diff(&a, &b).expect("diff");
         }
         _ => {
-            eprintln!("usage: bench_dd build|run|oracle|diff  (see the module doc comment)");
+            eprintln!("usage: bench_dd build|run|oracle|ordering|diff  (see the module doc comment)");
             std::process::exit(2);
         }
     }

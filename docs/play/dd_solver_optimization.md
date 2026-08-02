@@ -148,6 +148,9 @@ cargo build --release --features "parallel solver_stats" --bin bench_dd
 # ce que valent PVS / coups tueurs / historique (§3) — 5 configs + porte d'exactitude
 scripts/analysis/dd_ablation.sh
 
+# le plafond d'un ordonnancement parfait, avec découpe par difficulté (§5)
+./target/release/bench_dd ordering --corpus data/analysis/dd_corpus_v1.bin --threads 8
+
 # balayage de taille de TT, 1 thread et N (§2.1bis) — répéter la liste entrelace
 ./target/release/bench_tt_size --deals 400 --threads 32 --sizes 16,18,16,18,16,18
 
@@ -164,8 +167,9 @@ python3 scripts/analysis/dd_solver_bench.py --tag <nom> --repeats 5 --note "..."
 **Le motif à réutiliser, c'est `oracle`.** Devant une famille d'idées qui ne diffèrent que par
 la qualité d'une estimation — amorcer une fenêtre, ordonner des coups, choisir une borne — il
 est presque toujours moins cher de mesurer ce que ferait l'estimation **parfaite** que d'en
-construire une bonne. Un plafond bas ferme toute la famille d'un coup (§2.3bis) ; un plafond
-haut dit combien il reste et donne la cible à laquelle comparer.
+construire une bonne. Il a servi deux fois et a répondu deux choses opposées en une commande
+chacune : plafond bas, famille close (§2.3bis) ; plafond haut, et on sait à quoi comparer une
+règle avant de l'écrire (§5). Les bornes du §4.2 sont le troisième candidat évident.
 
 Le corpus fait **2 120 positions** en quatre formes : donnes complètes (depuis `base_5M.bin` —
 ses `dd_pts` sont périmés mais ses `hands` ne sont qu'une distribution de donnes et restent
@@ -552,21 +556,18 @@ nœuds ; la médiane fait 317 k nœuds quand le pire fait 6,0 M. Un solveur qui 
 ces donnes-là vaudrait plus que toutes les micro-optimisations réunies — et le profil dit que
 les micro-optimisations, elles, sont épuisées.
 
-Pistes non encore mesurées, par rapport gain/risque décroissant :
+**Et l'oracle a été exécuté : la queue est bien un échec d'ordonnancement.** §5.
 
-1. **L'oracle d'ordonnancement, sur les seules positions de la queue.** Rejouer chaque position
-   avec le meilleur coup connu placé en tête à chaque nœud, et compter. C'est le pendant du
-   §2.3bis : ça borne d'un coup *toute* la famille des ordonnancements, y compris ceux qui
-   connaîtraient la contrée. Si le plafond est à 1,3× sur la queue, la piste 2 est close sans
-   qu'on ait écrit une règle ; s'il est à 10×, on sait qu'il y a un facteur 10 à aller chercher
-   et on sait à quoi le comparer. **À faire avant la piste 2, pas après.**
-2. **Ordre des coups sur les positions de la queue.** Un arbre 20× plus gros que la médiane est
-   une signature d'échec d'ordonnancement, pas de difficulté intrinsèque — mais §3 montre que
-   l'ordonnancement générique retire déjà 71,5 % de l'arbre et qu'il n'est pas fatigué. C'est
-   la piste qui a besoin de la 1 pour savoir ce qu'elle vise.
-3. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
+Pistes, par rapport gain/risque décroissant :
+
+1. **Une règle d'ordonnancement qui sache jouer.** C'est désormais la seule piste avec un
+   plafond mesuré, et il est haut : **6× sur une donne complète, ~8× sur le décile le plus
+   dur** (§5). C'est aussi la seule qui demande de la connaissance du jeu plutôt que du
+   micro-réglage.
+2. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
    très lâche. Toute borne plus serrée doit être **saine** — c'est exactement là que
-   `quick_tricks` s'est planté, et la porte `diff` est là pour ça.
+   `quick_tricks` s'est planté, et la porte `diff` est là pour ça. À border par un oracle
+   avant d'écrire quoi que ce soit, comme les deux autres.
 
 Et **trois pistes qui figuraient ici et n'y sont plus** :
 
@@ -577,3 +578,101 @@ Et **trois pistes qui figuraient ici et n'y sont plus** :
   est confirmée et le compromis est plat autour d'elle, §2.1bis.
 - **L'amorçage de fenêtre**, sous toutes ses formes. Le plafond de la famille entière est
   mesuré et il est bas, §2.3bis.
+
+---
+
+## 5. L'oracle d'ordonnancement — **la queue est bien un échec d'ordre, et le plafond est haut**
+
+C'est le premier résultat de la campagne qui ouvre quelque chose au lieu de le fermer.
+
+L'hypothèse tenait depuis le début sans jamais être testée : un arbre 20× plus gros que la
+médiane serait la signature d'un mauvais ordre plutôt que d'une donne difficile. §3 ne la
+testait pas — savoir que les heuristiques génériques retirent 71,5 % dit que le levier
+fonctionne, pas qu'il reste quelque chose dedans.
+
+Même construction qu'au §2.3bis, appliquée à l'ordre : une première recherche **enregistre le
+meilleur coup à chaque nœud** dans une table **sans éviction** — c'est ce qui en fait un oracle
+et non une TT préchauffée, la vraie table tournant à 99,4 % de remplissage et perdant presque
+tout. Une seconde recherche rejoue la position avec ces coups placés en tête. Une troisième,
+qui enregistre encore, montre que le chiffre a convergé. Aucune règle, si bonne soit-elle en
+contrée, ne peut battre le fait de rejouer la réponse.
+
+`bench_dd ordering`, 2 120 positions, unité = **un solve racine** (pas `solve_with_scores` : ne
+pas comparer ces nœuds à ceux du §3). Fraction de la recherche qui survit :
+
+| forme | nœuds/pos | positions enregistrées | oracle | itéré |
+|---|---:|---:|---:|---:|
+| full | 722 051 | 228 769 | **0,214** | 0,212 |
+| mid | 5 623 | 1 801 | 0,418 | 0,417 |
+| end | 62 | 15 | 0,748 | 0,748 |
+| worlds | 30 676 | 9 708 | **0,251** | 0,251 |
+
+Et la découpe par difficulté, qui est le vrai livrable — **la queue s'améliore nettement plus
+que la médiane** :
+
+| donne complète | n | nœuds/pos | part des nœuds | oracle |
+|---|---:|---:|---:|---:|
+| 10 % les plus durs | 80 | 3 111 143 | **43,1 %** | **0,173** |
+| 15 % suivants | 120 | 1 150 711 | 23,9 % | 0,218 |
+| 50 % du milieu | 400 | 430 698 | 29,8 % | 0,259 |
+| 25 % les plus faciles | 200 | 91 923 | 3,2 % | 0,316 |
+
+| mondes (l'unité d'IS-DD) | n | nœuds/pos | part des nœuds | oracle |
+|---|---:|---:|---:|---:|
+| 10 % les plus durs | 72 | 225 715 | **73,6 %** | **0,218** |
+| 15 % suivants | 108 | 40 632 | 19,9 % | 0,311 |
+| 50 % du milieu | 360 | 3 997 | 6,5 % | 0,441 |
+| 25 % les plus faciles | 180 | 46 | 0,0 % | 0,816 |
+
+La concentration de la queue est re-dérivée au passage et tient : **43,1 %** des nœuds sur donne
+complète, et **73,6 %** sur les mondes — où le déséquilibre est bien plus violent que le « 40 % »
+qu'on citait. Les finales, elles, n'ont rien à donner (0,748) : elles sont trop petites pour que
+l'ordre pèse.
+
+### Le plafond est mesuré *par en dessous*
+
+Le 0,214 sous-estime. La passe 2 visite des nœuds que la passe 1 n'a jamais atteints, et
+l'oracle y est muet : **plus la passe 1 explore, meilleur est l'oracle**. Une exécution avec
+coups tueurs et historique éteints (PVS gardé — c'est une technique de recherche, pas d'ordre)
+explore 1 342 408 nœuds au lieu de 722 051, enregistre **322 869** positions au lieu de 228 769,
+et tombe à **0,089** — soit 119 474 nœuds en absolu, contre 154 519 par l'autre chemin. Sur le
+décile le plus dur elle descend à **0,050**, soit 399 000 nœuds là où l'ordre actuel en dépense
+3,11 M.
+
+En unité commune, donc :
+
+| | donne complète | décile le plus dur |
+|---|---:|---:|
+| ordre statique seul (ni tueurs ni historique) | 1 342 408 | 7 979 782 |
+| **ordre actuel** | **722 051** | **3 111 143** |
+| ordre parfait | ≤ 119 474 | ≤ 398 989 |
+| **plafond restant** | **≥ 6,0×** | **≥ 7,8×** |
+
+Les heuristiques génériques ont donc pris à peu près la moitié du chemin, et il en reste six
+fois plus que ce qu'elles ont pris. C'est la première fois qu'un chiffre de cette campagne
+justifie d'écrire du code.
+
+### Ce que ça n'autorise pas à dire
+
+**C'est un plafond, pas un gain.** L'oracle lit une recherche déjà terminée ; une règle n'aura
+que la position. Le §2.3bis est là pour rappeler ce que valent les plafonds : celui de
+l'amorçage était à 2× et la famille est morte quand même, parce qu'aucune estimation réelle
+n'approchait la justesse requise. La question suivante n'est donc pas « quelle règle écrire »
+mais **« ce que l'oracle choisit est-il prédictible depuis la position ? »** — dumper les coups
+enregistrés avec les traits de leur position et regarder ce qu'une règle simple en récupère.
+Le harnais pour ça est déjà là : c'est la table de `solver_oracle`.
+
+Deuxième réserve, structurelle : le gain porte là où les nœuds sont, donc sur `full` et sur les
+mondes durs — c'est-à-dire sur `gen_pool` et sur IS-DD à l'entame. Le web (mi-donne et finales)
+n'en verra presque rien.
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats solver_oracle" --bin bench_dd
+./target/release/bench_dd ordering --corpus data/analysis/dd_corpus_v1.bin --threads 8
+```
+La table est **par thread et sans borne** (~650 Mo de pic résident à 8 threads) et n'est unique
+qu'à l'intérieur d'un couple (donne, atout) — `position_hash` dérive les mains des cartes jouées
+et ne clé pas sur l'atout. `cmd_ordering` la vide entre deux positions ; ne pas le faire
+fabriquerait un oracle qui connaît une autre partie. Porte d'exactitude intégrée : les trois
+passes doivent rendre la même valeur, l'ordre ne change jamais la réponse.
