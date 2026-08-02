@@ -9,7 +9,9 @@ How a player plays cards once bidding ends. Implementations live in [colver-core
   came back negative**, with the measurement and the command to replay each one. Read before
   attempting any solver optimisation: larger TT, MTD(f), window seeding and a slimmed
   `apply_play` are all measured dead ends.
-- [is_dd.md](is_dd.md) — **Information-Set DD, the production card player** (samples determinized worlds + one exact DD solve each)
+- [is_dd.md](is_dd.md) — **Information-Set DD, the production card player** (samples determinized
+  worlds + one exact DD solve each). Its cost table **multiplies** the solver's, it does not
+  restate it — the per-shape costs live in [dd_solver.md](dd_solver.md#performance).
 - [../agents.md](../agents.md) — how a card player is built, configured and driven
 - [smart_ismcts.md](smart_ismcts.md) — Belief-weighted IS-MCTS
 - [dmc.md](dmc.md) — DouZero-style Q-network (DouDou35, DouDou50)

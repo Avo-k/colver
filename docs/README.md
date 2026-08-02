@@ -38,6 +38,8 @@ Belote Contrée engine + RL training stack.
 | Reward signal study | [bid/reward_studies/v3_reward_study.md](bid/reward_studies/v3_reward_study.md) |
 | Distilled bid rules (XGBoost) | [bid/interpretability/bid_rules_xgb.md](bid/interpretability/bid_rules_xgb.md) |
 | Classer les mains (index canonique + code) | [bid/interpretability/hand_classification.md](bid/interpretability/hand_classification.md) |
+| DD solver — timings (**the one table**) | [play/dd_solver.md](play/dd_solver.md#performance) |
+| DD solver — measured dead ends, read before optimising | [play/dd_solver_optimization.md](play/dd_solver_optimization.md) |
 | Triforge joint training | [play/experiments/triforge.md](play/experiments/triforge.md) |
 | Belief net + IS-DD | [belief/README.md](belief/README.md) |
 | Playgen world sampler (transformer) | [belief/playgen.md](belief/playgen.md) |

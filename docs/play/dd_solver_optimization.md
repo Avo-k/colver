@@ -27,16 +27,17 @@ D'où l'ordre imposé : **le harnais d'abord, les optimisations ensuite.**
 
 ### Le profil, une fois mesuré
 
-| | |
-|---|---|
-| Débit | **~34 M nœuds/s, soit ~29 ns par nœud** |
-| Ce qui domine un nœud | la **sonde TT** — un accès aléatoire dans 2 Mo |
-| Distribution (donne complète) | p50 317 k nœuds · p99 3,8 M · max 6,0 M |
-| Concentration | **les 10 % de solves les plus durs portent 40 % des nœuds** |
+Les chiffres eux-mêmes — temps par forme, percentiles, dispersion de mesure — vivent dans
+[dd_solver.md § Performance](dd_solver.md#performance) et **nulle part ailleurs**. Ce document
+n'en garde que les deux qui portent un raisonnement :
+
+- **~22 ns par nœud**, dominé par la **sonde TT**, un accès aléatoire dans 2 Mo : le solveur est
+  limité par la **latence mémoire**, pas par le débit d'instructions.
+- **Distribution très asymétrique** : les 10 % de solves les plus durs portent **40 % des nœuds**.
 
 Deux conséquences qui expliquent presque tous les résultats plus bas :
 
-1. **29 ns par nœud, c'est déjà serré.** Il n'y a pas de gras à retirer par nœud, et c'est
+1. **22 ns par nœud, c'est déjà serré.** Il n'y a pas de gras à retirer par nœud, et c'est
    pourquoi les micro-optimisations reviennent négatives ou nulles.
 2. **Ce qui n'aide que la donne médiane ne vaut presque rien.** Le temps est dans la queue.
 
@@ -128,8 +129,7 @@ dérivation est maintenant assertée.
 `colver-core/src/bin/bench_dd.rs`, trois sous-commandes :
 
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release \
-    --features "parallel solver_stats" --bin bench_dd
+cargo build --release --features "parallel solver_stats" --bin bench_dd
 
 # corpus figé — à construire une fois, puis à garder
 ./target/release/bench_dd build --out data/analysis/dd_corpus_v1.bin \
@@ -283,7 +283,7 @@ recherche lit (mains, pli, points, plis gagnés, état terminal).
 Compte de nœuds identique, `EXACT MATCH` sur les valeurs. **Retirer de vraies instructions fait
 perdre 2,3 %**, et de façon cohérente sur les deux formes à grand arbre.
 
-**Pourquoi, vraisemblablement.** À 29 ns par nœud le solveur est **limité par la latence
+**Pourquoi, vraisemblablement.** À ~22 ns par nœud le solveur est **limité par la latence
 mémoire** de la sonde TT, pas par le débit d'instructions : les écritures supprimées se
 faisaient « gratuitement » dans l'ombre du défaut de cache. En les retirant on a surtout changé
 la disposition du code et l'inlining, pour un coût net.
@@ -297,7 +297,60 @@ entreprendre le refactor de l'état compact sans avoir d'abord une raison neuve.
 `apply_play_dd` sautant `voids`, `check_belote` et l'écriture de `trick_history`, brancher les
 cinq `apply_play` de `solver.rs` dessus, et lancer `dd_ab_revs.sh HEAD 3`.
 
-### 2.5 Dédupliquer les coups racine équivalents — **non, seulement 5,2 % de gain possible**
+### 2.5 `-C target-cpu=native` / `x86-64-v3` — **non, 0 %, et l'instruction qui comptait était déjà là**
+
+**L'hypothèse.** rustc compile par défaut pour la cible `x86-64` de base, dont les seules
+extensions sont `fxsr`, `sse`, `sse2` — le jeu d'instructions de 2003. Or le chemin chaud est de
+l'itération de bits sur `CardSet = u32` : 12 `trailing_zeros` dans `card.rs`, 8 dans
+`solver.rs`. Sans BMI1 ni SSE4.2, ces primitives devaient coûter plusieurs µops là où le CPU
+sait faire en une.
+
+**La mesure**, trois binaires bâtis de la **même source** avec trois `RUSTFLAGS`, alternés sur
+5 tours, minimum par configuration (`scripts/analysis/dd_ab_flags.sh`) :
+
+| forme | base | `x86-64-v3` | `native` |
+|---|---|---|---|
+| donne complète | 32 283 µs | 32 272 µs — **1,000×** | 32 688 µs — **0,988×** |
+| mi-partie | 169,1 µs | 169,0 µs — 1,001× | 172,0 µs — 0,983× |
+| finale | 1,4 µs | 1,4 µs — 1,000× | 1,4 µs — 1,000× |
+| mondes | 1 127,5 µs | 1 156,7 µs — 0,975× | 1 138,6 µs — 0,990× |
+| **total** | | **0,998×** | **0,986×** |
+
+Nœuds identiques, `EXACT MATCH` sur les valeurs. `v3` est à **0,03 %** de la base sur le
+minimum (les deux convergent vers le même plancher) ; `native` est nominalement **plus lent**.
+
+**Vérifier que les drapeaux sont bien arrivés est ici la moitié du travail.** Un « aucune
+différence » entre trois binaires identiques ne vaut rien, et `rustc --print cfg` **ignore
+`RUSTFLAGS`** (c'est un mécanisme cargo) — un diagnostic bâti dessus dit « 3 features » pour les
+trois et ne prouve rien. La preuve est dans le désassemblage :
+
+| | `tzcnt` | `popcnt` | `blsr` | `andn` | `vpxor` |
+|---|---|---|---|---|---|
+| base | **32** | 0 | 0 | 0 | 48 |
+| v3 | **32** | 0 | 20 | 1 | 69 |
+| native | **32** | 0 | 21 | 4 | 123 |
+
+**Et c'est cette ligne qui explique tout : `tzcnt` est déjà présent 32 fois en baseline.** LLVM
+émet l'encodage préfixé `F3 0F BC`, que les CPU sans BMI1 décodent comme un simple `bsf` — donc
+la primitive dominante recevait déjà le meilleur encodage possible **sans le drapeau**.
+`popcnt` n'apparaît nulle part, même en `native` : ces trois sites d'appel sont froids ou
+repliés à la compilation. Ce que `v3`/`native` ajoutent réellement — `blsr`, `andn`, plus
+d'AVX — est réel mais tombe **à côté du chemin critique**, lequel est limité par la latence
+mémoire de la sonde TT (~22 ns/nœud). Même cause que §2.4.
+
+**Ce que ça ferme.** L'arbitrage sur les wheels manylinux n'a pas à être ouvert : il n'y a rien
+à gagner, donc pas de `.cargo/config.toml`, pas de risque de `SIGILL` chez un utilisateur PyPI
+dont le CPU serait plus vieux que le runner CI. **Ne pas rouvrir sans mécanisme neuf.**
+
+**Portée.** Mono-thread uniquement. Le « 2,4× » de `CLAUDE.md` porte sur `gen_pool`, un **autre
+binaire en 32 threads**, et **groupe `native` avec le LTO fat** sans répartition — il n'est ni
+confirmé ni infirmé ici. Mais le mécanisme trouvé (`tzcnt` déjà émis) ne dépend pas du nombre de
+threads, donc l'attente pour ce cas-là est également basse.
+
+**Réplication** : `scripts/analysis/dd_ab_flags.sh 5`. Le script vérifie aussi l'égalité des
+comptes de nœuds — même source, donc toute divergence dénoncerait le harnais, pas le drapeau.
+
+### 2.6 Dédupliquer les coups racine équivalents — **non, seulement 5,2 % de gain possible**
 
 `solve_with_scores` cherche **tous** les coups racine à fenêtre pleine, sans appliquer
 `reduce_equivalent` (à dessein : ses consommateurs ont besoin d'une valeur exacte par carte).
@@ -307,7 +360,7 @@ qu'une.
 **Mesuré sur 5 991 points de décision** : 21 640 coups légaux pour 20 508 après réduction, soit
 **5,2 % de recherches racine redondantes**. Le plafond est trop bas pour justifier le risque.
 
-### 2.6 Le défaut suspecté dans `reduce_equivalent` — **ce n'en est pas un**
+### 2.7 Le défaut suspecté dans `reduce_equivalent` — **ce n'en est pas un**
 
 Signalé pendant la reconnaissance, et le mécanisme est réel : `apply_play` fixe `played_cards`
 immédiatement alors que `current_trick` n'est vidé que dans `resolve_trick`, donc
@@ -332,7 +385,7 @@ du pli en cours bloquent aussi, 2 = aucune réduction), et comparer les sorties 
 `solve_with_scores` sur les positions où la forme se présente. Le mode 2 est la référence : il
 ne peut pas se tromper.
 
-### 2.7 Le décodage `ns == 0` de `solve()` — hasard théorique, jamais observé
+### 2.8 Le décodage `ns == 0` de `solve()` — hasard théorique, jamais observé
 
 `solve` décode le score E-O par `if ns == 252 || ns == 0 { 252 - ns } else { 162 - ns }`,
 c'est-à-dire qu'il suppose qu'un score N-S nul implique un capot adverse. C'est faux en théorie :
@@ -384,6 +437,6 @@ Pistes non encore mesurées, par rapport gain/risque décroissant :
 3. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
    très lâche. Toute borne plus serrée doit être **saine** — c'est exactement là que
    `quick_tricks` s'est planté, et la porte `diff` est là pour ça.
-4. **`-C target-cpu=native`.** Il n'existe **aucun `.cargo/config.toml`** : le web, l'arène,
-   IS-DD et les tests tournent tous sur la cible x86-64 de base. Décision non technique — un
-   drapeau au niveau du dépôt s'appliquerait aussi aux wheels manylinux du CI.
+Et **une piste qui figurait ici et n'y est plus** : `-C target-cpu=native`. Il n'existe toujours
+aucun `.cargo/config.toml`, donc tout le dépôt compile pour la cible x86-64 de base — mais c'est
+désormais une constatation sans conséquence, pas une piste. Mesuré à 0 %, cause identifiée, §2.5.

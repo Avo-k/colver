@@ -62,7 +62,9 @@ Alpha-beta solver for perfect-information Belote. No feature gate — zero exter
 - `solver::solve_best_card(state) -> u8` — optimal card for current player
 - `GameState::setup_dd(dealer, hands, trump)` — creates play-phase state for DD
 
-**Performance** (2026-08-02, fixed 2 120-position corpus, 1 thread, i9-13900K): full deal via `solve_with_scores` **34.6 ms** · mid-game (13-24 cards left) **190 µs** · endgame (2-12 cards) **1.5 µs** · one IS-DD determinized world **1.25 ms**; ~34 M nodes/s (~29 ns/node). Value-only `solve_for_trump` on a full deal: ~18 ms mean, 10.4 ms median, 69 ms P95. Full table and method: [play/dd_solver.md](play/dd_solver.md#performance). Invariant: `ns + ew == 162` (or 252 for capot).
+**Performance:** order of magnitude only — **~32 ms** for a full deal via `solve_with_scores`, falling by ~4 orders of magnitude as the deal empties. **The one table of solver timings lives in [play/dd_solver.md](play/dd_solver.md#performance)**; it carries the per-shape figures, the corpus, and the ~9 % measurement spread that says how many digits mean anything. Do not restate it here — two tables is how they drift apart. Invariant: `ns + ew == 162` (or 252 for capot).
+
+Two consequences that shape design decisions elsewhere: the search is **memory-latency-bound on the TT probe** (~22 ns/node, so per-node micro-optimisation is exhausted), and its cost distribution is **heavily tail-skewed** (worst 10 % of solves carry 40 % of the nodes). Both are why [play/dd_solver_optimization.md](play/dd_solver_optimization.md) exists — read it before optimising anything here, it records five measured dead ends.
 
 **Techniques:** Alpha-beta fail-soft, TT (256K entries, 2 MB — sweep-confirmed optimal 2026-08-02: 134 MB buys 3 % fewer nodes at 2.4× the time), **epoch-stamped rather than cleared per solve**, PVS, killer moves (2/ply), history heuristic (depth²), card equivalence pruning (lookup table), forced-move optimization. **No `quick_tricks`** — removed 2026-07-23, the bound was unsound and returned wrong values on 25 % of `solve_for_trump` calls; do not re-add it from this list. Move ordering: hash move → killers → history + static score.
 

@@ -15,6 +15,9 @@ REV="${1:?usage: dd_ab_revs.sh <baseline-rev> [rounds]}"
 ROUNDS="${2:-3}"
 CORPUS="data/analysis/dd_corpus_v1.bin"
 FEATURES="parallel solver_stats"
+# Kept for continuity with the numbers already journalised, not because it helps: the flag
+# measures 0 % on this solver (dd_solver_optimization.md §2.5). It applies to both sides
+# equally, so it cannot bias the comparison either way.
 export RUSTFLAGS="-C target-cpu=native"
 
 echo "building candidate (working tree)..."

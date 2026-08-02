@@ -14,19 +14,33 @@ Exact alpha-beta search assuming all 4 hands are visible. Used as the **oracle t
 
 ## Performance
 
+**This table is the single source for DD solver timings.** Every other document quotes at most
+one rounded figure from it and links back here — if you find a second table of solver times
+anywhere in `docs/`, one of them is stale. Consumers that reason from these numbers:
+[is_dd.md](is_dd.md#performance) (world budgets), [../ARCHITECTURE.md](../ARCHITECTURE.md),
+[../web_analyse_jeu.md](../web_analyse_jeu.md) (per-position sim budgets).
+
 Measured 2026-08-02 with `bench_dd` on a fixed 2 120-position corpus, one thread, i9-13900K,
-`-C target-cpu=native`. Journalised in [docs/measurements/index.jsonl](../measurements/index.jsonl).
-Every earlier figure in the docs is superseded: four documents quoted 13.5 / 14.9 / 28 / 77 ms
-for things all called "a solve", none with a stated corpus or shape.
+stock `x86-64` target (the flag buys nothing — see the negative-results table).
+Journalised in [docs/measurements/index.jsonl](../measurements/index.jsonl). Every earlier
+figure in the docs is superseded: four documents quoted 13.5 / 14.9 / 28 / 77 ms for things all
+called "a solve", none with a stated corpus or shape.
 
 | Shape (all via `solve_with_scores`) | n | nodes/pos | time/pos |
 |---|---|---|---|
-| Full deal, 4 suits | 800 | 1 448 045 | 34.6 ms |
-| Mid-game, real games, 13-24 cards left | 360 | 9 061 | 190 µs |
-| Endgame, real games, 2-12 cards left | 240 | 89 | 1.5 µs |
-| Determinized worlds (the IS-DD unit) | 720 | 55 862 | 1.25 ms |
+| Full deal, 4 suits | 800 | 1 448 045 | 32.3 ms |
+| Mid-game, real games, 13-24 cards left | 360 | 9 061 | 169 µs |
+| Endgame, real games, 2-12 cards left | 240 | 89 | 1.4 µs |
+| Determinized worlds (the IS-DD unit) | 720 | 55 862 | 1.13 ms |
 
-Throughput is ~34 M nodes/s, i.e. **~29 ns per node**. That is already tight, and it is the
+**Node counts are exact; the times are a floor, not a value.** They are the minimum of 5
+alternating rounds, and the per-round spread on this box is **~9 %** even with the machine
+otherwise idle. Quote them to two significant figures, and never compare a time here against a
+time measured on another day — only within one alternating run. (An earlier revision of this
+table said 34.6 ms for the full deal, from fewer rounds on a busier machine. That is the same
+measurement, not a regression.)
+
+Throughput is ~45 M nodes/s, i.e. **~22 ns per node**. That is already tight, and it is the
 reason most per-node micro-optimisation attempts below came back negative: the search is
 dominated by the transposition-table probe, which is a random access into 2 MB.
 
@@ -34,19 +48,24 @@ The distribution is heavily skewed — on full deals the **worst 10 % of solves 
 nodes** (p50 317 k nodes, p99 3.8 M, max 6.0 M). Anything that helps only the median deal is
 worth little; the tail is where the batch time is.
 
+**Value-only `solve_for_trump`, for comparison**: ~18 ms mean, 10.4 ms median, 69 ms P95 on a
+full deal (via the older `dd_bench`). Do not line these up against the table above — one trump
+instead of four, and a mean/median/P95 over deals instead of a min over repeats. The gap between
+the mean and the P95 is the same tail as above, seen from the other harness.
+
 ## Benchmarking and the exactness gate
 
 `bench_dd` (feature `solver_stats` for node counts) is both the benchmark and the guard:
 
 ```bash
-RUSTFLAGS="-C target-cpu=native" cargo build --release \
-    --features "parallel solver_stats" --bin bench_dd
+cargo build --release --features "parallel solver_stats" --bin bench_dd
 ./target/release/bench_dd build --out data/analysis/dd_corpus_v1.bin \
     --pool data/deals/base_5M.bin --games data/training/heldout_20k_s90210.bin
 ./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
     --values cand.vals --repeats 5
 ./target/release/bench_dd diff --a baseline.vals --b cand.vals   # must say EXACT MATCH
-scripts/analysis/dd_ab_revs.sh <baseline-rev> 3                  # alternating A/B, min-of-N
+scripts/analysis/dd_ab_revs.sh <baseline-rev> 3                  # alternating A/B of two git revs
+scripts/analysis/dd_ab_flags.sh 5                                # alternating A/B of RUSTFLAGS targets
 ```
 
 Three rules learned the hard way here:
@@ -74,6 +93,7 @@ the shape nothing in the repo measured before. `base_5M.bin`'s `dd_pts` are stal
 | MTD(f) / binary search on the point value | **No.** A null-window probe costs 0.42× a full search — only 2.4× cheaper — and a cold binary search needs 7.3 probes, so **1.94× the full-window cost**. Bridge DD wins here because its value is a trick count (0-13); a point total (0-252) is too wide. | 320 solves, 2026-08-02 |
 | Narrow window seeded from the running world mean | **No, 1.04× at best.** The premise is false: worlds of one hand are not clustered (36 % land >40 pts from the mean). | [bid_v7_plan.md](../bid/bid_v7_plan.md) §1.5 |
 | Solver-only `apply_play` skipping voids, belote and `trick_history` | **No, 0.977× — it made things *slower*.** Node counts identical, values exact; removing real instructions still lost 2.3 %. This also undercuts the larger "compact 32-byte solver state" idea, whose easier half this was. | Alternating A/B vs HEAD, min-of-3, 2026-08-02 |
+| `-C target-cpu=native` or `x86-64-v3` | **No, 0 %** — v3 lands within 0.03 % of baseline, `native` is 1.25 % *slower*. The reason is worth knowing: `tzcnt` is already emitted **32 times in the baseline binary** (LLVM uses the `F3`-prefixed encoding, which pre-BMI1 CPUs decode as plain `bsf`), and `popcnt` appears zero times even with `native`. The dominant bit primitive never needed the flag. | 3 binaries, same source, 5 alternating rounds, 2026-08-02 |
 | Deduplicating DD-equivalent cards at the root of `solve_with_scores` | Not worth it: only **5.2 %** of root moves are redundant. | 5 991 decision points |
 
 ## Accepted changes
@@ -89,7 +109,7 @@ the shape nothing in the repo measured before. `base_5M.bin`'s `dd_pts` are stal
   proved by exhaustion against the original loops. No measurable speed change; kept for
   simplicity and because the derivation's assumptions are now asserted.
 
-Pool generation throughput: ~244 deals/s on 32 cores with `RUSTFLAGS="-C target-cpu=native"` + workspace LTO. See [gen_pool.rs](../../colver-core/src/bin/gen_pool.rs).
+Pool generation throughput: ~244 deals/s on 32 cores with `RUSTFLAGS="-C target-cpu=native"` + workspace LTO — a compound claim on a *different* binary; `target-cpu=native` on the solver itself measures 0%, see the negative-results table. See [gen_pool.rs](../../colver-core/src/bin/gen_pool.rs).
 
 ## API
 

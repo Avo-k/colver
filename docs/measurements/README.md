@@ -48,6 +48,38 @@ Relire sans recalculer :
 python3 -c "import json;[print(json.loads(l)['tag'], json.loads(l)['summary']) for l in open('docs/measurements/index.jsonl')]"
 ```
 
+## Un chiffre dans un markdown : récité ou argumenté ?
+
+Le registre dit d'où vient un chiffre. Reste la question d'à côté : **combien de fois a-t-on le
+droit de l'écrire ?** Ouverte le 2026-08-02 après avoir propagé un même temps de solve à la main
+dans cinq documents, dont un le donnait encore dans une version antérieure de deux ordres de
+grandeur.
+
+La règle tient en une distinction, et c'est elle qui décide, pas le type du chiffre :
+
+- **Récité** — le document *reproduit* la mesure sans en tirer de conclusion (un tableau de perf
+  recopié dans une vue d'ensemble). **À ne pas dupliquer** : un seul document possède le chiffre,
+  les autres en donnent au plus une valeur arrondie d'orientation et **un lien**. Le mode d'échec
+  d'un chiffre récité périmé est bénin — il contredit visiblement sa source — mais il est
+  fréquent et il use la confiance dans tout le reste.
+- **Argumenté** — la phrase *conclut* quelque chose du chiffre (« calibré contre 13,5 ms, donc il
+  reste un ordre de grandeur inutilisé » ; « le coût s'effondre de 23 000× quand le budget ne
+  baisse que de 8× »). **Le chiffre reste dans la phrase**, et surtout il ne doit **jamais** être
+  substitué automatiquement : une mise à jour rendrait la phrase **cohérente et fausse**, ce qui
+  est bien pire que périmé. Même famille que `quick_tricks` — quelque chose qui a l'air juste et
+  ne l'est plus. Écrire dans la phrase *ce dont elle dépend* (« ce raisonnement porte sur le
+  rapport entre les formes, pas sur leur valeur absolue »).
+
+Corollaire sur l'outillage : **on vérifie, on ne génère pas.** Générer les markdown depuis un
+magasin impose une étape de build, met des fichiers générés dans git et ne protège pas les
+chiffres argumentés, qui sont les dangereux. Le problème n'a jamais été qu'un chiffre soit faux,
+c'est que **personne ne s'en aperçoive** — un contrôle qui échoue suffit. Et il devra tolérer
+l'incertitude de la mesure (~9 % sur les temps du solveur), ce qui oblige à l'enregistrer :
+bénéfice au moins égal à la synchronisation.
+
+État actuel : **la déduplication est faite, le contrôle automatique n'existe pas.** Trois
+documents qui bougent deux fois par an ne le justifient pas encore.
+
 ## Entrées `INCOMPLET`
 
 Les trois `bid_q_flatness` du 2026-08-02 sont **reconstruites depuis stdout**, le run
@@ -67,6 +99,13 @@ des entrées complètes.
   drapeaux de compilation autant que du code** — `RUSTFLAGS`, les features et l'horodatage du
   binaire sont donc enregistrés, ainsi que la charge machine (`loadavg`), sans laquelle un
   temps ne veut rien dire ici : un même binaire varie de 20 % selon ce que fait l'autre agent.
+
+- `dd_ab_revs.sh` / `dd_ab_flags.sh` — les deux harnais A/B du solveur : le premier alterne
+  deux **révisions git**, le second trois **cibles de compilation** bâties de la même source.
+  Ils ne passent pas par `runlog` (ce sont des scripts shell) mais appliquent la même règle,
+  qui est la raison d'être des deux : **alterner et garder le minimum**, jamais A puis B. Un
+  binaire inchangé mesuré deux fois varie de 20 % ici. Résultats à journaliser à la main —
+  cf. l'entrée `dd_target_cpu` de l'index.
 
 Les autres (`bid_candidates.py`, `bid_capot_probe.py`, `hand_classes.py`,
 `card_importance.py`) ne le sont **pas encore**.
