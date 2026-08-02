@@ -14,6 +14,11 @@ gpu_server = ["dmc_train", "dep:tiny_http", "dep:serde", "dep:serde_json"]
 # thread-local increment is not free. On a hybrid P/E-core CPU wall-clock alone cannot
 # separate "better pruning" from "landed on a P-core", so every solver benchmark needs this.
 solver_stats = []
+# Runtime switches that turn off PVS / killer moves / history in the DD solver, driven by
+# COLVER_DD_NO_{PVS,KILLERS,HISTORY}. Off by default and compiled out entirely: it exists so
+# the ablation configurations can share one binary, one corpus and one codegen. Never enable
+# in production — `solver::ablation_label()` says which heuristics a run actually had.
+solver_ablation = []
 
 [dependencies]
 rand = { version = "0.8", optional = true }

@@ -100,12 +100,19 @@ des entrées complètes.
   binaire sont donc enregistrés, ainsi que la charge machine (`loadavg`), sans laquelle un
   temps ne veut rien dire ici : un même binaire varie de 20 % selon ce que fait l'autre agent.
 
-- `dd_ab_revs.sh` / `dd_ab_flags.sh` — les deux harnais A/B du solveur : le premier alterne
-  deux **révisions git**, le second trois **cibles de compilation** bâties de la même source.
+- `dd_ab_revs.sh` / `dd_ab_flags.sh` / `dd_ablation.sh` — les harnais A/B du solveur : le
+  premier alterne deux **révisions git**, le deuxième trois **cibles de compilation** bâties de
+  la même source, le troisième cinq **configurations d'heuristiques** dans un seul binaire.
   Ils ne passent pas par `runlog` (ce sont des scripts shell) mais appliquent la même règle,
-  qui est la raison d'être des deux : **alterner et garder le minimum**, jamais A puis B. Un
-  binaire inchangé mesuré deux fois varie de 20 % ici. Résultats à journaliser à la main —
-  cf. l'entrée `dd_target_cpu` de l'index.
+  qui est la raison d'être des deux premiers : **alterner et garder le minimum**, jamais A puis
+  B. Un binaire inchangé mesuré deux fois varie de 20 % ici. `dd_ablation.sh` s'en dispense
+  parce que sa métrique est le **compte de nœuds**, exact et insensible à l'ordonnanceur —
+  c'est la sortie qu'offre ce plancher de bruit quand on peut l'obtenir. Résultats à
+  journaliser à la main — cf. les entrées `dd_target_cpu`, `dd_ablation` et `dd_tt_size`.
+
+- `bench_tt_size` (binaire) — même remarque, avec une facilité qui vaut d'être connue : il
+  mesure les tailles **dans l'ordre demandé**, donc répéter la liste (`--sizes 16,18,16,18`)
+  suffit à les entrelacer. Sans ça il produisait ici une conclusion fausse *et* actionnable.
 
 Les autres (`bid_candidates.py`, `bid_capot_probe.py`, `hand_classes.py`,
 `card_importance.py`) ne le sont **pas encore**.
