@@ -483,7 +483,14 @@ fn parse_hands(json: &str) -> Option<Vec<World>> {
         nums.push(u32::try_from(v).ok()?);
     }
 
-    if nums.is_empty() || nums.len() % 4 != 0 {
+    // An **empty** `hands` array is a valid answer, not a parse failure: the
+    // `WorldSource` contract says a source that runs dry — as it legitimately
+    // does in an over-constrained endgame — returns an empty batch rather than
+    // erroring. Folding that into `None` turned `{"hands":[]}` into
+    // "malformed response", which under the default `Strict` fallback is a hard
+    // error mid-deal. Measured at 8% of decisions when labelling with IS-DD.
+    // Only a non-empty list that does not group into 4s is actually malformed.
+    if nums.len() % 4 != 0 {
         return None;
     }
     Some(nums.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect())
@@ -492,6 +499,18 @@ fn parse_hands(json: &str) -> Option<Vec<World>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dry source answers `{"hands":[]}`. That is "no worlds here", which the
+    /// search handles, and not a malformed response, which it treats as a hard
+    /// error. Conflating the two failed ~8% of decisions in an endgame-heavy
+    /// workload.
+    #[test]
+    fn empty_hands_is_dry_not_malformed() {
+        assert_eq!(parse_hands(r#"{"hands":[]}"#), Some(Vec::new()));
+        // Still malformed when the numbers do not group into seats.
+        assert_eq!(parse_hands(r#"{"hands":[[1,2,3]]}"#), None);
+        assert_eq!(parse_hands(r#"{"worlds":3}"#), None);
+    }
 
     #[test]
     fn parses_sidecar_hands() {
