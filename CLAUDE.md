@@ -14,8 +14,10 @@ cargo run -p colver-core --bin train_joint --features dmc_train --release -- --m
 cargo run -p colver-core --bin train_bid_nn --features dmc_train --release -- --hidden 512 --layers 3 --steps 20000000 --pool-file data/deals/base_5M.bin --score-file data/deals/scores_isdd_5M.sc  # Standalone bid NN training (base pool + optional score layers)
 RUSTFLAGS="-C target-cpu=native" cargo run -p colver-core --bin gen_pool --release -- -o data/deals/dd_pool.bin -n 1000000  # DD pool generation (no CUDA dep, ~244 deals/s)
 cargo run -p colver-core --bin gen_bid_belief_data --release --features parallel -- --bid-model models/bid_v2/bid_nn_final.bin --bid-hidden 512 --deals 500000 --output data/belief/bid_belief_500k.bin  # Bid belief training data (COLVBB01, ~14M samples, ~65s)
-CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --features gpu_server && ./target/release/playgen_gpu_server --playgen models/playgen/playgen_v2_final.bin --port 8003  # Playgen GPU sidecar — IS-DD's world source
-export COLVER_PLAYGEN_GPU_URL=http://localhost:8003          # required by any IS-DD agent (arena, web, scripts)
+CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --features gpu_server  # build the sidecar once
+playgen-up                                     # start the sidecar (~5.5 GB VRAM, resident) — see "Playgen sidecar discipline"
+playgen-down                                   # stop it and RELEASE the VRAM — do this the moment the run ends
+playgen-status                                 # online? and how much VRAM is taken?
 uv sync                                        # Build and install Python bindings
 uv run python -m colver.web                    # Run web frontend → http://localhost:8000
 uv run pytest tests -q                         # Web-layer test suite (~15 s)
@@ -49,7 +51,7 @@ Belote Contrée game engine optimized for millions of RL rollouts/sec. Rust core
 - `dmc/` — dmc_net, dmc_obs, dmc_replay, dmc_env, dmc_candle, dmc_eval
 - `belief/` — belief_net, belief_obs, belief_candle, card_beliefs (**load-bearing**: supplies IS-DD's hard constraints, despite the "deprecated" label it carried)
 - `playgen/` — tokens (tokenizer v1/v2), model (candle transformer, dmc_train), infer (pure-Rust KV-cache inference, rand), analysis (read-only introspection)
-- root — suit_perm, game_replay, joint_env, rule_player
+- root — suit_perm, hand_class, game_replay, joint_env, rule_player
 
 All modules re-exported at crate root (`use colver_core::card` still works). Binaries in `src/bin/` (auto-discovered by Cargo). Scripts in `scripts/{training,analysis,export}/`.
 
@@ -132,6 +134,7 @@ Vocabulaire à utiliser avec l'utilisateur (ne pas dire « chicane ») :
   - **Resume gotcha:** `--resume-play`/`--resume-bid` reload weights only — NOT the step counter, replay buffer, or epsilon schedule. A naive resume injects ~25% random moves for millions of steps and degrades the policy. Override values in [docs/play/experiments/triforge.md](docs/play/experiments/triforge.md).
   - **Arena/eval:** obs_dim is auto-detected from weight-file size (411 canonical DouDou50 with residual vs 415 legacy DouDou35); use `residual = true` in TOML for triforge play models.
 - **NN inference kernels** (`nn_kernels.rs`): shared `dot` / `linear` / `layer_norm` for the pure-Rust nets, 8 accumulator lanes + AVX2 dispatch, 5-6× on all three nets. **Any new inference net should use these rather than an inline loop.** `playgen/infer.rs` has its own equivalent `dot8`. Numbers: [docs/BENCH.md](docs/BENCH.md).
+- **Hand classification** (`hand_class.rs`): two layers over the fact that suits are interchangeable before a trump is named. (1) `hand_class_id` — an **exact bijective index** into the 472 579 distinct 8-card hands (1 820 803 with a trump designated), with `hand_from_class_id` to walk it back, which makes the hand space **enumerable**: an opening bid is a pure function of the hand, so a bidder's opening policy *is* a 472 579-row table. (2) `HandCode` — a lossy, readable code (`T5.J9AT.A1/A1/x1`) nested over 5 levels, 80 codes at the `trump` level covering what decides a bid. **The code's content is measured, not opined**: a paired DD swap says trump J is worth +49.2 pts and side Q −0.1, so anything under the trump 10 / side 10 is not encoded. Counts are computed in `const fn` and asserted against Burnside — it is **not** `10 518 300 / 24`, since 7.5% of hands have a suit symmetry. See [docs/bid/interpretability/hand_classification.md](docs/bid/interpretability/hand_classification.md).
 - **Suit Augmentation** (`suit_perm.rs`): 24 suit permutations for data augmentation. Functions for belief obs (V1/V2/V3), DMC obs (415-dim), bid obs (108-dim), actions, and masks. TR variants (`permute_dmc_obs_tr` / `augment_play_batch_tr`) exist but unused since canonical ordering eliminates the need.
 
 ### DD Oracle: Training Signal, Not a Player
@@ -262,9 +265,20 @@ FastAPI + WebSocket + vanilla JS. Modes: Play (solo), Salon (multiplayer rooms),
 - **Où couper la carte, et pourquoi ça n'est pas cosmétique.** D'une languette on ne lit qu'une chose : l'index d'angle. Une carte en porte deux, en haut-à-gauche et le même **retourné** en bas-à-droite — un seul se lit à l'endroit. La découpe garde donc toujours le coin haut-gauche : tranche de **gauche** pour Ouest et Est, bande du **haut** pour Nord. Ça marche parce que la carte voisine arrive toujours par la droite (mains horizontales) ou par le bas (mains verticales), donc elle ne mange que le coin retourné. Couper de l'autre côté — ce que faisait Nord et Ouest, dont les cartes pendaient hors écran — ne laissait qu'une bande de dessins sans valeurs. Corollaire dans `cards.css` : `--card-vstep` ne descend pas sous `0.26` de la hauteur, l'index d'angle (rang **+** symbole) descend jusqu'à 24,5 %.
 - **Le panneau d'annonce ne recouvre jamais la main.** Il ne se centre pas sur la zone de jeu mais sur ce qui reste *au-dessus* de la main (`--bid-safe` = une carte + l'étiquette du siège), et son `max-height` borne cette même zone — sinon une enchère de six annonces suffit à le rallonger jusque sur les cartes de Sud. C'est l'historique, et lui seul, qui défile : les boutons restent atteignables. Deux paliers dans `bidding.css` : portrait (`max-width: 640px`) et paysage (`max-height: 500px`), où la zone libre tombe sous la hauteur des commandes empilées — elles passent donc sur une ligne.
 
+## Playgen sidecar discipline (dev machine)
+
+**Any arena run involving an IS-DD bot, and any large data generation that samples worlds, must have the sidecar up — and must give the VRAM back when it ends.** Two rules, both load-bearing:
+
+1. **Never run the arena without playgen when a bot uses IS-DD.** Without the sidecar an IS-DD agent either refuses to build (`fallback = "strict"`, the default) or, if a bot opts into `fallback = "uniform"`, silently plays a *different, weaker* agent than the one under test. The resulting `matches.csv` rows are not comparable to anything — that is exactly the trap that voided every pre-2026-07-24 IS-DD row. A run without playgen is not a cheaper measurement, it is a meaningless one.
+2. **`playgen-down` the moment the run ends.** The sidecar allocates its CUDA context and weights at startup and **never releases them while alive**: measured **5.5 GB resident with zero requests for 10 minutes**. There is no idle unload. Leaving it up amputates the GPU for training, `train_joint`, and everything else.
+
+`playgen-up` / `playgen-down` / `playgen-status` are shell functions in `~/.bashrc` (dev machine). `COLVER_PLAYGEN_GPU_URL` is exported **above** that file's interactive guard, so non-interactive shells and scripts see it too — the variable itself costs nothing and starts nothing; only the process takes VRAM. Prod is different: there the sidecar is a permanent systemd service.
+
 ## Arena: Bot Comparison Framework
 
 Systematic head-to-head and round-robin evaluation of bot architectures on 2000-point matches. Bots are TOML configs — no recompilation needed to test new combinations.
+
+⚠️ **Bring the sidecar up first if any bot plays `isdd` / `smart_isdd` / `dmc_then_isdd`, and take it down after** — see "Playgen sidecar discipline" above.
 
 **Directory structure:** `arena/bots/*.toml` (bot definitions), `arena/results/matches.csv` (persistent results). Binary: `colver-core/src/bin/arena.rs`.
 

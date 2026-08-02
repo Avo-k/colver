@@ -36,6 +36,7 @@ pub mod worlds;
 pub mod agent;
 #[cfg(feature = "rand")]
 pub mod game_loop;
+pub mod hand_class;
 pub mod rule_player;
 pub mod suit_perm;
 pub mod game_replay;

@@ -139,6 +139,8 @@ Predicts which player holds each unknown card from observable game state. Replac
 
 **Suit augmentation** (`suit_perm.rs`): 24 permutations for training data diversity. `--augment` flag.
 
+**Hand classification** (`hand_class.rs`): the same suit symmetry, used to *index* rather than to augment. `hand_class_id` is an exact bijection onto the 472 579 distinct 8-card hands (1 820 803 with a trump designated); `HandCode` is a lossy readable code (`T5.J9AT.A1/A1/x1`, 5 nesting levels, 80 codes at the `trump` level). Content chosen by a paired DD measurement of what each card is worth. Full write-up: [bid/interpretability/hand_classification.md](bid/interpretability/hand_classification.md).
+
 **Training data formats:**
 - `COLVBL01`: Pre-extracted (obs, target, mask). V1 only. ~20GB for 500K games.
 - `COLVGM01` (preferred): Compact game replays (~62 bytes/game). Re-extract on demand for V1/V2/V3. ~28MB for 500K games.

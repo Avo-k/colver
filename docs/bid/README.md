@@ -1,5 +1,10 @@
 # Bidding Documentation
 
+**En cours :** [bid_v7_plan.md](bid_v7_plan.md) — plan d'entraînement v7 (acquis
+mesurés, questions ouvertes, pistes). Trois défauts de v6 y sont chiffrés : non-équivariance
+aux couleurs (24,6 % des annonces basculent sous renommage), Q plate au sommet, capot
+jamais annoncé (0 sur 3000 enchères).
+
 ## Model zoo (`bid/bid_net.rs`)
 
 Dueling DQN, hidden size auto-detected from the weight file (tries 256, 512,
@@ -56,6 +61,7 @@ Distilled rules + heuristic strategy documentation.
 - [strategies/bid_v5_simplified_rules.md](strategies/bid_v5_simplified_rules.md) — **Arbre depth-3 minimaliste** : 5 features, 88-91% d'accord, mémorisable
 - [interpretability/bid_rules_xgb.md](interpretability/bid_rules_xgb.md) — **XGBoost-distilled rules from NN v5** (champion, score-aware, 2026-04-19) + diff vs v2
 - [interpretability/probe_morning_report.md](interpretability/probe_morning_report.md) — **Hidden-layer probe** : deux features manquantes découvertes (per-suit J/9, `opp_best_other_ts`) qui ferment l'écart 77%→97%
+- [interpretability/hand_classification.md](interpretability/hand_classification.md) — **Classer les mains** : index canonique exact (472 579 classes) + code lisible (`T5.J9AT.A1/A1/x1`, 80 codes utiles), et la mesure DD appariée qui dit ce que vaut chaque carte (J d'atout +49,2 ; Dame de côté −0,1)
 - [interpretability/bid_rules_xgb_v2.md](interpretability/bid_rules_xgb_v2.md) — historical v2 distillation (DD oracle, pre-rule-change)
 - [interpretability/strategies_encheres.md](interpretability/strategies_encheres.md) — French doc of all heuristic bidders (heuristic, smart, roro, improved, ...)
 

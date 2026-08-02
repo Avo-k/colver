@@ -122,3 +122,54 @@ inline loop.** `playgen/infer.rs` has its own equivalent, `dot8`.
 per step almost independently of batch size, so the GPU is worthless for a
 single world and decisive for pools: 78 worlds/s at B=32, 328 at B=128, 951 at
 B=512. See [belief/playgen.md](belief/playgen.md).
+
+## Playgen decode + prefill, v2 (2026-08-02)
+
+`bench_playgen_gpu` sur `models/playgen/playgen_v2_final.bin` (d=384 L=6 H=8,
+10,6M params), préfixe 58 tokens, **1 monde = 64 pas de décodage** (2 tokens ×
+32 cartes). 4090 + 32 cœurs.
+
+```bash
+CUDARC_CUDA_VERSION=13010 cargo build --release --bin bench_playgen_gpu --features dmc_train
+./target/release/bench_playgen_gpu --playgen models/playgen/playgen_v2_final.bin \
+    --batches 1,8,32,128,512 --steps 64 --prefix 58
+```
+
+| B | CPU 1 fil (ms/pas) | CPU mondes/s | GPU (ms/pas) | GPU mondes/s | GPU prefill 58 tok |
+|---|---|---|---|---|---|
+| 1 | 2,32 | 6,7 | 2,27 | 6,9 | 106,8 ms |
+| 8 | 10,21 | 12,2 | 2,83 | 44,1 | 129,6 ms |
+| 32 | 38,02 | 13,1 | 3,06 | 163,2 | 135,7 ms |
+| 128 | 149,41 | 13,4 | 3,52 | 567,5 | 127,9 ms |
+| 512 | *(trop lent)* | — | 7,96 | **1005,2** | 221,7 ms |
+
+Sorties identiques CPU/GPU (colonne `sink`). Chiffres plus hauts que l'entrée
+2026-07-23 ci-dessus, qui mesurait un autre chemin (`playgen/gpu.rs` via
+`bench_world_cred`) — les deux ne se contredisent pas, ils ne mesurent pas la
+même chose.
+
+**Le fait structurant : le prefill est par *batch*, pas par lane, et il est
+quasi plat en taille de batch** — 512× plus de lanes pour 2,1× le temps
+(106,8 → 221,7 ms). Le décodage, lui, est bien amorti (3,06 ms/pas couvre 32
+lanes).
+
+Conséquence, et elle décide de la faisabilité de toute feature dérivée de
+playgen : **pour un déroulement court, le prefill domine**. Un déroulement
+d'enchère seule (jusqu'à la triple passe) fait ~16 pas contre 64 pour un monde
+complet, donc à B=32 c'est 135,7 ms de prefill contre 49 ms de décodage. Le
+seul levier est alors de **mettre plusieurs positions différentes dans un même
+batch**, pas plus de lanes de la même position — et `KvCacheBatch::from_prefix`
+prend un seul préfixe par batch, donc c'est un changement de code.
+
+Ordre de grandeur pour précalculer une feature d'enchère sur un pool
+(5M donnes × ~6 décisions d'enchère = 30M positions, 32 déroulements chacune) :
+
+| stratégie | par position | pool 5M | pool 1M |
+|---|---|---|---|
+| API actuelle (1 préfixe/batch, B=32) | 185 ms | **1540 GPU-h (64 j)** | 308 GPU-h |
+| batch inter-positions (B=512 = 16 pos × 32) | 22 ms | 182 GPU-h (7,6 j) | **36 GPU-h** |
+
+Lecture : sans batch inter-positions, c'est hors de portée ; avec, c'est lourd
+à 5M et confortable à 1M. Le nombre de déroulements par position ne change
+presque rien tant que le prefill domine — c'est le nombre de *positions* qui
+coûte. Contexte et usage : [bid/bid_v7_plan.md](bid/bid_v7_plan.md) §3.8.

@@ -11,6 +11,7 @@ use colver_core::bid_eval;
 use colver_core::bidding;
 use colver_core::card;
 use colver_core::card::Suit;
+use colver_core::hand_class;
 use colver_core::bid_net::BidNet;
 use colver_core::dmc_net::DmcNet;
 use colver_core::dmc_obs::EnvTracking;
@@ -1630,11 +1631,133 @@ impl Beliefs {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Classification des mains (colver_core::hand_class)
+// ---------------------------------------------------------------------------
+
+/// Convertit une liste d'indices de carte 0-31 en CardSet, en validant le compte.
+fn cards_to_set(cards: &[u8], expect: Option<usize>) -> PyResult<card::CardSet> {
+    let mut set: card::CardSet = 0;
+    for &c in cards {
+        if c >= 32 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "indice de carte hors bornes : {c}"
+            )));
+        }
+        set |= 1 << c;
+    }
+    if set.count_ones() as usize != cards.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err("cartes en double"));
+    }
+    if let Some(n) = expect {
+        if cards.len() != n {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "main de {n} cartes attendue, {} reçues",
+                cards.len()
+            )));
+        }
+    }
+    Ok(set)
+}
+
+fn set_to_cards(set: card::CardSet) -> Vec<u8> {
+    (0..32u8).filter(|c| set >> c & 1 == 1).collect()
+}
+
+fn check_trump(trump: u8) -> PyResult<()> {
+    if trump >= 4 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "couleur d'atout hors bornes (0-3)",
+        ));
+    }
+    Ok(())
+}
+
+/// Index canonique d'une main de 8 cartes, dans [0, 472579).
+///
+/// Constant sur les 24 permutations de couleurs : deux mains identiques à un
+/// échange de couleurs près ont le même index.
+#[pyfunction]
+fn hand_class_id(cards: Vec<u8>) -> PyResult<u32> {
+    Ok(hand_class::hand_class_id(cards_to_set(&cards, Some(8))?))
+}
+
+/// Index canonique à atout désigné, dans [0, 1820803).
+#[pyfunction]
+fn hand_class_id_trump(cards: Vec<u8>, trump: u8) -> PyResult<u32> {
+    check_trump(trump)?;
+    Ok(hand_class::hand_class_id_trump(
+        cards_to_set(&cards, Some(8))?,
+        trump,
+    ))
+}
+
+/// Une main représentative de la classe `class_id`, en indices de carte.
+#[pyfunction]
+fn hand_from_class_id(class_id: u32) -> PyResult<Vec<u8>> {
+    if class_id >= hand_class::NUM_HAND_CLASSES {
+        return Err(pyo3::exceptions::PyValueError::new_err("class_id hors bornes"));
+    }
+    Ok(set_to_cards(hand_class::hand_from_class_id(class_id)))
+}
+
+/// Idem à atout désigné ; l'atout est rendu en couleur 0 (pique).
+#[pyfunction]
+fn hand_from_class_id_trump(class_id: u32) -> PyResult<Vec<u8>> {
+    if class_id >= hand_class::NUM_HAND_CLASSES_TRUMP {
+        return Err(pyo3::exceptions::PyValueError::new_err("class_id hors bornes"));
+    }
+    Ok(set_to_cards(hand_class::hand_from_class_id_trump(class_id)))
+}
+
+/// Code de main lisible et insensible aux couleurs, p.ex. `"T5.J9AT.A1/A1/x1"`.
+///
+/// `level` ∈ {"length", "trump", "shape", "tops", "full"} — du plus grossier
+/// (9 codes) au plus fin (6654). La chaîne est la clé de regroupement.
+#[pyfunction]
+#[pyo3(signature = (cards, trump, level="full"))]
+fn hand_code(cards: Vec<u8>, trump: u8, level: &str) -> PyResult<String> {
+    use hand_class::CodeLevel::*;
+    check_trump(trump)?;
+    let lvl = match level {
+        "length" => Length,
+        "trump" => Trump,
+        "shape" => Shape,
+        "tops" => Tops,
+        "full" => Full,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "niveau inconnu : {other:?} (length|trump|shape|tops|full)"
+            )))
+        }
+    };
+    let set = cards_to_set(&cards, Some(8))?;
+    Ok(hand_class::HandCode::from_hand(set, trump)
+        .coarsen(lvl)
+        .to_string())
+}
+
+/// Matadors signés (« mit N / ohne N » du Skat) : longueur de la série
+/// ininterrompue des plus gros atouts, positive si on la détient.
+#[pyfunction]
+fn matadors(cards: Vec<u8>, trump: u8) -> PyResult<i8> {
+    check_trump(trump)?;
+    Ok(hand_class::matadors(cards_to_set(&cards, Some(8))?, trump))
+}
+
 #[pymodule]
 fn _colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Env>()?;
     m.add_class::<Agent>()?;
     m.add_class::<Analyst>()?;
     m.add_class::<Beliefs>()?;
+    m.add_function(wrap_pyfunction!(hand_class_id, m)?)?;
+    m.add_function(wrap_pyfunction!(hand_class_id_trump, m)?)?;
+    m.add_function(wrap_pyfunction!(hand_from_class_id, m)?)?;
+    m.add_function(wrap_pyfunction!(hand_from_class_id_trump, m)?)?;
+    m.add_function(wrap_pyfunction!(hand_code, m)?)?;
+    m.add_function(wrap_pyfunction!(matadors, m)?)?;
+    m.add("NUM_HAND_CLASSES", hand_class::NUM_HAND_CLASSES)?;
+    m.add("NUM_HAND_CLASSES_TRUMP", hand_class::NUM_HAND_CLASSES_TRUMP)?;
     Ok(())
 }
