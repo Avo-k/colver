@@ -55,7 +55,7 @@ def main():
     if not os.path.exists(BIN):
         sys.exit(
             f"{BIN} absent — construire d'abord :\n"
-            '  RUSTFLAGS="-C target-cpu=native" cargo build --release '
+            '  cargo build --release '
             '--features "parallel solver_stats" --bin bench_dd'
         )
 

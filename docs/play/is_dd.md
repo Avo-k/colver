@@ -128,7 +128,7 @@ history (`colver-core/src/search/elephant.rs`) if the idea is worth revisiting.
 The solve column below is `n_dets ×` the measured per-shape cost from
 [dd_solver.md](dd_solver.md#performance), single-threaded. The old version of this table was
 wrong by up to **four orders of magnitude** and always in the optimistic direction: it implied
-2.5 ms for a full-deal solve against a measured 34.6 ms, and gave "~5-10 ms" for a resolved
+2.5 ms for a full-deal solve against a measured 32.3 ms, and gave "~5-10 ms" for a resolved
 endgame that actually costs 1.5 µs.
 
 `parallel` defaults to **true** from an `AgentSpec`, so the arena and the web divide the solve
@@ -136,7 +136,7 @@ column by the rayon pool — world *generation* stays sequential and does not.
 
 | Config | Solve time per move (1 thread) | Notes |
 |--------|---------------|-------|
-| 20 dets, opening lead | ~690 ms (20 × 34.6 ms) | A trick-1 world **is** a full deal |
+| 20 dets, opening lead | ~650 ms (20 × 32.3 ms) | A trick-1 world **is** a full deal |
 | 20 dets, mid-game (13-24 cards left) | ~4 ms (20 × 190 µs) | Smaller search trees |
 | 20 dets, with NN belief | + ~20 ms | NN forward + hybrid blend, independent of shape |
 | With `time_limit_ms=50`, full hand | 50 ms × 8/8 = 50 ms | A deadline, not an amount of work |
@@ -145,7 +145,7 @@ column by the rayon pool — world *generation* stays sequential and does not.
 | Forced move (early term) | <1 µs | Constant return |
 
 **Under a time budget the meaningful unit is worlds-per-budget, not milliseconds.** Per-world
-solve cost falls ~23 000× across a deal (34.6 ms → 1.5 µs) while `effective_ms` only falls 8×,
+solve cost falls ~23 000× across a deal (32.3 ms → 1.4 µs) while `effective_ms` only falls 8×,
 so from mid-deal onwards IS-DD is **world-generation-bound, not solver-bound**. Any future
 effort aimed at making IS-DD faster in the endgame belongs in the sampler, not here.
 
