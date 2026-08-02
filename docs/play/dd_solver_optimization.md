@@ -801,9 +801,39 @@ COLVER_DD_IID_DEPTH=0 ./target/release/bench_dd run --corpus data/analysis/dd_co
 ./target/release/bench_dd diff --a off.vals --b on.vals    # doit dire EXACT MATCH
 ```
 
+### Validé sur le vrai binaire — et le gain dépend du point d'entrée
+
+Le corpus est un substitut. `gen_pool`, lui, est la charge réelle : 10 000 donnes, 5 tours
+**entrelacés**, minimum — **46,7 s → 34,0 s, soit 0,728×**, et les cinq tours vont tous dans le
+même sens. C'est nettement plus que ce que le corpus annonçait, et la raison est structurelle :
+
+| unité | full | worlds | mid | end |
+|---|---:|---:|---:|---:|
+| `solve_for_trump` — un solve racine (`gen_pool`) | **0,743** | 0,811 | 0,930 | 1,000 |
+| `solve_with_scores` — le tableau par carte (IS-DD) | 0,889 | 0,960 | 1,000 | 1,000 |
+
+**`solve_with_scores` donne à chaque coup racine une fenêtre pleine `[0, 252]`.** Les frères ne
+partagent donc rien, et le levier d'un bon coup racine se dilue sur huit sous-recherches
+indépendantes. Un solve unique, lui, profite entièrement de la fenêtre serrée qu'établit le
+premier coup s'il est le bon. C'est la même asymétrie que mesure la fenêtre de profondeur du
+§5 — et elle veut dire qu'**annoncer un seul chiffre pour « le gain de l'IID » serait faux** :
+`gen_pool` gagne 1,35×, une couche de scores IS-DD 1,12×.
+
 ### Ce qui reste sur la table
 
-Le plafond du §5 est 6× ; l'IID en prend **1,11×**. Il ne touche que la racine et ses trois
+Le plafond de l'ordonnancement peut se recompter maintenant que l'IID est en place, et le calcul
+porte son propre contrôle : **l'arbre parfaitement ordonné ne dépend pas du chemin par lequel on
+y arrive**. Avant l'IID, 722 051 × 0,214 = **154 519** nœuds ; après, 536 250 × 0,285 =
+**152 831**. Les deux plancher s'accordent, ce qui valide la construction de l'oracle.
+
+| | avant IID | avec IID | plancher | pris | reste |
+|---|---:|---:|---:|---:|---:|
+| full | 722 051 | 536 250 | ~153 000 | **33 %** | **3,5×** |
+| worlds | 30 676 | 24 883 | ~7 300 | **25 %** | **3,4×** |
+
+**L'IID a pris le tiers facile ; il reste un facteur 3,5.** Et §5 dit exactement pourquoi c'est
+dur : le reste est de la discrimination *à l'intérieur d'une catégorie*, profond dans l'arbre,
+là où un regard ne peut plus être payé. Le plafond du §5 était 6× ; l'IID en prend **1,35×**. Il ne touche que la racine et ses trois
 plis, avec un regard qui ne voit qu'un pli et demi. Les pistes suivantes, dans l'ordre :
 
 1. **Un regard qui voit plus loin sans coûter plus cher.** L'horizon actuel rend les points
