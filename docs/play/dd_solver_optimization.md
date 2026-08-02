@@ -126,7 +126,7 @@ dérivation est maintenant assertée.
 
 ### 1.4 Le harnais — `bench_dd`, et la discipline de mesure
 
-`colver-core/src/bin/bench_dd.rs`, trois sous-commandes :
+`colver-core/src/bin/bench_dd.rs`, quatre sous-commandes :
 
 ```bash
 cargo build --release --features "parallel solver_stats" --bin bench_dd
@@ -142,12 +142,30 @@ cargo build --release --features "parallel solver_stats" --bin bench_dd
 # la porte : doit dire EXACT MATCH
 ./target/release/bench_dd diff --a baseline.vals --b cand.vals
 
+# le plafond d'un amorçage de fenêtre parfait, par écart toléré (§2.3bis)
+./target/release/bench_dd oracle --corpus data/analysis/dd_corpus_v1.bin --deltas 1,5,20,40
+
+# ce que valent PVS / coups tueurs / historique (§3) — 5 configs + porte d'exactitude
+scripts/analysis/dd_ablation.sh
+
+# balayage de taille de TT, 1 thread et N (§2.1bis) — répéter la liste entrelace
+./target/release/bench_tt_size --deals 400 --threads 32 --sizes 16,18,16,18,16,18
+
 # A/B alternant deux révisions git, minimum sur N tours
 scripts/analysis/dd_ab_revs.sh <rev-de-référence> 3
+
+# A/B de trois cibles de compilation construites depuis la même source (§2.5)
+scripts/analysis/dd_ab_flags.sh
 
 # et la version journalisée, qui écrit dans docs/measurements/index.jsonl
 python3 scripts/analysis/dd_solver_bench.py --tag <nom> --repeats 5 --note "..."
 ```
+
+**Le motif à réutiliser, c'est `oracle`.** Devant une famille d'idées qui ne diffèrent que par
+la qualité d'une estimation — amorcer une fenêtre, ordonner des coups, choisir une borne — il
+est presque toujours moins cher de mesurer ce que ferait l'estimation **parfaite** que d'en
+construire une bonne. Un plafond bas ferme toute la famille d'un coup (§2.3bis) ; un plafond
+haut dit combien il reste et donne la cible à laquelle comparer.
 
 Le corpus fait **2 120 positions** en quatre formes : donnes complètes (depuis `base_5M.bin` —
 ses `dd_pts` sont périmés mais ses `hands` ne sont qu'une distribution de donnes et restent
@@ -207,14 +225,58 @@ entrées récentes — et coûte **2,4× en temps** en défauts de cache. `1<<18
 `1<<16` (qui tient en L2) est même marginalement meilleur en temps au prix de 19 % de nœuds en
 plus. Le folklore avait raison, mais pas pour la raison qu'on lui prêtait.
 
-**Ce qui reste ouvert** : ce balayage est **mono-thread**. En 32 threads, 32 × 2 Mo = 64 Mo pour
-36 Mo de L3 sur ce 13900K ; `1<<16` donnerait 16 Mo. `bench_tt_size` existe précisément pour ça
-et **n'a jamais été exécuté**. C'est le levier ouvert le moins cher du dépôt.
-
 **Réplication** : passer une tranche de taille arbitraire (puissance de deux) à
 `solve_for_trump_reuse_tt` — le solveur masque avec `len()-1`, donc toute taille est légale —
 et chronométrer le memset séparément à chaque taille. Aujourd'hui il faut construire un
 `TtBuf::with_log2_size(n)`.
+
+**Le volet 32 threads a été exécuté depuis, et ne change rien** — voir §2.1bis.
+
+### 2.1bis Le même balayage en 32 threads — **non, la constante est confirmée**
+
+C'était « le levier ouvert le moins cher du dépôt » : en 32 threads, 32 × 2 Mo = 64 Mo de
+working set pour 36 Mo de L3 sur ce 13900K, et `1<<16` ramènerait ça à 16 Mo. `bench_tt_size`
+existait pour trancher et n'avait jamais tourné. Il a tourné.
+
+Le bench a d'abord été réparé sur deux points qui l'auraient rendu ininterprétable : il allouait
+**une TT par donne** (la production en alloue une par worker et la réestampille), et il ne
+comptait **pas les nœuds** — or deux effets opposés vivent dans le temps mesuré. Une table plus
+grande **entre en collision moins souvent, donc élague mieux et visite moins de nœuds** ; elle
+**sort du cache, donc chaque sonde coûte plus cher**. Sans la colonne de nœuds les deux sont
+indiscernables. 400 donnes × 4 couleurs, minimum sur des tailles **alternées** :
+
+| bits | par thread | nœuds/solve | ms/solve 1T | ns/nœud 32T | ms/solve 32T |
+|---|---|---:|---:|---:|---:|
+| 14 | 128 Ko | 1 119 298 | 21,66 | 48,7 | 54,47 |
+| 16 | 512 Ko | 802 587 | 16,03 | 48,2 | **35,41** |
+| **18 (actuel)** | **2 Mo** | **664 321** | **14,59** | 55,4 | 36,79 |
+| 20 | 8 Mo | 622 525 | 22,45 | 100,3 | 62,45 |
+| 22 | 32 Mo | 613 764 | — | 175,9 | 107,98 |
+
+**512 Ko et 2 Mo sont à égalité** : 2 Mo gagne de 7 % à 1 thread, 512 Ko de 4 % en 32, les deux
+sous le plancher de bruit (~9 %, et la machine était chargée). Ce n'est pas une indécision, c'est
+le mécanisme : **512 Ko visite 1,21× les nœuds à 0,83× le coût par nœud — produit 1,00**. Le
+compromis est plat autour de la constante actuelle, ce qui est précisément la raison pour
+laquelle il n'y a rien à y gagner. Les voisins d'un facteur 8 sont eux nettement moins bons
+(+46 % à 128 Ko, +52 % à 8 Mo, 2,6× à 32 Mo).
+
+L'hypothèse du thrash L3 n'est donc pas fausse — elle mord à partir de 8 Mo par thread — mais
+elle ne mord pas là où on est. **Ne pas toucher `TT_SIZE`.**
+
+**Piège rencontré, et c'est le plus instructif de la mesure.** La première passe, non alternée,
+disait que l'optimum à 1 thread était **128 Ko, 14 % devant 2 Mo**. C'était du bruit :
+l'alternance le retourne complètement (128 Ko finit 46 % *derrière*). Un balayage de tailles
+mesurées l'une après l'autre est exactement le motif que
+[la règle du dépôt interdit](../measurements/README.md) — et il produisait ici une conclusion non
+seulement fausse mais actionnable, donc du code inutile écrit avec confiance. `bench_tt_size`
+mesure les tailles dans l'ordre demandé : **répéter la liste suffit à les entrelacer**
+(`--sizes 16,18,16,18,16,18`).
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats" --bin bench_tt_size
+./target/release/bench_tt_size --deals 400 --threads 32 --sizes 14,16,18,20,14,16,18,20,14,16,18,20
+```
 
 ### 2.2 MTD(f) / recherche binaire sur la valeur — **non, 1,94× plus lent**
 
@@ -257,6 +319,39 @@ points de la moyenne courante, 12 % de plus de 80**, sur une échelle 0-252.
 4 points, 63,5 % des décisions dans une bande de 10). Ce sont deux quantités différentes, et
 c'est la première qui gouverne l'amorçage entre mondes. `solve_windowed_reuse_tt` et
 `solve_for_trump_windowed` restent dans le code sans aucun appelant en production.
+
+Et §2.3bis ci-dessous ferme la question au-delà de cet amorçage-là : **aucun** amorçage, si
+parfait soit-il, ne vaut la peine.
+
+### 2.3bis L'oracle de fenêtre — **la famille entière est bornée, et la borne est basse**
+
+§2.3 a mesuré *un* amorçage et l'a réfuté. Restait l'objection évidente : un meilleur amorçage
+aurait peut-être marché. Plutôt que d'en construire un deuxième, on mesure le **plafond** de la
+famille — on résout chaque position deux fois, la seconde avec une fenêtre centrée sur la
+réponse qu'on vient d'obtenir. Aucune heuristique ne peut battre la réponse elle-même.
+
+`bench_dd oracle --deltas 1,5,10,20,40,80`, corpus figé, 2 120 positions, nœuds exacts.
+Fraction de la recherche pleine fenêtre qui **survit** :
+
+| forme | nœuds/pos | ±1 | ±5 | ±10 | ±20 | ±40 | ±80 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| full | 722 051 | **0,503** | 0,653 | 0,746 | 0,905 | 0,984 | 0,999 |
+| mid | 5 623 | 0,665 | 0,767 | 0,850 | 0,919 | 0,982 | 0,999 |
+| end | 62 | 0,849 | 0,904 | 0,941 | 0,990 | 1,001 | 1,001 |
+| worlds | 30 676 | 0,569 | 0,731 | 0,804 | 0,947 | 0,997 | 0,996 |
+
+**Un amorçage parfait ne fait que 2× sur une donne complète**, et le bénéfice s'évapore vite :
+9,5 % à ±20, 1,6 % à ±40, rien à ±80. Sur les finales il n'y a jamais rien à prendre.
+
+Le chiffre de décision n'est pas le gain mais le **seuil de justesse**. Un amorceur précis à ±δ
+paie la recherche fenêtrée toujours, et une recherche complète à chaque fois qu'il rate : il ne
+s'amortit que s'il encadre la vraie valeur *plus souvent* que la fraction que sa fenêtre laisse
+debout. Soit, sur une donne complète : **90,5 % des amorçages dans ±20, ou 98,4 % dans ±40**.
+
+C'est exactement la colonne à lire contre la dispersion mesurée en §2.3 — **36 % des mondes
+s'écartent de plus de 40 points**. Les deux courbes ne se croisent nulle part. La ligne est
+close : il n'y a pas de « meilleur amorçage » à chercher, et les deux entrées fenêtrées
+peuvent rester sans appelant sans que ce soit un regret.
 
 ### 2.4 Un `apply_play` allégé pour le solveur — **non, 0,977×, donc plus lent**
 
@@ -405,19 +500,48 @@ contrôle « ns + ew ∈ {162, 252} » de `dd_bench` **ne peut pas l'attraper** 
 
 ---
 
-## 3. Folklore restant — jamais mesuré, à ne pas citer comme acquis
+## 3. Le folklore d'ordonnancement — mesuré, et il avait raison
 
-Ces chiffres vivent dans les notes historiques sans corpus, sans machine et sans artefact. Ils
-sont plausibles ; ils ne sont **pas** des mesures, et il faut les traiter comme des expériences
-candidates plutôt que comme des faits :
+Trois chiffres traînaient dans les notes historiques sans corpus ni machine : PVS ~+37 %, coups
+tueurs ~+38 %, historique ~+16 %. Ils ont été vérifiés, et l'intérêt n'est pas seulement de
+savoir s'ils tiennent : **c'est la seule mesure qui dise si la queue est un échec
+d'ordonnancement ou une difficulté intrinsèque** (§4).
 
-- PVS ~+37 %
-- coups tueurs + ordonnancement simple ~+38 %
-- heuristique d'historique ~+16 %
+Feature `solver_ablation` (compilée hors du binaire par défaut) : trois interrupteurs
+d'environnement qui éteignent une heuristique **à l'exécution**, pour que les configurations
+partagent un binaire, un corpus et un codegen. Nœuds par position sur donne complète :
+
+| config | nœuds/pos | part de la recherche que l'heuristique retire | folklore |
+|---|---:|---:|---:|
+| référence | 1 448 045 | — | — |
+| sans PVS | 2 155 637 | **32,8 %** | 37 % |
+| sans coups tueurs | 2 347 754 | **38,3 %** | 38 % |
+| sans historique | 1 704 864 | **15,1 %** | 16 % |
+| sans les trois | 5 075 486 | **71,5 %** | — |
+
+Les coups tueurs et l'historique tombent **au point près** ; PVS est quelques points en dessous
+de sa réputation. Un folklore qui se vérifie à ce niveau ne vient pas de nulle part : ces
+chiffres ont bien été mesurés un jour, ils n'ont simplement jamais été écrits avec leur harnais.
+
+**Les trois sont sur-additifs** : ensemble ils valent 3,50×, alors que le produit de leurs
+contributions individuelles ne prédit que 2,84×. Ils ne se recouvrent pas, ils se complètent —
+un coup tueur ne sert que si la fenêtre est déjà serrée, et PVS ne serre la fenêtre que si le
+premier coup est bon.
+
+**Ce que ça dit de la queue** : l'ordonnancement en place retire déjà 71,5 % de l'arbre, et ce
+n'est pas un mécanisme fatigué. La lecture honnête est que ça **ne tranche pas** §4.2 — ça
+établit que le levier est vivant, pas qu'il reste dedans un facteur 20. La mesure qui
+trancherait est différente : comparer, sur les seules positions de la queue, l'arbre réel à
+l'arbre d'un ordonnancement oracle (meilleur coup en premier à chaque nœud, lu d'un premier
+solve). C'est le pendant exact de l'oracle de fenêtre du §2.3bis, et c'est la prochaine à faire.
+
+Restent non mesurés, et à ne pas citer comme acquis :
 - TT à deux niveaux : « surcoût de sonde »
 - ordonnancement enrichi par le maître du pli partiel : « surcoût > bénéfice »
 
-Le harnais existe maintenant pour trancher chacun d'eux en une demi-heure.
+**Réplication** : `scripts/analysis/dd_ablation.sh`. Le script finit par une porte
+d'exactitude — une ablation change l'*ordre* de la recherche, jamais la réponse, donc les
+quatre configurations doivent rendre `EXACT MATCH` contre la référence. Elles le font.
 
 ---
 
@@ -430,13 +554,26 @@ les micro-optimisations, elles, sont épuisées.
 
 Pistes non encore mesurées, par rapport gain/risque décroissant :
 
-1. **`bench_tt_size` en 32 threads** (§2.1). Le bench existe, il n'a jamais tourné, et
-   l'hypothèse est concrète : 64 Mo de working set pour 36 Mo de L3.
+1. **L'oracle d'ordonnancement, sur les seules positions de la queue.** Rejouer chaque position
+   avec le meilleur coup connu placé en tête à chaque nœud, et compter. C'est le pendant du
+   §2.3bis : ça borne d'un coup *toute* la famille des ordonnancements, y compris ceux qui
+   connaîtraient la contrée. Si le plafond est à 1,3× sur la queue, la piste 2 est close sans
+   qu'on ait écrit une règle ; s'il est à 10×, on sait qu'il y a un facteur 10 à aller chercher
+   et on sait à quoi le comparer. **À faire avant la piste 2, pas après.**
 2. **Ordre des coups sur les positions de la queue.** Un arbre 20× plus gros que la médiane est
-   une signature d'échec d'ordonnancement, pas de difficulté intrinsèque.
+   une signature d'échec d'ordonnancement, pas de difficulté intrinsèque — mais §3 montre que
+   l'ordonnancement générique retire déjà 71,5 % de l'arbre et qu'il n'est pas fatigué. C'est
+   la piste qui a besoin de la 1 pour savoir ce qu'elle vise.
 3. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
    très lâche. Toute borne plus serrée doit être **saine** — c'est exactement là que
    `quick_tricks` s'est planté, et la porte `diff` est là pour ça.
-Et **une piste qui figurait ici et n'y est plus** : `-C target-cpu=native`. Il n'existe toujours
-aucun `.cargo/config.toml`, donc tout le dépôt compile pour la cible x86-64 de base — mais c'est
-désormais une constatation sans conséquence, pas une piste. Mesuré à 0 %, cause identifiée, §2.5.
+
+Et **trois pistes qui figuraient ici et n'y sont plus** :
+
+- `-C target-cpu=native`. Il n'existe toujours aucun `.cargo/config.toml`, donc tout le dépôt
+  compile pour la cible x86-64 de base — mais c'est une constatation sans conséquence, pas une
+  piste. Mesuré à 0 %, cause identifiée, §2.5.
+- **`bench_tt_size` en 32 threads**, qui était en tête de cette liste. Exécuté : la constante
+  est confirmée et le compromis est plat autour d'elle, §2.1bis.
+- **L'amorçage de fenêtre**, sous toutes ses formes. Le plafond de la famille entière est
+  mesuré et il est bas, §2.3bis.

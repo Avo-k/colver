@@ -308,6 +308,106 @@ pub fn solve_best_card(state: &GameState) -> u8 {
     best_card
 }
 
+// ---- Ablation switches (feature `solver_ablation`) ----
+//
+// PVS, killer moves and the history heuristic each carry a folklore gain (+37 %, +38 %, +16 %)
+// that predates every harness in this repo — nobody has re-derived them, and they are the
+// reason "the tail is a move-ordering failure" is a hypothesis rather than a fact.
+//
+// Turning one off at *runtime* rather than deleting it means the configurations share one
+// binary: same corpus, same codegen, same machine, so their node counts subtract cleanly.
+// Compiled out entirely by default — production never pays the branch, and `ablation_label`
+// makes a mislabeled run impossible to produce.
+//
+// Soundness check that comes for free: an ablation changes the search *order*, never a value.
+// So every ablated run must still `bench_dd diff --a baseline.vals` to EXACT MATCH.
+#[cfg(feature = "solver_ablation")]
+mod ablation {
+    use std::sync::OnceLock;
+
+    pub struct Flags {
+        pub no_pvs: bool,
+        pub no_killers: bool,
+        pub no_history: bool,
+    }
+
+    fn env_flag(name: &str) -> bool {
+        std::env::var(name).map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+    }
+
+    static FLAGS: OnceLock<Flags> = OnceLock::new();
+
+    pub fn flags() -> &'static Flags {
+        FLAGS.get_or_init(|| Flags {
+            no_pvs: env_flag("COLVER_DD_NO_PVS"),
+            no_killers: env_flag("COLVER_DD_NO_KILLERS"),
+            no_history: env_flag("COLVER_DD_NO_HISTORY"),
+        })
+    }
+}
+
+#[inline(always)]
+fn no_pvs() -> bool {
+    #[cfg(feature = "solver_ablation")]
+    {
+        ablation::flags().no_pvs
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    {
+        false
+    }
+}
+
+#[inline(always)]
+fn no_killers() -> bool {
+    #[cfg(feature = "solver_ablation")]
+    {
+        ablation::flags().no_killers
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    {
+        false
+    }
+}
+
+#[inline(always)]
+fn no_history() -> bool {
+    #[cfg(feature = "solver_ablation")]
+    {
+        ablation::flags().no_history
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    {
+        false
+    }
+}
+
+/// Which heuristics are live, for a benchmark to print next to its numbers.
+/// `"baseline"` when the ablation feature is off or nothing is disabled.
+pub fn ablation_label() -> String {
+    let mut off: Vec<&str> = Vec::new();
+    if no_pvs() {
+        off.push("no_pvs");
+    }
+    if no_killers() {
+        off.push("no_killers");
+    }
+    if no_history() {
+        off.push("no_history");
+    }
+    if off.is_empty() {
+        "baseline".into()
+    } else {
+        off.join("+")
+    }
+}
+
+/// Whether the ablation switches are compiled in — a `"baseline"` label means something
+/// different depending on this, so a benchmark must report both.
+pub const fn ablation_enabled() -> bool {
+    cfg!(feature = "solver_ablation")
+}
+
 // ---- Node counting (feature `solver_stats`) ----
 //
 // Wall-clock on a hybrid P/E-core CPU cannot separate "better pruning" from "landed on
@@ -448,7 +548,7 @@ fn alphabeta(
 
     // Apply card equivalence + order with hash move first, then killers, then by history
     let reduced = reduce_equivalent(legal, state);
-    let killer_pair = if ply < 32 { killers[ply] } else { [EMPTY; 2] };
+    let killer_pair = if ply < 32 && !no_killers() { killers[ply] } else { [EMPTY; 2] };
     let ordered = order_moves(state, reduced, hash_move, history, killer_pair);
 
     let orig_alpha = alpha;
@@ -463,7 +563,7 @@ fn alphabeta(
 
         let score = if child.is_terminal() {
             child.points[0] as i16
-        } else if i == 0 {
+        } else if i == 0 || no_pvs() {
             alphabeta(&child, alpha, beta, tt, stamp, history, killers)
         } else {
             // PVS: null window search after first move
@@ -504,13 +604,15 @@ fn alphabeta(
 
         if alpha >= beta {
             // Killer heuristic: remember cutoff-causing card at this ply
-            if ply < 32 && card != killers[ply][0] {
+            if ply < 32 && card != killers[ply][0] && !no_killers() {
                 killers[ply][1] = killers[ply][0];
                 killers[ply][0] = card;
             }
             // History heuristic: reward the cutoff-causing card
-            let depth = 8 - (state.tricks_won[0] + state.tricks_won[1]);
-            history[team as usize][card as usize] += (depth as u32) * (depth as u32);
+            if !no_history() {
+                let depth = 8 - (state.tricks_won[0] + state.tricks_won[1]);
+                history[team as usize][card as usize] += (depth as u32) * (depth as u32);
+            }
             break;
         }
     }
@@ -792,7 +894,7 @@ fn order_moves(
         let card = mask.trailing_zeros() as u8;
         mask &= mask - 1;
         let static_score = move_order_score(state, card, trump, ct) as i32;
-        let hist_bonus = history[team][card as usize] as i32;
+        let hist_bonus = if no_history() { 0 } else { history[team][card as usize] as i32 };
         scored[scount] = (static_score + hist_bonus, card);
         scount += 1;
     }

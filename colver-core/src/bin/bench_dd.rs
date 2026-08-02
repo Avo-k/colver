@@ -404,6 +404,11 @@ fn cmd_run(args: &Args) -> io::Result<()> {
         );
     }
     eprintln!("corpus: {} positions from {}", positions.len(), args.corpus);
+    eprintln!(
+        "heuristics: {} (ablation switches {})",
+        solver::ablation_label(),
+        if solver::ablation_enabled() { "compiled in" } else { "compiled out" }
+    );
 
     let threads = args.threads;
     let t_all = Instant::now();
@@ -531,11 +536,125 @@ fn cmd_run(args: &Args) -> io::Result<()> {
         let mut f = fs::File::create(path)?;
         writeln!(
             f,
-            "{{\"positions\":{},\"nodes\":{},\"cpu_us\":{:.0},\"wall_s\":{:.3},\"threads\":{},\"checksum\":{},\"stats\":{}}}",
-            totals.2, totals.0, totals.1, wall, threads, checksum, solver::stats_enabled()
+            "{{\"positions\":{},\"nodes\":{},\"cpu_us\":{:.0},\"wall_s\":{:.3},\"threads\":{},\"checksum\":{},\"stats\":{},\"heuristics\":\"{}\"}}",
+            totals.2, totals.0, totals.1, wall, threads, checksum, solver::stats_enabled(),
+            solver::ablation_label()
         )?;
         println!("summary -> {path}");
     }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ window oracle
+
+/// **Ceiling** on the whole family of window-seeding ideas: what if the seed were perfect?
+///
+/// `solve_windowed_reuse_tt` exists so a caller can hand the search a guess at the answer.
+/// Every proposal in that family — seed from a sibling world, from a heuristic evaluation,
+/// from the previous trick — differs only in *how good the guess is*. So rather than build
+/// one and measure it, solve each position twice: once for real, then again with a window
+/// centred on the answer we just got. No heuristic can beat the answer itself.
+///
+/// The δ sweep turns the ceiling into a requirement. δ=1 is the perfect seed; δ=40 is a seed
+/// that is merely in the right region. If the saving has already evaporated at δ=20, then the
+/// measured fact that 36 % of a hand's worlds deviate by more than 40 points settles it.
+///
+/// Break-even: a seeder that brackets the true value with probability `p` pays `r` always and
+/// a full re-search on a miss, so it is worth building only if `p > r`. A ratio of 0.7 means
+/// the guess must be right 70 % of the time just to pay for itself — printed per shape.
+///
+/// Scope: this is the *root* value, not the per-card table `solve_with_scores` returns. A
+/// windowed `solve_with_scores` would need one accurate seed per legal card, which is strictly
+/// harder, so the ceiling measured here bounds that case too.
+fn cmd_oracle(args: &Args, deltas: &[i16]) -> io::Result<()> {
+    let positions = read_corpus(&args.corpus)?;
+    if !solver::stats_enabled() {
+        eprintln!("REFUSING: the oracle compares node counts; rebuild with --features solver_stats");
+        std::process::exit(2);
+    }
+    eprintln!("corpus: {} positions from {}", positions.len(), args.corpus);
+    eprintln!("deltas: {deltas:?}\n");
+
+    let mut tt = solver::new_tt_buffer();
+    // [shape][delta] -> summed nodes; column 0 is the full-window reference.
+    let mut nodes = vec![vec![0u64; deltas.len() + 1]; 4];
+    let mut count = [0usize; 4];
+
+    for p in &positions {
+        let st = p.rebuild().expect("corpus position must rebuild");
+        let si = p.shape as usize;
+
+        let _ = solver::take_nodes();
+        let v = solver::solve_windowed_reuse_tt(&st, &mut tt, 0, 252);
+        nodes[si][0] += solver::take_nodes();
+        count[si] += 1;
+
+        for (di, &d) in deltas.iter().enumerate() {
+            let _ = solver::take_nodes();
+            let vd = solver::solve_windowed_reuse_tt(&st, &mut tt, v - d, v + d);
+            nodes[si][di + 1] += solver::take_nodes();
+            // The window strictly brackets v, so fail-soft owes us the exact value. If this
+            // ever fires, the windowed entry point is unsound and no ratio below means anything.
+            assert_eq!(vd, v, "windowed solve disagreed inside a bracketing window");
+        }
+    }
+
+    print!("{:>8} {:>7} {:>12}", "shape", "n", "nodes/pos");
+    for d in deltas {
+        print!("   +/-{:<3}", d);
+    }
+    println!("     (fraction of the full-window search that survives)");
+
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let si = shape as usize;
+        if count[si] == 0 {
+            continue;
+        }
+        let base = nodes[si][0] as f64;
+        print!(
+            "{:>8} {:>7} {:>12.0}",
+            shape.name(),
+            count[si],
+            base / count[si] as f64
+        );
+        for di in 0..deltas.len() {
+            print!("  {:>7.3}", nodes[si][di + 1] as f64 / base);
+        }
+        println!();
+    }
+
+    // The decision number. A seeder accurate to +/-d pays the windowed search always and a full
+    // re-search whenever it misses, so it only pays for itself if it lands inside +/-d more
+    // often than the fraction of the search that window leaves standing. Put the other way:
+    // this table is the accuracy a seeder must reach, and it can be read straight against a
+    // measured error distribution.
+    println!("\nseeder accurate to +/-d must bracket the answer at least this often to break even:");
+    print!("{:>8}", "shape");
+    for d in deltas {
+        print!("   +/-{:<3}", d);
+    }
+    println!();
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let si = shape as usize;
+        if count[si] == 0 {
+            continue;
+        }
+        let base = nodes[si][0] as f64;
+        print!("{:>8}", shape.name());
+        for di in 0..deltas.len() {
+            let r = nodes[si][di + 1] as f64 / base;
+            if r >= 1.0 {
+                print!("  {:>6}", "never");
+            } else {
+                print!("  {:>5.1}%", r * 100.0);
+            }
+        }
+        println!();
+    }
+    println!(
+        "\n\"never\" = the windowed search is already no cheaper than the full one, so no hit\n\
+         rate saves it. Read the +/-40 column against the measured spread of a hand's worlds."
+    );
     Ok(())
 }
 
@@ -720,6 +839,7 @@ fn main() {
     let mut worlds = 24usize;
     let mut a = String::new();
     let mut b = String::new();
+    let mut deltas: Vec<i16> = vec![1, 5, 20, 40];
 
     let mut i = 2;
     while i < argv.len() {
@@ -744,6 +864,7 @@ fn main() {
             "--worlds" => worlds = next().parse().unwrap(),
             "--a" => a = next(),
             "--b" => b = next(),
+            "--deltas" => deltas = next().split(',').map(|s| s.parse().unwrap()).collect(),
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -790,6 +911,10 @@ fn main() {
                 cmd_run(&args).expect("run");
             }
         }
+        "oracle" => {
+            let args = Args { corpus, values, json, threads, repeats, ab };
+            cmd_oracle(&args, &deltas).expect("oracle");
+        }
         "diff" => {
             if a.is_empty() || b.is_empty() {
                 eprintln!("diff needs --a and --b");
@@ -798,7 +923,7 @@ fn main() {
             cmd_diff(&a, &b).expect("diff");
         }
         _ => {
-            eprintln!("usage: bench_dd build|run|diff  (see the module doc comment)");
+            eprintln!("usage: bench_dd build|run|oracle|diff  (see the module doc comment)");
             std::process::exit(2);
         }
     }

@@ -12,6 +12,12 @@ Exact alpha-beta search assuming all 4 hands are visible. Used as the **oracle t
 - History heuristic for move ordering
 - Move ordering: TT move → killers → captures → quiets
 
+**What each one is worth is measured, not assumed** — killers remove 38.3 % of a full-deal
+search, PVS 32.8 %, history 15.1 %, and the three together 71.5 % (they are super-additive).
+The table, the ablation harness and what it does *not* settle about the hard tail live in
+[dd_solver_optimization.md § 3](dd_solver_optimization.md). The 2 MB buffer size is also
+measured rather than inherited: § 2.1bis, at 1 and 32 threads.
+
 ## Performance
 
 **This table is the single source for DD solver timings.** Every other document quotes at most
