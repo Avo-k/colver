@@ -269,6 +269,87 @@ the **analysis** pages; it no longer feeds IS-DD.
 > now on `playgen_v2_final.bin` (md5 `ebffd896…`, the v0.8.0 release asset).
 > Deployment details live in the deployment's own private runbook, not here.
 
+### Batching across positions, and the KV cache (2026-08-02)
+
+The sidecar served **one request at a time** and a request cost ~220 ms whether
+it returned 1 world or 256:
+
+| `n_worlds` | 1 | 20 | 128 | 256 | 512 |
+|---|---|---|---|---|---|
+| ms/request | 216 | 261 | 225 | 268 | 348 |
+
+The cost was almost entirely fixed — ~100 sequential decode steps on a 10.7M
+model — so it was neither VRAM (5.5 GB of 24) nor arithmetic, but **latency and
+occupancy**. IS-DD asks for ~20 worlds per decision from a different position
+each time, so it ran the GPU at ~8% of what it can do, and no amount of client
+concurrency helped against a serial server.
+
+Two independent fixes, both verified to leave behaviour **bit-identical**.
+
+**1. Batch across positions** (`generate_worlds_multi`). Batching *within* one
+position already existed; the missing axis was *between* positions. Prefixes of
+different lengths are right-aligned and padded, dummy tokens excluded by the
+additive mask, logical positions passed per lane — the "lockstep paddé" idiom
+`auction_round` already used for desynchronized auctions. Between prefill and
+decode the K prefix lanes are fanned out to `sum(n_worlds)` with an
+`index_select` on the batch axis. The server became: handler threads that parse
+and replay (taking replay off the GPU's critical path), a queue, and a single
+owner of the device draining it up to `--lane-budget`. No artificial wait
+window, so a lone request still leaves immediately.
+
+**2. Fixed-capacity KV cache.** Profiling (`COLVER_PLAYGEN_PROFILE=1`) put 97%
+of decode inside `forward_step`, and inside it:
+
+| | before | after |
+|---|---|---|
+| `cat` of the KV cache | 36-43% | 10% |
+| attention | 36-37% | 33% |
+| FFN | 11-15% | 29% |
+| qkv | 6-8% | 17% |
+
+So **~75% of the time was memory traffic**: the cache was copied whole *twice
+per step* to append one token — once by `Tensor::cat` reallocating, once by the
+`transpose(2,3).contiguous()` in attention. At 640 lanes that cache is ~1.3 GB.
+It is now allocated once at `prefix + 2 × cards left` and written in place with
+`slice_set`, with unwritten slots masked to -1e9 (whose exponential is exactly 0
+in f32, so the softmax is unchanged — that is what allows attending over the
+full capacity and keeping every tensor contiguous). K is stored **pre-transposed**
+`[B, H, hd, CAP]`, removing the second copy. The CPU path (`KvCacheBatch`) never
+had this problem; the GPU one had drifted from it.
+
+Measured, 32 positions × 20 worlds: one at a time **682-770 → 201-213 ms**
+(3.4×), batched **~78-208 → 15.3-18.0 ms** (~6×).
+
+**Client concurrency is part of the answer.** The GPU win did *not* show up
+end-to-end at first: with 32 threads the client sits blocked in HTTP (~180% CPU
+out of 3200%), so too few requests are in flight and batches average 12.8
+instead of 26. Labelling throughput by client threads:
+
+| threads | deals/s |
+|---|---|
+| 32 (default) | 0.237 |
+| 96 | 0.396 |
+| **192** | **0.496** |
+| 384 | 0.492 (plateau) |
+
+Cumulative on the labelling workload: **0.052 → 0.496 deals/s, 9.5×**.
+
+**Verification** — `bench_playgen_batch`, in order of how much it would hurt to
+get wrong: one item through the multi path is bit-identical to the single path
+at the same seed; a position's card marginals shift 0.0392 when batched with 7
+others against 0.0387 of sampling noise (no leak between lanes); 0 invalid
+worlds. And a **fingerprint of all three paths** — auction, single play, batched
+play — pinned before the KV refactor and unchanged after. The auction path feeds
+the Annonces page in prod and had no equivalence check at all before this.
+
+Two consequences worth carrying:
+
+- `--lane-budget` now pre-allocates. At 1024 lanes the cache is ~2 GB, fine on a
+  4090 but **not on a shared prod GPU** — lower it there.
+- Remaining headroom is fp16/bf16 on the tensor cores (~2×), but that would break
+  the CPU/GPU bit-identity the web's CPU fallback rests on. A product decision,
+  not an optimization.
+
 ## Next steps
 - [ ] Playgen v2: 10M-game corpus (generating on the GPU host), bigger model
       (d=384 L=6?), COLVGM01 merge tool for chunked corpora — better per-world
