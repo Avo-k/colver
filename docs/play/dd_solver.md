@@ -14,9 +14,14 @@ Exact alpha-beta search assuming all 4 hands are visible. Used as the **oracle t
 
 **What each one is worth is measured, not assumed** — killers remove 38.3 % of a full-deal
 search, PVS 32.8 %, history 15.1 %, and the three together 71.5 % (they are super-additive).
-The table, the ablation harness and what it does *not* settle about the hard tail live in
+The table and the ablation harness live in
 [dd_solver_optimization.md § 3](dd_solver_optimization.md). The 2 MB buffer size is also
 measured rather than inherited: § 2.1bis, at 1 and 32 threads.
+
+**Ordering is nonetheless where the remaining time is.** Replaying each position with the best
+move known at every node leaves 21 % of a full-deal search standing, and 17 % on the hardest
+decile — which alone carries 43 % of all nodes (73.6 % for the sampled-world shape). The tail
+is an ordering failure, and the ceiling above the current heuristics is ≥ 6×: § 5.
 
 ## Performance
 

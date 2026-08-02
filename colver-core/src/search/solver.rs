@@ -308,6 +308,100 @@ pub fn solve_best_card(state: &GameState) -> u8 {
     best_card
 }
 
+// ---- Move-ordering oracle (feature `solver_oracle`) ----
+//
+// The counterpart of `bench_dd oracle` for ordering instead of windows, and it exists for the
+// same reason: before writing a Contrée-aware move-ordering rule, measure what the *perfect*
+// rule would buy. If the ceiling is low the whole family is closed without writing one.
+//
+// A first solve records the best move at every node into a map with **no eviction** — which is
+// what makes this an oracle rather than just a warmed TT, since the real table runs 99.4 % full
+// at 21.5 writes per slot and loses almost all of them. A second solve replays the position
+// with that move forced to the front.
+//
+// Two honest limits, both making this an *under*-estimate of a true perfect ordering:
+//   - a move recorded at a cut node is the first one that produced a cutoff, not provably the
+//     best — that is the standard notion of a good hint, and it is what a real heuristic aims at;
+//   - the second pass visits some nodes the first never reached, and there the map is silent.
+// Iterating (record again while using) closes most of the second gap; `bench_dd ordering`
+// reports the iterated figure next to the first so convergence is visible rather than assumed.
+//
+// The map keys on `position_hash`, which is only unique **within one (deal, trump)** — it
+// derives the hands from the cards played and does not key on trump. So it must be cleared
+// between positions, and `cmd_ordering` does.
+#[cfg(feature = "solver_oracle")]
+mod ordering_oracle {
+    use std::cell::{Cell, RefCell};
+    use std::collections::HashMap;
+
+    thread_local! {
+        pub static MODE: Cell<u8> = const { Cell::new(0) };
+        pub static MAP: RefCell<HashMap<u64, u8>> = RefCell::new(HashMap::new());
+    }
+}
+
+/// No oracle: ordinary move ordering.
+pub const ORACLE_OFF: u8 = 0;
+/// Record the best move at every node, but do not consult the map.
+pub const ORACLE_RECORD: u8 = 1;
+/// Consult the map for a hash move; do not update it.
+pub const ORACLE_USE: u8 = 2;
+/// Consult and update — the iterating pass.
+pub const ORACLE_USE_RECORD: u8 = 3;
+
+#[inline(always)]
+fn oracle_hint(_hash: u64) -> u8 {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_USE != 0 {
+            return ordering_oracle::MAP
+                .with(|m| m.borrow().get(&_hash).copied())
+                .unwrap_or(EMPTY);
+        }
+    }
+    EMPTY
+}
+
+#[inline(always)]
+fn oracle_note(_hash: u64, _best: u8) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_RECORD != 0 {
+            ordering_oracle::MAP.with(|m| {
+                m.borrow_mut().insert(_hash, _best);
+            });
+        }
+    }
+}
+
+/// Set the oracle mode **for the calling thread**. No-op without the feature.
+pub fn oracle_set_mode(_mode: u8) {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::MODE.with(|m| m.set(_mode));
+}
+
+/// Drop every recorded move. Required between two (deal, trump) pairs — the key is not
+/// unique across them, so skipping this silently feeds one position's moves to another.
+pub fn oracle_clear() {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+}
+
+/// Distinct positions currently recorded on this thread.
+pub fn oracle_len() -> usize {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::MAP.with(|m| m.borrow().len());
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    0
+}
+
+/// Whether the ordering oracle is compiled in.
+pub const fn oracle_enabled() -> bool {
+    cfg!(feature = "solver_oracle")
+}
+
 // ---- Ablation switches (feature `solver_ablation`) ----
 //
 // PVS, killer moves and the history heuristic each carry a folklore gain (+37 %, +38 %, +16 %)
@@ -541,6 +635,13 @@ fn alphabeta(
         }
     }
 
+    // A recorded move outranks the TT's: it comes from a completed search of this exact
+    // position, where the TT's is whatever survived eviction. Compiled out by default.
+    let hinted = oracle_hint(hash);
+    if hinted != EMPTY && (legal & card_to_bit(hinted)) != 0 {
+        hash_move = hinted;
+    }
+
     let team = GameState::player_team(state.current_player);
     let maximizing = team == 0;
     let ply = (state.tricks_won[0] + state.tricks_won[1]) as usize * 4
@@ -627,6 +728,7 @@ fn alphabeta(
     };
 
     tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move, stamp);
+    oracle_note(hash, best_move);
     best_score
 }
 
