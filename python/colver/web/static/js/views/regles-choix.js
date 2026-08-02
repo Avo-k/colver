@@ -38,6 +38,7 @@ const TEMPLATE = `
         <button type="button" data-goto="q-methode">Comment on a tranché</button>
 
         <span class="rg-toc-group">La marque</span>
+        <button type="button" data-goto="q-plus-que-defense">Faire plus que la défense</button>
         <button type="button" data-goto="q-chute">La chute</button>
         <button type="button" data-goto="q-base">162 et pas 160</button>
         <button type="button" data-goto="q-mult">Ce que double la coinche</button>
@@ -147,6 +148,82 @@ const TEMPLATE = `
     <!-- ================= LA MARQUE ================= -->
     <section class="rg-sec">
         <h3>La marque</h3>
+
+        <div class="rg-q" id="q-plus-que-defense">
+            <h4>Faut-il aussi faire plus de points que la défense&nbsp;?</h4>
+            <p class="rg-a">Non. Seule l'enchère compte. Un contrat peut être réussi alors que la défense a ramassé plus de points cartes que les preneurs.</p>
+            <p>
+                Le cas est facile à rencontrer. On annonce 80, on ne ramasse que 70 points de
+                plis — mais on a la belote, donc 90, donc le contrat est tenu, alors que la défense
+                tient 92 des 162 points de la donne. Ou plus net encore&nbsp;: on annonce 80, on
+                fait <strong>80 pile</strong>, et la défense en a 82.
+            </p>
+            <p>
+                Les sources se répondent, et pour une fois elles le font <em>explicitement</em>
+                plutôt que par omission&nbsp;:
+            </p>
+            <blockquote class="rg-quote">
+                « Le contrat est réussi si les preneurs obtiennent un total supérieur ou égal à
+                l'enchère demandée […] <strong>Ceci est valable même si les défenseurs ont réalisé
+                plus de points que les preneurs.</strong> »
+                <cite>FFB, règles officielles de la belote contrée, 27.01.2016</cite>
+            </blockquote>
+            <blockquote class="rg-quote">
+                « Le contrat est réussi si <strong>les deux conditions</strong> suivantes sont
+                réunies&nbsp;: 1) […] supérieur ou égal à l'enchère demandée […] 2) Les preneurs
+                obtiennent un total <strong>supérieur à celui de la défense</strong>. »
+                <cite>FFB, règles de la belote coinchée, 2015</cite>
+            </blockquote>
+            <p>
+                Encore une fracture interne à la fédération — mais celle-ci, contrairement aux
+                autres, <strong>n'est pas une incohérence</strong>, et c'est ce qui la rend
+                éclairante. La coinche a des <button type="button" class="rg-xref" data-goto="q-annonces">annonces</button>
+                (tierce, cent, carré), qui peuvent porter la défense au-dessus du preneur
+                <em>sans que celui-ci ait mal joué</em>. La condition « faire plus que la défense »
+                est donc le corollaire <strong>des annonces</strong>, pas de l'enchère. La contrée
+                n'en a pas&nbsp;; elle n'a pas besoin de la condition.
+            </p>
+            <p>
+                Deux indices confirment cette lecture. D'abord, <strong>c'est de là que vient le
+                « 82 »</strong> des sources anglophones&nbsp;: 162 / 2 = 81, donc 82 est le
+                minimum pour avoir strictement plus que l'adversaire. Pagat le dit lui-même — « <em>It
+                is a vestige of this rule that requires a score of at least 82 to win a bid of
+                80</em> » — et la FFB, ayant supprimé la règle, a gardé le 80. Ensuite, les
+                <strong>quatre implémentations libres</strong> du relevé testent toutes
+                « points du preneur ≥ contrat » sans jamais regarder le total adverse, quoi qu'en
+                disent les textes qu'elles prétendent suivre.
+            </p>
+            <p>
+                Colver suit donc le camp contrée. Les trois situations, telles que le moteur les
+                marque&nbsp;:
+            </p>
+            <div class="rg-scroll">
+                <table class="rg-table">
+                    <caption>Contrat de 80, la défense a plus de points cartes</caption>
+                    <thead><tr><th>Situation</th><th class="rg-num">Preneurs</th><th class="rg-num">Défense</th></tr></thead>
+                    <tbody>
+                        <tr><th>70 de plis + belote (défense 92)</th><td class="rg-num">170</td><td class="rg-num">92</td></tr>
+                        <tr><th>80 pile (défense 82)</th><td class="rg-num">160</td><td class="rg-num">82</td></tr>
+                        <tr><th>80 pile, mais coinché</th><td class="rg-num">322</td><td class="rg-num">0</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p>
+                Le troisième cas mérite qu'on s'y arrête&nbsp;: coincher un 80 qui tombe pile à 80
+                fait marquer <strong>322 à 0</strong> aux preneurs, alors que la défense tenait la
+                moitié de la donne. C'est le rappel que la belote
+                <button type="button" class="rg-xref" data-goto="q-belote">compte pour réaliser le
+                contrat</button> — un règlement de concours met en garde en ces termes exacts&nbsp;:
+                « attention au moment de contrer&nbsp;! ».
+            </p>
+            <p class="rg-src">
+                <strong>Portée du cas&nbsp;:</strong> pour réussir en ayant moins de points cartes
+                que la défense, il faut ramasser au plus 80 points de plis — donc cela ne peut
+                arriver <strong>qu'aux contrats 80, 90 et 100</strong>, et <strong>sans belote,
+                uniquement à 80 pile</strong>. Au-delà, la valeur du contrat garantit à elle seule
+                la majorité des points cartes.
+            </p>
+        </div>
 
         <div class="rg-q" id="q-chute">
             <h4>Quand un contrat chute, pourquoi la défense marque-t-elle 162 + le contrat&nbsp;?</h4>

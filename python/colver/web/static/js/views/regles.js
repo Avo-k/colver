@@ -324,6 +324,11 @@ const TEMPLATE = `
             comprise, atteignent la valeur annoncée. Pour un capot annoncé, il faut les huit plis.
             Sinon c'est une <strong>chute</strong>.
         </p>
+        <p>
+            C'est la <em>seule</em> condition&nbsp;: il n'est pas nécessaire de faire plus de points
+            que la défense. Annoncer 80 et ramasser 80 points de plis pile suffit, même si la
+            défense en tient 82. <a href="/regles/choix?q=q-plus-que-defense">Pourquoi&nbsp;?</a>
+        </p>
 
         <div class="rg-scroll">
             <table class="rg-table">
