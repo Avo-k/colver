@@ -1,7 +1,7 @@
 # Un pool DD périmé : ce que ça coûte vraiment (2026-08-02)
 
 **Verdict : non, il ne faut pas regénérer `base_5M.bin` pour cause de dérive d'IS-DD.**
-87 % de l'écart avril → aujourd'hui est du bruit d'échantillonnage du solveur. Et une
+Au moins 87 % de l'écart avril → aujourd'hui est du bruit d'échantillonnage. Et une
 deuxième raison, plus forte que la première : le format ne peut pas porter le label
 qu'on voudrait de toute façon.
 
@@ -22,10 +22,27 @@ temps, pour que le label ne dépende pas de la charge machine.
 
 | bras | mondes | enchère | graine | ce qu'il isole |
 |---|---|---|---|---|
-| **B0** | uniform | aucune | 42 | protocole d'avril, code d'aujourd'hui → dérive de code seule |
+| **B0** | uniform | aucune | 42 | code d'aujourd'hui, mondes uniformes comme en avril |
 | **plancher** | uniform | aucune | 1234 | B0 contre lui-même → bruit intrinsèque |
 | **B** | uniform | synthétique | 42 | prix du préfixe d'enchère |
 | **C** | playgen | synthétique | 42 | l'effet playgen |
+
+⚠️ **B0 n'est pas le protocole d'avril, contrairement à ce que ce document a d'abord
+affirmé.** `scores_isdd_5M.sc` a été produit par `enrich_pool_isdd` en **mode temps**
+(20 ms/coup), et en mode temps la boucle d'IS-DD ne sort que sur l'échéance : le
+`else if det_count >= config.determinizations` de [is_dd.rs](../../colver-core/src/search/is_dd.rs)
+est inatteignable. Le « × 20 dets » que citait `CLAUDE.md` n'a jamais borné quoi que ce
+soit — **le nombre de mondes par label est variable, et au premier pli il est petit**,
+un monde de trick 1 étant une donne complète à résoudre. Les bras ci-dessous sont tous en
+mode **compte** (20 mondes), donc la comparaison avril → aujourd'hui mélange la dérive de
+code et un budget d'échantillonnage différent.
+
+Le sens de l'effet est connu même sans le mesurer : moins de mondes = plus de bruit, donc
+**les labels d'avril sont plus bruités que ceux d'ici**. Le plancher mesuré plus bas
+(24,32, entre deux runs à 20 mondes) est donc un plancher *trop bas* pour lire l'écart
+avril → aujourd'hui, et les 9,3 pts d'excès en sont d'autant plus un **majorant**. La
+conclusion — ne pas regénérer — s'en trouve renforcée, pas fragilisée. Ce qui tombe, c'est
+l'attribution : on n'a pas isolé la dérive de code.
 
 Le bras B existe parce que le sidecar ne peut pas représenter une position atteinte par
 `setup_dd` : il rejoue `GameState::new` à travers une liste d'actions, et pour playgen v2
@@ -43,7 +60,7 @@ de bruit à lui tout seul. Toute comparaison se lit contre ce plancher, jamais c
 | comparaison | Δ moyen | RMS | r | même meilleure couleur |
 |---|---|---|---|---|
 | **plancher** (B0 vs B0, graine ≠) | +0,52 ± 0,38 | **24,32** | 0,843 | 72,3 % |
-| dérive de code (avril → B0) | +0,08 ± 0,40 | 25,60 | 0,820 | 69,8 % |
+| avril → B0 (code **et** budget de mondes) | +0,08 ± 0,40 | 25,60 | 0,820 | 69,8 % |
 | préfixe d'enchère (B0 → B) | 0,00 | **0,00** | 1,000 | 100 % |
 | mondes playgen (B → C) | −0,26 ± 0,41 | 26,08 | 0,808 | 69,6 % |
 | **péremption totale** (avril → C) | **−0,18 ± 0,41** | **26,05** | 0,805 | 68,4 % |
@@ -55,8 +72,11 @@ Rien n'a systématiquement déplacé la valeur d'un contrat — il n'y a pas de 
 appliquer aux anciens labels.
 
 **2. L'excès sur le bruit est petit.** √(26,05² − 24,32²) = **9,3 pts**, soit **12,8 % de
-la variance** d'un label. Autrement dit **87 % de ce qui bouge entre avril et aujourd'hui
-aurait bougé de toute façon** en relançant le même code avec une autre graine.
+la variance** d'un label. Autrement dit **au moins 87 % de ce qui bouge entre avril et
+aujourd'hui aurait bougé de toute façon** en relançant le même code avec une autre graine.
+« Au moins », parce que 24,32 est le plancher entre deux runs à 20 mondes, alors qu'avril
+en avait moins (cf. l'avertissement plus haut) : le vrai plancher est plus haut et les
+9,3 pts sont un majorant.
 
 **3. Le préfixe synthétique est un no-op bit-à-bit** en mondes uniformes (RMS exactement
 0,00, 100 % de labels identiques). C'est ce qui autorise à lire tout l'écart B → C comme
