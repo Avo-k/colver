@@ -46,7 +46,9 @@ usually enough.
 **Why generation and solving are split.** World *generation* is inherently
 sequential — the world queue and the RNG are stateful, and the sidecar client
 speaks one request at a time. DD *solving* is embarrassingly parallel: worlds are
-independent and the transposition table is cleared at the start of every solve
+independent, and every solve stamps a fresh **epoch** into the transposition table — an O(1)
+invalidation rather than a memset since 2026-08-02 ([dd_solver.md](dd_solver.md)) — so no entry
+from another world can ever be probed
 (`solver.rs::solve_reuse_tt`), so nothing is shared between worlds anyway. The
 pipeline therefore generates a chunk sequentially, then hands the whole chunk to
 the solver — sequentially or across the rayon pool (see [Parallelism](#parallelism)).
@@ -123,15 +125,29 @@ history (`colver-core/src/search/elephant.rs`) if the idea is worth revisiting.
 
 ## Performance
 
-| Config | Time per move | Notes |
+The solve column below is `n_dets ×` the measured per-shape cost from
+[dd_solver.md](dd_solver.md#performance), single-threaded. The old version of this table was
+wrong by up to **four orders of magnitude** and always in the optimistic direction: it implied
+2.5 ms for a full-deal solve against a measured 34.6 ms, and gave "~5-10 ms" for a resolved
+endgame that actually costs 1.5 µs.
+
+`parallel` defaults to **true** from an `AgentSpec`, so the arena and the web divide the solve
+column by the rayon pool — world *generation* stays sequential and does not.
+
+| Config | Solve time per move (1 thread) | Notes |
 |--------|---------------|-------|
-| 20 dets, no belief, full hand | ~50 ms | Default setup |
-| 20 dets, with NN belief | ~70 ms | +20ms for NN forward + hybrid blend |
-| 20 dets, mid-game (4 tricks left) | ~20 ms | Smaller search trees |
-| With `time_limit_ms=50`, full hand | up to 50ms × 8/8 = 50ms | Auto-scaled |
-| With `time_limit_ms=50`, last trick | up to 50ms × 1/8 = 6ms | Endgame finishes fast |
-| Resolved position (early term) | ~5-10 ms | Single DD solve |
+| 20 dets, opening lead | ~690 ms (20 × 34.6 ms) | A trick-1 world **is** a full deal |
+| 20 dets, mid-game (13-24 cards left) | ~4 ms (20 × 190 µs) | Smaller search trees |
+| 20 dets, with NN belief | + ~20 ms | NN forward + hybrid blend, independent of shape |
+| With `time_limit_ms=50`, full hand | 50 ms × 8/8 = 50 ms | A deadline, not an amount of work |
+| With `time_limit_ms=50`, last trick | 50 ms × 1/8 = 6 ms | idem |
+| Resolved position (early term) | ~1.5 µs (≤ 12 cards left) | Single DD solve; 18.9× cheaper since the TT epoch change |
 | Forced move (early term) | <1 µs | Constant return |
+
+**Under a time budget the meaningful unit is worlds-per-budget, not milliseconds.** Per-world
+solve cost falls ~23 000× across a deal (34.6 ms → 1.5 µs) while `effective_ms` only falls 8×,
+so from mid-deal onwards IS-DD is **world-generation-bound, not solver-bound**. Any future
+effort aimed at making IS-DD faster in the endgame belongs in the sampler, not here.
 
 ## Variants in the arena
 

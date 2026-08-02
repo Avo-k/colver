@@ -138,7 +138,7 @@ Sans `$COLVER_PLAYGEN_GPU_URL`, les bots IS-DD retombent sur des mondes uniforme
 
 ### Oracle — Solveur DD (`solver.rs`)
 
-Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et elagage par equivalence de cartes. Calcule la carte optimale exacte en ~7ms (mediane). Utile comme borne superieure.
+Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et elagage par equivalence de cartes. Calcule la carte optimale exacte en ~35 ms sur donne complete, ~190 us en mi-partie et ~1,5 us en finale (mesure du 2026-08-02, 1 thread). Utile comme borne superieure.
 
 ### Dede — IS-DD (`is_dd.rs`)
 
@@ -176,7 +176,7 @@ Versions precedentes toujours supportees via auto-detection :
 
 | Agent | Type | Vitesse/coup | Notes |
 |---|---|---|---|
-| Oracle (DD) | Solveur DD (triche) | ~7ms | Borne superieure |
+| Oracle (DD) | Solveur DD (triche) | 35 ms -> 1,5 us (pli 1 -> pli 8) | Borne superieure |
 | Dede (IS-DD) | Solveur DD sur mondes echantillonnes | budget (1 s sur le web) | Plus fort avec recherche |
 | **DouDou50** | **Reseau Q (ResNet)** | **<1ms** | Plus fort, sans recherche |
 | Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |

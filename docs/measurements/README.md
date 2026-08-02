@@ -61,6 +61,12 @@ des entrées complètes.
 - `bid_equivariance.py` — 0,8 s pour 400 donnes × 23 permutations, donc utilisable comme
   test de non-régression à chaque checkpoint
 - `bid_q_flatness.py` — ~13-25 min par régime, c'est celui qui motivait tout ceci
+- `dd_solver_bench.py` — enveloppe du binaire Rust `bench_dd`. Un binaire ne peut pas appeler
+  `runlog` lui-même, donc ce script l'exécute, lit son tableau et journalise le run. Cas
+  particulier de provenance : il n'y a aucun modèle à hacher, mais **le résultat dépend des
+  drapeaux de compilation autant que du code** — `RUSTFLAGS`, les features et l'horodatage du
+  binaire sont donc enregistrés, ainsi que la charge machine (`loadavg`), sans laquelle un
+  temps ne veut rien dire ici : un même binaire varie de 20 % selon ce que fait l'autre agent.
 
 Les autres (`bid_candidates.py`, `bid_capot_probe.py`, `hand_classes.py`,
 `card_importance.py`) ne le sont **pas encore**.

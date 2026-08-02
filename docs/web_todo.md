@@ -137,7 +137,7 @@ Ce que le code impose (relevé 2026-08-01) :
   `determinizations = 20`) — chaque bot temps existant deviendrait
   silencieusement un bot à 20 mondes.
 - **Garder l'échelle cards-left** pour le plafond (le budget temps actuel est
-  × cards_left/8, `is_dd.rs:830`) : un solve coûte ~6× moins cher en milieu de
+  × cards_left/8, `is_dd.rs:830`) : un solve coûte **~180× moins cher** en milieu de
   donne, un plafond plat serait trop serré tôt et inutile tard.
 - Déjà en place, gratuit : en mode compte le sidecar fait **un aller-retour par
   coup** (tout le budget demandé d'un bloc, `is_dd.rs:876`) au lieu d'un par

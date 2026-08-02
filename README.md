@@ -145,7 +145,7 @@ Without `$COLVER_PLAYGEN_GPU_URL`, IS-DD bots fall back to constraint-uniform wo
 
 ### Oracle — DD Solver (`solver.rs`)
 
-Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~7ms (median). Useful as an upper bound.
+Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~35 ms from a full deal, ~190 us mid-game and ~1.5 us in the endgame (measured 2026-08-02, 1 thread). Useful as an upper bound.
 
 ### Dede — IS-DD (`is_dd.rs`)
 
@@ -183,7 +183,7 @@ Past versions still supported via auto-detect:
 
 | Agent | Type | Speed/move | Notes |
 |---|---|---|---|
-| Oracle (DD) | DD solver (cheats) | ~7ms | Perfect info upper bound |
+| Oracle (DD) | DD solver (cheats) | 35 ms -> 1.5 us (trick 1 -> trick 8) | Perfect info upper bound |
 | Dede (IS-DD) | DD solver over sampled worlds | budget (1 s in the web) | Strongest search-based |
 | **DouDou50** | **Q-network (ResNet)** | **<1ms** | Strongest overall, no search |
 | Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
