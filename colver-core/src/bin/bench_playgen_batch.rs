@@ -105,6 +105,56 @@ fn position(
     Some((sampler, state))
 }
 
+/// Build a sampler + state stopped **mid-auction**, for the auction path.
+fn auction_position(
+    model: &Arc<PlaygenModel>,
+    dealer: u8,
+    hands: [u32; 4],
+    observer: u8,
+    n_actions: usize,
+    rng: &mut StdRng,
+) -> Option<(PlaygenSampler, GameState)> {
+    let mut state = GameState::new(dealer, hands);
+    let mut sampler = PlaygenSampler::new(model.clone());
+    sampler.init_deal(&state, observer);
+    for _ in 0..n_actions {
+        if state.phase != Phase::Bidding {
+            return None;
+        }
+        let legal = state.legal_actions();
+        let opts: Vec<u8> = (0..43u8).filter(|&a| legal & (1u64 << a) != 0).collect();
+        if opts.is_empty() {
+            return None;
+        }
+        let action = opts[rng.gen_range(0..opts.len())];
+        let p = state.current_player();
+        sampler.record_action(&state, p, action);
+        state.step(action);
+    }
+    if state.phase != Phase::Bidding {
+        return None;
+    }
+    Some((sampler, state))
+}
+
+/// Empreinte stable d'un ensemble de mondes.
+///
+/// Sert de **filet de sécurité pour les refactors du cache KV** : `forward_step`
+/// sert trois chemins (enchère, jeu simple, jeu groupé) qui gèrent le cache
+/// différemment, et seul le jeu groupé avait un contrôle d'équivalence. Le
+/// chemin enchère alimente la page Annonces en prod. On fige donc une empreinte
+/// avant de toucher au cache, et on vérifie qu'elle ne bouge pas après.
+fn fingerprint(worlds: &[([u32; 4], impl Copy)]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for (hands, _) in worlds {
+        for w in hands {
+            h ^= *w as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+    }
+    h
+}
+
 /// p(card -> seat) over a world set, for comparing distributions.
 fn marginals(worlds: &[([u32; 4], colver_core::playgen::infer::WorldLogp)]) -> [[f32; 32]; 4] {
     let mut m = [[0f32; 32]; 4];
@@ -182,6 +232,55 @@ fn main() {
     }
     assert_eq!(pos.len(), positions, "pas assez de positions jouables");
     eprintln!("{} positions construites\n", positions);
+
+    // ══ 0. Empreintes des trois chemins — à comparer avant/après refactor ══
+    println!("=== 0. empreintes (invariantes sous refactor du cache KV) ===");
+    {
+        let mut fr = StdRng::seed_from_u64(77);
+        let mut auc = Vec::new();
+        let mut idx2 = 0usize;
+        while auc.len() < 4 && idx2 < pool.len() {
+            let d = pool.get(idx2);
+            idx2 += 1;
+            let obs = fr.gen_range(0..4u8);
+            let n = 1 + (idx2 % 4);
+            if let Some(p) = auction_position(&model, d.dealer, d.hands, obs, n, &mut fr) {
+                auc.push(p);
+            }
+        }
+        let mut hs: u64 = 0;
+        for (i, (s_, st)) in auc.iter().enumerate() {
+            let mut r = StdRng::seed_from_u64(500 + i as u64);
+            let w = gpu
+                .generate_deals_from_auction_scored(
+                    &s_.prefix_tokens(), st, s_.observer(), s_.observer_hand(),
+                    s_.bid_entries_count(), 16, 1.0, &mut r,
+                )
+                .expect("auction");
+            hs ^= fingerprint(&w).rotate_left(i as u32 * 7);
+        }
+        println!("  chemin ENCHÈRE  ({} positions) : {:#018x}", auc.len(), hs);
+
+        let mut hp: u64 = 0;
+        for (i, (s_, st)) in pos.iter().take(4).enumerate() {
+            let mut r = StdRng::seed_from_u64(600 + i as u64);
+            let w = gpu.generate_worlds_scored(s_, st, 16, 1.0, &mut r).expect("play");
+            hp ^= fingerprint(&w).rotate_left(i as u32 * 7);
+        }
+        println!("  chemin JEU simple ({} positions) : {:#018x}", 4, hp);
+
+        let items: Vec<WorldBatchItem> = pos
+            .iter()
+            .take(4)
+            .map(|(s_, st)| WorldBatchItem { sampler: s_, state: st, n_worlds: 16, temperature: 1.0 })
+            .collect();
+        let mut r = StdRng::seed_from_u64(700);
+        let w = gpu.generate_worlds_multi(&items, &mut r).expect("multi");
+        let hm = w.iter().enumerate().fold(0u64, |a, (i, v)| {
+            a ^ fingerprint(v).rotate_left(i as u32 * 7)
+        });
+        println!("  chemin JEU groupé ({} positions) : {:#018x}", 4, hm);
+    }
 
     // ══ 1. Equivalence: K=1 multi vs single, same seed ══
     println!("=== 1. équivalence K=1 (multi vs simple, même graine) ===");

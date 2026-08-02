@@ -49,10 +49,30 @@
 //! worlds per decision, then blows its 20 ms deadline on the first round trip
 //! and solves one or two of them. Count mode asks for exactly `--dets`.
 //!
+//! ## `--threads` : bien plus que le nombre de cœurs, avec le sidecar
+//!
+//! Contre-intuitif mais mesuré. Avec `--worlds sidecar` les threads passent leur
+//! temps **bloqués en HTTP**, pas à calculer : à 32 threads le process n'utilise
+//! que ~180 % de CPU sur 3200 % disponibles. Or le sidecar groupe les requêtes
+//! qu'il trouve en file, donc peu de requêtes en vol = petits lots = GPU mal
+//! amorti. Monter la concurrence remplit les lots :
+//!
+//! | threads | donnes/s | lots moyens |
+//! |---|---|---|
+//! | 32 (défaut) | 0,237 | 12,8 req |
+//! | 96 | 0,396 | |
+//! | **192** | **0,496** | 25,9 req |
+//! | 384 | 0,492 | plateau |
+//!
+//! Avec `--worlds uniform` c'est l'inverse : tout est CPU, le défaut est bon.
+//!
 //! Usage:
 //!   cargo run --bin relabel_isdd --release --features parallel -- \
 //!     --deals 1000 --worlds uniform --auction none --dets 20 \
 //!     --output data/deals/relabel/b0_uniform_noauction.sc
+//!
+//!   # avec le sidecar : monter la concurrence
+//!   ... --worlds sidecar --auction synthetic --threads 192
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};

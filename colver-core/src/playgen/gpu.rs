@@ -133,6 +133,31 @@ impl Profile {
     }
 }
 
+/// Cache KV d'une couche, **à capacité fixe**.
+///
+/// Deux choix, tous deux là pour supprimer une recopie intégrale du cache à
+/// chaque pas de décodage — ce que le profilage a chiffré à ~75 % du temps :
+///
+/// - **capacité fixe** : le cache est alloué une fois à la longueur maximale de
+///   la séquence, et chaque pas y écrit son jeton *en place* (`slice_set`) au
+///   lieu de réallouer par `Tensor::cat`. Les créneaux pas encore écrits sont
+///   masqués à -1e9, dont l'exponentielle vaut exactement 0 en f32 : le softmax
+///   est donc inchangé, et attendre sur toute la capacité plutôt que sur un
+///   `narrow` garde chaque tenseur contigu — ce qui est précisément ce que
+///   `slice_set` exige.
+/// - **K déjà transposé** (`[B, H, hd, CAP]`) : l'attention le consommait via
+///   `transpose(2, 3).contiguous()`, qui matérialisait une copie transposée de
+///   tout le cache à chaque pas.
+///
+/// Le chemin CPU (`KvCacheBatch`) faisait déjà les deux ; c'est la version GPU
+/// qui avait dérivé.
+struct KvSlot {
+    /// `[B, H, hd, CAP]` — transposé.
+    kt: Tensor,
+    /// `[B, H, CAP, hd]`.
+    v: Tensor,
+}
+
 struct GpuBlock {
     attn_norm: Tensor, // [d]
     qkv_w_t: Tensor,   // [d, 3d]
@@ -256,17 +281,19 @@ impl GpuPlaygen {
             .index_select(&Tensor::from_slice(pos_ids, b, &self.device)?, 0)?
     }
 
-    /// One decode step for B lanes.
-    /// `caches`: per layer (k, v) as [B, H, T, hd] (None au premier pas).
-    /// `mask`: masque additif persistant [B, 1, 1, T] (0 valide / -1e9 factice)
-    /// couvrant les T positions déjà en cache ; la colonne du token courant est
-    /// toujours considérée valide pour ce pas (pas de ligne toute -inf → pas de
-    /// NaN), sa validité future étant gérée par l'appelant.
+    /// One decode step for B lanes against a fixed-capacity KV cache.
+    ///
+    /// `pos` is the slot this step's k/v are written into; `mask` is the
+    /// persistent additive mask over the **whole** capacity (`[B, 1, 1, CAP]`,
+    /// 0 valid / -1e9 not). The caller must have marked column `pos` valid for
+    /// every lane before calling — a row that is entirely -1e9 would make the
+    /// softmax produce NaN.
     fn forward_step(
         &self,
         x: &Tensor,
-        caches: &mut [Option<(Tensor, Tensor)>],
-        mask: Option<&Tensor>,
+        caches: &mut [KvSlot],
+        pos: usize,
+        mask: &Tensor,
     ) -> Result<Tensor> {
         let (b, _) = x.dims2()?;
         let mut x = x.clone();
@@ -295,33 +322,20 @@ impl GpuPlaygen {
             let q = qkv.narrow(1, 0, self.d)?.reshape(shape)?;
             let k = qkv.narrow(1, self.d, self.d)?.reshape(shape)?;
             let v = qkv.narrow(1, 2 * self.d, self.d)?.reshape(shape)?;
-            let (k_cache, v_cache) = lap!(1, match caches[l].take() {
-                Some((kc, vc)) => (
-                    Tensor::cat(&[&kc, &k], 2)?,
-                    Tensor::cat(&[&vc, &v], 2)?,
-                ),
-                None => (k, v),
-            });
-            let mut scores =
-                lap!(2, (q.matmul(&k_cache.transpose(2, 3)?.contiguous()?)? * scale))?;
-            if let Some(m) = mask {
-                // m couvre T-1 positions (avant append) ; la colonne du token
-                // courant est valide → pad d'une colonne de zéros.
-                let t_now = scores.dim(3)?;
-                let t_m = m.dim(3)?;
-                if t_m + 1 == t_now {
-                    let zero = Tensor::zeros((b, 1, 1, 1), m.dtype(), &self.device)?;
-                    let full = Tensor::cat(&[m, &zero], 3)?;
-                    scores = scores.broadcast_add(&full)?;
-                } else {
-                    scores = scores.broadcast_add(m)?;
-                }
-            }
-            let ctx = lap!(2, {
-                let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
-                probs.matmul(&v_cache)?.reshape((b, self.d))
+
+            lap!(1, {
+                let slot = &caches[l];
+                slot.kt.slice_set(&k.transpose(2, 3)?.contiguous()?, 3, pos)?;
+                slot.v.slice_set(&v, 2, pos)
             })?;
-            caches[l] = Some((k_cache, v_cache));
+
+            let ctx = lap!(2, {
+                let slot = &caches[l];
+                let scores = (q.matmul(&slot.kt)? * scale)?.broadcast_add(mask)?;
+                let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
+                probs.matmul(&slot.v)?.reshape((b, self.d))
+            })?;
+
             let attn = lap!(3, ctx.matmul(&blk.out_w_t)?.broadcast_add(&blk.out_b))?;
             x = (x + attn)?;
 
@@ -339,6 +353,32 @@ impl GpuPlaygen {
             x = (x + ffn)?;
         }
         Ok(x)
+    }
+
+    /// Allocate an empty fixed-capacity cache for `b` lanes.
+    fn new_kv(&self, b: usize, cap: usize) -> Result<Vec<KvSlot>> {
+        let dt = candle_core::DType::F32;
+        (0..self.blocks.len())
+            .map(|_| {
+                Ok(KvSlot {
+                    kt: Tensor::zeros((b, self.n_heads, self.hd, cap), dt, &self.device)?,
+                    v: Tensor::zeros((b, self.n_heads, cap, self.hd), dt, &self.device)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Fan a prefill cache out to one lane per world, `idx` giving each output
+    /// lane's source lane.
+    fn select_kv(&self, src: &[KvSlot], idx: &Tensor) -> Result<Vec<KvSlot>> {
+        src.iter()
+            .map(|s| {
+                Ok(KvSlot {
+                    kt: s.kt.index_select(idx, 0)?.contiguous()?,
+                    v: s.v.index_select(idx, 0)?.contiguous()?,
+                })
+            })
+            .collect()
     }
 
     fn card_logits(&self, hidden: &Tensor) -> Result<Vec<Vec<f32>>> {
@@ -482,11 +522,18 @@ impl GpuPlaygen {
 
         let mut prof = Profile::new();
         let t_prefill = std::time::Instant::now();
-        let mut caches: Vec<Option<(Tensor, Tensor)>> = vec![None; self.blocks.len()];
-        let mut pre_mask: Option<Tensor> = None;
+
+        // Capacité du cache : préfixe le plus long + deux jetons par carte
+        // restante. Allouée une fois, écrite en place ensuite.
+        let steps_max = act.iter().map(|a| a.spec.steps).max().expect("act non-empty");
+        let cap = lmax + 2 * steps_max;
+
+        let mut caches = self.new_kv(k_lanes, cap)?;
+        // Masque hôte, réuploadé à chaque pas : quelques centaines de Ko, sans
+        // commune mesure avec les Go que la réallocation du cache déplaçait.
+        let mut mh = vec![neg; k_lanes * cap];
         let mut toks = vec![dummy; k_lanes];
         let mut pos_ids = vec![0u32; k_lanes];
-        let mut col = vec![0f32; k_lanes];
 
         for t in 0..lmax {
             for j in 0..k_lanes {
@@ -499,15 +546,16 @@ impl GpuPlaygen {
                     toks[j] = dummy;
                     pos_ids[j] = 0;
                 }
-                col[j] = if real { 0.0 } else { neg };
+                // La colonne courante est valide pour *toutes* les lanes le
+                // temps du pas : une ligne entièrement à -1e9 rendrait NaN.
+                mh[j * cap + t] = 0.0;
             }
+            let mask = Tensor::from_slice(&mh, (k_lanes, 1, 1, cap), &self.device)?;
             let x = self.embed(&toks, &pos_ids)?;
-            self.forward_step(&x, &mut caches, pre_mask.as_ref())?;
-            let col_t = Tensor::from_slice(&col, (k_lanes, 1, 1, 1), &self.device)?;
-            pre_mask = Some(match pre_mask {
-                Some(m) => Tensor::cat(&[&m, &col_t], 3)?,
-                None => col_t,
-            });
+            self.forward_step(&x, &mut caches, t, &mask)?;
+            for j in 0..k_lanes {
+                mh[j * cap + t] = if t >= pad[j] { 0.0 } else { neg };
+            }
         }
 
         if prof.on {
@@ -522,19 +570,12 @@ impl GpuPlaygen {
         }
         let m_lanes = lane_of.len();
         let sel = Tensor::from_slice(&lane_of, m_lanes, &self.device)?;
-
-        for c in caches.iter_mut() {
-            if let Some((k, v)) = c.take() {
-                *c = Some((
-                    k.index_select(&sel, 0)?.contiguous()?,
-                    v.index_select(&sel, 0)?.contiguous()?,
-                ));
-            }
+        let mut caches = self.select_kv(&caches, &sel)?;
+        let mut mh_dec = vec![neg; m_lanes * cap];
+        for (m, &j) in lane_of.iter().enumerate() {
+            let src = j as usize * cap;
+            mh_dec[m * cap..m * cap + cap].copy_from_slice(&mh[src..src + cap]);
         }
-        let mut mask = pre_mask
-            .expect("lmax >= 1: every play prefix has at least a header")
-            .index_select(&sel, 0)?
-            .contiguous()?;
 
         // ══ Phase 3 — decode ══
         let mut gens: Vec<GenState> = Vec::with_capacity(m_lanes);
@@ -553,8 +594,6 @@ impl GpuPlaygen {
         let mut card_toks = vec![dummy; m_lanes];
         let mut mpos = vec![0u32; m_lanes];
         let mut mcol = vec![0f32; m_lanes];
-
-        let steps_max = act.iter().map(|a| a.spec.steps).max().expect("act non-empty");
 
         // A lane is *active* while it is alive and has not yet reached its own
         // position's step count. Finished lanes are masked out like dead ones
@@ -580,12 +619,20 @@ impl GpuPlaygen {
                 mcol[m] = if on { 0.0 } else { neg };
             }
             prof.steps += 1;
+            let t_slot = lmax + 2 * step_i;
+            for m in 0..m_lanes {
+                mh_dec[m * cap + t_slot] = 0.0;
+            }
+            let mask = prof.lap(&self.device, 4, || {
+                Tensor::from_slice(&mh_dec, (m_lanes, 1, 1, cap), &self.device)
+            })?;
             let x = prof.lap(&self.device, 0, || self.embed(&act_toks, &mpos))?;
             let hidden = prof.lap(&self.device, 1, || {
-                self.forward_step(&x, &mut caches, Some(&mask))
+                self.forward_step(&x, &mut caches, t_slot, &mask)
             })?;
-            let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
-            mask = prof.lap(&self.device, 4, || Tensor::cat(&[&mask, &col_t], 3))?;
+            for m in 0..m_lanes {
+                mh_dec[m * cap + t_slot] = mcol[m];
+            }
             let card_lg = prof.lap(&self.device, 2, || self.card_logits(&hidden))?;
             let t_sample = std::time::Instant::now();
 
@@ -684,10 +731,18 @@ impl GpuPlaygen {
                 mcol[m] = if on { 0.0 } else { neg };
             }
             prof.steps += 1;
+            let t_slot = lmax + 2 * step_i + 1;
+            for m in 0..m_lanes {
+                mh_dec[m * cap + t_slot] = 0.0;
+            }
+            let mask = prof.lap(&self.device, 4, || {
+                Tensor::from_slice(&mh_dec, (m_lanes, 1, 1, cap), &self.device)
+            })?;
             let x = prof.lap(&self.device, 0, || self.embed(&card_toks, &mpos))?;
-            prof.lap(&self.device, 1, || self.forward_step(&x, &mut caches, Some(&mask)))?;
-            let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
-            mask = prof.lap(&self.device, 4, || Tensor::cat(&[&mask, &col_t], 3))?;
+            prof.lap(&self.device, 1, || self.forward_step(&x, &mut caches, t_slot, &mask))?;
+            for m in 0..m_lanes {
+                mh_dec[m * cap + t_slot] = mcol[m];
+            }
         }
         prof.report(m_lanes, prefill_ms);
 
@@ -735,25 +790,22 @@ impl GpuPlaygen {
         let prefix = sampler.prefix_tokens();
 
         // ---- Prefill B=1 then replicate the cache across lanes ----
-        let mut caches1: Vec<Option<(Tensor, Tensor)>> = vec![None; self.blocks.len()];
-        for (pos, tok) in prefix.iter().enumerate() {
-            let x = self.embed(std::slice::from_ref(tok), &[pos as u32])?;
-            self.forward_step(&x, &mut caches1, None)?;
-        }
         let plen = prefix.len();
-        let mut caches: Vec<Option<(Tensor, Tensor)>> = Vec::with_capacity(self.blocks.len());
-        for c in &caches1 {
-            match c {
-                Some((k, v)) => {
-                    let k = k.expand((n_worlds, self.n_heads, plen, self.hd))?.contiguous()?;
-                    let v = v.expand((n_worlds, self.n_heads, plen, self.hd))?.contiguous()?;
-                    caches.push(Some((k, v)));
-                }
-                None => caches.push(None),
-            }
+        let cap = plen + 2 * spec.steps;
+        let mut caches1 = self.new_kv(1, cap)?;
+        let mut mh1 = vec![-1e9f32; cap];
+        for (pos, tok) in prefix.iter().enumerate() {
+            mh1[pos] = 0.0;
+            let mask1 = Tensor::from_slice(&mh1, (1, 1, 1, cap), &self.device)?;
+            let x = self.embed(std::slice::from_ref(tok), &[pos as u32])?;
+            self.forward_step(&x, &mut caches1, pos, &mask1)?;
         }
-        let mut mask =
-            Tensor::zeros((n_worlds, 1, 1, plen), candle_core::DType::F32, &self.device)?;
+        let sel = Tensor::from_slice(&vec![0u32; n_worlds], n_worlds, &self.device)?;
+        let mut caches = self.select_kv(&caches1, &sel)?;
+        let mut mh = vec![-1e9f32; n_worlds * cap];
+        for k in 0..n_worlds {
+            mh[k * cap..k * cap + plen].fill(0.0);
+        }
 
         let mut gens = vec![spec.base; n_worlds];
         let mut assigned = vec![[0u32; 4]; n_worlds];
@@ -773,11 +825,16 @@ impl GpuPlaygen {
                     Tok { primary: P_ACT0 + r, suit: S_NULL, actor: r, segment: SEG_PLAY };
             }
             let pos_ids = vec![pos as u32; n_worlds];
+            let t_slot = plen + 2 * step_i;
+            for k in 0..n_worlds {
+                mh[k * cap + t_slot] = 0.0;
+            }
+            let mask = Tensor::from_slice(&mh, (n_worlds, 1, 1, cap), &self.device)?;
             let x = self.embed(&act_toks, &pos_ids)?;
-            let hidden = self.forward_step(&x, &mut caches, Some(&mask))?;
-            let col: Vec<f32> = alive.iter().map(|&a| if a { 0.0 } else { neg }).collect();
-            let col_t = Tensor::from_slice(&col, (n_worlds, 1, 1, 1), &self.device)?;
-            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+            let hidden = self.forward_step(&x, &mut caches, t_slot, &mask)?;
+            for k in 0..n_worlds {
+                mh[k * cap + t_slot] = if alive[k] { 0.0 } else { neg };
+            }
             pos += 1;
             let card_lg = self.card_logits(&hidden)?;
 
@@ -856,11 +913,16 @@ impl GpuPlaygen {
             }
 
             let pos_ids = vec![pos as u32; n_worlds];
+            let t_slot = plen + 2 * step_i + 1;
+            for k in 0..n_worlds {
+                mh[k * cap + t_slot] = 0.0;
+            }
+            let mask = Tensor::from_slice(&mh, (n_worlds, 1, 1, cap), &self.device)?;
             let x = self.embed(&card_toks, &pos_ids)?;
-            self.forward_step(&x, &mut caches, Some(&mask))?;
-            let col: Vec<f32> = alive.iter().map(|&a| if a { 0.0 } else { neg }).collect();
-            let col_t = Tensor::from_slice(&col, (n_worlds, 1, 1, 1), &self.device)?;
-            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+            self.forward_step(&x, &mut caches, t_slot, &mask)?;
+            for k in 0..n_worlds {
+                mh[k * cap + t_slot] = if alive[k] { 0.0 } else { neg };
+            }
             pos += 1;
         }
 
@@ -901,33 +963,30 @@ impl GpuPlaygen {
         let rel = |seat: u8| (seat + 4 - observer) % 4;
 
         // ---- Prefill B=1 puis réplication du cache sur n_lanes ----
-        let mut caches1: Vec<Option<(Tensor, Tensor)>> = vec![None; self.blocks.len()];
-        for (pos, tok) in prefix.iter().enumerate() {
-            let x = self.embed(std::slice::from_ref(tok), &[pos as u32])?;
-            self.forward_step(&x, &mut caches1, None)?;
-        }
+        //
+        // Les lanes se désynchronisent (les enchères n'ont pas la même
+        // longueur), donc chacune avance à sa *position logique* propre — mais
+        // toutes écrivent au même *créneau physique* du cache, un par pas. La
+        // capacité est donc bornée par `max_seq_len`, la seule borne dure sur
+        // le nombre de jetons qu'une lane peut émettre.
         let plen = prefix.len();
-        let mut caches: Vec<Option<(Tensor, Tensor)>> = Vec::with_capacity(self.blocks.len());
-        for c in &caches1 {
-            match c {
-                Some((k, v)) => {
-                    let k = k
-                        .expand((n_lanes, self.n_heads, plen, self.hd))?
-                        .contiguous()?;
-                    let v = v
-                        .expand((n_lanes, self.n_heads, plen, self.hd))?
-                        .contiguous()?;
-                    caches.push(Some((k, v)));
-                }
-                None => caches.push(None),
-            }
+        let cap = self.max_seq_len;
+        let mut caches1 = self.new_kv(1, cap)?;
+        let mut mh1 = vec![-1e9f32; cap];
+        for (pos, tok) in prefix.iter().enumerate() {
+            mh1[pos] = 0.0;
+            let mask1 = Tensor::from_slice(&mh1, (1, 1, 1, cap), &self.device)?;
+            let x = self.embed(std::slice::from_ref(tok), &[pos as u32])?;
+            self.forward_step(&x, &mut caches1, pos, &mask1)?;
         }
-        // Masque persistant : préfixe valide partout.
-        let mut mask = Tensor::zeros(
-            (n_lanes, 1, 1, plen),
-            candle_core::DType::F32,
-            &self.device,
-        )?;
+        let sel = Tensor::from_slice(&vec![0u32; n_lanes], n_lanes, &self.device)?;
+        let mut caches = self.select_kv(&caches1, &sel)?;
+        let mut mh = vec![-1e9f32; n_lanes * cap];
+        for k in 0..n_lanes {
+            mh[k * cap..k * cap + plen].fill(0.0);
+        }
+        // Créneau physique du prochain jeton, commun à toutes les lanes.
+        let mut slot = plen;
 
         // ---- États par lane (identique au chemin CPU) ----
         let mut phases = vec![BIDDING; n_lanes];
@@ -998,12 +1057,17 @@ impl GpuPlaygen {
             let pos_ids: Vec<u32> = (0..n_lanes)
                 .map(|k| if act_active[k] { lens[k] as u32 } else { 0 })
                 .collect();
+            for k in 0..n_lanes {
+                mh[k * cap + slot] = 0.0;
+            }
+            let mask = Tensor::from_slice(&mh, (n_lanes, 1, 1, cap), &self.device)?;
             let x = self.embed(&act_toks, &pos_ids)?;
-            let hidden = self.forward_step(&x, &mut caches, Some(&mask))?;
-            // Validité future de la colonne appendée
-            let col: Vec<f32> = act_active.iter().map(|&a| if a { 0.0 } else { neg }).collect();
-            let col_t = Tensor::from_slice(&col, (n_lanes, 1, 1, 1), &self.device)?;
-            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+            let hidden = self.forward_step(&x, &mut caches, slot, &mask)?;
+            // Validité future du créneau qu'on vient d'écrire
+            for k in 0..n_lanes {
+                mh[k * cap + slot] = if act_active[k] { 0.0 } else { neg };
+            }
+            slot += 1;
 
             // Les deux têtes en un seul download chacune.
             let card_lg = self.card_logits(&hidden)?;
@@ -1119,12 +1183,16 @@ impl GpuPlaygen {
                 let pos_ids: Vec<u32> = (0..n_lanes)
                     .map(|k| if action_active[k] { lens[k] as u32 } else { 0 })
                     .collect();
+                for k in 0..n_lanes {
+                    mh[k * cap + slot] = 0.0;
+                }
+                let mask = Tensor::from_slice(&mh, (n_lanes, 1, 1, cap), &self.device)?;
                 let x = self.embed(&action_toks, &pos_ids)?;
-                self.forward_step(&x, &mut caches, Some(&mask))?;
-                let col: Vec<f32> =
-                    action_active.iter().map(|&a| if a { 0.0 } else { neg }).collect();
-                let col_t = Tensor::from_slice(&col, (n_lanes, 1, 1, 1), &self.device)?;
-                mask = Tensor::cat(&[&mask, &col_t], 3)?;
+                self.forward_step(&x, &mut caches, slot, &mask)?;
+                for k in 0..n_lanes {
+                    mh[k * cap + slot] = if action_active[k] { 0.0 } else { neg };
+                }
+                slot += 1;
                 for k in 0..n_lanes {
                     if action_active[k] {
                         lens[k] += 1;
