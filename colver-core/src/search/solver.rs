@@ -289,10 +289,16 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
 
         result.scores[i] = (card, score);
 
-        // Same tie-break as `solve_best_card`, and the two must keep agreeing: lowest card
-        // index among the equal-valued maxima, independent of the order they were searched in.
-        let better = if maximizing { score > best_score } else { score < best_score };
-        if better || (score == best_score && card < result.best_card) {
+        // Ties resolve to whichever card this loop reaches first — see the note in
+        // `solve_best_card`. The two functions agree only because both order the root with
+        // `order_moves`; `test_solve_with_scores_consistent_with_best_card` is what holds them
+        // together, and it is the test that caught the divergence when one of them was changed.
+        if maximizing {
+            if score > best_score {
+                best_score = score;
+                result.best_card = card;
+            }
+        } else if score < best_score {
             best_score = score;
             result.best_card = card;
         }
@@ -330,14 +336,21 @@ pub fn solve_best_card(state: &GameState) -> u8 {
             alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
-        // Ties are broken by the **lowest card index**, not by whichever the search happened
-        // to reach first. Several cards are often DD-equal, and before this the answer moved
-        // with any change to move ordering — which is how a purely internal reordering made
-        // this function disagree with `solve_with_scores` about a card that was just as good.
-        // A caller displaying "the best card" deserves a function of the position, not of the
-        // search's internals.
-        let better = if maximizing { score > best_score } else { score < best_score };
-        if better || (score == best_score && card < best_card) {
+        // NOTE — a latent fragility, deliberately left as it was. Which card is reported among
+        // several DD-equal ones depends on the order this loop happens to visit them, and
+        // **57,8 % of corpus positions have more than one optimal card** (2 optimal: 27 %, 3:
+        // 12 %, up to all 8). So any change to root ordering silently moves the answer: that is
+        // exactly how the rejected root-lookahead ordering (§8) made this function disagree
+        // with `solve_with_scores`. Breaking ties on the lowest card index fixes it for good,
+        // but it would change the reported card on those 57,8 % — visible in `OraclePlayer`,
+        // in `/analyse/jeu` and in Rejouer — so it is a product decision, not a perf one, and
+        // it is not bundled into a speed change.
+        if maximizing {
+            if score > best_score {
+                best_score = score;
+                best_card = card;
+            }
+        } else if score < best_score {
             best_score = score;
             best_card = card;
         }

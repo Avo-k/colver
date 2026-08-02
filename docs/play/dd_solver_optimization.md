@@ -987,12 +987,23 @@ pour cette raison exacte. C'est le même piège que `legal_actions_reduced` dans
 et seule la porte `diff` l'a vu. `shallow_rank_moves` prend désormais l'ensemble à ranger en
 argument, avec le contrat écrit à côté.
 
-**Effet de bord assumé : le départage des ex æquo est devenu explicite.** En réordonnant la
-racine, `solve_with_scores` et `solve_best_card` ont cessé de désigner la même carte — deux
-cartes **également optimales**, mais la réponse dépendait d'un détail interne de la recherche.
-Les deux départagent maintenant par **indice de carte le plus bas**, ce qui rend la « meilleure
-carte » fonction de la position et non du parcours. Changement de comportement possible sur les
-positions à égalité ; **inerte sur les 2 120 positions du corpus** (`best card moved: 0`).
+### Une fragilité mise au jour, et laissée telle quelle — c'est une décision produit
+
+En réordonnant la racine, `solve_with_scores` et `solve_best_card` ont cessé de désigner la même
+carte. Aucune des deux n'avait tort : **57,8 % des positions du corpus ont plusieurs cartes
+DD-optimales** (2 optimales : 27 %, 3 : 12 %, jusqu'à toutes les 8). Laquelle est rendue dépend
+donc de l'ordre dans lequel la boucle racine les visite — c'est-à-dire d'un détail interne de la
+recherche.
+
+Départager par **indice de carte le plus bas** règle le problème définitivement et rend la
+« meilleure carte » fonction de la position. Ça a été écrit, mesuré, puis **retiré** : ça
+changerait la carte annoncée sur ces 57,8 %, donc dans `OraclePlayer`, dans `/analyse/jeu` et
+dans Rejouer. Toutes ces cartes sont DD-équivalentes, mais contre un adversaire imparfait elles
+ne se valent pas forcément — **c'est un arbitrage produit, pas une optimisation**, et il n'a
+rien à faire dans un changement de vitesse.
+
+Ce qui tient l'invariant en attendant : `test_solve_with_scores_consistent_with_best_card`,
+qui n'est pas décoratif — c'est lui qui a attrapé la divergence.
 
 ### La leçon, qui vaut au-delà d'ici
 
