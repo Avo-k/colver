@@ -124,11 +124,20 @@ dérivation est maintenant assertée.
   solveur relâche le GIL ». C'est vrai de `solve_all_suits`, pas de celui-là : le fan-out de
   `/analyse/jeu` était **sérialisé**, 200 à 500 solves à la file.
 
-### 1.5 IID d'ordonnancement au sommet — **0,90× en nœuds** → §6
+### 1.5 IID d'ordonnancement au sommet → **§6**
 
-Une recherche courte choisit le premier coup à essayer près de la racine. C'est le seul gain de
-vitesse livré par la campagne, et il vient en droite ligne des mesures du §5. Détail, garde,
-constantes et réplication : **[§6](#6-liid-dordonnancement--implémenté-090-en-nœuds-et-092-au-chrono)**.
+Une recherche courte choisit le premier coup à essayer près de la racine. Vient en droite ligne
+des mesures du §5. Détail, garde, constantes et réplication au **§6**.
+
+### 1.6 Fenêtre entre cartes racine → **§8**
+
+`solve_with_scores` donnait à chaque carte une fenêtre pleine alors que la précédente venait de
+dire, à quatre points près, où était la réponse. **C'est la seule optimisation qui morde
+franchement sur les mondes IS-DD**, donc sur les ~2 800 core-h d'une couche de scores. Détail au
+**§8**.
+
+**Les deux ensemble : 0,805× au chronomètre**, 0,804× en nœuds sur donne complète et 0,877× sur
+les mondes.
 
 ### 1.4 Le harnais — `bench_dd`, et la discipline de mesure
 
@@ -569,9 +578,12 @@ qui résume la campagne :
 
 | famille | plafond mesuré | issue |
 |---|---:|---|
-| amorçage de fenêtre (§2.3bis) | 2,0× avec un seed **exact** | fermée — il faudrait 98,4 % de justesse à ±40 |
-| ordonnancement des coups (§5) | **6,0×**, ~8× sur la queue | **partiellement pris : l'IID livre 1,11× (§6)** |
+| amorçage **entre mondes** (§2.3bis) | 2,0× avec un seed **exact** | fermée — il faudrait 98,4 % de justesse à ±40 |
+| amorçage **entre cartes racine** (§8) | — | **pris : 0,904× de plus, et 0,914× sur les mondes** |
+| ordonnancement des coups (§5) | **6,0×**, ~8× sur la queue | **partiellement pris : l'IID (§6)** |
 | bornes / évaluation (§7) | 1,09× avec une évaluation **parfaite** | fermée |
+
+**Total livré : 0,805× au chronomètre sur `solve_with_scores`, 0,728× sur le vrai `gen_pool`.**
 
 Ce qui reste vient donc entièrement de la deuxième ligne, et la suite est au §6 « ce qui reste
 sur la table » : un horizon moins naïf, une fenêtre plus large payée moins cher. Pas de règle de
@@ -896,3 +908,53 @@ cargo build --release --features "parallel solver_stats solver_oracle" --bin ben
 ./target/release/bench_dd bounds --corpus data/analysis/dd_corpus_v1.bin \
     --threads 8 --deltas 0,2,5,10,20,40
 ```
+
+---
+
+## 8. La fenêtre entre cartes racine — **le seul amorçage qui paie**, et il paie où sont les heures
+
+§2.3bis avait fermé la famille des amorçages de fenêtre. Elle reste fermée, et pourtant celui-ci
+marche : parce que ce n'est pas la même quantité qu'on amorce.
+
+**§2.3 le disait déjà, en note d'avertissement.** L'écart qui avait tué l'amorçage était celui
+**entre mondes échantillonnés** d'une même main — 36 % s'écartent de plus de 40 points. L'écart
+**entre cartes racine d'une même position** est une autre quantité, et il est petit : **médiane
+4 points, 63,5 % des décisions dans une bande de 10**. Cette note était là depuis le début ; ce
+qui manquait, c'était de remarquer qu'un endroit du code jetait exactement cette information.
+
+Car `solve_with_scores` donnait à **chaque** carte racine une fenêtre pleine `[0, 252]` — c'est
+ce que le §6 a fini par identifier comme la raison pour laquelle l'IID y rend moins que sur un
+solve unique. Chaque carte repart de zéro alors que la précédente vient de dire, à quatre points
+près, où se situe la réponse.
+
+La carte *i* est donc cherchée dans `[v(i-1) − 8, v(i-1) + 8]`, et **re-cherchée en fenêtre
+pleine si le résultat sort de la fenêtre** — fail-soft : dedans c'est une valeur, dehors c'est
+une borne. Prendre la borne pour la valeur est précisément le défaut de `quick_tricks` ; la
+re-recherche est le prix de ne pas le commettre, et la porte `diff` prouve qu'il a été payé.
+
+### Ce que ça donne
+
+| forme | avant campagne | + IID (§6) | + fenêtre | total |
+|---|---:|---:|---:|---:|
+| full | 1 448 045 | 1 287 334 | **1 163 727** | **0,804×** |
+| worlds | 55 862 | 53 609 | **48 994** | **0,877×** |
+| mid | 9 061 | 9 061 | 8 707 | 0,961× |
+| end | 89 | 89 | 88 | 0,989× |
+
+Au chronomètre, trois configurations **entrelacées** à 8 threads, minimum sur 8 tours :
+**rien 4,97 s → IID 4,65 s (0,936×) → IID + fenêtre 4,00 s (0,805×)**. La dispersion par tour
+est de 3 %, la plus propre de la campagne.
+
+**C'est la seule optimisation qui aide `worlds` franchement** (0,877×), donc la seule qui morde
+vraiment sur les ~2 800 core-h d'une couche de scores IS-DD. La largeur 8 est au fond d'un bassin
+plat (0,905× contre 0,910-0,912 de 5 à 10, 0,954× à ±20) — élargir et la fenêtre cesse d'élaguer,
+resserrer et chaque carte paie une re-recherche.
+
+### La leçon, qui vaut au-delà d'ici
+
+Une famille fermée l'est **pour la quantité mesurée**, pas pour son nom. « L'amorçage de fenêtre
+ne marche pas » était vrai de l'écart entre mondes et faux de l'écart entre cartes. Les deux
+chiffres étaient dans le même document depuis le début, l'un sous l'autre, avec un avertissement
+explicite de ne pas les confondre — et la conclusion a quand même été généralisée d'un cran de
+trop. **Avant de classer une piste comme fermée, vérifier de quelle quantité parle la mesure qui
+l'a fermée.**

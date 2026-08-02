@@ -238,6 +238,9 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
     };
 
     let mut best_score = if maximizing { i16::MIN } else { i16::MAX };
+    let rp = root_ply_of(state);
+    let sib_window = sibling_window();
+    let mut prev_exact: Option<i16> = None;
 
     for i in 0..ordered.1 {
         let card = ordered.0[i];
@@ -246,9 +249,27 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
 
         let score = if child.is_terminal() {
             child.points[0] as i16
+        } else if let (Some(anchor), true) = (prev_exact, sib_window > 0) {
+            // Sibling window. The one place in this solver where seeding a window is not
+            // hopeless: § 2.3 measured the spread **between root cards** at a median of 4
+            // points, 63,5 % inside a 10-point band — the opposite of the spread between
+            // sampled worlds, which is what killed every other seeding idea (§ 2.3bis).
+            //
+            // Fail-soft, so the result is a value only strictly inside the window; outside it
+            // is a bound and the search has to be redone wide. Taking the bound for the value
+            // is exactly the `quick_tricks` defect, and the extra `alphabeta` below is the
+            // price of not committing it.
+            let (a, b) = (anchor - sib_window, anchor + sib_window);
+            let r = alphabeta(&child, a, b, entries, stamp, &mut history, &mut killers, rp);
+            if r > a && r < b {
+                r
+            } else {
+                alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, rp)
+            }
         } else {
-            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, rp)
         };
+        prev_exact = Some(score);
 
         result.scores[i] = (card, score);
 
@@ -702,6 +723,7 @@ mod ablation {
         pub iid_min_cards: u8,
         pub iid_eval: u8,
         pub iid_sched: u8,
+        pub sib_window: i16,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -739,6 +761,10 @@ mod ablation {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(super::IID_SCHED),
+            sib_window: std::env::var("COLVER_DD_SIBWIN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::SIBLING_WINDOW),
         })
     }
 }
@@ -1611,6 +1637,25 @@ pub const IID_EVAL: u8 = 1;
 /// cost exploding — the cost is what kills a wide window (a flat depth 6 over 8 plies measures
 /// 1,085x, i.e. it spends more than it saves). 0 = flat depth everywhere.
 pub const IID_SCHED: u8 = 0;
+
+/// Half-width of the window a root card is given, seeded from the previous card's value.
+/// 0 disables it and every child gets the full `[0, 252]`.
+///
+/// 8 sits in a flat basin (0.905x against 0.910-0.912 at 5-7 and 9-10, 0.954x by ±20), and the
+/// basin is where § 2.3 said it would be: the spread **between root cards** has a median of 4
+/// points. Widen it and the window stops pruning; narrow it and every card needs a re-search.
+/// Details and why this is the one seeding idea that pays: `dd_solver_optimization.md` § 8.
+pub const SIBLING_WINDOW: i16 = 8;
+
+#[inline(always)]
+fn sibling_window() -> i16 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().sib_window;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    SIBLING_WINDOW
+}
 
 #[inline(always)]
 fn iid_sched() -> u8 {
