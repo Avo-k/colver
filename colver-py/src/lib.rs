@@ -969,13 +969,19 @@ impl Env {
         Ok(Some(out))
     }
 
-    fn action_oracle_dd(&self) -> PyResult<u8> {
+    fn action_oracle_dd(&self, py: Python<'_>) -> PyResult<u8> {
         if self.state.phase != Phase::Playing {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "Oracle DD only valid during play phase",
             ));
         }
-        Ok(colver_core::solver::solve_best_card(&self.state))
+        // Release the GIL. Three callers offload this to a thread (`card_analysis.opinions`,
+        // `agent_review`, `game_manager`) on the documented assumption that the Rust solver
+        // lets go — it did not, so the event loop was blocked for one whole DD search per
+        // card. Invisible while review positions are mid/endgame (190 µs / 1.5 µs); a 35 ms
+        // stall at the opening lead.
+        let state = self.state;
+        Ok(py.allow_threads(move || colver_core::solver::solve_best_card(&state)))
     }
 
     /// DD scores for every legal root move of the current player.
@@ -987,7 +993,12 @@ impl Env {
                 "solve_scores only valid during play phase",
             ));
         }
-        let result = colver_core::solver::solve_with_scores(&self.state, None);
+        // Release the GIL for the search, exactly like `solve_all_suits` below.
+        // `card_analysis.py` fans this call out across a thread pool on the stated assumption
+        // that "the Rust solver releases the GIL" — for this entry point it did not, so that
+        // fan-out was serialised and one page load paid 200-500 solves back to back.
+        let state = self.state;
+        let result = py.allow_threads(move || colver_core::solver::solve_with_scores(&state, None));
         let scores: Vec<Vec<i32>> = result.scores[..result.count]
             .iter()
             .map(|&(card, ns)| vec![card as i32, ns as i32])
@@ -1004,7 +1015,8 @@ impl Env {
         let start = Instant::now();
         let hands = self.state.hands;
         let dealer = self.state.dealer;
-        // Release the GIL during the solve (~300ms) so callers can run several
+        // Release the GIL during the solve (~70 ms for four suits on a median deal, up to
+        // ~300 ms on tail deals) so callers can run several
         // solves in parallel from a Python thread pool.
         let suits = py.allow_threads(move || {
             let mut tt_buf = colver_core::solver::new_tt_buffer();

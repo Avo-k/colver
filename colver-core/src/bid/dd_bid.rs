@@ -73,7 +73,7 @@ pub struct DdBidResult {
 /// DD-based bidder. Holds a pre-allocated TT buffer (2MB) for reuse.
 pub struct DdBidder {
     pub config: DdBidConfig,
-    tt_buf: Vec<u64>,
+    tt_buf: crate::solver::TtBuf,
 }
 
 impl DdBidder {

@@ -183,7 +183,7 @@ impl WasmBidNet {
 /// Oracle DD solver wrapper for WASM.  Owns a reusable TT buffer (2MB).
 #[wasm_bindgen]
 pub struct WasmOracle {
-    tt_buf: Vec<u64>,
+    tt_buf: solver::TtBuf,
 }
 
 #[wasm_bindgen]

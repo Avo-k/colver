@@ -14,24 +14,118 @@ Exact alpha-beta search assuming all 4 hands are visible. Used as the **oracle t
 
 ## Performance
 
-| Position | Time |
-|----------|------|
-| Full deal (1 trump) | ~77 ms |
-| Full deal (4 trumps) | ~310 ms |
-| Mid-game (4-5 tricks left) | ~13.5 ms |
+Measured 2026-08-02 with `bench_dd` on a fixed 2 120-position corpus, one thread, i9-13900K,
+`-C target-cpu=native`. Journalised in [docs/measurements/index.jsonl](../measurements/index.jsonl).
+Every earlier figure in the docs is superseded: four documents quoted 13.5 / 14.9 / 28 / 77 ms
+for things all called "a solve", none with a stated corpus or shape.
+
+| Shape (all via `solve_with_scores`) | n | nodes/pos | time/pos |
+|---|---|---|---|
+| Full deal, 4 suits | 800 | 1 448 045 | 34.6 ms |
+| Mid-game, real games, 13-24 cards left | 360 | 9 061 | 190 µs |
+| Endgame, real games, 2-12 cards left | 240 | 89 | 1.5 µs |
+| Determinized worlds (the IS-DD unit) | 720 | 55 862 | 1.25 ms |
+
+Throughput is ~34 M nodes/s, i.e. **~29 ns per node**. That is already tight, and it is the
+reason most per-node micro-optimisation attempts below came back negative: the search is
+dominated by the transposition-table probe, which is a random access into 2 MB.
+
+The distribution is heavily skewed — on full deals the **worst 10 % of solves hold 40 % of all
+nodes** (p50 317 k nodes, p99 3.8 M, max 6.0 M). Anything that helps only the median deal is
+worth little; the tail is where the batch time is.
+
+## Benchmarking and the exactness gate
+
+`bench_dd` (feature `solver_stats` for node counts) is both the benchmark and the guard:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release \
+    --features "parallel solver_stats" --bin bench_dd
+./target/release/bench_dd build --out data/analysis/dd_corpus_v1.bin \
+    --pool data/deals/base_5M.bin --games data/training/heldout_20k_s90210.bin
+./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
+    --values cand.vals --repeats 5
+./target/release/bench_dd diff --a baseline.vals --b cand.vals   # must say EXACT MATCH
+scripts/analysis/dd_ab_revs.sh <baseline-rev> 3                  # alternating A/B, min-of-N
+```
+
+Three rules learned the hard way here:
+
+- **Node counts first, wall-clock second.** On a hybrid P/E-core CPU under WSL2, wall time
+  cannot separate better pruning from landing on a P-core.
+- **Never compare two sequential runs.** A single binary measured twice on this machine
+  differed by 20 % because another job started in between — larger than most of the wins.
+  `--ab` interleaves within one process; `dd_ab_revs.sh` alternates two binaries built from
+  two git revisions. Both keep the **minimum**, since competing load only ever adds time.
+- **The corpus is a file, written once and kept.** No seeded generator here is reproducible:
+  `gen_pool` hands slot indices out of an `AtomicUsize` to N workers, so the RNG stream that
+  lands at a given index depends on thread scheduling.
+
+The corpus draws its mid-game and endgame positions from **real played games** (COLVGM01), not
+random legal play, and includes the determinized-world batches that are IS-DD's actual unit —
+the shape nothing in the repo measured before. `base_5M.bin`'s `dd_pts` are stale, but its
+`hands` are just a deal distribution and remain usable.
+
+## Measured negative results — do not re-derive
+
+| Idea | Verdict | Evidence |
+|---|---|---|
+| Larger transposition table | **No.** 2 MB → 134 MB buys 3 % fewer nodes and costs 2.4× the time (cache misses). `1<<18` is at the optimum; `1<<16` is marginally better. | Single-thread sweep over 6 sizes, 2026-08-02 |
+| MTD(f) / binary search on the point value | **No.** A null-window probe costs 0.42× a full search — only 2.4× cheaper — and a cold binary search needs 7.3 probes, so **1.94× the full-window cost**. Bridge DD wins here because its value is a trick count (0-13); a point total (0-252) is too wide. | 320 solves, 2026-08-02 |
+| Narrow window seeded from the running world mean | **No, 1.04× at best.** The premise is false: worlds of one hand are not clustered (36 % land >40 pts from the mean). | [bid_v7_plan.md](../bid/bid_v7_plan.md) §1.5 |
+| Solver-only `apply_play` skipping voids, belote and `trick_history` | **No, 0.977× — it made things *slower*.** Node counts identical, values exact; removing real instructions still lost 2.3 %. This also undercuts the larger "compact 32-byte solver state" idea, whose easier half this was. | Alternating A/B vs HEAD, min-of-3, 2026-08-02 |
+| Deduplicating DD-equivalent cards at the root of `solve_with_scores` | Not worth it: only **5.2 %** of root moves are redundant. | 5 991 decision points |
+
+## Accepted changes
+
+- **The TT stamps an epoch instead of being cleared** (2026-08-02). The table is valid for one
+  (deal, trump) pair only, so it was `memset` on every entry point — a flat 28.8 ms per 1000
+  solves, negligible against a 35 ms full deal and *dominant* below 12 cards left, where a
+  solve searches 89 nodes. A 15-bit epoch in the spare entry bits invalidates in O(1); the
+  clear happens once per 32 767 solves. **18.9× on endgames, 1.14× mid-game, node-for-node
+  identical.** Keep `&mut [u64]` in the recursion — holding `&mut TtBuf` there re-loads the
+  `Vec` pointer at every probe and costs more than the memset saved.
+- **Card equivalence is a table, not two sorts** (2026-08-02). Derived from the point tables and
+  proved by exhaustion against the original loops. No measurable speed change; kept for
+  simplicity and because the derivation's assumptions are now asserted.
 
 Pool generation throughput: ~244 deals/s on 32 cores with `RUSTFLAGS="-C target-cpu=native"` + workspace LTO. See [gen_pool.rs](../../colver-core/src/bin/gen_pool.rs).
 
 ## API
 
+Every entry point returns `[NS_points, EW_points]` unless stated otherwise. The previous
+version of this section was wrong on both counts it made: `solve` takes no table, and
+`solver::solve_all_suits` does not exist — it is a private helper in
+[bid_train_env.rs](../../colver-core/src/bid/bid_train_env.rs) looping the four trumps over
+one table.
+
 ```rust
-use colver_core::solver::{solve, new_tt_buffer, solve_all_suits};
+use colver_core::solver::{self, new_tt_buffer, TtBuf};
 
-let mut tt = new_tt_buffer();
-let ns_pts = solve(&state, &mut tt);  // returns NS points with optimal play
+// One-shot. Allocates its own 2 MB table, so not for a loop.
+let pts: [u8; 2] = solver::solve(&state);
+let pts: [u8; 2] = solver::solve_for_trump(hands, dealer, trump);
 
-let dd_pts: [u8; 4] = solve_all_suits(&state, &mut tt);  // all 4 trump suits
+// Reusing a table across many solves — always do this in a loop.
+let mut tt: TtBuf = new_tt_buffer();
+let pts = solver::solve_reuse_tt(&state, &mut tt);
+let pts = solver::solve_for_trump_reuse_tt(hands, dealer, trump, &mut tt);
+
+// Per-card values for every legal root move. This is IS-DD's unit and the dominant
+// consumer of DD CPU in the project. `None` allocates a fresh table per call.
+let sc = solver::solve_with_scores(&state, Some(&mut tt));
+// sc.scores[..sc.count] is (card, ns_points), and sc.best_card is already the best move —
+// do not follow this with solve_best_card, which searches the same tree a second time.
 ```
+
+**`TtBuf`, not `Vec<u64>`** (changed 2026-08-02). The table carries a solve epoch so it can
+invalidate itself in O(1) instead of being memset; see
+[dd_solver_optimization.md](dd_solver_optimization.md) §1.1. `TtBuf::with_log2_size(n)` builds
+any power-of-two size.
+
+**Node counting** lives behind the `solver_stats` feature: `solver::take_nodes()` returns and
+resets this thread's count, `solver::stats_enabled()` says whether it is compiled in. Check the
+latter before reporting a count — a silent 0 reads like a perfect search.
 
 ### Windowed solve (2026-07-26)
 
@@ -54,6 +148,18 @@ asserts every windowed result against the full-window value rather than assuming
 the same path: `new_tt_buffer()` is 2 MB, so 32 threads each carrying one is a 64 MB
 working set, well past L3. The solver masks with `tt.len() - 1`, so any power-of-two
 size is legal.
+
+**Single-threaded, the sweep is settled and the answer is "leave it alone"**: 2 MB → 134 MB
+buys 3 % fewer nodes and costs 2.4× the time. `1<<18` is at the optimum. The 32-thread
+question — 64 MB of working set against 36 MB of L3 — is the part that has **never been
+run**, and it is the cheapest open lever in the repo. Numbers and method:
+[dd_solver_optimization.md](dd_solver_optimization.md) §2.1.
+
+**The premise behind the windowed solve is false**, incidentally: the sampled worlds of one
+hand do *not* cluster (36 % land more than 40 points from the running mean), so seeding a
+narrow window from that mean is worth 1.04× at best. Both windowed entry points therefore
+have no production caller. §2.3 of the same document, and
+[bid_v7_plan.md](../bid/bid_v7_plan.md) §1.5.
 
 ## BREAKING (2026-07-23): `quick_tricks` removed — it returned wrong DD values
 

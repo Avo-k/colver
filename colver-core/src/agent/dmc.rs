@@ -105,15 +105,24 @@ impl CardPlayer for RulePlayer {
 /// Exact double-dummy solver with all four hands visible. The ceiling, not a
 /// player: it cheats by construction and exists to bound how much strength is
 /// left on the table.
-pub struct OraclePlayer;
+#[derive(Default)]
+pub struct OraclePlayer {
+    /// Kept across cards: `solve_with_scores(state, None)` allocated and zeroed a fresh 2 MB
+    /// table on every single decision.
+    tt: Option<crate::solver::TtBuf>,
+}
 
 impl CardPlayer for OraclePlayer {
     fn decide(&mut self, state: &GameState, _ctx: &MatchContext) -> Result<Decision, AgentError> {
-        let scores = crate::solver::solve_with_scores(state, None);
+        let tt = self.tt.get_or_insert_with(crate::solver::new_tt_buffer);
+        // One search, not two: `solve_with_scores` already reports the best card. The old code
+        // followed it with `solve_best_card`, which re-ran the identical tree from scratch on
+        // its own fresh table — an exact doubling of the cost of every oracle move.
+        let scores = crate::solver::solve_with_scores(state, Some(tt));
         let candidates: Vec<(u8, f32)> =
             (0..scores.count).map(|i| (scores.scores[i].0, scores.scores[i].1 as f32)).collect();
         Ok(Decision {
-            action: crate::solver::solve_best_card(state),
+            action: scores.best_card,
             stats: Stats { source: "oracle", candidates, ..Stats::default() },
         })
     }
