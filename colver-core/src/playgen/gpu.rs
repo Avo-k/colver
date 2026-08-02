@@ -40,6 +40,99 @@ pub struct WorldBatchItem<'a> {
     pub temperature: f32,
 }
 
+/// Profileur opt-in du décodage (`COLVER_PLAYGEN_PROFILE=1`).
+///
+/// Les lancements CUDA sont asynchrones, donc chronométrer une phase sans
+/// synchroniser mesure le temps de *soumission*, pas celui du calcul — et
+/// attribue tout le coût à la première opération qui, elle, synchronise
+/// (ici `to_vec2` dans `card_logits`). Chaque phase est donc suivie d'un
+/// `device.synchronize()`. Ça fausse légèrement le total à la hausse en
+/// supprimant le recouvrement, mais c'est la seule façon de savoir *où* passe
+/// le temps plutôt que de le deviner.
+/// Ventilation *interne* à `forward_step`, en nanosecondes. Statique parce que
+/// `forward_step` est appelé depuis trois chemins qui n'ont pas de `Profile`
+/// sous la main ; l'écriture n'a lieu que si le profilage est armé.
+pub(crate) static FWD_NS: [std::sync::atomic::AtomicU64; 5] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+const FWD_LABELS: [&str; 5] = ["qkv", "cat cache KV", "attention", "proj sortie", "FFN"];
+
+#[derive(Default)]
+struct Profile {
+    on: bool,
+    embed: f64,
+    forward: f64,
+    logits: f64,
+    sample: f64,
+    mask_cat: f64,
+    steps: u64,
+}
+
+impl Profile {
+    fn new() -> Self {
+        Profile {
+            on: std::env::var("COLVER_PLAYGEN_PROFILE").map(|v| v != "0").unwrap_or(false),
+            ..Default::default()
+        }
+    }
+
+    /// Chronomètre `f`, en synchronisant le device avant de rendre la main.
+    fn lap<T>(&mut self, dev: &Device, slot: usize, f: impl FnOnce() -> T) -> T {
+        if !self.on {
+            return f();
+        }
+        let t0 = std::time::Instant::now();
+        let out = f();
+        let _ = dev.synchronize();
+        let dt = t0.elapsed().as_secs_f64() * 1e3;
+        match slot {
+            0 => self.embed += dt,
+            1 => self.forward += dt,
+            2 => self.logits += dt,
+            3 => self.sample += dt,
+            _ => self.mask_cat += dt,
+        }
+        out
+    }
+
+    fn report(&self, lanes: usize, prefill_ms: f64) {
+        if !self.on {
+            return;
+        }
+        let tot = self.embed + self.forward + self.logits + self.sample + self.mask_cat;
+        eprintln!(
+            "[playgen] {lanes} lanes, {} pas de décodage | prefill {prefill_ms:.0} ms\n\
+             [playgen]   embed {:.0} ms ({:.0}%)  forward {:.0} ms ({:.0}%)  \
+             logits+sync {:.0} ms ({:.0}%)  échantillonnage {:.0} ms ({:.0}%)  \
+             cat masque {:.0} ms ({:.0}%)\n\
+             [playgen]   total décodage {tot:.0} ms, {:.2} ms/pas",
+            self.steps,
+            self.embed, self.embed / tot * 100.0,
+            self.forward, self.forward / tot * 100.0,
+            self.logits, self.logits / tot * 100.0,
+            self.sample, self.sample / tot * 100.0,
+            self.mask_cat, self.mask_cat / tot * 100.0,
+            tot / self.steps.max(1) as f64,
+        );
+        let inner: Vec<f64> = FWD_NS
+            .iter()
+            .map(|a| a.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e6)
+            .collect();
+        let isum: f64 = inner.iter().sum();
+        if isum > 0.0 {
+            eprint!("[playgen]   dont, dans forward_step :");
+            for (lbl, ms) in FWD_LABELS.iter().zip(inner.iter()) {
+                eprint!("  {lbl} {ms:.0} ms ({:.0}%)", ms / isum * 100.0);
+            }
+            eprintln!();
+        }
+    }
+}
+
 struct GpuBlock {
     attn_norm: Tensor, // [d]
     qkv_w_t: Tensor,   // [d, 3d]
@@ -178,21 +271,39 @@ impl GpuPlaygen {
         let (b, _) = x.dims2()?;
         let mut x = x.clone();
         let scale = 1.0 / (self.hd as f64).sqrt();
+        let prof = std::env::var("COLVER_PLAYGEN_PROFILE").map(|v| v != "0").unwrap_or(false);
+        macro_rules! lap {
+            ($slot:expr, $e:expr) => {{
+                if prof {
+                    let t = std::time::Instant::now();
+                    let r = $e;
+                    let _ = self.device.synchronize();
+                    FWD_NS[$slot].fetch_add(
+                        t.elapsed().as_nanos() as u64,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    r
+                } else {
+                    $e
+                }
+            }};
+        }
         for (l, blk) in self.blocks.iter().enumerate() {
             let normed = self.rmsnorm(&x, &blk.attn_norm)?;
-            let qkv = normed.matmul(&blk.qkv_w_t)?.broadcast_add(&blk.qkv_b)?;
+            let qkv = lap!(0, normed.matmul(&blk.qkv_w_t)?.broadcast_add(&blk.qkv_b))?;
             let shape = (b, self.n_heads, 1, self.hd);
             let q = qkv.narrow(1, 0, self.d)?.reshape(shape)?;
             let k = qkv.narrow(1, self.d, self.d)?.reshape(shape)?;
             let v = qkv.narrow(1, 2 * self.d, self.d)?.reshape(shape)?;
-            let (k_cache, v_cache) = match caches[l].take() {
+            let (k_cache, v_cache) = lap!(1, match caches[l].take() {
                 Some((kc, vc)) => (
                     Tensor::cat(&[&kc, &k], 2)?,
                     Tensor::cat(&[&vc, &v], 2)?,
                 ),
                 None => (k, v),
-            };
-            let mut scores = (q.matmul(&k_cache.transpose(2, 3)?.contiguous()?)? * scale)?;
+            });
+            let mut scores =
+                lap!(2, (q.matmul(&k_cache.transpose(2, 3)?.contiguous()?)? * scale))?;
             if let Some(m) = mask {
                 // m couvre T-1 positions (avant append) ; la colonne du token
                 // courant est valide → pad d'une colonne de zéros.
@@ -206,21 +317,25 @@ impl GpuPlaygen {
                     scores = scores.broadcast_add(m)?;
                 }
             }
-            let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
-            let ctx = probs.matmul(&v_cache)?.reshape((b, self.d))?;
+            let ctx = lap!(2, {
+                let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
+                probs.matmul(&v_cache)?.reshape((b, self.d))
+            })?;
             caches[l] = Some((k_cache, v_cache));
-            let attn = ctx.matmul(&blk.out_w_t)?.broadcast_add(&blk.out_b)?;
+            let attn = lap!(3, ctx.matmul(&blk.out_w_t)?.broadcast_add(&blk.out_b))?;
             x = (x + attn)?;
 
             let normed = self.rmsnorm(&x, &blk.ffn_norm)?;
-            let gate = normed
-                .matmul(&blk.gate_w_t)?
-                .broadcast_add(&blk.gate_b)?
-                .gelu()?;
-            let up = normed.matmul(&blk.up_w_t)?.broadcast_add(&blk.up_b)?;
-            let ffn = (gate * up)?
-                .matmul(&blk.down_w_t)?
-                .broadcast_add(&blk.down_b)?;
+            let ffn = lap!(4, {
+                let gate = normed
+                    .matmul(&blk.gate_w_t)?
+                    .broadcast_add(&blk.gate_b)?
+                    .gelu()?;
+                let up = normed.matmul(&blk.up_w_t)?.broadcast_add(&blk.up_b)?;
+                (gate * up)?
+                    .matmul(&blk.down_w_t)?
+                    .broadcast_add(&blk.down_b)
+            })?;
             x = (x + ffn)?;
         }
         Ok(x)
@@ -365,6 +480,8 @@ impl GpuPlaygen {
         let lmax = *plen.iter().max().expect("act non-empty");
         let pad: Vec<usize> = plen.iter().map(|&l| lmax - l).collect();
 
+        let mut prof = Profile::new();
+        let t_prefill = std::time::Instant::now();
         let mut caches: Vec<Option<(Tensor, Tensor)>> = vec![None; self.blocks.len()];
         let mut pre_mask: Option<Tensor> = None;
         let mut toks = vec![dummy; k_lanes];
@@ -392,6 +509,11 @@ impl GpuPlaygen {
                 None => col_t,
             });
         }
+
+        if prof.on {
+            let _ = self.device.synchronize();
+        }
+        let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1e3;
 
         // ══ Phase 2 — fan K prefix lanes out to sum(n) decode lanes ══
         let mut lane_of: Vec<u32> = Vec::new();
@@ -457,11 +579,15 @@ impl GpuPlaygen {
                 }
                 mcol[m] = if on { 0.0 } else { neg };
             }
-            let x = self.embed(&act_toks, &mpos)?;
-            let hidden = self.forward_step(&x, &mut caches, Some(&mask))?;
+            prof.steps += 1;
+            let x = prof.lap(&self.device, 0, || self.embed(&act_toks, &mpos))?;
+            let hidden = prof.lap(&self.device, 1, || {
+                self.forward_step(&x, &mut caches, Some(&mask))
+            })?;
             let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
-            mask = Tensor::cat(&[&mask, &col_t], 3)?;
-            let card_lg = self.card_logits(&hidden)?;
+            mask = prof.lap(&self.device, 4, || Tensor::cat(&[&mask, &col_t], 3))?;
+            let card_lg = prof.lap(&self.device, 2, || self.card_logits(&hidden))?;
+            let t_sample = std::time::Instant::now();
 
             // --- sample one card per active lane ---
             for m in 0..m_lanes {
@@ -542,6 +668,10 @@ impl GpuPlaygen {
                 gens[m].step(actor, phys_card);
             }
 
+            if prof.on {
+                prof.sample += t_sample.elapsed().as_secs_f64() * 1e3;
+            }
+
             // --- card token ---
             for m in 0..m_lanes {
                 let on = active_at(step_i, m, &alive, &lane_of, &act);
@@ -553,11 +683,13 @@ impl GpuPlaygen {
                 }
                 mcol[m] = if on { 0.0 } else { neg };
             }
-            let x = self.embed(&card_toks, &mpos)?;
-            self.forward_step(&x, &mut caches, Some(&mask))?;
+            prof.steps += 1;
+            let x = prof.lap(&self.device, 0, || self.embed(&card_toks, &mpos))?;
+            prof.lap(&self.device, 1, || self.forward_step(&x, &mut caches, Some(&mask)))?;
             let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
-            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+            mask = prof.lap(&self.device, 4, || Tensor::cat(&[&mask, &col_t], 3))?;
         }
+        prof.report(m_lanes, prefill_ms);
 
         // ══ Phase 4 — harvest, per item ══
         for m in 0..m_lanes {

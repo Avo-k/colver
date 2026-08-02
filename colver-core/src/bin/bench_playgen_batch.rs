@@ -194,8 +194,7 @@ fn main() {
         let mut r2 = StdRng::seed_from_u64(1000 + n as u64);
         let multi = gpu
             .generate_worlds_multi(
-                &[WorldBatchItem { sampler, state, n_worlds: worlds }],
-                1.0,
+                &[WorldBatchItem { sampler, state, n_worlds: worlds, temperature: 1.0 }],
                 &mut r2,
             )
             .expect("multi");
@@ -226,12 +225,13 @@ fn main() {
         sampler: s0,
         state: st0,
         n_worlds: dist_worlds,
+        temperature: 1.0,
     }];
     for (s, st) in pos.iter().skip(1).take(7) {
-        items.push(WorldBatchItem { sampler: s, state: st, n_worlds: worlds });
+        items.push(WorldBatchItem { sampler: s, state: st, n_worlds: worlds, temperature: 1.0 });
     }
     let mut rc = StdRng::seed_from_u64(9);
-    let batched = gpu.generate_worlds_multi(&items, 1.0, &mut rc).expect("batched");
+    let batched = gpu.generate_worlds_multi(&items, &mut rc).expect("batched");
 
     let noise = max_abs_diff(&marginals(&alone_a), &marginals(&alone_b));
     let effect = max_abs_diff(&marginals(&alone_a), &marginals(&batched[0]));
@@ -250,10 +250,10 @@ fn main() {
     println!("\n=== 3. validité des mondes ===");
     let items: Vec<WorldBatchItem> = pos
         .iter()
-        .map(|(s, st)| WorldBatchItem { sampler: s, state: st, n_worlds: worlds })
+        .map(|(s, st)| WorldBatchItem { sampler: s, state: st, n_worlds: worlds, temperature: 1.0 })
         .collect();
     let mut rd = StdRng::seed_from_u64(11);
-    let all = gpu.generate_worlds_multi(&items, 1.0, &mut rd).expect("all");
+    let all = gpu.generate_worlds_multi(&items, &mut rd).expect("all");
     let mut bad = 0usize;
     let mut produced = 0usize;
     for (j, ws) in all.iter().enumerate() {
@@ -293,11 +293,11 @@ fn main() {
 
     let items: Vec<WorldBatchItem> = pos
         .iter()
-        .map(|(s, st)| WorldBatchItem { sampler: s, state: st, n_worlds: worlds })
+        .map(|(s, st)| WorldBatchItem { sampler: s, state: st, n_worlds: worlds, temperature: 1.0 })
         .collect();
     let mut rf = StdRng::seed_from_u64(13);
     let t1 = Instant::now();
-    let bat = gpu.generate_worlds_multi(&items, 1.0, &mut rf).expect("bat");
+    let bat = gpu.generate_worlds_multi(&items, &mut rf).expect("bat");
     let batch = t1.elapsed().as_secs_f64();
     let bat_total: usize = bat.iter().map(|v| v.len()).sum();
 
