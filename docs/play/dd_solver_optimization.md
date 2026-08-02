@@ -124,6 +124,12 @@ dérivation est maintenant assertée.
   solveur relâche le GIL ». C'est vrai de `solve_all_suits`, pas de celui-là : le fan-out de
   `/analyse/jeu` était **sérialisé**, 200 à 500 solves à la file.
 
+### 1.5 IID d'ordonnancement au sommet — **0,90× en nœuds** → §6
+
+Une recherche courte choisit le premier coup à essayer près de la racine. C'est le seul gain de
+vitesse livré par la campagne, et il vient en droite ligne des mesures du §5. Détail, garde,
+constantes et réplication : **[§6](#6-liid-dordonnancement--implémenté-090-en-nœuds-et-092-au-chrono)**.
+
 ### 1.4 Le harnais — `bench_dd`, et la discipline de mesure
 
 `colver-core/src/bin/bench_dd.rs`, quatre sous-commandes :
@@ -676,3 +682,107 @@ qu'à l'intérieur d'un couple (donne, atout) — `position_hash` dérive les ma
 et ne clé pas sur l'atout. `cmd_ordering` la vide entre deux positions ; ne pas le faire
 fabriquerait un oracle qui connaît une autre partie. Porte d'exactitude intégrée : les trois
 passes doivent rendre la même valeur, l'ordre ne change jamais la réponse.
+
+---
+
+## 6. L'IID d'ordonnancement — **implémenté, 0,90× en nœuds et 0,92× au chrono**
+
+Le premier gain livré de la campagne, et il tombe directement du §5.
+
+**Le raisonnement, en trois mesures.** L'oracle dit qu'un ordre parfait vaut 6× (§5). La table
+de confusion dit qu'aucune règle statique ne l'atteindra : ~70 % des échecs ont le bon coup et
+le coup essayé **dans la même catégorie** — la plus grosse cellule est defausse→defausse, 27 %
+tôt et 50 % tard. Et les quatre raffinements écrits à la main du score statique le confirment :
+0,991× à 1,030×, autrement dit rien. La raison est structurelle — le score statique n'est
+consulté **qu'après** le coup de TT et les coups tueurs, qui portent déjà 38,3 % et 15,1 % : il
+ne lui reste presque pas de levier.
+
+La troisième mesure dit où aller. En restreignant l'indice parfait à une fenêtre de profondeur :
+
+| donne complète | racine seule | + ses enfants | 1ᵉʳ pli | 2 plis | 4 plis |
+|---|---:|---:|---:|---:|---:|
+| fraction restante | **0,705** | 0,635 | 0,541 | 0,388 | 0,269 |
+
+**Ordonner la racine seule vaut 1,42×.** Un nœud, une décision. Ce qui sépare deux cartes de
+même nature, ce n'est pas une règle, c'est **regarder** — donc au sommet, quand la table n'a
+rien à proposer, on lance une recherche courte et on prend sa réponse comme premier coup.
+
+### Pourquoi ce n'est pas un second `quick_tricks`
+
+**La valeur de la recherche courte ne sort jamais de l'ordonnancement.** À l'horizon elle rend
+les points déjà ramassés et s'arrête — aucune estimation du reste, aucune affirmation sur
+l'avenir. `quick_tricks` était un défaut pour la raison inverse : son approximation atteignait
+une **valeur rendue**. Un ordre peut être arbitrairement mauvais et ne coûter que du temps.
+C'est la porte `diff` qui prouve que la distinction a tenu, et elle a tenu à chaque variante.
+
+### Ce que ça donne
+
+| forme | avant | après | |
+|---|---:|---:|---:|
+| full | 1 448 045 | 1 296 735 | **0,896×** |
+| worlds | 55 862 | 53 990 | **0,966×** |
+| mid | 9 061 | 9 061 | 1,000× |
+| end | 89 | 89 | 1,000× |
+| **ALL** | **566 953** | **509 219** | **0,898×** |
+
+Au chronomètre, A/B **entrelacé** à 8 threads, minimum sur 8 tours : **0,916×** (référence
+7,17-7,48 s, IID 6,57-6,84 s). Les nœuds comptés **incluent la recherche d'ordonnancement au
+prix fort**, alors qu'un de ses nœuds est moins cher qu'un vrai (pas de sonde TT, pas de
+hachage, pas de tenue de tueurs) : le gain réel est donc au moins celui-là.
+
+### La garde n'est pas un réglage, c'est la différence entre un gain et un désastre
+
+Sans la garde sur les cartes restantes, mesuré : les **finales deviennent 3,8× plus lentes** et
+la mi-donne 1,56×. Sur une position qui explore 89 nœuds, un regard à 6 plis est plus gros que
+la recherche entière qu'il prétend aider. Seules les donnes complètes ont un arbre assez
+profond pour rembourser — et ce sont elles qui portent les nœuds, donc la garde ne coûte rien
+et supprime toute régression. **C'est le corpus à quatre formes qui a attrapé ça** : une
+mesure agrégée aurait montré 0,902× et caché un facteur 3,8 sur les positions exactes où
+`/analyse/jeu` et `agent_review` passent leur temps.
+
+### Les constantes, et leur plateau
+
+`IID_DEPTH = 6`, `IID_TOP = 4`, `IID_MIN_CARDS = 24`. Chacune est au milieu d'un plateau, pas
+sur une pointe — c'est ce qui les rend sûres :
+
+| profondeur | 4 | 5 | **6** | 7 | 8 | 9 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,919 | 0,911 | **0,898** | 0,897 | 0,910 | 0,938 |
+
+| fenêtre | 3 | **4** | 5 | 6 | 8 | 12 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,928 | **0,902** | 0,909 | 0,935 | 1,085 | 2,312 |
+
+| cartes min | 30 | 28 | 26 | **24** | 20 | 0 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,927 | 0,899 | 0,899 | **0,898** | 0,899 | 0,902 |
+
+La fenêtre est le paramètre dangereux : à 12 plis l'IID coûte **2,3× plus qu'il ne rapporte**.
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats solver_ablation" --bin bench_dd
+COLVER_DD_IID_DEPTH=0 ./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 32 --values off.vals              # l'éteindre
+./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 32 --values on.vals               # le défaut
+./target/release/bench_dd diff --a off.vals --b on.vals    # doit dire EXACT MATCH
+```
+
+### Ce qui reste sur la table
+
+Le plafond du §5 est 6× ; l'IID en prend **1,11×**. Il ne touche que la racine et ses trois
+plis, avec un regard qui ne voit qu'un pli et demi. Les pistes suivantes, dans l'ordre :
+
+1. **Un regard qui voit plus loin sans coûter plus cher.** L'horizon actuel rend les points
+   ramassés, ce qui est le signal le plus pauvre possible. Une évaluation d'horizon un peu
+   moins naïve permettrait d'aller moins profond pour la même qualité d'ordre — et la courbe
+   dit que la profondeur est chère (0,938× à 9 plis).
+2. **Étendre la fenêtre en la payant moins.** À 8 plis de fenêtre le coût explose (1,085×)
+   parce que l'IID tourne à chaque nœud. Ne le lancer qu'aux nœuds dont le sous-arbre s'annonce
+   gros — qu'il faudrait savoir prédire, ce qui est la même question un cran plus loin.
+3. **Un réseau de politique au sommet reste hors de portée**, et le calcul est simple : un
+   solve de donne complète coûte ~15,9 ms, la racine parfaite en rend 4,7 ms, et DouDou50 coûte
+   ~1 ms par évaluation — mais il faudrait qu'il corrige une bonne part des **15,3 %** de
+   racines que l'ordre actuel rate déjà, alors qu'il prédit du bon jeu à information
+   incomplète, pas le coup DD. L'IID fait le même travail pour ~0,3 % du budget de nœuds.

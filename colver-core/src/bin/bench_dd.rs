@@ -386,10 +386,13 @@ fn build_worlds(
 fn solve_one(p: &Position, tt: &mut solver::TtBuf) -> (Vals, u64, f64) {
     let st = p.rebuild().expect("corpus position must rebuild");
     let _ = solver::take_nodes();
+    let _ = solver::take_shallow_nodes();
     let t = Instant::now();
     let sc = solver::solve_with_scores(&st, Some(tt));
     let us = t.elapsed().as_secs_f64() * 1e6;
-    let nodes = solver::take_nodes();
+    // Charged at full price: the ordering lookahead is real work, and a metric that omits it
+    // would show IID winning by not counting what it costs.
+    let nodes = solver::take_nodes() + solver::take_shallow_nodes();
     let mut v: Vals = sc.scores[..sc.count].to_vec();
     v.sort_unstable();
     (v, nodes, us)

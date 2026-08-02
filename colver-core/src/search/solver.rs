@@ -1,6 +1,7 @@
 /// Alpha-beta double-dummy solver for Belote Contrée.
 ///
 /// Techniques (inspired by bridge DD solvers like DDS/GIB):
+/// - Internal iterative deepening near the root: a short lookahead picks the first move to try
 /// - Alpha-beta with fail-soft
 /// - Transposition table with relative (future) scores and hash move
 /// - Card equivalence pruning — only one representative per equivalence class
@@ -102,7 +103,7 @@ pub fn solve(state: &GameState) -> [u8; 2] {
     let (entries, stamp) = tt.begin_solve();
     let mut history = [[0u32; 32]; 2]; // [team][card] — cutoff history
     let mut killers = [[EMPTY; 2]; 32]; // [ply][0..2] — killer moves per ply
-    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state));
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -122,7 +123,7 @@ pub fn solve_reuse_tt(state: &GameState, tt_buf: &mut TtBuf) -> [u8; 2] {
 
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state));
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -156,7 +157,7 @@ pub fn solve_windowed_reuse_tt(
     let (entries, stamp) = tt_buf.begin_solve();
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    alphabeta(state, alpha, beta, entries, stamp, &mut history, &mut killers)
+    alphabeta(state, alpha, beta, entries, stamp, &mut history, &mut killers, root_ply_of(state))
 }
 
 /// Windowed solve from a full deal + trump. See [`solve_windowed_reuse_tt`].
@@ -246,7 +247,7 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
         result.scores[i] = (card, score);
@@ -291,7 +292,7 @@ pub fn solve_best_card(state: &GameState) -> u8 {
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
         if maximizing {
@@ -633,6 +634,9 @@ mod ablation {
         pub no_killers: bool,
         pub no_history: bool,
         pub order_variant: u8,
+        pub iid_depth: u8,
+        pub iid_top: u8,
+        pub iid_min_cards: u8,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -650,6 +654,18 @@ mod ablation {
                 .ok()
                 .and_then(|v| v.trim_start_matches('v').parse().ok())
                 .unwrap_or(0),
+            iid_depth: std::env::var("COLVER_DD_IID_DEPTH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_DEPTH),
+            iid_top: std::env::var("COLVER_DD_IID_TOP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_TOP),
+            iid_min_cards: std::env::var("COLVER_DD_IID_MIN_CARDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_MIN_CARDS),
         })
     }
 }
@@ -724,6 +740,12 @@ pub const fn ablation_enabled() -> bool {
 #[cfg(feature = "solver_stats")]
 thread_local! {
     static NODES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+    /// Nodes spent in the ordering lookahead, counted **apart** from the search proper.
+    /// Folding them into `NODES` would hide the very cost being weighed; leaving them out
+    /// entirely — which is what the first IID sweep did — makes the metric lie in IID's
+    /// favour. They are also cheaper per node (no TT probe, no hashing, no bookkeeping), so
+    /// the true cost sits between the two columns and the win has to survive at the far end.
+    static SHALLOW: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
 }
 
 #[inline(always)]
@@ -744,6 +766,22 @@ pub fn take_nodes() -> u64 {
     {
         0
     }
+}
+
+#[inline(always)]
+fn count_shallow_node() {
+    #[cfg(feature = "solver_stats")]
+    SHALLOW.with(|c| c.set(c.get() + 1));
+}
+
+/// Ordering-lookahead nodes visited by this thread since the last call, and reset.
+pub fn take_shallow_nodes() -> u64 {
+    #[cfg(feature = "solver_stats")]
+    {
+        return SHALLOW.with(|c| c.replace(0));
+    }
+    #[cfg(not(feature = "solver_stats"))]
+    0
 }
 
 /// Whether node counting is compiled in.
@@ -780,6 +818,10 @@ fn alphabeta(
     stamp: u64,
     history: &mut [[u32; 32]; 2],
     killers: &mut [[u8; 2]; 32],
+    // Absolute ply the search started from, so "near the top" means the same thing for a full
+    // deal and for a mid-game position. Passed rather than stashed in a thread-local: it rides
+    // in a register and cannot be left stale by an early return.
+    root_ply: u8,
 ) -> i16 {
     count_node();
     if state.is_terminal() {
@@ -808,7 +850,7 @@ fn alphabeta(
         return if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
         };
     }
 
@@ -864,6 +906,24 @@ fn alphabeta(
     let ply = (state.tricks_won[0] + state.tricks_won[1]) as usize * 4
         + state.trick_count as usize;
 
+    // Internal iterative deepening. Only near the top, and only when nothing better is on
+    // offer: below that the subtree is too small to repay even a very short look. The window
+    // counts from the root, so an IS-DD world resolved from mid-deal gets it on the same terms
+    // as a full deal — which matters, since that shape is where most of the project's DD hours
+    // actually go.
+    if hash_move == EMPTY {
+        let (iid_depth, iid_top, iid_min_cards) = iid_config();
+        if iid_depth > 0
+            && ply.saturating_sub(root_ply as usize) < iid_top as usize
+            && 32usize.saturating_sub(ply) >= iid_min_cards as usize
+        {
+            let m = shallow_best_move(state, iid_depth);
+            if m != EMPTY && (legal & card_to_bit(m)) != 0 {
+                hash_move = m;
+            }
+        }
+    }
+
     // Apply card equivalence + order with hash move first, then killers, then by history
     let reduced = reduce_equivalent(legal, state);
     let killer_pair = if ply < 32 && !no_killers() { killers[ply] } else { [EMPTY; 2] };
@@ -882,13 +942,13 @@ fn alphabeta(
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else if i == 0 || no_pvs() {
-            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
         } else {
             // PVS: null window search after first move
             let scout = if maximizing {
-                alphabeta(&child, alpha, alpha + 1, tt, stamp, history, killers)
+                alphabeta(&child, alpha, alpha + 1, tt, stamp, history, killers, root_ply)
             } else {
-                alphabeta(&child, beta - 1, beta, tt, stamp, history, killers)
+                alphabeta(&child, beta - 1, beta, tt, stamp, history, killers, root_ply)
             };
             let needs_research = if maximizing {
                 scout > alpha && scout < orig_beta
@@ -896,7 +956,7 @@ fn alphabeta(
                 scout < beta && scout > orig_alpha
             };
             if needs_research {
-                alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+                alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
             } else {
                 scout
             }
@@ -1239,6 +1299,121 @@ fn order_moves(
     }
 
     (result, count)
+}
+
+// ---- Internal iterative deepening for move ordering ----
+//
+// The depth sweep says the leverage is at the top: ordering the **root alone** perfectly leaves
+// 0.705 of a full-deal search, its first trick 0.541. And the confusion table says no static
+// rule reaches it, because the failures are between cards of the same kind. What separates
+// same-kind cards is *looking*, so: at the first plies, when the table offers no move, run a
+// short search and take its answer as the first move to try.
+//
+// **The value this returns is deliberately crude, and that is safe precisely because it never
+// leaves the ordering.** At the horizon it reports the points captured so far and stops — no
+// estimate of the rest, no claim about the future. `quick_tricks` was a defect for the opposite
+// reason: its approximation reached a *returned value*. An ordering can be arbitrarily wrong and
+// only cost time, and the exactness gate is what proves the distinction held.
+fn shallow_order_search(state: &GameState, alpha0: i16, beta0: i16, plies_left: u8) -> i16 {
+    count_shallow_node();
+    if state.is_terminal() || plies_left == 0 {
+        // Horizon: what has actually been won. Two siblings compared here differ by the points
+        // captured on the way, which is the whole signal being extracted.
+        return state.points[0] as i16;
+    }
+    let legal = play::legal_plays(state);
+    let reduced = reduce_equivalent(legal, state);
+    let maximizing = GameState::player_team(state.current_player) == 0;
+    let (mut alpha, mut beta) = (alpha0, beta0);
+    let mut best = if maximizing { i16::MIN } else { i16::MAX };
+
+    let mut mask = reduced;
+    while mask != 0 {
+        let card = mask.trailing_zeros() as u8;
+        mask &= mask - 1;
+        let mut child = *state;
+        play::apply_play(&mut child, card);
+        let v = shallow_order_search(&child, alpha, beta, plies_left - 1);
+        if maximizing {
+            if v > best {
+                best = v;
+            }
+            if best > alpha {
+                alpha = best;
+            }
+        } else {
+            if v < best {
+                best = v;
+            }
+            if best < beta {
+                beta = best;
+            }
+        }
+        if alpha >= beta {
+            break;
+        }
+    }
+    best
+}
+
+/// First move to try according to a `plies`-deep look, or [`EMPTY`] when there is nothing to
+/// order. Not counted as solver nodes: it is overhead, and folding it into the node count
+/// would hide exactly the cost being weighed.
+fn shallow_best_move(state: &GameState, plies: u8) -> u8 {
+    let legal = play::legal_plays(state);
+    let reduced = reduce_equivalent(legal, state);
+    if reduced == 0 || reduced & (reduced - 1) == 0 {
+        return EMPTY;
+    }
+    let maximizing = GameState::player_team(state.current_player) == 0;
+    let mut best_card = EMPTY;
+    let mut best = if maximizing { i16::MIN } else { i16::MAX };
+    let mut mask = reduced;
+    while mask != 0 {
+        let card = mask.trailing_zeros() as u8;
+        mask &= mask - 1;
+        let mut child = *state;
+        play::apply_play(&mut child, card);
+        let v = shallow_order_search(&child, 0, 252, plies.saturating_sub(1));
+        let better = if maximizing { v > best } else { v < best };
+        if better || best_card == EMPTY {
+            best = v;
+            best_card = card;
+        }
+    }
+    best_card
+}
+
+/// Absolute ply of a position — the origin the IID window is measured from.
+#[inline(always)]
+fn root_ply_of(state: &GameState) -> u8 {
+    (state.tricks_won[0] + state.tricks_won[1]) * 4 + state.trick_count
+}
+
+/// `(plies of lookahead, plies of the root it applies within, cards that must remain)`.
+/// A depth-0 first element disables it.
+///
+/// The third guard is not a tuning knob, it is the difference between a win and a disaster.
+/// Measured without it, a 6-ply look made endgames **3.8x slower** — on a position that
+/// searches 89 nodes, the lookahead is larger than the entire search it is meant to help.
+/// Mid-game went 1.56x. Only full deals have a tree deep enough to repay a look, and they are
+/// also where the nodes are, so the guard costs nothing and removes every regression.
+/// Production defaults, measured on the frozen corpus: depth 6 is the flat top of the curve
+/// (0.898x against 0.919x at 4 and 0.938x at 9), 4 plies of window beats 3 and 5, and 24 is
+/// anywhere in the 20-26 plateau. Sweeps: `docs/play/dd_solver_optimization.md` § 6.
+pub const IID_DEPTH: u8 = 6;
+pub const IID_TOP: u8 = 4;
+pub const IID_MIN_CARDS: u8 = 24;
+
+#[inline(always)]
+fn iid_config() -> (u8, u8, u8) {
+    #[cfg(feature = "solver_ablation")]
+    {
+        let f = ablation::flags();
+        return (f.iid_depth, f.iid_top, f.iid_min_cards);
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    (IID_DEPTH, IID_TOP, IID_MIN_CARDS)
 }
 
 /// The best card in the trick so far. `trick::trick_winner` needs a complete trick; this walks
