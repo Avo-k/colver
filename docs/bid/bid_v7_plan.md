@@ -534,10 +534,46 @@ temps mais coûte 75 points quand il la franchit. À vérifier régime par régi
 moyenne — et pas à l'arène (§2.9).
 
 ### 3.2 Suite de sondes stratifiée, en **évaluation** *(coût nul, risque nul)*
-Quelques centaines de mains construites par famille — capot forcé, 8 atouts, 7
-atouts, coupe franche + longue, mains limites 150/160, mains de relance — et on lit
-ce que le bidder annonce. Aucun risque de polluer l'entraînement. **Ça aurait attrapé
-§1.3 il y a des mois.** À faire tourner à chaque checkpoint, comme un test.
+**Faite le 2026-08-02** — [bid_probes.py](../../scripts/analysis/bid_probes.py), 9 familles
+construites × 3 régimes × 200 mains, **0,4 s**, aucune donne jouée, aucun monde échantillonné.
+Référence v6 figée dans [../measurements/bid_probes_v6.json](../measurements/bid_probes_v6.json) ;
+`--baseline` diffe un checkpoint contre elle. À faire tourner à chaque checkpoint, comme un test.
+
+Les familles sont **construites** et non tirées, pour deux raisons : celles qui décident sont
+à ~10⁻⁴ (on ne les verrait jamais), et une famille construite est *identique* d'un checkpoint
+à l'autre, donc deux runs se comparent directement.
+
+**Une seule assertion est dure**, parce qu'une seule réponse est prouvable : huit cartes d'une
+même couleur prennent les huit levées quoi qu'il arrive, et un capot réussi marque 502 contre
+412 pour un 160 tous plis. **v6 la rate à 100 % dans les trois régimes** (exit 1) — c'est §1.3,
+désormais sous test. Il n'y a volontairement pas de drapeau pour la taire.
+
+Ce que la sonde a immédiatement ajouté :
+
+| observation | régime | lecture |
+|---|---|---|
+| `main_pauvre` annonce **80♠ dans 14 %** | ouverture | 8 cartes prises parmi les douze 7-8-9 du paquet — il n'y a rien à annoncer |
+| `main_pauvre` **relance à 120♣ dans 18 %** | soutien | pire : c'est une relance au-dessus du partenaire, sans une seule carte à points |
+| `belote_seche` passe à 95-100 % | tous | correct — la belote ne rachète pas une main faible |
+| `quatre_as` passe à 35 % / 77 % | ouv. / cont. | pas d'anomalie visible |
+| marge médiane **0,004 à ouverture, 0,03-0,10 en contestation** | | reproduit §1.7 sur une population construite et non tirée |
+
+**Équivariance, cas exact et sans échantillonnage.** Les quatre mains de huit atouts sont des
+permutations de couleur exactes les unes des autres : les quatre réponses *doivent* être la
+même annonce. Ramenées dans un repère commun :
+
+| régime | les 4 réponses | étendue |
+|---|---|---|
+| ouverture | 140 · 140 · 140 · **150** | 10 pts |
+| contestation | 150 · 150 · **160** · **160** | 10 pts |
+| soutien | **160** · 140 · 140 · **160** | 20 pts |
+
+⚠️ **Le préfixe doit être permuté avec la main.** Une première version ne permutait que la main
+et sortait une étendue de **160 pts** en soutien, « Passe sur huit atouts » compris — artefact :
+la main ♣ était la seule dont la longue était la couleur que le partenaire venait d'annoncer,
+donc les quatre positions n'étaient pas les mêmes. Même piège qu'`apply_prior` dans
+[bid_equivariance.py](../../scripts/analysis/bid_equivariance.py). Le chiffre honnête est
+10-20 pts, et il reste une violation exacte sur le cas le plus trivial du jeu.
 
 ### 3.3 Réveiller les actions mortes *(coût moyen)*
 ε-greedy ne suffit pas : à 10⁻⁴ de fréquence et 43 actions, l'action capot ne reçoit
