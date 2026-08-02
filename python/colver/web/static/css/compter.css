@@ -307,10 +307,20 @@
 #pc-trick-e { grid-area: e; }
 #pc-trick-area .trick-card { min-width: var(--card-w); min-height: var(--card-h); }
 
-/* Le pli part du côté du camp qui le ramasse : c'est la direction qui dit à
-   qui il est, pas une étiquette. */
-.pc-fly-near { transform: translateY(28%) scale(.86); opacity: 0; }
-.pc-fly-far  { transform: translateY(-28%) scale(.86); opacity: 0; }
+/* Le pli part vers le SIÈGE qui le ramasse, aux quatre points de la croix :
+   c'est la direction qui dit à qui il est, pas une étiquette.
+
+   L'axe porte le camp — vertical pour Nord-Sud, horizontal pour Est-Ouest — et
+   le sens désigne lequel des deux partenaires a ramassé. Les quatre distances
+   sont tirées de la hauteur de carte et non d'un pourcentage
+   de la croix : celle-ci est bien plus haute que large, donc un pourcentage de
+   ses propres dimensions ferait des départs latéraux deux fois plus courts que
+   les verticaux — la lecture dépendrait de l'axe. Réglé pour retomber sur le
+   déplacement vertical d'avant (~84px sur un écran de bureau). */
+.pc-fly-n { transform: translateY(calc(var(--card-h) * -0.9)) scale(.86); opacity: 0; }
+.pc-fly-s { transform: translateY(calc(var(--card-h) *  0.9)) scale(.86); opacity: 0; }
+.pc-fly-w { transform: translateX(calc(var(--card-h) * -0.9)) scale(.86); opacity: 0; }
+.pc-fly-e { transform: translateX(calc(var(--card-h) *  0.9)) scale(.86); opacity: 0; }
 
 /* La pause masque la table : s'arrêter devant un pli complet serait un retour
    en arrière déguisé. Le voile seul ne suffit pas — à 85% de noir sur une carte

@@ -20,7 +20,7 @@ compteur à l'écran et le fait que les tas n'affichent que leur nombre de plis.
 | Source par défaut | **Génération**, « Mes parties » en option | La base contient quelques dizaines de donnes terminées ; la page en consomme une toutes les vingt secondes |
 | Aller-retour | **Un seul** par séquence, la donne entière | La correction est alors locale et instantanée ; un curieux peut lire la réponse dans la console, la seule personne qu'il tromperait est lui-même |
 | Ce qu'on compte | Points **cartes** des plis montrés, plus dix de der et belote en mode « partie entière » | Deux niveaux de règle explicites valent mieux qu'un énoncé ambigu |
-| Modes de comptage | **un camp** (on ne compte qu'un tas) ou **deux camps** (deux totaux, plis dans deux directions) | Le premier est le geste réel à la table, le second oblige à tenir deux compteurs |
+| Modes de comptage | **un camp** (on ne compte qu'un tas) ou **deux camps** (deux totaux) | Le premier est le geste réel à la table, le second oblige à tenir deux compteurs |
 
 ## 1. Les trois façons de faire défiler
 
@@ -95,10 +95,26 @@ En chronométré, **un pli complet tient un temps de plus** (`nextDelay()` rend
 ce qui laisse au vol le temps de se jouer avant la carte suivante. Une donne
 entière en Expert (0,5 s) dure donc ≈ 24 s, pas 16.
 
-**La direction est l'information.** En « deux camps », un pli qui descend est à
-Nord-Sud, un pli qui monte est à Est-Ouest ; rien ne l'écrit. C'est ce qu'on lit
-à une table, où l'on sait à qui est un pli parce qu'on l'a vu partir de son
-côté.
+**La direction est l'information.** Le pli part vers **le siège** qui l'a
+ramassé, aux quatre points de la croix — comme à une table, où l'on voit le
+vainqueur tirer les cartes à lui. Rien ne l'écrit : on sait à qui est un pli
+parce qu'on l'a vu partir de son côté.
+
+L'**axe** porte le camp, et lui seul : vertical pour Nord-Sud, horizontal pour
+Est-Ouest. Le **sens**, dans l'axe, désigne lequel des deux partenaires a
+ramassé — une information de plus, jamais une de moins. C'est ce qui distingue
+ce défilé d'un simple compteur à deux tas : à une vraie table on ne voit pas
+« un pli pour Nord-Sud », on voit Nord qui ramasse.
+
+Les quatre distances sont tirées de `--card-h`, pas d'un pourcentage de la
+croix : celle-ci est bien plus haute que large, donc un pourcentage de ses
+propres dimensions donnerait des départs latéraux deux fois plus courts que les
+verticaux — la lisibilité dépendrait de l'axe, ce qui est exactement ce qu'il
+ne faut pas.
+
+Les deux tas, eux, restent à gauche et à droite : ils comptent, ils ne sont pas
+la destination du vol. Un pli qui part vers l'est ne pointe donc pas son tas, et
+c'est sans conséquence — l'étiquette et le compte sont écrits dessus.
 
 ## 3. Ce que le joueur doit annoncer
 

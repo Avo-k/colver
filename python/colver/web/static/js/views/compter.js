@@ -10,9 +10,11 @@
 //   2. On compte PENDANT, pas après : le décompte se fait au fil des plis, et
 //      la question ne tombe qu'à la fin. C'est pour ça qu'il n'y a aucun
 //      compteur à l'écran, et que les tas ne montrent que leur nombre de plis.
-//   3. En « deux camps », les plis PARTENT DANS DEUX DIRECTIONS. La direction
-//      est l'information : à une table, on sait à qui est un pli parce qu'on
-//      l'a vu partir de son côté, pas parce qu'une étiquette le dit.
+//   3. Les plis PARTENT VERS LES QUATRE SIÈGES. La direction est
+//      l'information : à une table, on sait à qui est un pli parce qu'on l'a vu
+//      partir de son côté, pas parce qu'une étiquette le dit. L'axe porte le
+//      camp — vertical pour Nord-Sud, horizontal pour Est-Ouest — et le sens
+//      dit lequel des deux partenaires a ramassé.
 //
 // Un seul aller-retour serveur par séquence (`count_generate` → `count_ready`,
 // la donne entière) : la correction est locale, donc instantanée. Un curieux
@@ -30,6 +32,12 @@ import { teamClass, teamName } from '../shared/seats.js';
 
 // `teamClass` prend un SIÈGE ; ici on raisonne parfois en camps.
 const TEAM_CLASS = ['team-ns', 'team-ew'];
+
+// Le pli vole vers le siège qui l'a ramassé — indexé comme les sièges du
+// moteur (0=N, 1=E, 2=S, 3=O), donc l'axe vertical est Nord-Sud et l'axe
+// horizontal Est-Ouest, ce qui garde le camp lisible d'un coup d'œil.
+const SEAT_DIR = ['n', 'e', 's', 'w'];
+const FLY_CLASSES = SEAT_DIR.map(d => `pc-fly-${d}`);
 
 const K_CFG = 'colver:compter:cfg';
 const K_STATS = 'colver:compter:stats';
@@ -335,7 +343,7 @@ function tableAt(i) {
 }
 
 function renderAt(withSound = false) {
-    $('pc-trick-area').classList.remove('pc-fly-near', 'pc-fly-far');
+    $('pc-trick-area').classList.remove(...FLY_CLASSES);
     const { onTable, shown, gathered } = tableAt(pcIdx);
 
     const trick = [-1, -1, -1, -1];
@@ -409,9 +417,15 @@ function renderAnnounce(ti, shown, withSound) {
 function flyOut(ti, done) {
     const t = win[ti];
     if (!t) { done(); return; }
-    // En « deux camps » la direction EST l'information : un pli qui descend est
-    // à Nord-Sud, un pli qui monte est à Est-Ouest. Rien ne l'écrit.
-    const dir = (t.winner % 2 === 0) ? 'near' : 'far';
+    // Le pli part vers LE SIÈGE qui l'a ramassé, aux quatre points de la croix
+    // — comme à une table, où l'on voit le vainqueur tirer les cartes à lui.
+    //
+    // C'est l'AXE qui porte le camp, et lui seul : vertical pour Nord-Sud,
+    // horizontal pour Est-Ouest. Le sens, dans l'axe, désigne lequel des deux
+    // partenaires a ramassé — une information de plus, jamais une de moins.
+    // Rien ne l'écrit, et c'est le but : à une table on sait à qui est un pli
+    // parce qu'on l'a vu partir de son côté.
+    const dir = SEAT_DIR[t.winner];
     $('pc-trick-area').classList.add(`pc-fly-${dir}`);
     SFX.trickWon();
     if (flyTimer) clearTimeout(flyTimer);
