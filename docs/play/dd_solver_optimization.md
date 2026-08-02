@@ -564,16 +564,18 @@ les micro-optimisations, elles, sont épuisées.
 
 **Et l'oracle a été exécuté : la queue est bien un échec d'ordonnancement.** §5.
 
-Pistes, par rapport gain/risque décroissant :
+**Les trois familles sont désormais bornées, et une seule a rendu quelque chose.** Le tableau
+qui résume la campagne :
 
-1. **Une règle d'ordonnancement qui sache jouer.** C'est désormais la seule piste avec un
-   plafond mesuré, et il est haut : **6× sur une donne complète, ~8× sur le décile le plus
-   dur** (§5). C'est aussi la seule qui demande de la connaissance du jeu plutôt que du
-   micro-réglage.
-2. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
-   très lâche. Toute borne plus serrée doit être **saine** — c'est exactement là que
-   `quick_tricks` s'est planté, et la porte `diff` est là pour ça. À border par un oracle
-   avant d'écrire quoi que ce soit, comme les deux autres.
+| famille | plafond mesuré | issue |
+|---|---:|---|
+| amorçage de fenêtre (§2.3bis) | 2,0× avec un seed **exact** | fermée — il faudrait 98,4 % de justesse à ±40 |
+| ordonnancement des coups (§5) | **6,0×**, ~8× sur la queue | **partiellement pris : l'IID livre 1,11× (§6)** |
+| bornes / évaluation (§7) | 1,09× avec une évaluation **parfaite** | fermée |
+
+Ce qui reste vient donc entièrement de la deuxième ligne, et la suite est au §6 « ce qui reste
+sur la table » : un horizon moins naïf, une fenêtre plus large payée moins cher. Pas de règle de
+contrée à écrire — §5 a montré que les échecs d'ordre sont entre cartes de même nature.
 
 Et **trois pistes qui figuraient ici et n'y sont plus** :
 
@@ -786,3 +788,51 @@ plis, avec un regard qui ne voit qu'un pli et demi. Les pistes suivantes, dans l
    ~1 ms par évaluation — mais il faudrait qu'il corrige une bonne part des **15,3 %** de
    racines que l'ordre actuel rate déjà, alors qu'il prédit du bon jeu à information
    incomplète, pas le coup DD. L'IID fait le même travail pour ~0,3 % du budget de nœuds.
+
+---
+
+## 7. Le troisième oracle — les bornes, **et la famille est fermée aussi**
+
+La borne haute du solveur suppose que N-S ramasse **tout ce qui reste dans la donne**, la basse
+qu'il ne ramasse plus rien. C'est aussi lâche qu'une borne peut l'être, et §4 en faisait la
+dernière grande piste ouverte. C'est aussi exactement ce que `quick_tricks` tentait de resserrer
+avant de rendre des valeurs fausses — raison de plus pour borner la question avant que
+quelqu'un ne recommence.
+
+Même construction qu'au §2.3bis et au §5. Une passe enregistre la vraie valeur de chaque nœud
+que la recherche a résolu **exactement**, une seconde s'en sert comme borne à ± slack près.
+Slack 0 = l'évaluation parfaite.
+
+| forme | nœuds/pos | ±0 | ±2 | ±5 | ±10 | ±20 | ±40 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| full | 554 108 | **0,917** | 0,915 | 0,937 | 0,966 | 0,996 | 0,995 |
+| mid | 5 204 | 0,941 | 0,941 | 0,950 | 0,993 | 0,985 | 0,988 |
+| end | 62 | 0,962 | 0,971 | 0,971 | 0,982 | 0,981 | 1,000 |
+| worlds | 26 576 | 0,915 | 0,907 | 0,923 | 0,952 | 0,977 | 0,995 |
+
+**Une évaluation parfaite ne rend que 8,3 %.** À ±10 il reste 3,4 %, à ±20 plus rien. Aucune
+fonction d'évaluation, si bonne et si gratuite soit-elle, ne vaut la peine d'être écrite ici.
+
+**Pourquoi.** L'alpha-bêta a déjà resserré la fenêtre quand on arrive au nœud. La borne grossière
+ne se déclenche que dans les cas extrêmes — là où le camp mène déjà tellement que même « il
+prend tout le reste » ne suffit pas — et resserrer une borne qui ne coupait presque jamais ne
+coupe presque jamais plus.
+
+### La porte a d'abord attrapé une vraie erreur, et elle est instructive
+
+Le premier montage stockait la valeur **absolue** du nœud, et a échoué `EXACT MATCH` dès la
+première position. Cause : `position_hash` porte `played_cards`, qui est un **ensemble** — deux
+positions ayant les mêmes cartes jouées mais un partage de plis différent se retrouvent sur le
+même hachage, et **seul l'avenir leur est commun**. C'est précisément pour ça que la TT stocke
+un `future_score` relatif à `ns_base` et non un score absolu.
+
+Ce détail passait pour du style. C'est un invariant, et une carte auxiliaire indexée sur le même
+hachage doit le respecter. La leçon générale : **toute structure clée sur `position_hash` ne
+peut porter que des quantités relatives aux points déjà faits.**
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats solver_oracle" --bin bench_dd
+./target/release/bench_dd bounds --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 8 --deltas 0,2,5,10,20,40
+```

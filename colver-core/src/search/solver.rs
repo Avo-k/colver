@@ -354,7 +354,67 @@ mod ordering_oracle {
         /// near the root costs orders of magnitude more than one near a leaf, and a raw count
         /// would be dominated by the cheap ones.
         pub static CONFUSION: RefCell<[[[u64; 8]; 8]; 2]> = const { RefCell::new([[[0; 8]; 8]; 2]) };
+        /// Values recorded **only at nodes the search resolved exactly**, and stored **relative
+        /// to the points already made** — the same `future_score` the TT stores, for the same
+        /// reason. `position_hash` keys on `played_cards`, which is a *set*: two positions with
+        /// the same cards played but a different split of the tricks collide, and only the
+        /// future is common to them. Storing the absolute value here failed the exactness gate
+        /// on the first run, which is how the TT's design turned out to be load-bearing rather
+        /// than stylistic.
+        ///
+        /// Only exact nodes: a cut node's score is a bound, not a value, and seeding a bound
+        /// from one is precisely the `quick_tricks` unsoundness this harness exists to catch.
+        pub static VALUES: RefCell<HashMap<u64, i16>> = RefCell::new(HashMap::new());
+        /// Slack around the true value when it stands in for the crude bounds; -1 = off.
+        pub static SLACK: Cell<i16> = const { Cell::new(-1) };
     }
+}
+
+/// A sound bound derived from the true value with `slack` points to spare, when this position
+/// was resolved exactly during the recording pass. `None` means fall back to the crude bounds.
+#[inline(always)]
+fn oracle_bounds(_hash: u64, _ns_base: i16) -> Option<(i16, i16)> {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let slack = ordering_oracle::SLACK.with(|s| s.get());
+        if slack < 0 {
+            return None;
+        }
+        return ordering_oracle::VALUES
+            .with(|m| m.borrow().get(&_hash).copied())
+            .map(|future| (future + _ns_base - slack, future + _ns_base + slack));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    None
+}
+
+#[inline(always)]
+fn oracle_note_value(_hash: u64, _flag: u8, _future_score: i16) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_RECORD != 0 && _flag == TT_EXACT {
+            ordering_oracle::VALUES.with(|m| {
+                m.borrow_mut().insert(_hash, _future_score);
+            });
+        }
+    }
+}
+
+#[inline(always)]
+fn oracle_bounds_enabled() -> bool {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::SLACK.with(|s| s.get()) >= 0;
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    false
+}
+
+/// How tight a *sound* bound would have to be, in points, to stand in for the crude one.
+/// Negative disables it. See `bench_dd bounds`.
+pub fn oracle_set_bound_slack(_slack: i16) {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::SLACK.with(|s| s.set(_slack));
 }
 
 /// Coarse description of what a card *does* at this node — the vocabulary a Contrée-aware
@@ -548,7 +608,10 @@ pub fn oracle_set_mode(_mode: u8) {
 /// unique across them, so skipping this silently feeds one position's moves to another.
 pub fn oracle_clear() {
     #[cfg(feature = "solver_oracle")]
-    ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+    {
+        ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+        ordering_oracle::VALUES.with(|m| m.borrow_mut().clear());
+    }
 }
 
 /// Fraction of nodes at which a recorded move is applied, in `[0.0, 1.0]`. `1.0` (the default)
@@ -840,6 +903,26 @@ fn alphabeta(
         return ns_lower;
     }
 
+    // Measurement only (feature `solver_oracle`, off): what a *sound* bound accurate to a few
+    // points would prune, standing in for the crude "NS takes everything left". Returns the
+    // bound exactly as the crude prune above does, so it is no less sound than what it
+    // replaces — and `bench_dd bounds` still gates every sweep on EXACT MATCH.
+    //
+    // It needs the position hash, which the search otherwise computes further down, so
+    // enabling it moves work earlier. That is irrelevant to a node count, which is what the
+    // sweep reads, and it is why this can never become production code as written.
+    if oracle_bounds_enabled() {
+        let h = position_hash(state);
+        if let Some((lo, hi)) = oracle_bounds(h, state.points[0] as i16) {
+            if hi <= alpha {
+                return hi;
+            }
+            if lo >= beta {
+                return lo;
+            }
+        }
+    }
+
     let legal = play::legal_plays(state);
 
     // Forced move: single legal card
@@ -1006,6 +1089,7 @@ fn alphabeta(
 
     tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move, stamp);
     oracle_note(hash, best_move);
+    oracle_note_value(hash, flag, future_score);
     oracle_note_rank(state, &ordered.0, ordered.1, best_move, state.contract.trump);
     best_score
 }

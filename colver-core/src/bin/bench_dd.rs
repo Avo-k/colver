@@ -997,6 +997,99 @@ fn cmd_ordering(args: &Args, rates: &[f64]) -> io::Result<()> {
     Ok(())
 }
 
+// ------------------------------------------------------------------- bounds oracle
+//
+/// **Ceiling** on a heuristic evaluation, the third and last family the campaign left open.
+///
+/// The pruning bounds are as crude as they can be: the upper one assumes NS takes every point
+/// left in the deal, the lower one that it takes none. A cheap evaluation could tighten them —
+/// but `quick_tricks` was exactly such an attempt and it returned wrong values, so the question
+/// is worth bounding before anyone tries again.
+///
+/// Same construction as § 2.3bis and § 5: solve once recording the true value at every node the
+/// search resolved **exactly** (a cut node's score is a bound, not a value — seeding from one
+/// would be the unsoundness this harness exists to catch), then re-solve using `value ± slack`
+/// as the bound. Slack 0 is the perfect evaluation; larger slacks say how accurate a real one
+/// would have to be, and the answer is read against what an evaluation could plausibly reach.
+fn cmd_bounds(args: &Args, slacks: &[i16]) -> io::Result<()> {
+    let positions = read_corpus(&args.corpus)?;
+    if !solver::stats_enabled() || !solver::oracle_enabled() {
+        eprintln!("REFUSING: needs --features \"solver_stats solver_oracle\"");
+        std::process::exit(2);
+    }
+    eprintln!("corpus: {} positions | slacks {slacks:?}\n", positions.len());
+
+    let one = |p: &Position| -> (u64, Vec<u64>, Vals) {
+        let st = p.rebuild().expect("corpus position must rebuild");
+        let mut tt = solver::new_tt_buffer();
+        solver::oracle_clear();
+        solver::oracle_set_bound_slack(-1);
+
+        solver::oracle_set_mode(solver::ORACLE_RECORD);
+        let _ = solver::take_nodes();
+        let v0 = solver::solve_reuse_tt(&st, &mut tt);
+        let n0 = solver::take_nodes();
+        solver::oracle_set_mode(solver::ORACLE_OFF);
+
+        let mut out = Vec::with_capacity(slacks.len());
+        for &sl in slacks {
+            solver::oracle_set_bound_slack(sl);
+            let _ = solver::take_nodes();
+            let v = solver::solve_reuse_tt(&st, &mut tt);
+            out.push(solver::take_nodes());
+            // A bound that changes a value is not a faster solver, it is quick_tricks again.
+            assert_eq!(v0, v, "bound with slack {sl} changed the answer");
+        }
+        solver::oracle_set_bound_slack(-1);
+        (n0, out, vec![(0u8, v0[0] as i16)])
+    };
+
+    let res: Vec<(u64, Vec<u64>, Vals)> = if args.threads == 1 {
+        positions.iter().map(one).collect()
+    } else {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(args.threads)
+                .build()
+                .unwrap()
+                .install(|| positions.par_iter().map(one).collect())
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            positions.iter().map(one).collect()
+        }
+    };
+
+    println!("fraction of the search surviving a sound bound accurate to +/- N points:");
+    print!("{:>8} {:>13}", "shape", "nodes/pos");
+    for sl in slacks {
+        print!("{:>10}", format!("+/-{sl}"));
+    }
+    println!();
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let s0: u64 = idx.iter().map(|&i| res[i].0).sum();
+        print!("{:>8} {:>13.0}", shape.name(), s0 as f64 / idx.len() as f64);
+        for k in 0..slacks.len() {
+            let s: u64 = idx.iter().map(|&i| res[i].1[k]).sum();
+            print!("{:>10.3}", s as f64 / s0 as f64);
+        }
+        println!();
+    }
+    println!(
+        "\nslack 0 is a perfect evaluation. Read the wider columns against what a cheap\n\
+         evaluation could actually reach on a 0-252 scale."
+    );
+    Ok(())
+}
+
 /// Interleaved A/B of the epoch TT against the old memset-every-solve behaviour.
 ///
 /// Runs both configurations alternately, `repeats` times each, and reports the **minimum**
@@ -1258,6 +1351,10 @@ fn main() {
             let args = Args { corpus, values, json, threads, repeats, ab };
             cmd_oracle(&args, &deltas).expect("oracle");
         }
+        "bounds" => {
+            let args = Args { corpus, values, json, threads, repeats, ab };
+            cmd_bounds(&args, &deltas).expect("bounds");
+        }
         "ordering" => {
             let args = Args { corpus, values, json, threads, repeats, ab };
             cmd_ordering(&args, &hint_rates).expect("ordering");
@@ -1270,7 +1367,7 @@ fn main() {
             cmd_diff(&a, &b).expect("diff");
         }
         _ => {
-            eprintln!("usage: bench_dd build|run|oracle|ordering|diff  (see the module doc comment)");
+            eprintln!("usage: bench_dd build|run|oracle|ordering|bounds|diff  (see the module doc)");
             std::process::exit(2);
         }
     }
