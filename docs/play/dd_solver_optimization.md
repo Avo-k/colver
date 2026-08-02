@@ -950,6 +950,30 @@ vraiment sur les ~2 800 core-h d'une couche de scores IS-DD. La largeur 8 est au
 plat (0,905× contre 0,910-0,912 de 5 à 10, 0,954× à ±20) — élargir et la fenêtre cesse d'élaguer,
 resserrer et chaque carte paie une re-recherche.
 
+### Deux essais adjacents, tous deux rejetés — et par des portes différentes
+
+**Ordonner aussi les cartes racine par le regard.** La fenêtre s'amorce sur la carte
+précédente, donc l'ordre décide de son taux de réussite : un bon ordre groupe les cartes de
+valeur voisine. Mesuré : **1,1 % de nœuds en moins et 3,1 % de temps en plus**, les 8 tours
+entrelacés d'accord. `ROOT_IID = false`, gardé derrière l'interrupteur parce que la mesure vaut
+mieux que le code effacé. **Troisième fois de la campagne que le compte de nœuds pointe à
+l'envers** — il est exact, mais il cesse d'être un substitut fidèle du temps dès qu'un
+changement modifie la *nature* des nœuds.
+
+**Et sa première version était fausse, pas seulement lente.** Elle rangeait l'ensemble
+**réduit** — un représentant par classe d'équivalence — alors que `solve_with_scores` doit une
+valeur à **chaque carte légale**. Elle en laissait donc tomber, et paraissait 3 % plus rapide
+pour cette raison exacte. C'est le même piège que `legal_actions_reduced` dans `/analyse/jeu`,
+et seule la porte `diff` l'a vu. `shallow_rank_moves` prend désormais l'ensemble à ranger en
+argument, avec le contrat écrit à côté.
+
+**Effet de bord assumé : le départage des ex æquo est devenu explicite.** En réordonnant la
+racine, `solve_with_scores` et `solve_best_card` ont cessé de désigner la même carte — deux
+cartes **également optimales**, mais la réponse dépendait d'un détail interne de la recherche.
+Les deux départagent maintenant par **indice de carte le plus bas**, ce qui rend la « meilleure
+carte » fonction de la position et non du parcours. Changement de comportement possible sur les
+positions à égalité ; **inerte sur les 2 120 positions du corpus** (`best card moved: 0`).
+
 ### La leçon, qui vaut au-delà d'ici
 
 Une famille fermée l'est **pour la quantité mesurée**, pas pour son nom. « L'amorçage de fenêtre

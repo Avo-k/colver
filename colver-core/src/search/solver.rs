@@ -229,7 +229,23 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
     let team = GameState::player_team(state.current_player);
     let maximizing = team == 0;
 
-    let ordered = order_moves(state, legal, EMPTY, &history, [EMPTY; 2]);
+    // The root cards are ordered by the same lookahead the search uses inside, when it is on
+    // and the tree is deep enough to repay it. That matters twice here: the first card's value
+    // anchors every sibling window below, and a better order groups cards of similar value
+    // together, which is exactly when a window seeded from the previous one hits.
+    let (iid_depth, _, iid_min_cards) = iid_config();
+    let cards_left = 32usize.saturating_sub(root_ply_of(state) as usize);
+    let ordered = if root_iid() && iid_depth > 0 && cards_left >= iid_min_cards as usize {
+        // Full legal set, never the reduced one: this table owes a value per legal card.
+        let (list, n) = shallow_rank_moves(state, legal, iid_depth);
+        if n > 0 {
+            (list, n)
+        } else {
+            order_moves(state, legal, EMPTY, &history, [EMPTY; 2])
+        }
+    } else {
+        order_moves(state, legal, EMPTY, &history, [EMPTY; 2])
+    };
 
     let mut result = SolveScores {
         scores: [(0, 0); 8],
@@ -273,12 +289,10 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
 
         result.scores[i] = (card, score);
 
-        if maximizing {
-            if score > best_score {
-                best_score = score;
-                result.best_card = card;
-            }
-        } else if score < best_score {
+        // Same tie-break as `solve_best_card`, and the two must keep agreeing: lowest card
+        // index among the equal-valued maxima, independent of the order they were searched in.
+        let better = if maximizing { score > best_score } else { score < best_score };
+        if better || (score == best_score && card < result.best_card) {
             best_score = score;
             result.best_card = card;
         }
@@ -316,12 +330,14 @@ pub fn solve_best_card(state: &GameState) -> u8 {
             alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
-        if maximizing {
-            if score > best_score {
-                best_score = score;
-                best_card = card;
-            }
-        } else if score < best_score {
+        // Ties are broken by the **lowest card index**, not by whichever the search happened
+        // to reach first. Several cards are often DD-equal, and before this the answer moved
+        // with any change to move ordering — which is how a purely internal reordering made
+        // this function disagree with `solve_with_scores` about a card that was just as good.
+        // A caller displaying "the best card" deserves a function of the position, not of the
+        // search's internals.
+        let better = if maximizing { score > best_score } else { score < best_score };
+        if better || (score == best_score && card < best_card) {
             best_score = score;
             best_card = card;
         }
@@ -724,6 +740,7 @@ mod ablation {
         pub iid_eval: u8,
         pub iid_sched: u8,
         pub sib_window: i16,
+        pub root_iid: bool,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -765,6 +782,10 @@ mod ablation {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(super::SIBLING_WINDOW),
+            root_iid: std::env::var("COLVER_DD_ROOT_IID")
+                .ok()
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(super::ROOT_IID),
         })
     }
 }
@@ -1046,7 +1067,7 @@ fn alphabeta(
             } else {
                 iid_depth.saturating_sub(d * iid_sched()).max(2)
             };
-            let (list, n) = shallow_rank_moves(state, look);
+            let (list, n) = shallow_rank_moves(state, reduce_equivalent(legal, state), look);
             if n > 0 {
                 if legal & card_to_bit(list[0]) != 0 {
                     hash_move = list[0];
@@ -1565,9 +1586,14 @@ fn shallow_order_search(state: &GameState, alpha0: i16, beta0: i16, plies_left: 
 /// computed: the lookahead scores every root move, so ranking them all costs nothing beyond a
 /// sort of at most eight elements. That matters at nodes where the first move fails to cut —
 /// there the second and third choice are what the search actually pays for.
-fn shallow_rank_moves(state: &GameState, plies: u8) -> ([u8; 8], usize) {
-    let legal = play::legal_plays(state);
-    let reduced = reduce_equivalent(legal, state);
+/// `moves` is the set to rank, and **which set it is matters for correctness, not just speed**.
+/// Inside the search, pass the reduced set: dropping a card equivalent to one already there
+/// cannot change the value. At the root of [`solve_with_scores`] pass the **full legal set** —
+/// that function owes a value for every legal card, and ranking the reduced set silently drops
+/// cards from the table it returns. The exactness gate caught exactly that, on a version that
+/// was 3 % faster and wrong. Same trap as `legal_actions_reduced` in `/analyse/jeu`.
+fn shallow_rank_moves(state: &GameState, moves: CardSet, plies: u8) -> ([u8; 8], usize) {
+    let reduced = moves;
     if reduced == 0 || reduced & (reduced - 1) == 0 {
         return ([EMPTY; 8], 0);
     }
@@ -1646,6 +1672,25 @@ pub const IID_SCHED: u8 = 0;
 /// points. Widen it and the window stops pruning; narrow it and every card needs a re-search.
 /// Details and why this is the one seeding idea that pays: `dd_solver_optimization.md` § 8.
 pub const SIBLING_WINDOW: i16 = 8;
+
+/// Whether the root cards of [`solve_with_scores`] are ordered by the lookahead too.
+///
+/// **Off: measured a node win and a clock loss.** 1,1 % fewer nodes, 3,1 % *more* wall time,
+/// with all 8 interleaved rounds agreeing. Third time in this campaign that the node count
+/// pointed the wrong way — it is exact, but it stops being a faithful proxy for time as soon
+/// as a change alters the *mix* of node kinds, and a lookahead node is not a search node.
+/// Kept behind the switch because the measurement is worth more than the deleted code.
+pub const ROOT_IID: bool = false;
+
+#[inline(always)]
+fn root_iid() -> bool {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().root_iid;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    ROOT_IID
+}
 
 #[inline(always)]
 fn sibling_window() -> i16 {
