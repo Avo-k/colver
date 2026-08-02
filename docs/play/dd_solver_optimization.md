@@ -719,7 +719,7 @@ passes doivent rendre la même valeur, l'ordre ne change jamais la réponse.
 
 ---
 
-## 6. L'IID d'ordonnancement — **implémenté, 0,90× en nœuds et 0,92× au chrono**
+## 6. L'IID d'ordonnancement — **implémenté**
 
 Le premier gain livré de la campagne, et il tombe directement du §5.
 
