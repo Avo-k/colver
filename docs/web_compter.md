@@ -193,6 +193,27 @@ compris), `card_points`, `der {team, value}`, `belote`, `source`,
 On envoie toujours les huit plis, jamais un préfixe : le client décide combien
 il en montre selon le niveau, et la correction peut dérouler la donne entière.
 
+### La fenêtre de plis n'est pas forcément les N premiers
+
+`pickWindow` choisit N plis **consécutifs** dans la donne, sous deux conditions
+quand N < 8 : le camp à compter doit avoir ramassé **la moitié au moins** des
+plis montrés (2 sur 3, 3 sur 5) et plus de zéro point. Sans ça on sert des
+séquences dont la réponse est 0 — ce n'est pas un exercice, c'est une donne où
+la question ne s'est pas posée. En « deux camps » le seuil tombe à un pli par
+camp : en exiger la moitié pour chacun est contradictoire (3 plis, 2 + 2).
+
+La donne entière étant déjà là, faire glisser la fenêtre ne coûte rien et
+suffit presque toujours : mesuré sur 2000 donnes réellement jouées, **1,18
+donne par séquence à 3 plis, 1,49 à 5 plis**, et jamais de repli. Redemander
+une donne au serveur serait le seul autre levier, et il coûte un aller-retour ;
+c'est pourquoi il n'intervient qu'en second (`MAX_DEAL_TRIES`), quand aucune
+fenêtre ne convient. Après quoi on montre la **moins mauvaise** fenêtre de la
+dernière donne, jamais « les N premiers plis » — le repli doit rester le
+meilleur exercice disponible, pas un abandon.
+
+À 8 plis on ne filtre rien : il n'y a qu'une fenêtre, et un capot subi se
+compte — il vaut 0, légitimement.
+
 `source = "mes"` sans compte, sans donne disponible, ou sur une donne
 inexploitable → repli sur la génération avec `source_degraded: true`, **et la
 page le dit**. Même politique que `pacing.resolve` avec `mode_degraded`.

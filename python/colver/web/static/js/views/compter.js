@@ -224,7 +224,7 @@ const TEMPLATE = `
 let phase = 'config';
 let cfg = null;
 let deal = null;       // payload `count_ready`
-let win = null;        // deal.tricks.slice(0, N) — la fenêtre montrée
+let win = null;        // les N plis consécutifs montrés (cf. pickWindow)
 let side = 0;          // camp à compter en mode « un camp », tiré si side = -1
 let pcIdx = 0;         // cartes révélées, 0 .. 4·N
 let paused = false;
@@ -237,6 +237,9 @@ let flyTimer = null;
 let endHold = false;
 let pending = null;    // requête à rejouer si le socket n'était pas ouvert
 let reqId = 0;
+// Donnes écartées d'affilée faute de fenêtre montrable (cf. pickWindow).
+let dealTries = 0;
+const MAX_DEAL_TRIES = 6;
 let given = [null, null];
 // Tout est ramassé : la croix se vide et les tas sont complets. C'est l'image
 // de la fin de donne, celle qu'on a sous les yeux au moment de compter.
@@ -303,6 +306,56 @@ const cardPoints = (c, trump) => ((c >> 3) === trump ? TRUMP_POINTS : PLAIN_POIN
 
 /** Nombre de plis réellement montrés. « Partie entière » impose la donne entière. */
 function windowSize() { return cfg.rules === 'realiste' ? 8 : cfg.nTricks; }
+
+/**
+ * Les N plis consécutifs à montrer — pas forcément les N premiers.
+ *
+ * Une fenêtre où le camp à compter n'a presque rien ramassé donne une réponse
+ * proche de zéro : l'exercice ne s'est pas posé. On exige donc que **la moitié
+ * au moins** des plis montrés lui reviennent (2 sur 3, 3 sur 5), et qu'ils
+ * vaillent plus de zéro point — deux plis de 7-8-9 font une réponse aussi vide.
+ *
+ * La donne entière arrive toujours du serveur, donc la fenêtre peut glisser :
+ * commencer au pli n°4 ne change rien à l'exercice (la correction affiche les
+ * vrais numéros), et c'est bien moins cher que de redemander une donne. On tire
+ * au hasard parmi les fenêtres qui conviennent, sinon la page servirait
+ * toujours le même endroit de la donne.
+ *
+ * Rend `ok: false` avec la **moins mauvaise** fenêtre quand aucune ne convient
+ * (un camp qui ne ramasse qu'un pli de la donne n'en offre aucune) : l'appelant
+ * redemande une donne, mais si ça échoue encore il vaut mieux montrer ça que
+ * les N premiers plis au hasard.
+ *
+ * À 8 plis il n'y a qu'une fenêtre possible : on ne filtre rien, sinon on
+ * rejetterait des donnes entières parfaitement légitimes (un capot subi se
+ * compte, il vaut 0).
+ */
+function pickWindow(tricks, n, teams) {
+    if (n >= tricks.length) return { win: tricks.slice(), ok: true };
+    // Deux camps à compter : exiger la moitié des plis pour chacun serait
+    // contradictoire (3 plis, 2 + 2). Chacun doit juste avoir de quoi compter.
+    const need = teams.length > 1 ? 1 : Math.ceil(n / 2);
+    const all = [];
+    for (let s = 0; s + n <= tricks.length; s++) {
+        const w = tricks.slice(s, s + n);
+        const share = teams.map((k) => {
+            const mine = w.filter((t) => t.winner % 2 === k);
+            return [mine.length, mine.reduce((a, t) => a + t.points, 0)];
+        });
+        all.push({
+            w,
+            ok: share.every(([c, p]) => c >= need && p > 0),
+            // Une fenêtre ne vaut que par son camp le moins servi.
+            rank: Math.min(...share.map(([c]) => c)) * 1000
+                + Math.min(...share.map(([, p]) => p)),
+        });
+    }
+    const good = all.filter((x) => x.ok);
+    if (good.length) {
+        return { win: good[Math.floor(Math.random() * good.length)].w, ok: true };
+    }
+    return { win: all.reduce((a, b) => (b.rank > a.rank ? b : a)).w, ok: false };
+}
 
 /**
  * Ce que le joueur doit annoncer, camp par camp.
@@ -593,9 +646,22 @@ function onReady(data) {
 
     deal = data;
     if (data.source === 'base') pushSeen(data.game_id);
-    win = deal.tricks.slice(0, windowSize());
     side = cfg.count === 'deux' ? 0
         : (cfg.side === -1 ? (Math.random() < 0.5 ? 0 : 1) : cfg.side);
+
+    // Aucune fenêtre montrable dans cette donne : on en redemande une. Borné,
+    // parce que « Mes parties » puise dans un vivier mince et qu'une page qui
+    // redemande sans fin ne dit rien au joueur.
+    const pick = pickWindow(deal.tricks, windowSize(),
+        cfg.count === 'deux' ? [0, 1] : [side]);
+    if (!pick.ok && dealTries < MAX_DEAL_TRIES) {
+        dealTries++;
+        requestDeal();
+        return;
+    }
+    win = pick.win;
+    dealTries = 0;
+
     pcIdx = 0;
     paused = false;
     endHold = false;
@@ -1102,7 +1168,7 @@ export function mount(container) {
     // Le module est un singleton : tout repart de zéro ici.
     phase = 'config'; deal = null; win = null; pcIdx = 0; paused = false;
     allGathered = false; pending = null; given = [null, null];
-    endHold = false; inReplay = false;
+    endHold = false; inReplay = false; dealTries = 0;
     methodBeforeReplay = null;   // sinon il écraserait le réglage relu ci-dessous
     cfg = loadCfg();
     if (cfg.rules === 'realiste') cfg.nTricks = 8;
