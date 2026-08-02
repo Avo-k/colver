@@ -311,6 +311,23 @@ const TEMPLATE = `
         </p>
     </div>
 
+    <div class="docs-section" id="doc-regles">
+        <h4>R\u00e8gles du jeu</h4>
+        <p>
+            <a href="/regles">Les r\u00e8gles</a> que le moteur applique, en une page&nbsp;: ce qu'on a
+            le droit de jouer, ce qui compte pour le contrat, comment le score se calcule.
+        </p>
+        <p>
+            Il n'existe pas de r\u00e8glement officiel unique de la belote contr\u00e9e \u2014 la f\u00e9d\u00e9ration en
+            a publi\u00e9 \u00e0 elle seule quatre r\u00e9dactions incompatibles, une f\u00e9d\u00e9ration concurrente
+            existe depuis 1997, et le Championnat de France de Cannes ne suit ni l'une ni l'autre.
+            Chaque choix a donc \u00e9t\u00e9 tranch\u00e9, et l'est publiquement sur
+            <a href="/regles/choix">Pourquoi ces r\u00e8gles</a>&nbsp;: qui dit la m\u00eame chose, qui dit
+            le contraire, et \u2014 quand la question se pr\u00eate \u00e0 la mesure \u2014 ce que valent les chiffres.
+            Le relev\u00e9 de sources complet vit dans <em>docs/rules-survey</em>.
+        </p>
+    </div>
+
     <div class="docs-section">
         <h4>Aide-m\u00e9moire, Guide des annonces, Marquer</h4>
         <p>

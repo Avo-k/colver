@@ -196,6 +196,11 @@ const TEMPLATE = `
                 <span class="aide-bid-match">Partie en 2000 pts</span>
             </div>
         </div>
+
+        <div class="rg-crosslink">
+            <a href="/regles">Les r\u00e8gles compl\u00e8tes</a>
+            <a href="/regles/choix">Pourquoi ces r\u00e8gles&nbsp;?</a>
+        </div>
     </div>
 </div>
 `;

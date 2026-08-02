@@ -207,6 +207,17 @@ _ROUTE_META = {
         "description": "Entraînez votre jeu de la carte : trouvez la meilleure "
                        "carte de la position, l'Oracle corrige.",
     },
+    "/regles": {
+        "title": "Règles de la belote contrée — Colver",
+        "description": "Les règles complètes de la belote contrée : enchères, "
+                       "coinche, ce qu'on a le droit de jouer, et le calcul exact "
+                       "du score.",
+    },
+    "/regles/choix": {
+        "title": "Pourquoi ces règles — Colver",
+        "description": "Il n'existe pas de règlement officiel unique de la belote "
+                       "contrée. Chaque choix de règle de Colver, justifié et sourcé.",
+    },
     "/aide": {
         "title": "Aide-mémoire de la belote contrée — Colver",
         "description": "Les règles essentielles de la belote contrée : ordre et "
@@ -258,6 +269,7 @@ _SITEMAP_ROUTES = [
     "/", "/jouer/humain", "/jouer/salon", "/jouer/ia",
     "/analyse/rejouer", "/analyse/annonces", "/analyse/croyances",
     "/problemes/annonce", "/problemes/jeu",
+    "/regles", "/regles/choix",
     "/aide", "/annoncer", "/score", "/classement", "/about",
 ]
 

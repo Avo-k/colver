@@ -1,0 +1,523 @@
+/* ============================================================
+   RÈGLES — /regles (le texte) et /regles/choix (les justifications)
+   ------------------------------------------------------------
+   Deux pages de lecture pure : une colonne de texte, un sommaire
+   collant, des tableaux. Elles partagent toute cette feuille, la
+   seconde n'ajoutant que le bloc question/réponse.
+   ============================================================ */
+
+/* `#app` est un flex en colonne à hauteur fixe, `overflow: hidden` :
+   l'ascenseur appartient donc à la page, et la page doit prendre toute
+   la largeur. Une largeur *définie*, pas seulement un `max-width` — des
+   marges automatiques sur l'axe secondaire empêchent l'étirement, et la
+   largeur retomberait sur celle du plus large tableau. */
+.rg-page {
+    width: 100%;
+    max-height: 100%;
+    overflow-y: auto;
+    color: var(--c-text);
+    font-size: var(--fs-md);
+    line-height: var(--lh-body);
+}
+
+.rg-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: var(--sp-4) var(--sp-6) var(--sp-10);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-6);
+}
+
+/* ---------- En-tête ---------- */
+
+.rg-head { grid-column: 1 / -1; }
+
+.rg-head h2 {
+    font-size: var(--fs-2xl);
+    font-weight: var(--fw-bold);
+    color: var(--c-accent);
+    margin-bottom: var(--sp-1);
+}
+
+.rg-kicker {
+    font-weight: var(--fw-regular);
+    color: var(--c-text-dim);
+    font-size: 0.55em;
+    letter-spacing: var(--tracking-caps);
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: var(--sp-1);
+}
+
+.rg-lede {
+    color: var(--c-text-muted);
+    max-width: 68ch;
+    margin: 0;
+}
+
+.rg-lede + .rg-lede { margin-top: var(--sp-2); }
+
+.rg-crosslink {
+    margin-top: var(--sp-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+}
+
+.rg-crosslink a {
+    display: inline-block;
+    text-decoration: none;
+    font-size: var(--fs-sm);
+    font-weight: var(--fw-semi);
+    color: var(--c-accent);
+    background: var(--c-accent-a10);
+    border: 1px solid var(--c-accent-a30);
+    border-radius: var(--r-full);
+    padding: var(--sp-1) var(--sp-3);
+}
+.rg-crosslink a:hover {
+    background: var(--c-accent-a15);
+    border-color: var(--c-accent-a40);
+}
+
+/* ---------- Sommaire ---------- */
+/* Sous 1100px c'est une rangée de puces sous l'en-tête ; au-dessus, un
+   rail collant à gauche. Le collant se cale sur `.rg-page`, qui est le
+   conteneur de défilement — d'où `top: 0` et non la hauteur d'en-tête. */
+
+/* Volontairement un <div role="navigation"> et non un <nav> : `layout.css`
+   style l'élément `nav` NU pour le menu du site, et sous 640px il le passe
+   en `display: none; position: absolute` — un sommaire en <nav> devenait
+   un panneau flottant recouvrant la page au téléphone. */
+.rg-toc {
+    align-self: start;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1) var(--sp-2);
+    padding-bottom: var(--sp-2);
+    border-bottom: 1px solid var(--c-border);
+}
+
+.rg-toc-group {
+    display: none;
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--c-text-dim);
+}
+
+.rg-toc button {
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    color: var(--c-text-muted);
+    font: inherit;
+    font-size: var(--fs-xs);
+    text-align: left;
+    padding: 3px var(--sp-2);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+}
+.rg-toc button:hover {
+    background: var(--c-accent-a10);
+    border-color: var(--c-accent-a30);
+    color: var(--c-accent);
+}
+/* `base.css` repeint tout <button> en pavé accent et le rétrécit au clic :
+   les boutons de ces deux pages doivent donc annuler l'écrasement. */
+.rg-toc button:active,
+.rg-xref:active { transform: none; }
+
+/* Renvoi d'une réponse vers une autre : un bouton et non une ancre, parce
+   que le routeur avalerait un fragment (cf. shared/toc.js). Il doit donc
+   se lire comme un lien. */
+.rg-xref {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: var(--c-accent);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: var(--c-accent-a40);
+    text-underline-offset: 2px;
+}
+.rg-xref:hover {
+    background: none;
+    color: var(--c-accent-bright);
+    text-decoration-color: var(--c-accent);
+}
+
+@media (min-width: 1100px) {
+    .rg-inner { grid-template-columns: 208px minmax(0, 1fr); }
+    .rg-toc {
+        position: sticky;
+        top: 0;
+        flex-direction: column;
+        align-items: stretch;
+        flex-wrap: nowrap;
+        gap: 2px;
+        max-height: calc(100dvh - var(--header-h) - var(--sp-8));
+        overflow-y: auto;
+        padding: var(--sp-1) var(--sp-2) var(--sp-4) 0;
+        border-bottom: none;
+        border-right: 1px solid var(--c-border);
+    }
+    .rg-toc-group {
+        display: block;
+        margin: var(--sp-3) 0 var(--sp-1);
+    }
+    .rg-toc-group:first-child { margin-top: 0; }
+    .rg-toc button {
+        background: none;
+        border: none;
+        border-left: 2px solid transparent;
+        border-radius: 0;
+        padding: 2px var(--sp-2);
+        line-height: var(--lh-snug);
+    }
+    .rg-toc button:hover {
+        background: none;
+        border-left-color: var(--c-accent);
+    }
+}
+
+/* ---------- Sections ---------- */
+
+.rg-body { min-width: 0; }
+
+.rg-sec { scroll-margin-top: var(--sp-4); }
+.rg-sec + .rg-sec { margin-top: var(--sp-8); }
+
+.rg-sec > h3 {
+    font-size: var(--fs-xl);
+    font-weight: var(--fw-semi);
+    color: var(--c-text);
+    margin: 0 0 var(--sp-3);
+    padding-bottom: var(--sp-1);
+    border-bottom: 1px solid var(--c-border);
+}
+
+.rg-sec h4 {
+    font-size: var(--fs-md);
+    font-weight: var(--fw-semi);
+    color: #e0d8c0;
+    margin: var(--sp-4) 0 var(--sp-1);
+}
+
+.rg-sec p { margin: 0 0 var(--sp-2); max-width: 72ch; }
+.rg-sec p:last-child { margin-bottom: 0; }
+
+.rg-sec strong { color: var(--c-text); font-weight: var(--fw-semi); }
+.rg-sec em { color: var(--c-text-muted); }
+
+.rg-body a,
+.rg-lede a { color: var(--c-accent); text-decoration: none; }
+.rg-body a:hover,
+.rg-lede a:hover { text-decoration: underline; }
+
+/* Liste simple, puce discrète */
+.rg-list {
+    list-style: none;
+    margin: 0 0 var(--sp-2);
+    padding: 0;
+    max-width: 72ch;
+}
+.rg-list > li {
+    position: relative;
+    padding-left: var(--sp-4);
+    margin-bottom: var(--sp-1);
+}
+.rg-list > li::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0.62em;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--c-accent-dim);
+}
+
+/* ---------- Arbre de décision du jeu de la carte ---------- */
+
+.rg-steps {
+    counter-reset: rgstep;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-width: 74ch;
+}
+
+.rg-steps > li {
+    counter-increment: rgstep;
+    position: relative;
+    padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-8);
+    border-left: 2px solid var(--c-accent-a30);
+    background: var(--c-surface-1);
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+.rg-steps > li + li { margin-top: var(--sp-2); }
+
+.rg-steps > li::before {
+    content: counter(rgstep);
+    position: absolute;
+    left: var(--sp-3);
+    top: var(--sp-2);
+    width: 20px;
+    height: 20px;
+    line-height: 20px;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--c-accent-a15);
+    color: var(--c-accent);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-bold);
+}
+
+.rg-steps ul {
+    list-style: none;
+    margin: var(--sp-1) 0 0;
+    padding: 0;
+}
+.rg-steps ul li {
+    position: relative;
+    padding-left: var(--sp-4);
+    color: var(--c-text-muted);
+    margin-top: 3px;
+}
+.rg-steps ul li::before {
+    content: "\2192";
+    position: absolute;
+    left: 0;
+    color: var(--c-accent-dim);
+}
+.rg-steps ul ul { margin-left: var(--sp-2); }
+
+/* ---------- Tableaux ---------- */
+
+.rg-scroll { overflow-x: auto; margin-bottom: var(--sp-2); }
+
+.rg-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: var(--fs-sm);
+}
+
+.rg-table caption {
+    caption-side: top;
+    text-align: left;
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--c-text-dim);
+    padding-bottom: var(--sp-1);
+}
+
+.rg-table th,
+.rg-table td {
+    padding: var(--sp-1) var(--sp-3);
+    border-bottom: 1px solid var(--c-border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.rg-table thead th {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--c-text-dim);
+    font-weight: var(--fw-semi);
+    white-space: nowrap;
+}
+
+.rg-table tbody th {
+    font-weight: var(--fw-semi);
+    color: var(--c-text);
+    white-space: nowrap;
+}
+
+.rg-table td { color: var(--c-text-muted); }
+.rg-table .rg-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rg-table tr:last-child th,
+.rg-table tr:last-child td { border-bottom: none; }
+
+.rg-table .rg-win th, .rg-table .rg-win td { background: var(--c-success-a15); }
+.rg-table .rg-lose th, .rg-table .rg-lose td { background: var(--c-danger-a15); }
+
+.rg-total th, .rg-total td {
+    border-top: 1px solid var(--c-border-strong);
+    color: var(--c-text);
+    font-weight: var(--fw-semi);
+}
+
+/* Les deux tableaux de cartes côte à côte */
+.rg-duo {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: var(--sp-3) var(--sp-6);
+    margin-bottom: var(--sp-2);
+}
+
+.suit-red { color: var(--c-suit-red); }
+.suit-black { color: var(--c-suit-black); }
+
+/* ---------- Encarts ---------- */
+
+.rg-note {
+    border-left: 2px solid var(--c-accent-a40);
+    background: var(--c-accent-a10);
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+    padding: var(--sp-2) var(--sp-3);
+    margin: var(--sp-3) 0;
+    font-size: var(--fs-sm);
+    color: var(--c-text-muted);
+    max-width: 74ch;
+}
+.rg-note p { margin: 0; max-width: none; }
+.rg-note p + p { margin-top: var(--sp-1); }
+.rg-note strong { color: var(--c-text); }
+
+.rg-formula {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    background: var(--c-surface-2);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-sm);
+    padding: 1px 6px;
+    color: var(--c-accent);
+    white-space: nowrap;
+}
+
+/* ---------- Exemples de marque ---------- */
+
+.rg-ex {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--sp-3);
+}
+
+.rg-ex-card {
+    background: var(--c-surface-2);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
+    font-size: var(--fs-sm);
+}
+.rg-ex-card h5 {
+    margin: 0 0 var(--sp-1);
+    font-size: var(--fs-xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--c-text-dim);
+    font-weight: var(--fw-semi);
+}
+.rg-ex-card p { margin: 0 0 var(--sp-1); color: var(--c-text-muted); max-width: none; }
+.rg-ex-card .rg-ex-out {
+    margin: 0;
+    padding-top: var(--sp-1);
+    border-top: 1px solid var(--c-border);
+    color: var(--c-text);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Questions / réponses (page « choix ») ---------- */
+
+.rg-q {
+    scroll-margin-top: var(--sp-4);
+    padding: var(--sp-3) 0;
+    border-bottom: 1px solid var(--c-border);
+}
+.rg-q:last-child { border-bottom: none; }
+
+.rg-q > h4 {
+    margin: 0 0 var(--sp-2);
+    font-size: var(--fs-lg);
+    font-weight: var(--fw-semi);
+    color: var(--c-accent);
+    line-height: var(--lh-snug);
+}
+
+.rg-q--target {
+    background: var(--c-accent-a10);
+    border-radius: var(--r-md);
+    padding-left: var(--sp-3);
+    padding-right: var(--sp-3);
+    margin-left: calc(-1 * var(--sp-3));
+    margin-right: calc(-1 * var(--sp-3));
+}
+
+/* Réponse d'une phrase, mise en tête */
+.rg-a {
+    font-weight: var(--fw-semi);
+    color: var(--c-text);
+    border-left: 2px solid var(--c-accent);
+    padding-left: var(--sp-3);
+    margin: 0 0 var(--sp-2);
+}
+
+.rg-quote {
+    margin: var(--sp-2) 0;
+    padding: var(--sp-2) var(--sp-3);
+    border-left: 2px solid var(--c-border-strong);
+    background: var(--c-surface-2);
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+    color: var(--c-text-muted);
+    font-size: var(--fs-sm);
+    max-width: 74ch;
+}
+.rg-quote cite {
+    display: block;
+    margin-top: var(--sp-1);
+    font-style: normal;
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+}
+
+.rg-src {
+    font-size: var(--fs-xs);
+    color: var(--c-text-dim);
+    margin-top: var(--sp-2);
+}
+.rg-src strong { color: var(--c-text-muted); font-weight: var(--fw-semi); }
+
+.rg-tag {
+    display: inline-block;
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    padding: 1px 8px;
+    border-radius: var(--r-full);
+    vertical-align: middle;
+    margin-left: var(--sp-2);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--c-border-strong);
+    color: var(--c-text-dim);
+    white-space: nowrap;
+}
+.rg-tag--measured {
+    background: var(--c-accent-a10);
+    border-color: var(--c-accent-a30);
+    color: var(--c-accent);
+}
+
+.rg-foot {
+    grid-column: 1 / -1;
+    margin-top: var(--sp-8);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--c-border);
+    text-align: center;
+    color: var(--c-text-dim);
+    font-size: var(--fs-sm);
+}
+.rg-foot a { color: var(--c-accent); text-decoration: none; font-weight: var(--fw-semi); }
+.rg-foot a:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+    .rg-inner { padding: var(--sp-3) var(--sp-4) var(--sp-8); gap: var(--sp-4); }
+    .rg-head h2 { font-size: var(--fs-xl); }
+    .rg-sec > h3 { font-size: var(--fs-lg); }
+    .rg-q > h4 { font-size: var(--fs-md); }
+    .rg-steps > li { padding-left: var(--sp-6); }
+    .rg-steps > li::before { left: var(--sp-2); }
+}
