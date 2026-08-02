@@ -7,6 +7,7 @@ Pool generation, deal enrichment, replay storage.
 A "pool" is a pre-computed set of deals + DD points (and optionally "real" play points from a play model). Stored in `data/pools/`.
 
 - pools.md — list of all pools, formats, sources
+- [pool_staleness.md](pool_staleness.md) — **quand un pool est-il assez périmé pour justifier une regénération ?** Mesuré : la dérive d'IS-DD ne suffit pas (87 % de l'écart est du bruit d'échantillonnage). Contient la règle « un label DD symétrique ne peut pas voir la force de jeu ».
 
 ## Enrichment Methods
 

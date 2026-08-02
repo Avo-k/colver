@@ -44,3 +44,5 @@ Belote Contrée engine + RL training stack.
 | Building / running a bot | [agents.md](agents.md) |
 | Training commands | [training/overview.md](training/overview.md) |
 | Auction-conditioned bid labels (**negative** — read before retrying) | [bid/experiments/auction_conditioned_labels.md](bid/experiments/auction_conditioned_labels.md) |
+| Un pool DD périmé : ce que ça coûte (**ne pas regénérer pour ça**) | [data_gen/pool_staleness.md](data_gen/pool_staleness.md) |
+| Registre des mesures (provenance + agrégats, versionné) | [measurements/README.md](measurements/README.md) |

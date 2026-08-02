@@ -133,17 +133,42 @@ unbiased in the max). The continuation target is, as far as it can be verified, 
 correctly. Yet every distilled model loses by 3–7 pp, and the residual is always the same:
 the targets want to bid where v6 passes, on roughly a sixth of all positions.
 
-What has *not* been ruled out is the scoring of the final contract. Both attempts settle
-it from DD points — attempt 2 via a sampled `P(isdd | dd)` map, but that map was built
-from `scores_isdd_5M.sc`, which is stale (pre-quick_tricks-fix) and came from a
-*uniform-world* IS-DD, a weaker player than the one the arena actually uses. Scoring the
-final contract with a real rollout of the current play policy is the one substantive
-piece that has never been tried, and it is the expensive one
-(see the cost analysis: ~74 GPU-days at pool scale).
+### The last open line, closed (2026-08-02)
 
-Until that is done, the honest summary is: the measured 21.5% RMSE gain from auction
-conditioning is a fact about estimating `dd_pts`, and it has not transferred to bidding
-strength through any target definition tried so far.
+The one remaining hypothesis was the **scoring of the final contract**. Both attempts
+settle it from DD points — attempt 2 via a sampled `P(isdd | dd)` map, but that map was
+built from `scores_isdd_5M.sc`, which is stale (pre-quick_tricks-fix) and came from a
+*uniform-world* IS-DD, a weaker player than the one the arena actually uses. Scoring the
+final contract with a real rollout of the current play policy had never been tried, and
+it was the expensive one (~74 GPU-days at pool scale).
+
+**It is not worth trying.** Three things converge:
+
+1. **The map barely moves.** Re-labelling 1000 deals with today's playgen IS-DD and
+   comparing against `scores_isdd_5M.sc` gives a mean shift of **−0.18 ± 0.41** — zero —
+   and RMS 26.05 against a **noise floor of 24.32**, measured by running the same code
+   twice with different seeds. The excess attributable to *all* the drift together is
+   √(26.05² − 24.32²) = **9.3 pts, 12.8% of a label's variance**. `E[isdd | dd]` is fitted
+   on exactly these labels, so this bounds how far the map can move.
+   [data_gen/pool_staleness.md](../../data_gen/pool_staleness.md)
+2. **This was always the second-order bias** — the section above says so in as many words.
+   The first-order defect, the target bidding where v6 passes, survived attempt 2, which
+   was designed to kill it, and came out *worse*.
+3. **v6 looks like a plateau, not a badly-fitted model.** `playgen_bid` — a behaviour
+   clone, no RL, not even score-aware — lands at 48.2%. Rescoring a label does not move an
+   architecture plateau.
+
+What the re-labelling does **not** bound is the *population shift*: the map is fitted over
+"all four trumps, uniform deals", whereas real auctions reach a strongly selected subset of
+(hand, contract) pairs. That is the only version of this idea still worth reviving, and
+**as a measurement, not as a retrain** — the acceptance test would be an arena h2h, and
+[bid_v7_plan.md](../bid_v7_plan.md) §2.9 shows the arena cannot resolve effects of a few
+points per decision.
+
+**Closed summary:** the measured 21.5% RMSE gain from auction conditioning is a fact about
+estimating `dd_pts`, and it does not transfer to bidding strength through any target
+definition tried. Do not re-open this line without a new idea about the *target itself* —
+not about how its final contract is scored.
 
 ## Reproduce
 

@@ -44,6 +44,11 @@ Le chiffre qui compte est un rapport de deux échelles :
 24,6 %. Ce n'est pas une curiosité esthétique : un quart des annonces de v6 est
 décidé par du bruit d'apprentissage plutôt que par le contenu de la main.
 
+⚠️ **Tous les chiffres de cette section portent sur l'annonce d'ouverture** — `flip_rate`,
+`q_scale` et `q_equivariance` mesurent après `redeal_with_hands`, sans aucun `step`. Le
+taux de bascule et la marge changent beaucoup avec le préfixe d'enchère, et **le coût
+attendu ne se lit sur aucun des deux pris seul** : §1.7.
+
 ### 1.2 La fonction Q est plate au sommet
 
 Corollaire du point précédent, mais il tient tout seul : v6 sépare ses deux
@@ -169,42 +174,6 @@ du label**. À budget CPU constant, scorer 1M donnes avec beaucoup de mondes est
 peut-être meilleur que 5M avec 20 — hypothèse à trancher avec `bench_label_variance`
 avant d'engager les 87 h. Cf. §2.8.
 
-### 1.7 Le Q plat reflète un jeu réellement plat — et v6 ordonne juste
-
-*Mesuré le 2026-08-02, [bid_q_flatness.py](../../scripts/analysis/bid_q_flatness.py),
-40 mains d'ouverture × 300 mondes playgen × 3 candidates = 36 000 déroulements.*
-
-Pour chaque main : la valeur réelle du top-1 de v6, celle de son top-2, et celle de sa
-**8ᵉ** annonce comme contrôle positif. Écarts de points marqués, appariés sur le même
-pool de mondes, puis moyennés sur les mains.
-
-| | Δ vs top-1 | lecture |
-|---|---|---|
-| top-2 | **−8,20 ± 4,31** | le top-1 est vraiment le meilleur, mais de peu (1,9 σ) |
-| 8ᵉ annonce | **−114,50 ± 6,48** | **contrôle positif**, 17,7 σ — la mesure a toute la puissance voulue |
-
-- top-1 bat top-2 sur **60 %** des mains ;
-- corrélation **ΔQ ↔ Δréel = +0,504** alors que le ΔQ médian de ces paires vaut 0,0041.
-
-**Conclusion : l'hypothèse (a) l'emporte.** Le sommet du Q est plat parce que le jeu
-l'est — deux annonces voisines valent à ~8 points près — et non parce que v6
-sous-discriminerait. Le contrôle positif l'établit : le même protocole détecte sans
-peine les 114 points qui séparent le top-1 d'une annonce médiocre. Mieux, v6 ordonne
-correctement ces quasi-égalités : un écart de Q de 0,004 prédit encore le bon
-gagnant à r = 0,50.
-
-**Ce que ça change pour §3.1.** Le bruit de symétrie fait basculer 24,6 % des annonces,
-mais il les fait basculer *entre options qui valent ~8 points d'écart* : le coût
-attendu est de l'ordre de **2 points par donne**, pas des dizaines. La canonicalisation
-reste justifiée — hygiène, capacité libérée, et c'est elle qui rend §3.6 bien définie —
-mais **il ne faut pas en attendre un gain de force spectaculaire**. Mise en regard
-utile : le bug capot vaut 585 points sur ~10⁻⁴ des donnes, soit ~0,06 pt/donne. En
-espérance, la symétrie pèse donc plus lourd que le capot, d'un ordre de grandeur.
-
-*Limite* : mesuré sur des annonces d'**ouverture** seulement. Une sonde avec préfixe
-(partenaire à 100♣) donnait −86 ± 25 pour la 3ᵉ candidate — les décisions de milieu
-d'enchère sont probablement moins plates. À refaire avec `--prior`.
-
 ### 1.6 Acquis antérieurs qui contraignent v7
 
 Établis avant ce document, à ne pas re-litiger :
@@ -213,6 +182,19 @@ d'enchère sont probablement moins plates. À refaire avec `--prior`.
   Distiller « valeur de jouer ce contrat » fait sur-annoncer : 47,3 % puis 43-44 %
   vs v6. Le pipeline est réutilisable, c'est la cible qui est fausse.
   [experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md)
+  **Ligne close le 2026-08-02** : la dernière hypothèse ouverte — rescorer le contrat
+  final par un vrai déroulement au lieu de la table `P(isdd | dd)` — ne vaut pas le
+  coup. La table est ajustée sur des labels qui, remesurés aujourd'hui, ne bougent que
+  de 9,3 pts sur 24 de bruit. Ne pas rouvrir sans une idée neuve sur **la cible**, pas
+  sur son scoring.
+- **Le pool n'est pas à regénérer pour cause de dérive d'IS-DD** (mesuré 2026-08-02,
+  1000 donnes × 4 couleurs) : décalage moyen nul, excès sur le plancher de bruit = 12,8 %
+  de la variance d'un label, contre ~117 GPU-jours à l'échelle 5M. Le motif de
+  regénération est un **changement de format**, pas la fraîcheur des chiffres — ce qui en
+  fait une décision de §5 (périmètre de v7) et non un préalable.
+  Corollaire méthodologique à ne pas réapprendre : **un label DD symétrique ne peut pas
+  voir la force de jeu**, les points cartes N-S étant à somme constante.
+  [../data_gen/pool_staleness.md](../data_gen/pool_staleness.md)
 - **Jamais de E[Y|X] substitué par échantillon avant un seuil** (erreur de Jensen) :
   on calibre en échantillonnant.
 - **Deux features manquantes identifiées par sonde de couche cachée** — J/9 par
@@ -226,6 +208,197 @@ d'enchère sont probablement moins plates. À refaire avec `--prior`.
 - **v6 bat v5** 55,8 % (jeu DMC) / 57,3 % +181 (jeu IS-DD), mais perd -16 à -26
   pts/donne à chaque sonde de score : le paradoxe donne/match n'est pas expliqué.
 
+### 1.7 La platitude dépend du **type de décision**, pas de la profondeur d'enchère
+
+*Mesuré le 2026-08-02. Platitude : [bid_q_flatness.py](../../scripts/analysis/bid_q_flatness.py),
+120 mains × 300 mondes playgen × 3 candidates = 108 000 déroulements **par régime**,
+graine commune donc **mains appariées d'un régime à l'autre**. Bascules :
+[bid_equivariance.py](../../scripts/analysis/bid_equivariance.py) `--prior`, 400 donnes
+× 23 permutations.*
+
+Pour chaque main : la valeur réelle du top-1 de v6, celle de son top-2, et celle de sa
+**8ᵉ** annonce comme contrôle positif. Trois régimes, définis par le préfixe d'enchère —
+le siège qui décide est toujours `len(prior)` crans après le premier parleur, donc la
+longueur du préfixe suffit à les nommer :
+
+| régime | Δréel(top2 − top1) | contrôle positif (8ᵉ) | top1 > top2 | r(ΔQ, Δréel) | ΔQ médian |
+|---|---|---|---|---|---|
+| **ouverture** | **−8,94 ± 2,12** | −111,7 ± 3,8 | 65 % | +0,509 | 0,0042 |
+| **adversaire a ouvert 100♣** | **−74,76 ± 8,75** | −210,0 ± 10,7 | 81 % | +0,708 | 0,0423 |
+| **partenaire a ouvert 100♣** | **−1,03 ± 2,94** | −338,0 ± 8,6 | 53 % | +0,111 | 0,0150 |
+
+La première ligne **reproduit la mesure à 40 mains** (−8,20 ± 4,31, contrôle −114,5,
+r = +0,504) à trois fois l'échantillon : le résultat d'ouverture tient.
+
+**Ce n'est pas la profondeur de l'enchère qui compte, c'est le type de décision.**
+*Contester* l'ouverture adverse met 75 points en jeu, 8,4× l'ouverture, et c'est là que
+v6 ordonne le mieux. *Soutenir* son partenaire est au contraire parfaitement plat :
+top-1 et top-2 sont interchangeables à 1 point près, 53 % — pile ou face. Le r = +0,111
+n'y est pas un défaut de v6 : **on n'ordonne pas ce qui est identique**. Et le contrôle
+positif y est le plus large des trois (−338), donc la décision compte énormément dans
+l'absolu — c'est seulement son *sommet* qui est plat.
+
+#### Ce que ça change pour §3.1, et pourquoi le taux de bascule seul induit en erreur
+
+Les 24,6 % de §1.1 sont mesurés **à l'ouverture** (`flip_rate` ne joue aucun `step`).
+Mesurés par régime, taux de bascule et coût d'une bascule varient **en sens inverse** :
+
+| régime | bascules v6 | bruit / marge | coût d'une bascule | **coût attendu** |
+|---|---|---|---|---|
+| ouverture | **24,58 %** | 8,8× | 8,94 pts | **2,2 pts** |
+| adversaire a ouvert | **5,24 %** | 0,9× | 74,76 pts | **3,9 pts** |
+| partenaire a ouvert | **19,88 %** | 2,9× | 1,03 pt | **0,2 pt** |
+
+**Le régime le plus coûteux est celui qui bascule le moins.** Contester ne bascule que
+5 % du temps — la marge y est 10× plus large, le bruit de symétrie ne la franchit
+presque plus — mais chaque bascule coûte 75 points. À l'inverse, les 19,9 % de bascules
+du régime « soutien » ne coûtent rien, puisqu'elles permutent des options équivalentes.
+**Un taux de bascule seul ne dit donc rien du coût** : c'est le produit qui compte, et
+c'est le régime jamais mesuré jusqu'ici qui domine.
+
+Conséquences :
+- la canonicalisation vaut **plus** que les ~2 pts/décision estimés d'après l'ouverture,
+  et son gisement est le régime de **contestation**, pas l'ouverture ;
+- l'ordre de grandeur reste néanmoins de quelques points par décision, donc **l'arène
+  ne pourra pas trancher §2.1** — cf. la question de puissance ouverte en §2.9 ;
+- l'erreur d'équivariance du vecteur Q, elle, est **stable** (0,037 / 0,040 / 0,043,
+  soit ~5 % de l'étendue partout) : c'est bien la marge qui bouge, pas le bruit.
+
+*Deux limites à ne pas oublier.* (1) `bascules × Δ(top1,top2)` est un **minorant** : une
+bascule ne va pas toujours vers le top-2. (2) Le *coût* d'une bascule n'est mesuré qu'à
+**un seul niveau d'enchère** (100) ; le taux de bascule, lui, est cartographié sur 20
+régimes en §1.8.
+
+#### Le taux de bascule, cartographié — l'ouverture est un plateau
+
+*[bid_margin_sweep.py](../../scripts/analysis/bid_margin_sweep.py), 20 régimes × 400
+donnes × 23 permutations, **17 s au total**.* L'asymétrie de coût est le point de
+méthode : la marge coûte 0,8 s par régime, le coût d'une bascule 13 à 25 min. On balaie
+donc large pour presque rien, et on ne dépense le GPU que là où la carte le justifie.
+
+| régime | bascules | ctrl | marge | bruit/marge |
+|---|---|---|---|---|
+| ouverture (1er / 2e / 3e / 4e de parole) | **24,6 / 25,4 / 26,2 / 24,6 %** | ≤3,1 % | 0,0042-0,0069 | 7,1-8,8× |
+| contestation 100 / 110 / 130 / 150 | 5,2 / 6,5 / **1,0 / 0,00 %** | ≤0,3 % | 0,042 → 0,136 | 0,9 → 0,3× |
+| contestation 100, couleurs ♠/♥/♦ | 4,8 / 3,8 / 5,2 % | ≤0,3 % | ~0,044 | ~0,9× |
+| soutien 100 / 130 | 19,9 / 3,9 % | ≤0,3 % | 0,015 / 0,089 | 2,9 / 0,9× |
+| 2e tour (part. nous relance à 130) | 2,1 % | 0,00 % | 0,111 | 0,5× |
+
+- **L'ouverture est un plateau, pas un point** : les quatre positions de parole donnent
+  toutes ~25 % et une marge de 0,004-0,007. Les 24,6 % de §1.1 caractérisent le régime
+  entier.
+- **Une annonce sur la table change tout** : 0-10 % au lieu de ~25 %.
+- **Plus l'enchère est haute, plus v6 est décidé** — jusqu'à **0 bascule sur 9200** à 150.
+- **La couleur ne change rien** à niveau égal : le taux est une propriété du *niveau*.
+- Les contrôles heuristiques restent ≤3,1 % partout, ce qui valide la permutation du
+  préfixe (`apply_prior`) dans les 20 régimes.
+
+### 1.8 Ce que l'arène peut voir — et la conversion en points par donne
+
+*[arena_power.py](../../scripts/analysis/arena_power.py), 2000 donnes jouées (enchère v6,
+jeu DouDou50) puis 20 000 matchs simulés par point de la courbe.*
+
+**Fréquence des régimes** — 16 055 décisions réelles, **8,0 par donne** (passes forcées
+exclues, les quatre sièges) :
+
+| régime | part | par donne | niveaux dominants |
+|---|---|---|---|
+| **contestation** | **57,7 %** | 4,63 | 110→23 %, 120→19 %, 90→17 %, 100→17 % |
+| soutien | 23,6 % | 1,89 | |
+| ouverture | 16,0 % | 1,28 | |
+| notre enchère | 2,8 % | 0,22 | |
+
+**Le format** : σ = **314,9 pts** d'écart par donne, et une partie ne dure que
+**10,4 donnes**. C'est court, et c'est ce qui rend la variance dominante — cf. §2.6.
+
+**Seuil de détectabilité** (borne optimiste = duplicate matching parfait, pessimiste =
+donnes indépendantes ; l'arène duplique, donc la vérité penche vers l'optimiste) :
+
+| matchs | taux requis | δ détectable |
+|---|---|---|
+| 1 000 | ≥ 53,10 % | **4 à 10** pts/donne |
+| 2 000 | ≥ 52,19 % | 2 à 10 |
+| 5 000 | ≥ 51,39 % | 1 à 4 |
+| 10 000 | ≥ 50,98 % | 1 à 2 |
+
+*Contrôle* : à δ = 0 la simulation rend **50,00 %**. Une première version reversait tout
+l'écart d'une donne au camp gagnant et rendait 58 % — en contrée les deux camps marquent,
+la course à 2000 ne se déduit pas de la seule différence. Le pool est en outre
+**symétrisé** (chaque donne entre aussi retournée), sans quoi l'asymétrie d'un
+échantillon fini se propage dans la courbe.
+
+#### La conversion, et une estimation antérieure à corriger
+
+En pondérant §1.7 par ces fréquences, et en ne comptant que les décisions d'**une seule
+équipe** (2 sièges sur 4, soit ~4 décisions par donne) :
+
+| régime | décisions/donne/équipe | × bascules | × coût | = pts/donne |
+|---|---|---|---|---|
+| contestation | 2,32 | 5,24 % | 74,76 | **9,1** |
+| ouverture | 0,64 | 24,58 % | 8,94 | 1,4 |
+| soutien | 0,95 | 19,88 % | 1,03 | 0,2 |
+| | | | **total** | **~10,7** |
+
+**Ceci corrige l'estimation « ~2 pts/donne » de §1.7**, qui ne portait que sur
+l'ouverture et confondait points par *décision* et par *donne*. À ~10,7 on est
+**au-dessus** du seuil de 1000 matchs, pas en dessous : l'arène peut voir §2.1.
+
+*Deux réserves qui empêchent d'en faire une promesse.* (1) ~10,7 est la valeur **en
+jeu**, pas le gain : la canonicalisation achète de la *cohérence*, pas de la *justesse*.
+Le gain réel vient de ce que les 24 étiquetages d'une classe fusionnent, donc que
+l'entraînement voit 24× plus de signal — un effet d'apprentissage qu'aucune mesure sur v6
+ne peut prédire. (2) La contestation pèse 85 % du total et son coût ne vient que du
+niveau 100, alors que 90-120 dominent.
+
+### 1.9 Il n'y a pas de paradoxe donne/match — l'audit de 2026-04-26 mesurait autre chose
+
+*[bid_ev_by_score.py](../../scripts/analysis/bid_ev_by_score.py), 2000 donnes par sonde,
+chacune jouée **deux fois, v6 dans un camp puis dans l'autre à score miroir** — un
+appariement qui annule l'asymétrie de siège et de donneur. Les deux specs ne diffèrent
+que par le modèle d'annonce (même DouDou50 au jeu), donc l'écart est bien celui du bidder.*
+
+| score (v6 − adv) | Δ deal-EV de v6 | |
+|---|---|---|
+| **0 - 0** | **+12,00 ± 3,71** | +3,2 σ — la sonde qui décide |
+| 900 - 200 | +22,88 ± 3,99 | +5,7 σ |
+| 200 - 900 | +5,65 ± 4,10 | +1,4 σ |
+| 1500 - 1000 | +16,54 ± 3,76 | +4,4 σ |
+| 1000 - 1500 | +17,10 ± 3,80 | +4,5 σ |
+| 1700 - 1700 | +10,60 ± 4,55 | +2,3 σ |
+
+**v6 est meilleur en points par donne, à tous les scores** — l'inverse de ce que le
+dossier affirmait (« −16 à −26 pts/donne à chaque sonde », 2026-04-26).
+
+**Le contrôle qui tranche entre les deux mesures.** L'écart mesuré doit prédire le taux
+de matchs connu. Via la courbe de §1.8 : +14,1 pts/donne en moyenne → **~55-56 %**, à
+comparer aux **55,8 %** (jeu DMC) et **57,3 %** (jeu IS-DD) enregistrés en arène. Sous
+l'ancien chiffre de −22, la même courbe prédirait **~41 %**, c'est-à-dire que v6
+*perdrait* ses matchs. C'était exactement ça, le « paradoxe » : deux mesures dont une
+seule est compatible avec l'arène.
+
+**Pourquoi l'ancien chiffre.** L'audit différenciait **deux « nets » mesurés séparément**
+(v5 +57,6, v6 +35,2) au lieu d'un face-à-face apparié. Une telle métrique pénalise
+l'agressivité par construction : un bidder qui prend plus de contrats marginaux mais
+rentables baisse sa moyenne par donne déclarée tout en gagnant plus. C'est précisément ce
+que la note d'origine observait sans en tirer la conséquence — v6 « annonce 140-160 trois
+fois plus souvent » et chute plus (45 % contre 38 %). Le chiffre est en outre antérieur à
+quatre ruptures (solveur 07-23, base 162 le 07-28, fin de l'arrondi le 07-31, règle
+d'atout le 08-01), même si leur effet documenté sur un score de donne est petit (~2,4 pts).
+
+*Réserve* : le code de l'audit de 2026-04-26 n'a pas été relu, donc ce qu'il appelait
+« net » est reconstitué à partir de sa note. Ce qui est établi, c'est que les deux
+protocoles diffèrent et qu'**un seul des deux est compatible avec l'arène**.
+
+**Ce que ça ferme.** §2.6 était le seul bloqueur explicite sur le choix de reward.
+Δ-winprob ne sacrifie rien en deal-EV : v6 domine v5 sur les deux tableaux. Donc (1) v7
+garde la reward sans arbitrage à faire, et (2) **le pts/donne redevient un diagnostic
+valide** — la doctrine « le match-arena est la vérité, point » de la note d'origine était
+une conséquence de l'artefact, pas du modèle.
+
+*Corollaire méthodologique* : ne jamais comparer deux bidders par des moyennes mesurées
+séparément. Un face-à-face apparié sur les mêmes donnes, camps échangés, coûte le même
+temps de calcul et ne peut pas produire ce genre d'illusion.
+
 ---
 
 ## 2. Ce qui reste à prouver
@@ -234,18 +407,25 @@ Chaque question est formulée pour pouvoir tomber.
 
 **2.1 — Canonicaliser l'obs d'annonce améliore-t-il la force, ou seulement la cohérence ?**
 L'erreur d'équivariance est grande *relativement à la marge*, mais petite en absolu
-(4,7 % de l'étendue). Il se peut que supprimer ce bruit ne change rien à l'arène
-parce que les options qu'il permute sont réellement d'égale valeur.
-*Test* : entraîner v7 à budget identique avec et sans canonicalisation, h2h 1000
-matchs. *Critère* : ≥ 52 % pour la version canonique, et flip rate mesuré à 0 %.
+(4,7 % de l'étendue). §1.7 a depuis chiffré le coût attendu par régime — **3,9 pts par
+décision en contestation, 2,2 à l'ouverture, 0,2 en soutien** — donc l'effet existe et
+se concentre là où on ne le cherchait pas.
+*Test* : entraîner v7 à budget identique avec et sans canonicalisation.
+*Critère* : flip rate mesuré à 0 % **dans les trois régimes** (non-régression, gratuit),
+plus une sonde appariée en pts/décision par régime via l'outil de §4.
+⚠️ **Le critère « ≥ 52 % en h2h 1000 matchs » qui figurait ici est retiré** : à quelques
+points par décision, l'écart attendu est sous l'erreur type de l'arène. Il testait la
+puissance de l'instrument, pas l'hypothèse. Cf. §2.9.
 
 **2.2 — Le Q plat est-il un défaut de calibration ou la réalité du jeu ?**
-**Fermée le 2026-08-02 : c'est le jeu, et v6 ordonne juste.** Voir §1.7.
+**Fermée le 2026-08-02 : c'est le jeu, et v6 ordonne juste** — mais seulement à
+l'ouverture et en soutien ; en contestation le jeu n'est pas plat du tout (75 pts) et
+v6 y ordonne encore mieux. Voir §1.7.
 
 **2.3 — Réveiller le capot rapporte-t-il quelque chose en arène ?**
-Les capots forcés sont à ~10⁻⁴. Même parfaitement joués, le gain en % de matchs sera
-minuscule ; le gain en points sur ces donnes est de 110 à 200. *Test* : v7 avec capot
-réveillé vs v7 sans, h2h. *Attente honnête* : indétectable en % de matchs, visible en
+Les capots forcés sont à ~10⁻⁴, et §1.3 a depuis chiffré ce qui s'y perd : **585 points
+par donne** — pas les 110-200 estimés à la main avant mesure — soit **~0,06 pt/donne**
+en espérance. *Test* : v7 avec capot réveillé vs v7 sans, h2h. *Attente honnête* : indétectable en % de matchs, visible en
 pts/donne conditionnellement à la famille de mains. **À traiter comme une correction
 de justesse, pas comme un gain de force** — ne pas la vendre autrement.
 
@@ -262,8 +442,9 @@ uniquement, playgen vs uniforme vs belief. Attention à la règle maison : **ne 
 tirer les questions du flux que consomme le testé**.
 
 **2.6 — Le paradoxe donne/match de v6 est-il un artefact de la reward Δ-winprob ?**
-Ouvert depuis v6. Il conditionne le choix de reward pour v7, donc il faut au moins
-une hypothèse testée avant de figer le signal.
+**Fermée le 2026-08-02 : il n'y a pas de paradoxe.** v6 est *meilleur* en deal-EV que
+v5, à tous les scores. Voir §1.9. Conséquence directe : **la reward n'est pas un
+bloqueur pour v7** et le pts/donne reste un diagnostic valide.
 
 **2.7 — Une architecture équivariante bat-elle une canonicalisation ?**
 Alternative à 2.1 : un encodeur par couleur partagé + agrégation invariante (deep
@@ -319,6 +500,20 @@ dispersion est plus faible que les 44,7 pts mesurés ici en uniforme.
 *Reste ouvert* : la valeur marginale de 5M contre 1M à k identique (87 h contre 17 h).
 C'est une question de rendement décroissant, pas d'allocation.
 
+**2.9 — Que peut réellement résoudre l'arène, et à partir de quel écart ?**
+*Ouverte le 2026-08-02.* Plusieurs questions de cette section posent un critère en % de
+matchs sans avoir vérifié que l'instrument peut l'atteindre. Ordre de grandeur : quelques
+points par donne cumulés sur une partie à 2000 pèsent ~1 % de score, soit ~51 % de
+matchs, quand 1000 matchs ont déjà ~1,6 pp d'erreur type. **Un critère à 52 % est alors
+un test de la puissance de l'arène, pas de l'hypothèse.**
+*Test* : une table de conversion pts/donne → % de matchs (par simulation sur des scores
+de donne déjà enregistrés, sans réentraîner quoi que ce soit), et le seuil de
+détectabilité à 1000 / 2000 / 5000 matchs.
+*Conséquence attendue* : réaffecter chaque question de §2 à l'instrument qui a la
+puissance voulue — sonde appariée en pts/décision pour §2.1 et §2.3, arène réservée aux
+effets de plus de ~4-5 pp. Le réflexe existe déjà dans ce document sous forme de
+**contrôle positif** (§1.7) ; il s'agit de l'étendre aux critères d'arène.
+
 ---
 
 ## 3. Pistes d'amélioration
@@ -330,9 +525,13 @@ Comme l'obs de jeu 411 (`canonical_play_order`). Avant l'enchère il n'y a pas d
 pour ancrer l'ordre : trier les couleurs par (longueur, motif de rangs) décroissant.
 La sortie devant nommer une couleur, il faut remapper l'action comme le fait
 `card_to_physical`. Espace d'entrée effectif ÷ ~22, équivariance gratuite, et une
-source de bruit qui vaut 9× la marge de décision qui disparaît. Le tri existe dans
-[suit_perm.rs](../../colver-core/src/suit_perm.rs).
+source de bruit qui vaut 8,8× la marge de décision à l'ouverture qui disparaît. Le tri
+existe dans [suit_perm.rs](../../colver-core/src/suit_perm.rs).
 *Effet secondaire utile* : rend la §3.6 bien définie.
+*Ce qu'on en attend, depuis §1.7* : le gisement n'est pas l'ouverture (2,2 pts/décision)
+mais la **contestation** (3,9 pts/décision), où le bruit ne franchit la marge que 5 % du
+temps mais coûte 75 points quand il la franchit. À vérifier régime par régime, pas en
+moyenne — et pas à l'arène (§2.9).
 
 ### 3.2 Suite de sondes stratifiée, en **évaluation** *(coût nul, risque nul)*
 Quelques centaines de mains construites par famille — capot forcé, 8 atouts, 7
@@ -452,7 +651,7 @@ en laissant l'enchère **se poursuivre** et la donne se jouer, sur N mondes play
 **Pourquoi ça n'est pas déjà ce que fait la page Annonces.** La page fixe la question
 (« ce contrat, à ce seuil, passe-t-il ? ») et échantillonne les mondes. Ici on veut
 comparer des *actions*, chacune suivie de sa propre continuation d'enchère — c'est-à-dire
-exactement la cible de label validée en §1.5.
+exactement la cible de label validée en §1.6.
 
 **Le biais d'Oracle ne se moyenne pas.** Point important, parce que l'intuition
 contraire est naturelle : un solve DD est un *majorant* de ce qui est réalisable dans
@@ -526,17 +725,29 @@ ne fait rien, et le repli uniforme est silencieux pour qui ne lit pas `probe()`.
 ## 5. Ordre de travail proposé
 
 1. ~~§4 — l'évaluateur de candidates~~ **fait** (2026-08-02).
-2. ~~§2.2 — le Q plat~~ **fermée** (2026-08-02, §1.7) : c'est le jeu qui est plat, et
-   v6 ordonne juste (r = +0,50). §3.1 reste à faire mais pour ~2 pts/donne, pas plus.
-   *Suite naturelle* : refaire la mesure **avec préfixe d'enchère**, où les premiers
-   indices montrent des écarts bien plus larges (−86 ± 25 sur une 3ᵉ candidate).
-3. §3.2 — la suite de sondes. Immédiat, sans risque, et c'est le garde-fou qui manquait.
-4. §3.1 — canonicalisation de l'obs, avec le flip rate comme test de non-régression.
-5. §3.4 — les deux features du probe, à intégrer avant de figer l'obs v7.
-6. ~~§2.8 — arbitrer donnes contre mondes~~ **tranché** (2026-08-02) : 5M × 20, les
+2. ~~§2.2 — le Q plat~~ **fermée** (2026-08-02, §1.7), puis **étendue aux préfixes**
+   (2026-08-02) : la platitude dépend du *type de décision*, et le coût du bruit de
+   symétrie se concentre sur la **contestation**, régime jamais mesuré auparavant.
+3. **§2.9 — la puissance de l'arène.** Remontée ici parce qu'elle conditionne le
+   *critère d'acceptation* de tout ce qui suit : §3.1 comme §3.3 produisent des effets
+   de quelques points par décision, que l'arène ne sait pas voir. Tant qu'on n'a pas le
+   seuil de détectabilité, chaque expérience risque de se conclure par un « pas de
+   différence » qui ne veut rien dire.
+4. §3.2 — la suite de sondes. Immédiat, sans risque, et c'est le garde-fou qui manquait.
+   À construire **par régime** (ouverture / contestation / soutien), la leçon de §1.7
+   étant qu'une moyenne sur les régimes cache l'essentiel.
+5. §3.1 — canonicalisation de l'obs, avec le flip rate **des trois régimes** comme test
+   de non-régression (`bid_equivariance.py --prior`).
+6. §3.4 — les deux features du probe, à intégrer avant de figer l'obs v7.
+7. ~~§2.8 — arbitrer donnes contre mondes~~ **tranché** (2026-08-02) : 5M × 20, les
    donnes gagnent. Reste à décider 5M contre 1M à k identique — 87 h contre 17 h.
-7. Regénération du pool (due de toute façon) avec §3.5 dedans.
-8. §3.3 — actions mortes, une fois qu'on a une sonde qui mesure le progrès.
+8. Regénération du pool (due de toute façon) avec §3.5 dedans.
+9. §3.3 — actions mortes, une fois qu'on a une sonde qui mesure le progrès.
+
+*Cadrage restant avant d'implémenter* : **le périmètre de v7** — v6 + hygiène, mesurable
+brique par brique, contre refonte obs + pool + feature, non attribuable. C'est désormais
+la **seule** question de cadrage ouverte : §2.9 a donné à l'arène son seuil, et §2.6 —
+qui était le seul bloqueur sur la reward — est tombée avec le paradoxe qu'elle supposait.
 
 ---
 
@@ -546,11 +757,23 @@ ne fait rien, et le repli uniforme est silencieux pour qui ne lit pas `probe()`.
 `playgen-up` avant, **`playgen-down` après** (5,5 Go de VRAM résidents tant qu'il vit,
 il n'y a pas de libération à l'inactivité). Cf. CLAUDE.md, « Playgen sidecar discipline ».
 
+**Les runs se journalisent** depuis le 2026-08-02 : provenance + agrégats dans le
+registre versionné [docs/measurements/index.jsonl](../measurements/index.jsonl), brut
+monde par monde dans `data/analysis/`. Avant de relancer quoi que ce soit d'ici,
+regarder si la mesure y est déjà — les trois régimes de §1.7 coûtent ~50 min de GPU.
+Les entrées marquées `INCOMPLET` sont antérieures à l'instrumentation : agrégats justes,
+brut absent. Cf. [docs/measurements/README.md](../measurements/README.md).
+
 Versés dans `scripts/analysis/` :
 - [bid_candidates.py](../../scripts/analysis/bid_candidates.py) — §1.3, §4 ;
-- [bid_q_flatness.py](../../scripts/analysis/bid_q_flatness.py) — §1.7 ;
+- [bid_q_flatness.py](../../scripts/analysis/bid_q_flatness.py) — §1.7. `--prior ""` /
+  `"100C"` / `"100C P"` pour les trois régimes ; **même `--seed` = mains appariées**,
+  c'est ce qui autorise à comparer les régimes entre eux ;
 - [bid_equivariance.py](../../scripts/analysis/bid_equivariance.py) — §1.1-1.2 : taux de
-  bascule avec contrôles heuristiques, échelle des Q, erreur d'équivariance du vecteur Q ;
+  bascule avec contrôles heuristiques, échelle des Q, erreur d'équivariance du vecteur Q.
+  `--prior` mesure les trois mêmes régimes ; il **permute aussi le préfixe** (`apply_prior`),
+  sans quoi on comparerait deux positions différentes. Les contrôles heuristiques restent
+  la validation de l'arithmétique : ≤ 2,6 % dans les trois régimes ;
 - [bid_capot_probe.py](../../scripts/analysis/bid_capot_probe.py) — §1.3 : fréquence du
   capot sur N enchères auto-jouées, sondes capot forcé, rareté des familles ;
 - [hand_classes.py](../../scripts/analysis/hand_classes.py) — §1.4 : Burnside vérifié par
