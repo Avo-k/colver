@@ -165,7 +165,7 @@ A causal transformer (10.7M params) trained to continue a deal autoregressively 
 
 ### Older search agents
 
-**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
+**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
 
 ### Bid V6 IS-DD — NN Bidder (`bid_net.rs`)
 

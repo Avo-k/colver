@@ -158,7 +158,7 @@ Un transformer causal (10,7M parametres) entraine a prolonger une donne de manie
 
 ### Anciens agents de recherche
 
-**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/SMART_ISMCTS.md](docs/SMART_ISMCTS.md).
+**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondere par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Determinisation par ensemble sans croyances. Les deux sont configurables et documentes dans [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
 
 ### Bid V6 IS-DD — Encherisseur NN (`bid_net.rs`)
 

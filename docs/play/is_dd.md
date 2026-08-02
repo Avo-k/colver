@@ -125,29 +125,37 @@ history (`colver-core/src/search/elephant.rs`) if the idea is worth revisiting.
 
 ## Performance
 
-The solve column below is `n_dets ×` the measured per-shape cost from
-[dd_solver.md](dd_solver.md#performance), single-threaded. The old version of this table was
-wrong by up to **four orders of magnitude** and always in the optimistic direction: it implied
-2.5 ms for a full-deal solve against a measured 32.3 ms, and gave "~5-10 ms" for a resolved
-endgame that actually costs 1.5 µs.
+**This table multiplies; it does not measure.** Every entry is `n_dets ×` a per-shape solve cost
+that is measured and maintained in **[dd_solver.md § Performance](dd_solver.md#performance)** —
+the one place solver timings live. What IS-DD contributes is the multiplier and the shape
+mapping, so that is all this table states. If a product below disagrees with the source table,
+the source wins.
+
+The previous version of this table was wrong by up to **four orders of magnitude**, always
+optimistically — it implied ~2.5 ms for a full-deal solve where the measurement says ~32 ms, and
+"~5-10 ms" for a resolved endgame that costs microseconds. That is what a table restating
+numbers it does not own looks like once the numbers move.
 
 `parallel` defaults to **true** from an `AgentSpec`, so the arena and the web divide the solve
 column by the rayon pool — world *generation* stays sequential and does not.
 
 | Config | Solve time per move (1 thread) | Notes |
 |--------|---------------|-------|
-| 20 dets, opening lead | ~650 ms (20 × 32.3 ms) | A trick-1 world **is** a full deal |
-| 20 dets, mid-game (13-24 cards left) | ~4 ms (20 × 190 µs) | Smaller search trees |
+| 20 dets, opening lead | 20 × *full deal* ≈ 650 ms | A trick-1 world **is** a full deal |
+| 20 dets, mid-game (13-24 cards left) | 20 × *mid-game* ≈ 3.4 ms | Smaller search trees |
 | 20 dets, with NN belief | + ~20 ms | NN forward + hybrid blend, independent of shape |
 | With `time_limit_ms=50`, full hand | 50 ms × 8/8 = 50 ms | A deadline, not an amount of work |
 | With `time_limit_ms=50`, last trick | 50 ms × 1/8 = 6 ms | idem |
-| Resolved position (early term) | ~1.5 µs (≤ 12 cards left) | Single DD solve; 18.9× cheaper since the TT epoch change |
+| Resolved position (early term) | 1 × *endgame* ≈ 1.4 µs (≤ 12 cards left) | Single DD solve; 18.9× cheaper since the TT epoch change |
 | Forced move (early term) | <1 µs | Constant return |
 
 **Under a time budget the meaningful unit is worlds-per-budget, not milliseconds.** Per-world
-solve cost falls ~23 000× across a deal (32.3 ms → 1.4 µs) while `effective_ms` only falls 8×,
-so from mid-deal onwards IS-DD is **world-generation-bound, not solver-bound**. Any future
-effort aimed at making IS-DD faster in the endgame belongs in the sampler, not here.
+solve cost falls **~23 000× across a deal** while `effective_ms` only falls 8×, so from mid-deal
+onwards IS-DD is **world-generation-bound, not solver-bound**. Any future effort aimed at making
+IS-DD faster in the endgame belongs in the sampler, not here — see
+[../belief/playgen.md](../belief/playgen.md) for the sampler and
+[dd_solver_optimization.md § 4](dd_solver_optimization.md#4-où-il-reste-du-temps-à-prendre) for
+what is left on the solver side.
 
 ## Variants in the arena
 

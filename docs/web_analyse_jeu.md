@@ -138,14 +138,25 @@ sidecar est absent, **annoncé** comme le badge `worlds_source` /
 
 - **Oracle** : un `solve_scores()` par monde couvre **toutes les lignes** d'un
   coup (il rend les points NS pour chaque carte légale, plus `best_card`). Le
-  coût est donc en `n_mondes`, indépendant du nombre de candidates. ~13,5 ms en
-  milieu de donne, davantage au pli 1. Fenêtre glissante parallèle sur
+  coût est donc en `n_mondes`, indépendant du nombre de candidates. Il **s'effondre
+  à mesure que la donne se vide** — de la donne complète à la microseconde en
+  finale, coûts par forme dans
+  [play/dd_solver.md](play/dd_solver.md#performance) — ce qui est exactement ce
+  que `WORLDS_BY_CARDS_LEFT` exploite. Fenêtre glissante parallèle sur
   `_DD_EXECUTOR`, exactement comme `_run_annonces_sim`.
+  - *(Cette ligne annonçait « ~13,5 ms en milieu de donne » : un des quatre
+    chiffres périmés que la campagne du 2026-08-02 a invalidés, trop pessimiste
+    de deux ordres de grandeur. Les budgets actuels ont été calibrés dessus et
+    laissent donc de la précision inutilisée en fin de donne.)*
 - `solve_windowed_reuse_tt` est fait pour ce profil (« lots de positions
-  quasi identiques : les mondes échantillonnés d'une même main »). Réserve
-  fail-soft : le résultat n'est exact que si `alpha < v < beta`, sinon c'est une
-  borne et il faut réélargir. Traiter une borne comme une valeur est exactement
-  le défaut de `quick_tricks`.
+  quasi identiques : les mondes échantillonnés d'une même main »). **Sa prémisse
+  est fausse** : les mondes d'une même main ne sont pas groupés (36 % tombent à
+  plus de 40 points de la moyenne), donc amorcer une fenêtre étroite ne vaut
+  1,04× au mieux et les deux points d'entrée n'ont aucun appelant en production
+  ([play/dd_solver_optimization.md](play/dd_solver_optimization.md) §2.3).
+  Réserve fail-soft, si on y revient quand même : le résultat n'est exact que si
+  `alpha < v < beta`, sinon c'est une borne et il faut réélargir. Traiter une
+  borne comme une valeur est exactement le défaut de `quick_tricks`.
 - **Jeu réel** : il faut forcer chaque candidate séparément → `n_cartes ×
   n_mondes` déroulements. **C'est l'axe qui domine le budget.** Le pool est
   dimensionné pour l'Oracle et les déroulements s'en partagent

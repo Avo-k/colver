@@ -14,6 +14,12 @@ Exact alpha-beta search assuming all 4 hands are visible. Used as the **oracle t
 
 ## Performance
 
+**This table is the single source for DD solver timings.** Every other document quotes at most
+one rounded figure from it and links back here — if you find a second table of solver times
+anywhere in `docs/`, one of them is stale. Consumers that reason from these numbers:
+[is_dd.md](is_dd.md#performance) (world budgets), [../ARCHITECTURE.md](../ARCHITECTURE.md),
+[../web_analyse_jeu.md](../web_analyse_jeu.md) (per-position sim budgets).
+
 Measured 2026-08-02 with `bench_dd` on a fixed 2 120-position corpus, one thread, i9-13900K,
 stock `x86-64` target (the flag buys nothing — see the negative-results table).
 Journalised in [docs/measurements/index.jsonl](../measurements/index.jsonl). Every earlier
@@ -41,6 +47,11 @@ dominated by the transposition-table probe, which is a random access into 2 MB.
 The distribution is heavily skewed — on full deals the **worst 10 % of solves hold 40 % of all
 nodes** (p50 317 k nodes, p99 3.8 M, max 6.0 M). Anything that helps only the median deal is
 worth little; the tail is where the batch time is.
+
+**Value-only `solve_for_trump`, for comparison**: ~18 ms mean, 10.4 ms median, 69 ms P95 on a
+full deal (via the older `dd_bench`). Do not line these up against the table above — one trump
+instead of four, and a mean/median/P95 over deals instead of a min over repeats. The gap between
+the mean and the P95 is the same tail as above, seen from the other harness.
 
 ## Benchmarking and the exactness gate
 

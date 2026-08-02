@@ -27,12 +27,13 @@ D'où l'ordre imposé : **le harnais d'abord, les optimisations ensuite.**
 
 ### Le profil, une fois mesuré
 
-| | |
-|---|---|
-| Débit | **~45 M nœuds/s, soit ~22 ns par nœud** (min sur 5 tours ; dispersion par tour ~9 %) |
-| Ce qui domine un nœud | la **sonde TT** — un accès aléatoire dans 2 Mo |
-| Distribution (donne complète) | p50 317 k nœuds · p99 3,8 M · max 6,0 M |
-| Concentration | **les 10 % de solves les plus durs portent 40 % des nœuds** |
+Les chiffres eux-mêmes — temps par forme, percentiles, dispersion de mesure — vivent dans
+[dd_solver.md § Performance](dd_solver.md#performance) et **nulle part ailleurs**. Ce document
+n'en garde que les deux qui portent un raisonnement :
+
+- **~22 ns par nœud**, dominé par la **sonde TT**, un accès aléatoire dans 2 Mo : le solveur est
+  limité par la **latence mémoire**, pas par le débit d'instructions.
+- **Distribution très asymétrique** : les 10 % de solves les plus durs portent **40 % des nœuds**.
 
 Deux conséquences qui expliquent presque tous les résultats plus bas :
 
