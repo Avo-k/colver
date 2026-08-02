@@ -19,6 +19,16 @@
      tirerait toute la page à sa largeur, ascenseur compris.
    ============================================================ */
 
+/* Au-delà de 640px, `#app` est figé à la hauteur de l'écran et découpe ce qui
+   dépasse SANS ascenseur (layout.css) — à charge de chaque vue longue de
+   déclarer le sien, comme le font Regarder et Rejouer. Cette page dépasse dès
+   que « Réglages fins » est ouvert : sur un 1280×800, « Commencer » tombait
+   34px sous la découpe, injoignable à la souris comme à la molette. En phase
+   correction, c'est le bandeau d'atout qui devenait définitivement inatteignable
+   après le `scrollIntoView`. On garde la hauteur d'écran de `#app` et on lui
+   rend son ascenseur : la barre de commandes collante en profite au passage. */
+#app:has(#pc-wrap) { overflow-y: auto; }
+
 #pc-wrap {
     width: 100%;
     max-width: 980px;
@@ -42,7 +52,20 @@
 #pc-wrap[data-phase="answer"] #pc-review,
 #pc-wrap[data-phase="review"] #pc-config,
 #pc-wrap[data-phase="review"] #pc-answer,
+/* Les commandes de défilement n'ont plus rien à faire avancer une fois la
+   question posée : « Suivant » y rivalisait en or avec « Annoncer », et le
+   retour arrière y effaçait le total saisi. */
+#pc-wrap[data-phase="answer"] #pc-controls,
 #pc-wrap[data-phase="review"] #pc-controls { display: none; }
+
+/* La croix vide garde sinon ses trois rangs de carte — environ 300px de cadre
+   pointillé vide au-dessus de la saisie puis de la correction, soit tout le
+   premier écran au téléphone. Les tas, eux, RESTENT : on ne fait pas
+   disparaître ce qu'on demande de compter. */
+#pc-wrap[data-phase="answer"] #pc-trick-area,
+#pc-wrap[data-phase="review"] #pc-trick-area { display: none; }
+#pc-wrap[data-phase="answer"] #pc-board,
+#pc-wrap[data-phase="review"] #pc-board { min-height: 0; }
 
 /* ---------- Panneaux ---------- */
 
@@ -128,7 +151,9 @@
     font-weight: var(--fw-semi);
     min-width: 3.5ch;
 }
-.pc-row input[type="range"] { flex: 1 1 160px; }
+/* Sans `accent-color`, Chrome peint ses curseurs en bleu vif sur une page
+   verte et or : c'est l'élément le plus discordant de l'écran. */
+.pc-row input[type="range"] { flex: 1 1 160px; accent-color: var(--c-accent); }
 .pc-row--off { opacity: .45; }
 
 .pc-toggle, .pc-ghost-btn {
@@ -141,10 +166,44 @@
     background: var(--c-surface-1);
     color: var(--c-text);
 }
+/* Même piège que `:hover`, un cran plus bas : `button:disabled` de base.css
+   repeint le fond en gris opaque (spécificité 0,1,1 contre 0,1,0). Le ◀ est
+   désactivé par défaut — en chronométré — et devenait un pavé gris au milieu
+   de deux boutons transparents. */
+.pc-toggle:disabled, .pc-ghost-btn:disabled,
+.pc-toggle:disabled:hover, .pc-ghost-btn:disabled:hover {
+    background: transparent;
+    opacity: .4;
+}
 .pc-toggle { margin-top: var(--sp-4); }
 .pc-toggle[aria-expanded="true"] .pc-caret { display: inline-block; transform: rotate(180deg); }
 
 .pc-start-row { display: flex; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); }
+
+.pc-badge-perso {
+    margin-left: var(--sp-2);
+    padding: 1px var(--sp-2);
+    border: 1px solid var(--c-accent-a40);
+    border-radius: var(--r-full);
+    background: var(--c-accent-a15);
+    color: var(--c-accent);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-semi);
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+/* Une génération qui échoue se disait dans `#pc-hint` (masqué en config) ou
+   dans le repli des réglages fins : elle ne se voyait nulle part. */
+.pc-error {
+    margin-top: var(--sp-3);
+    padding: var(--sp-2) var(--sp-3);
+    border-left: 2px solid var(--c-warn);
+    border-radius: var(--r-sm);
+    background: var(--c-surface-1);
+    color: var(--c-warn);
+    font-size: var(--fs-sm);
+}
 
 .pc-stats {
     display: flex;
@@ -156,6 +215,9 @@
     font-size: var(--fs-xs);
     color: var(--c-text-muted);
 }
+/* À la première visite il n'y a rien à dire : le filet seul, sous le bouton,
+   ressemble à un bloc qui n'a pas fini de charger. */
+.pc-stats:empty { display: none; }
 .pc-stats b { color: var(--c-accent); font-variant-numeric: tabular-nums; }
 .pc-stats-n { color: var(--c-text-dim); margin-left: auto; }
 
@@ -194,6 +256,11 @@
 }
 
 .pc-pile { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); }
+/* Placement explicite : un `display: none` sort la croix du placement de grille,
+   et le tas Nord-Sud remontait alors dans la colonne du milieu. Les deux tas
+   restent chacun de leur côté, croix ou pas. */
+#pc-pile-far { grid-column: 1; }
+#pc-pile-near { grid-column: 3; }
 .pc-pile-label {
     font-size: var(--fs-2xs);
     text-transform: uppercase;
@@ -246,7 +313,13 @@
 .pc-fly-far  { transform: translateY(-28%) scale(.86); opacity: 0; }
 
 /* La pause masque la table : s'arrêter devant un pli complet serait un retour
-   en arrière déguisé. */
+   en arrière déguisé. Le voile seul ne suffit pas — à 85% de noir sur une carte
+   blanche, l'As de cœur et le Roi restent parfaitement lisibles et l'exercice
+   se contourne. Ce sont donc les cartes elles-mêmes qu'on retire ; le voile ne
+   garde que l'assombrissement et l'étiquette. */
+#pc-trick-area.pc-paused .trick-card,
+#pc-trick-area.pc-paused #pc-announce { visibility: hidden; }
+
 #pc-veil {
     position: absolute;
     inset: 0;
@@ -343,6 +416,8 @@
     margin-bottom: var(--sp-2);
 }
 
+#pc-table-swipe { display: none; margin-bottom: var(--sp-2); }
+
 .pc-table-scroll {
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -401,37 +476,68 @@
 
     /* Deux tas côte à côte ne tiennent pas autour de la croix : ils deviennent
        deux languettes collées aux bords, comme le liseré de bord des sièges. */
-    #pc-board { grid-template-columns: 1fr; position: relative; }
+    #pc-board {
+        grid-template-columns: 1fr;
+        position: relative;
+        /* Les tas ; la croix garde le sien, déclaré sur `#pc-trick-area`. */
+        --card-w: 26px;
+        --card-h: calc(var(--card-w) * 1.43);
+    }
     .pc-pile {
         position: absolute;
         top: 0;
         flex-direction: row;
         align-items: center;
         gap: var(--sp-2);
-        --card-w: 26px;
-        --card-h: calc(var(--card-w) * 1.43);
+        /* Deux languettes sorties du flux prennent chacune leur largeur de
+           contenu : à huit plis elles se recouvraient franchement, et le tas de
+           droite repeignait l'étiquette du gauche — on lisait « 1 plNORD-SUD ».
+           C'est la pile de dos qui cède, jamais l'étiquette ni le compte. */
+        max-width: 48%;
     }
     #pc-pile-far { left: 0; }
     #pc-pile-near { right: 0; }
-    .pc-pile-label { font-size: 9px; }
-    .pc-pile-stack { flex-direction: row; min-height: var(--card-h); }
-    .pc-pile-stack .card { margin-top: 0 !important; margin-left: -18px !important; }
+    .pc-pile-label { font-size: var(--fs-2xs); flex: 0 0 auto; }
+    .pc-pile-count { flex: 0 0 auto; white-space: nowrap; }
+    .pc-pile-stack {
+        flex-direction: row;
+        min-height: var(--card-h);
+        min-width: 0;
+        overflow: hidden;
+    }
+    .pc-pile-stack .card {
+        flex: 0 0 auto;
+        margin-top: 0 !important;
+        /* Un tiers de carte, comme le liseré de bord des sièges. */
+        margin-left: calc(var(--card-w) * -0.7) !important;
+    }
     .pc-pile-stack .card:first-child { margin-left: 0 !important; }
+
+    /* La croix retirée, il reste les deux languettes : le plateau garde juste
+       leur hauteur au lieu de s'effondrer sous elles. */
+    #pc-wrap[data-phase="answer"] #pc-board,
+    #pc-wrap[data-phase="review"] #pc-board { min-height: var(--card-h); }
 
     #pc-trick-area { margin: var(--sp-8) auto 0; min-height: 40vh; }
     .pc-row-label { flex: 1 0 100%; }
-    .pc-seg-btn { min-height: 0; }
+    /* `base.css` impose 40px à tout bouton sous 640px ; les segments qui
+       portent un `<small>` le dépassent seuls, ceux qui n'en ont pas (Nord-Sud,
+       Est-Ouest, Au hasard) retombaient à 38px. On garde le plancher. */
+    .pc-seg-btn { min-height: 40px; }
 
-    /* Les commandes restent au pouce. */
-    #pc-controls {
-        position: sticky;
-        bottom: 0;
-        z-index: 4;
-        background: var(--c-bg-deep);
-        padding: var(--sp-2);
-        margin: 0 calc(var(--sp-3) * -1);
-    }
+    /* Les commandes restent au pouce — mais sans bandeau opaque : `#app` est
+       ici en hauteur libre (layout.css), donc c'est le viewport qui défile et
+       un `position: sticky` calé dessus ne collait à rien. Le fond
+       `--c-bg-deep` est en plus celui des pages *plates* : sur une route
+       feutre il posait une barre noire franche au milieu du tapis. Pendant la
+       phase de jeu la page tient de toute façon dans un écran. */
+    #pc-controls { padding: var(--sp-2) 0; }
     #pc-controls button { min-height: 44px; flex: 1 1 auto; }
+
+    /* Le tableau déborde de plus de la moitié de sa largeur, et le diagnostic
+       renvoie justement à la colonne Cumul : sans cette ligne, rien ne dit
+       qu'elle existe. */
+    #pc-table-swipe { display: block; }
 
     #pc-answer-form { flex-direction: column; align-items: stretch; }
     .pc-field input { width: 100%; }
@@ -443,7 +549,9 @@
         position: sticky;
         left: 0;
         z-index: 1;
-        background: var(--c-bg-deep);
+        /* Opaque, obligatoirement — mais pas `--c-bg-deep`, qui est le fond des
+           pages plates et tranche sur le panneau translucide qui l'entoure. */
+        background: var(--c-bg);
         box-shadow: 1px 0 0 var(--c-border);
     }
     .pc-table-scroll::-webkit-scrollbar { height: 4px; }

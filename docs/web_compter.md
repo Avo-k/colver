@@ -37,8 +37,21 @@ Un seul écran, trois méthodes, choisies dans les réglages fins :
 autre exercice. `#pc-prev` porte `disabled` dans ce mode, pour qu'on voie que le
 bouton existe et pourquoi il ne répond pas.
 
-**La pause masque la table** (`#pc-veil`). Sans ça, s'arrêter devant un pli
-complet est un retour en arrière déguisé et l'exercice se contourne tout seul.
+**La pause masque la table**. Le voile (`#pc-veil`) ne suffit pas : à
+`rgba(10,10,10,.85)` sur une carte blanche, l'As de cœur et le Roi restent
+parfaitement lisibles — mesuré, l'exercice se contournait donc tout seul en
+s'arrêtant devant un pli complet. Ce sont **les cartes elles-mêmes** qu'on
+retire (`#pc-trick-area.pc-paused .trick-card { visibility: hidden }`) ; le
+voile ne garde que l'assombrissement et l'étiquette.
+
+**Le maintien de fin est une échéance comme une autre, et la pause doit savoir
+la ré-armer.** `pcTimer` porte deux choses de nature différente — le tick du
+défilement et le maintien du dernier pli — d'où le drapeau `endHold`. Sans lui,
+une pause pendant ce maintien tuait la séquence **pour de bon** : à la reprise
+`tick` rappelait `advance(1)` depuis `max`, qui sort avant `afterStep`, donc
+`finishRun` n'était plus joignable et l'écran de saisie n'arrivait jamais. Or
+c'est le battement « où l'on additionne » : le moment le plus naturel pour
+demander une seconde.
 
 ## 2. Le moteur de défilement
 
@@ -58,6 +71,18 @@ défaire. C'est aussi pourquoi la page n'appelle ni `detectTrickCompletion`
 (état global de module dans `shared/cards.js`, ne détecte qu'un sens de
 transition — le `←` produirait des faux positifs) ni `animateTrickFlush` (qui
 envoie les cartes vers *la main du gagnant*, et il n'y a pas de mains ici).
+
+**Un changement de phase coupe TOUT ce qui est armé** (`stopAllTimers` :
+tick, maintien de fin, vol). `stopTimer` seul laissait le vol en cours, dont le
+callback rappelle `renderAt` puis enchaîne sur `toAnswer` — « Abandonner »
+pendant un vol renvoyait aux réglages, puis basculait tout seul sur l'écran de
+saisie une seconde et demie plus tard.
+
+**`advance()` ne fait rien hors de la phase `run`.** Les commandes de
+défilement sont masquées sur l'écran de saisie (elles n'ont plus rien à faire
+avancer, et « Suivant » y rivalisait en or avec « Annoncer »), mais le garde
+tient aussi au clavier : sans lui, un ◀ suivi d'un ▶ y relançait `toAnswer`,
+qui **vide les champs** — le total qu'on venait de taper disparaissait.
 
 **Le vol précède le repeint.** `flyOut(ti, done)` anime, puis rappelle
 `renderAt` : repeindre d'abord animerait la première carte du pli suivant. La
@@ -92,6 +117,44 @@ Invariant, à `N = 8` : `cards[0] + cards[1] = 152`, quel que soit l'atout
 point carte** : les deux tas font 152 avec ou sans elle, les 20 se posent
 par-dessus — c'est pour ça qu'elle est une ligne de pied du tableau, sous le
 sous-total cartes.
+
+## 3 bis. Défauts corrigés le 2026-08-02
+
+Repris au navigateur sur les trois formats (grand écran, portable, téléphone).
+Les deux premiers rendaient une commande **inatteignable**, le troisième faisait
+enseigner une erreur — c'est-à-dire exactement le contraire du but de la page.
+
+| | Symptôme | Cause |
+|---|---|---|
+| Blocage | Pause pendant le dernier pli (chrono) : plus rien, jamais | `pcTimer` porte deux échéances, la reprise ré-armait la mauvaise — §1 |
+| Blocage | « Commencer » sous la découpe en 1280×800, sans ascenseur | `#app` est en `overflow: hidden` au-delà de 640px et la page ne déclarait pas son propre défilement — voir ci-dessous |
+| Faux | Dix de der mal attribué diagnostiqué « pli dans le mauvais tas » | ordre de l'échelle — §6 |
+| Perte | ◀ sur l'écran de saisie effaçait le total tapé | `advance()` sans garde de phase — §2 |
+| Triche | Le voile de pause laissait lire les cartes | 85 % de noir ne cache pas — §1 |
+| Triche | La relecture rejouait un essai noté, gagné d'avance | §6 |
+
+**`#app` découpe ce qui dépasse.** `layout.css` le fige à la hauteur de l'écran
+avec `overflow: hidden` au-delà de 640px, à charge de chaque vue longue de
+déclarer son propre ascenseur — ce que font Regarder et Rejouer. Cette page
+dépasse dès que « Réglages fins » est ouvert : sur 1280×800, « Commencer »
+tombait 34 px sous la découpe, injoignable à la souris comme à la molette
+(seule `Entrée` lançait encore, sans que rien ne le dise) ; en phase correction,
+le `scrollIntoView` emportait le bandeau d'atout hors de portée définitivement.
+`#app:has(#pc-wrap) { overflow-y: auto }` suffit, et rend au passage sa raison
+d'être à la barre de commandes collante.
+
+Réglé en même temps : croix vide masquée en phases `answer`/`review` (≈ 300 px
+de cadre pointillé vide, tout le premier écran au téléphone) — **les tas, eux,
+restent**, on ne fait pas disparaître ce qu'on demande de compter ; tas qui se
+recouvraient sous 390 px (on lisait « 1 plNORD-SUD ») ; barre de commandes
+collante qui ne collait à rien et peignait un bandeau `--c-bg-deep` — le fond
+des pages *plates* — au milieu du tapis ; curseurs laissés au bleu par défaut de
+Chrome ; `:disabled` qui repeignait le ◀ fantôme en pavé gris (même piège que le
+`:hover` documenté en tête de `compter.css`) ; champ de réponse non focalisé en
+chronométré, c'est-à-dire dans les trois préréglages ; erreur de génération
+invisible depuis la correction (`onError` sortait sur `phase !== 'config'`, et
+ni `#pc-hint` ni `#pc-fine-note` n'est visible à ce moment-là) ; filet des
+statistiques affiché à vide.
 
 ## 4. Protocole
 
@@ -147,7 +210,15 @@ juste / « presque » sous 5 points / le chiffre annoncé contre le vrai.
 
 Le diagnostic est une échelle ordonnée, premier match gagnant — l'ordre est
 load-bearing, ±20 étant ambigu (belote, ou Valet d'atout compté 2) et ±10 aussi
-(dix de der, ou un 10) :
+(dix de der, ou un 10). **Cet ordre a été violé et ça se voyait** : une règle
+« vos deux totaux somment juste, c'est un pli qui est allé dans le mauvais tas »
+était testée en tête de boucle. Or donner le dix de der ou la belote au mauvais
+camp **somme juste aussi**. Sur une donne contenant un pli valant exactement
+10 points, un dix de der mal attribué produisait donc : « C'est le pli n°6
+(10 pts, ramassé par Nord) qui est allé dans le mauvais tas » — faux deux fois,
+puisque ce n'était pas un pli et que celui-là était correctement attribué. Cette
+règle n'est plus qu'une **nuance du rang 5**, testée après le dix de der et la
+belote.
 
 1. les deux totaux intervertis (un seul message, pas un par camp) ;
 2. le total de l'autre camp ;
@@ -155,10 +226,30 @@ load-bearing, ±20 étant ambigu (belote, ou Valet d'atout compté 2) et ±10 au
 4. belote oubliée / attribuée au mauvais camp ;
 5. un pli entier oublié, nommé par son numéro et son ramasseur ;
 6. le 9 d'atout compté 0, le Valet d'atout compté 2 ;
+   — testés sur `d === -14` / `d === -18`, pas sur `Math.abs(d)` : ces deux
+   messages disent « vous avez compté trop peu », et sur un écart positif ils
+   accusaient d'une erreur exactement inverse de celle commise ;
 7. sinon, renvoi à la colonne Cumul.
 
+Les rangs 5 et 6 vérifient **la direction** de l'écart (`(d < 0) === (t.winner
+% 2 === k)`) : sans elle, un pli de la bonne valeur mais du bon côté fait
+accuser le joueur d'une erreur qu'il n'a pas commise.
+
 Le tableau pli par pli porte la valeur de chaque carte en exposant, et le 9 et
-le Valet d'atout un anneau accent : c'est là que l'œil apprend.
+le Valet d'atout un anneau accent : c'est là que l'œil apprend. **Au téléphone
+il déborde de plus de la moitié de sa largeur** — les trois colonnes chiffrées,
+dont la colonne Cumul que le rang 7 invite justement à lire, sont hors champ.
+D'où `#pc-table-swipe`, affiché sous 640px seulement : un conteneur qui défile
+sans le dire ne défile pas.
+
+**Une relecture n'est pas un essai.** « Revoir au ralenti » repasse en phase
+`run` sur la même donne, dont la réponse vient d'être affichée juste au-dessus :
+elle revient donc à la **correction** (`toReview`) et non à la saisie, et
+`recordStats` est sauté (`inReplay`). Avant, on pouvait répondre faux, lancer la
+relecture, lire la réponse dans le tableau resté à l'écran et la re-saisir :
+série et record montaient d'un essai gagné d'avance — sous une clé de
+statistiques différente, qui plus est, puisque la relecture force `method =
+'carte'`. `statsKey()` retombe sur `methodBeforeReplay` pour la même raison.
 
 ## 7. Réglages
 
@@ -168,11 +259,62 @@ pour qu'on voie ce qu'on a choisi. Toucher un réglage fin bascule sur `perso`,
 et les statistiques changent de clé : un record Expert ne se mélange pas à un
 réglage sur mesure.
 
+`perso` n'a **pas de bouton**, et c'est un piège à deux têtes. (1) La tabulation
+roulante de `setSeg` met `tabIndex = -1` partout où rien n'est coché : le groupe
+Niveau se retrouvait sans **aucun** arrêt de tabulation, donc injoignable au
+clavier — et comme `preset` est persisté, définitivement. `setSeg` garde
+désormais un arrêt sur le premier bouton quand rien ne correspond. (2) Les trois
+niveaux éteints donnaient l'impression d'un groupe qui a perdu sa sélection :
+d'où la puce `#pc-preset-note`.
+
 `localStorage` : `colver:compter:cfg`, `colver:compter:stats`
 (`{"<preset>|<method>": {plays, exact, sumAbsDelta, streak, best}}`),
 `colver:compter:seen`.
 
-## 8. Hors périmètre, volontairement
+## 8. À faire — d'autres questions sur la même donne
+
+Le défilé de plis est un **moteur**, pas un exercice : il montre une donne
+réelle carte par carte et interroge à la fin. Le total des points n'est qu'une
+question parmi d'autres, et c'est la plus dure. Plusieurs questions plus faciles
+portent sur exactement la même séquence, sans rien changer au payload — tout est
+déjà dans `count_ready` (les huit plis, l'atout, le contrat).
+
+**Questions candidates**, de la plus simple à la plus dure :
+
+| Question | Ce qu'elle entraîne | Réponse |
+|---|---|---|
+| Combien d'atouts sont tombés ? | le comptage d'atouts, le premier réflexe de table | un nombre 0-8 |
+| Combien de cartes dans chaque couleur ? | suivre les couleurs, repérer les coupes | quatre nombres |
+| Qui a coupé à quelle couleur ? | la lecture des coupes franches et acquises | un siège × une couleur |
+| Quelles cartes sont maîtresses ? | ce qui décide la fin de donne | une sélection de cartes |
+| Combien de points ? | l'exercice actuel | un nombre par camp |
+
+Deux niveaux d'ambition, à trancher au moment de le faire :
+
+1. **Un mode = une question**, choisie dans les réglages. Simple, lisible, et
+   chaque mode garde ses propres statistiques (`statsKey` porte déjà le
+   préréglage et la méthode, il suffit d'y ajouter la question).
+2. **Des questions tirées procéduralement à la fin**, une ou plusieurs parmi un
+   catalogue, paramétrées par la donne (« combien de piques sont tombés ? »,
+   « le Roi de cœur est-il encore maître ? »). C'est ce qui ressemble le plus à
+   une vraie table, où l'on ne sait pas d'avance ce qu'il faudra savoir — et ça
+   interdit de ne suivre qu'une seule chose.
+
+Ce qu'il faudra décider :
+- **Le tirage doit être vérifiable.** Une question générée doit avoir une réponse
+  calculable côté client depuis le payload, sinon la correction redevient un
+  aller-retour serveur (§8 s'y oppose).
+- **Une seule question ou plusieurs ?** Plusieurs, c'est le vrai exercice, mais
+  ça change la forme de la correction (un verdict par question) et des
+  statistiques (par question, ou par lot ?).
+- **« Cartes maîtresses » demande un état de jeu**, pas seulement un décompte :
+  maître *à quel moment* — à la fin, ou à un pli donné ? C'est la seule question
+  de la liste qui a besoin d'autre chose que les plis déjà tombés.
+- **La difficulté ne vient pas de la question mais du débit.** Compter les atouts
+  à 0,5 s par carte est plus dur que compter les points à 2 s : les préréglages
+  devront se relire à l'aune de la question choisie.
+
+## 9. Hors périmètre, volontairement
 
 | Écarté | Pourquoi |
 |---|---|

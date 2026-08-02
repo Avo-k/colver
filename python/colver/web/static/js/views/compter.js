@@ -61,7 +61,8 @@ const TEMPLATE = `
       avec l’atout du contrat. Gardez le compte dans votre tête : on vous le
       demandera à la fin.</p>
 
-    <div class="section-title">Niveau</div>
+    <div class="section-title">Niveau
+      <span id="pc-preset-note" class="pc-badge-perso hidden"></span></div>
     <div id="pc-presets" class="pc-seg" role="radiogroup" aria-label="Niveau">
       <button type="button" class="pc-seg-btn" role="radio" data-preset="debutant" aria-checked="true">
         Débutant<small>3 plis · 1 s · un camp</small></button>
@@ -128,6 +129,7 @@ const TEMPLATE = `
       <button id="pc-start">Commencer</button>
       <span id="pc-loading" class="pc-note hidden">Génération…</span>
     </div>
+    <div id="pc-error" class="pc-error hidden" role="alert"></div>
     <div id="pc-stats" class="pc-stats"></div>
   </div>
 
@@ -193,6 +195,7 @@ const TEMPLATE = `
     <div id="pc-diag" class="pc-diag"></div>
     <div class="pc-panel">
       <div class="section-title">Décompte pli par pli</div>
+      <div id="pc-table-swipe" class="pc-note"></div>
       <div class="pc-table-scroll">
         <table id="pc-table"><thead></thead><tbody></tbody></table>
       </div>
@@ -219,6 +222,11 @@ let pcIdx = 0;         // cartes révélées, 0 .. 4·N
 let paused = false;
 let pcTimer = null;    // le SEUL timer de la page
 let flyTimer = null;
+// `pcTimer` porte deux échéances de nature différente : le tick du défilement,
+// et le maintien du dernier pli. La pause les tue toutes les deux — il faut
+// donc savoir laquelle ré-armer, sinon la reprise relance un tick qui ne peut
+// plus avancer (on est à `max`) et la séquence ne se termine JAMAIS.
+let endHold = false;
 let pending = null;    // requête à rejouer si le socket n'était pas ouvert
 let reqId = 0;
 let given = [null, null];
@@ -228,6 +236,9 @@ let allGathered = false;
 // « Revoir au ralenti » force le pas-à-pas ; on rend son mode au joueur ensuite,
 // sinon la séquence suivante repartirait au pas alors qu'il a choisi le chrono.
 let methodBeforeReplay = null;
+// Une relecture n'est pas un essai : la réponse vient d'être affichée juste
+// au-dessus. Elle ne repasse donc pas par la saisie et ne compte pas.
+let inReplay = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -268,7 +279,10 @@ function pushSeen(id) {
     } catch { /* quota */ }
 }
 
-function statsKey() { return `${cfg.preset}|${cfg.method}`; }
+// Une relecture force `cfg.method = 'carte'` : sans ce repli, le bandeau de
+// statistiques changerait de clé en cours de route et afficherait le record
+// d'un mode que le joueur n'a pas choisi.
+function statsKey() { return `${cfg.preset}|${methodBeforeReplay ?? cfg.method}`; }
 
 // ===== Règles du comptage ===================================================
 
@@ -360,7 +374,7 @@ function renderPile(id, team, tricks) {
         stack.appendChild(c);
     }
     const n = tricks.length;
-    el.querySelector('.pc-pile-count').textContent = n === 1 ? '1 pli' : `${n} plis`;
+    el.querySelector('.pc-pile-count').textContent = n > 1 ? `${n} plis` : `${n} pli`;
     el.classList.toggle('pc-pile--ghost', cfg.count === 'un' && team !== side);
 }
 
@@ -412,6 +426,10 @@ function flyOut(ti, done) {
  * sien se pose. Un pli complet reste donc visible un pas entier.
  */
 function advance(step) {
+    // Les commandes de défilement survivent à l'écran sur la phase de saisie ;
+    // sans ce garde, un ◀ suivi d'un ▶ y relance `toAnswer`, qui vide les
+    // champs — le total que le joueur venait de taper disparaissait.
+    if (phase !== 'run') return;
     const max = win.length * 4;
     const from = pcIdx;
     const next = Math.max(0, Math.min(max, pcIdx + step));
@@ -421,6 +439,7 @@ function advance(step) {
         // Reculer annule le maintien de fin : sinon le minuteur déjà armé
         // arracherait le joueur à sa relecture pour l'emmener à la saisie.
         stopTimer();
+        endHold = false;
         renderAt(false);
         return;
     }
@@ -442,21 +461,43 @@ function finishRun() {
     stopTimer();
     // La dernière levée est tenue à l'écran avant que la saisie ne la recouvre :
     // c'est la seule qu'on ne verrait jamais autrement.
-    pcTimer = setTimeout(() => {
-        pcTimer = null;
-        // Puis tout se ramasse, comme en fin de donne — les tas montrent alors
-        // le compte exact de plis sur lequel on interroge.
-        flyOut(win.length - 1, () => {
-            allGathered = true;
-            renderAt(false);
-            toAnswer();
-        });
-    }, END_HOLD_MS);
+    endHold = true;
+    pcTimer = setTimeout(closeRun, END_HOLD_MS);
+}
+
+/** La fin du maintien : tout se ramasse, puis on demande le total.
+ *
+ *  Fonction nommée, et pas une lambda dans `finishRun` : la pause doit pouvoir
+ *  la ré-armer. Une pause pendant le maintien — le battement où l'on additionne,
+ *  donc le moment le plus naturel pour demander une seconde — tuait sinon la
+ *  séquence pour de bon.
+ */
+function closeRun() {
+    pcTimer = null;
+    endHold = false;
+    // Puis tout se ramasse, comme en fin de donne — les tas montrent alors
+    // le compte exact de plis sur lequel on interroge.
+    flyOut(win.length - 1, () => {
+        allGathered = true;
+        renderAt(false);
+        // Une relecture ne redemande pas le total : elle rend la correction,
+        // qui est ce qu'on était en train de lire en la lançant.
+        if (inReplay) toReview(); else toAnswer();
+    });
 }
 
 // ===== Chronomètre ==========================================================
 
 function stopTimer() { if (pcTimer) { clearTimeout(pcTimer); pcTimer = null; } }
+
+/** Coupe tout ce qui est armé — tick, maintien de fin, vol. À appeler à chaque
+ *  changement de phase : un vol qui se termine après coup rappelle `renderAt`
+ *  sur un plateau masqué, et son callback peut enchaîner sur `toAnswer`. */
+function stopAllTimers() {
+    stopTimer();
+    endHold = false;
+    if (flyTimer) { clearTimeout(flyTimer); flyTimer = null; }
+}
 
 /** Un pli complet tient un temps de plus : c'est là qu'on additionne, et le
  *  vol a besoin de ce battement pour se jouer avant la carte suivante. */
@@ -483,8 +524,14 @@ function setPaused(on) {
     // La pause MASQUE la table : sinon s'arrêter devant un pli complet est un
     // retour en arrière déguisé, et l'exercice se contourne tout seul.
     $('pc-veil').classList.toggle('hidden', !on);
+    // Le voile assombrit, il ne cache pas : à 85 % de noir un As de cœur reste
+    // parfaitement lisible. Ce sont les cartes elles-mêmes qu'on retire.
+    $('pc-trick-area').classList.toggle('pc-paused', on);
     $('pc-pause').textContent = on ? 'Reprendre' : 'Pause';
     if (on) stopTimer();
+    // On ré-arme l'échéance qu'on a interrompue, pas systématiquement un tick :
+    // pendant le maintien de fin il n'y a plus rien à faire avancer.
+    else if (endHold) pcTimer = setTimeout(closeRun, END_HOLD_MS);
     else pcTimer = setTimeout(tick, nextDelay());
 }
 
@@ -514,6 +561,7 @@ function requestDeal() {
     send(pending);
     $('pc-start').disabled = true;
     $('pc-loading').classList.remove('hidden');
+    $('pc-error').classList.add('hidden');
 }
 
 function flushPending() { if (pending) send(pending); }
@@ -531,7 +579,9 @@ function onReady(data) {
         : (cfg.side === -1 ? (Math.random() < 0.5 ? 0 : 1) : cfg.side);
     pcIdx = 0;
     paused = false;
+    endHold = false;
     allGathered = false;
+    inReplay = false;
     given = [null, null];
 
     $('pc-trump-chip').innerHTML = `Atout ${suitHtml(deal.trump)}`;
@@ -540,6 +590,7 @@ function onReady(data) {
         ? 'Comptez les deux camps'
         : `Comptez ${teamName(side)}`;
     $('pc-veil').classList.add('hidden');
+    $('pc-trick-area').classList.remove('pc-paused');
     $('pc-announce').classList.add('hidden');
     $('pc-pause').classList.toggle('hidden', cfg.method !== 'chrono');
     $('pc-pause').textContent = 'Pause';
@@ -554,12 +605,24 @@ function onReady(data) {
     startTimer();
 }
 
+/**
+ * Une génération qui échoue doit se voir — depuis n'importe quelle phase.
+ *
+ * Le garde portait sur `phase === 'config'`, or « Nouvelle séquence » part de
+ * la correction : le message était jeté et le bouton restait sans effet, sans
+ * fin. `#pc-hint` vit dans `#pc-stage` (masqué en config) et `#pc-fine-note`
+ * dans le repli des réglages : ni l'un ni l'autre n'est un endroit fiable.
+ */
 function onError(data) {
-    if (phase !== 'config') return;
+    if (!pending) return;              // une erreur qui ne nous concerne pas
+    pending = null;
     $('pc-start').disabled = false;
     $('pc-loading').classList.add('hidden');
-    hint(data.msg || 'Erreur');
-    $('pc-fine-note').textContent = data.msg || 'Erreur';
+    stopAllTimers();
+    setPhase('config');
+    const el = $('pc-error');
+    el.textContent = data.msg || 'La génération a échoué. Réessayez.';
+    el.classList.remove('hidden');
 }
 
 function toAnswer() {
@@ -573,9 +636,13 @@ function toAnswer() {
     $('pc-in-0').value = '';
     $('pc-in-1').value = '';
     $('pc-answer-check').textContent = '';
-    // En chronométré on arrive par un minuteur, pas par un geste : iOS n'ouvre
-    // alors pas le clavier, et un champ focalisé sans clavier est pire que rien.
-    if (cfg.method !== 'chrono') (two ? $('pc-in-1') : $(`pc-in-${side}`)).focus();
+    // Au doigt on ne focalise pas : iOS n'ouvre le clavier que sur un geste, et
+    // un champ focalisé sans clavier fait défiler la page pour rien. Au clavier,
+    // en revanche, il faut le focus — le chronométré amène ici tout seul, et
+    // c'est le mode des trois préréglages.
+    if (!window.matchMedia('(pointer: coarse)').matches) {
+        (two ? $('pc-in-1') : $(`pc-in-${side}`)).focus();
+    }
     $('pc-answer').scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
@@ -595,7 +662,9 @@ function submitAnswer(e) {
         }
         given[k] = parseInt(raw, 10);
     }
-    recordStats(teams, exp);
+    // Une relecture ne compte pas : la réponse était affichée juste au-dessus.
+    // Sans ce garde, série et record se gonflent d'un essai gagné d'avance.
+    if (!inReplay) recordStats(teams, exp);
     renderReview(teams, exp);
     setPhase('review');
     $('pc-review').scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -630,7 +699,7 @@ function renderStats() {
         + `<span>record <b>${s.best}</b></span>`
         + `<span><b>${pct} %</b> justes</span>`
         + `<span>écart moyen <b>${avg}</b> pts</span>`
-        + `<span class="pc-stats-n">${s.plays} essais</span>`;
+        + `<span class="pc-stats-n">${s.plays} essai${s.plays > 1 ? 's' : ''}</span>`;
 }
 
 const VERDICT_CLASS = (d) => d === 0 ? 'prob-badge-correct'
@@ -669,21 +738,17 @@ function diagnose(teams, exp) {
         && exp.total[0] !== exp.total[1]) {
         return ['Les deux totaux sont intervertis : chaque camp a reçu celui de l’autre.'];
     }
+    // Les deux totaux qui somment juste ne désignent PAS à eux seuls un pli
+    // déplacé : donner le dix de der ou la belote au mauvais camp somme juste
+    // aussi. C'est pour ça que ce test ne sert plus qu'à nuancer le rang 5,
+    // après que le dix de der et la belote ont eu leur tour.
+    const sumsMatch = teams.length === 2
+        && given[0] + given[1] === exp.total[0] + exp.total[1];
     for (const k of teams) {
         const d = given[k] - exp.total[k];
         if (d === 0) continue;
         const trump = deal.trump;
 
-        // Les deux totaux somment juste mais sont échangés : rien n'a été
-        // oublié, c'est un pli qui est tombé dans le mauvais tas.
-        if (teams.length === 2 && given[0] + given[1] === exp.total[0] + exp.total[1]) {
-            const t = win.find(x => x.points === Math.abs(d));
-            if (t && k === 0) {
-                out.push(`Vos deux totaux somment juste (${given[0] + given[1]}) : aucune carte n’a été oubliée. `
-                    + `C’est le pli n°${t.no} (${t.points} pts, ramassé par ${SEAT_NAMES_FR[t.winner]}) qui est allé dans le mauvais tas.`);
-                break;
-            }
-        }
         if (given[k] === exp.total[1 - k]) {
             out.push(`${teamName(k)} : c’est le total de l’autre camp — vérifiez quel tas vous comptiez.`);
             continue;
@@ -704,21 +769,34 @@ function diagnose(teams, exp) {
             out.push(`La belote a été annoncée par ${teamName(1 - k)} : les 20 points sont à eux.`);
             continue;
         }
+        // Un pli entier dans le mauvais tas. La direction fait partie du test :
+        // sans elle, un pli de la bonne valeur mais du bon côté ferait accuser
+        // le joueur d'une erreur qu'il n'a pas commise.
         const missed = win.filter(t => t.points === Math.abs(d)
             && ((d < 0) === (t.winner % 2 === k)));
         if (missed.length) {
             const t = missed[0];
+            // Quand les deux totaux somment juste, rien n'a été oublié : c'est un
+            // déplacement, et ça se dit une fois pour les deux camps.
+            if (sumsMatch) {
+                out.push(`Vos deux totaux somment juste (${given[0] + given[1]}) : aucune carte n’a été oubliée. `
+                    + `C’est le pli n°${t.no} (${t.points} pts, ramassé par ${SEAT_NAMES_FR[t.winner]}) qui est allé dans le mauvais tas.`);
+                break;
+            }
             out.push(`Le pli n°${t.no} vaut exactement ${t.points} points, ramassé par ${SEAT_NAMES_FR[t.winner]}`
                 + (missed.length > 1 ? ` (${missed.length} plis de cette valeur).` : '.'));
             continue;
         }
+        // `d === -14` et pas `Math.abs(d)` : ces deux messages disent « vous
+        // avez compté trop peu ». Sur un écart positif ils accusaient d'une
+        // erreur exactement inverse de celle commise.
         const nine = 8 * trump + 2, jack = 8 * trump + 3;
         const inPile = (c) => win.some(t => t.winner % 2 === k && t.cards.includes(c));
-        if (Math.abs(d) === 14 && inPile(nine)) {
+        if (d === -14 && inPile(nine)) {
             out.push(`Le 9 de ${SUIT_NAMES_FR[trump]} est atout : <b>14</b> points, pas 0.`);
             continue;
         }
-        if (Math.abs(d) === 18 && inPile(jack)) {
+        if (d === -18 && inPile(jack)) {
             out.push(`Le Valet de ${SUIT_NAMES_FR[trump]} est atout : <b>20</b> points, pas 2.`);
             continue;
         }
@@ -764,6 +842,11 @@ function renderTable(exp) {
             if (exp.belote[k]) addBonusRow(tbody, 'belote', 20, k, run);
         }
     }
+    // Au téléphone la moitié droite du tableau est hors champ, et c'est
+    // précisément la colonne que le diagnostic invite à lire. La CSS ne montre
+    // cette ligne qu'en dessous de 640px.
+    $('pc-table-swipe').textContent =
+        'Faites glisser le tableau vers la gauche pour voir Pts et Cumul.';
     const foot = $('pc-table-foot');
     const lines = [`Points cartes : ${exp.cards[0]} pour Nord-Sud, ${exp.cards[1]} pour Est-Ouest`
         + (win.length === 8 ? ' — 152 en tout.' : '.')];
@@ -803,14 +886,21 @@ function applyPreset(name) {
 }
 
 function setSeg(id, attr, value) {
-    for (const btn of $(id).querySelectorAll('.pc-seg-btn')) {
+    const btns = [...$(id).querySelectorAll('.pc-seg-btn')];
+    let matched = false;
+    for (const btn of btns) {
         const on = btn.dataset[attr] === String(value);
+        if (on) matched = true;
         btn.setAttribute('aria-checked', on ? 'true' : 'false');
         // Tabulation roulante : un groupe = un seul arrêt de tabulation, sur
         // l'option choisie. Sans ça un `radiogroup` de trois options coûte
         // trois tabulations et ment sur ce qu'il est.
         btn.tabIndex = on ? 0 : -1;
     }
+    // « perso » n'a pas de bouton : sans ce repli le groupe Niveau se retrouve
+    // sans AUCUN arrêt de tabulation dès qu'on touche un réglage fin, et comme
+    // l'état est persisté il devient injoignable au clavier pour de bon.
+    if (!matched && btns.length) btns[0].tabIndex = 0;
 }
 
 /** Les flèches parcourent un groupe de segments, et la sélection suit le focus
@@ -838,6 +928,11 @@ function syncFine() {
     if (realiste) cfg.nTricks = 8;
 
     setSeg('pc-presets', 'preset', cfg.preset);
+    // « perso » n'a pas de bouton : sans ce marqueur les trois niveaux restent
+    // éteints et le groupe a l'air d'avoir perdu sa sélection.
+    const perso = cfg.preset === 'perso';
+    $('pc-preset-note').textContent = perso ? 'réglages personnalisés' : '';
+    $('pc-preset-note').classList.toggle('hidden', !perso);
     setSeg('pc-method', 'method', cfg.method);
     setSeg('pc-count', 'count', cfg.count);
     setSeg('pc-side', 'side', cfg.side);
@@ -924,6 +1019,8 @@ function onKeyDown(e) {
 
 function startRun() {
     if (phase === 'run') return;
+    stopAllTimers();
+    inReplay = false;
     restoreMethod();
     hint('');
     requestDeal();
@@ -937,27 +1034,43 @@ function restoreMethod() {
 }
 
 function toConfig() {
-    stopTimer();
+    // `stopTimer` seul laissait le vol en cours : son callback rappelait
+    // `renderAt` sur un plateau masqué, puis `toAnswer` — la page de réglages
+    // basculait toute seule sur l'écran de saisie une seconde et demie plus tard.
+    stopAllTimers();
+    inReplay = false;
     restoreMethod();
     setPhase('config');
     renderStats();
 }
 
+/** Retour à la correction déjà calculée — le DOM de `#pc-review` est intact. */
+function toReview() {
+    inReplay = false;
+    restoreMethod();
+    setPhase('review');
+    renderStats();
+    $('pc-review').scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
 /** Rejoue la MÊME donne, au pas, sans rien redemander au serveur. */
 function replaySlow() {
     if (!deal) return;
+    stopAllTimers();
     pcIdx = 0;
     paused = false;
     allGathered = false;
+    inReplay = true;
     if (methodBeforeReplay === null) methodBeforeReplay = cfg.method;
     cfg = { ...cfg, method: 'carte' };
     syncFine();
     $('pc-pause').classList.add('hidden');
     $('pc-next').classList.remove('hidden');
     $('pc-prev').disabled = false;
+    $('pc-trick-area').classList.remove('pc-paused');
     setPhase('run');
     renderAt();
-    hint('Relecture : avancez avec →, reculez avec ←.');
+    hint('Relecture : avancez avec →, reculez avec ←. La correction revient à la fin.');
 }
 
 // ===== Montage ==============================================================
@@ -970,6 +1083,7 @@ export function mount(container) {
     // Le module est un singleton : tout repart de zéro ici.
     phase = 'config'; deal = null; win = null; pcIdx = 0; paused = false;
     allGathered = false; pending = null; given = [null, null];
+    endHold = false; inReplay = false;
     methodBeforeReplay = null;   // sinon il écraserait le réglage relu ci-dessous
     cfg = loadCfg();
     if (cfg.rules === 'realiste') cfg.nTricks = 8;
@@ -1052,8 +1166,7 @@ export function mount(container) {
 }
 
 export function unmount() {
-    stopTimer();
-    if (flyTimer) { clearTimeout(flyTimer); flyTimer = null; }
+    stopAllTimers();
     document.removeEventListener('keydown', onKeyDown);
     offMessage('count_ready', onReady);
     offMessage('error', onError);
@@ -1067,4 +1180,5 @@ export function unmount() {
     paused = false;
     allGathered = false;
     methodBeforeReplay = null;
+    inReplay = false;
 }
