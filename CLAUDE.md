@@ -362,4 +362,24 @@ data/
     bid_distill_console.log
   shap/               SHAP analysis plots
   colver.db           SQLite (web frontend)
+  analysis/           Brut des mesures d'analyse (voir ci-dessous)
 ```
+
+## Mesures d'analyse : tout run se journalise
+
+**Un script de `scripts/analysis/` qui n'écrit que sur stdout fait repayer son coût à
+chaque question posée.** Ouvert le 2026-08-02 après avoir perdu ~50 min de GPU : les
+trois régimes de `bid_q_flatness` ont été calculés (324 000 déroulements) et rien n'a
+été conservé — l'affichage tronquait même à 25 des 120 lignes par régime.
+
+`scripts/analysis/runlog.py` — `runlog.save(script, tag, params, summary, payload, models)` :
+- **le brut** (écarts monde par monde, lignes par main) → `data/analysis/<script>/<horodatage>__<tag>.json`, gitignoré ;
+- **le registre** (provenance + agrégats) → `docs/measurements/index.jsonl`, **versionné**, pour que la trace survive à un `rm -rf data/` ou à un changement de machine.
+
+La provenance inclut un **sha256 de chaque fichier de poids** consulté : les `.bin` ne
+sont pas dans git et changent sans prévenir, donc un résultat sans l'empreinte de son
+modèle n'est pas interprétable six mois plus tard. Le SHA du dépôt est enregistré avec
+son état propre/sale.
+
+Conventions : `--tag` nomme le run, `--no-log` pour un essai jetable. Détail et liste
+des scripts instrumentés (tous ne le sont pas encore) : [docs/measurements/README.md](docs/measurements/README.md).

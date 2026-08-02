@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import colver  # noqa: E402
 
 import bid_candidates as bc  # noqa: E402
+import runlog  # noqa: E402
 
 
 def pearson(xs, ys):
@@ -57,6 +58,9 @@ def main():
     ap.add_argument("--bid-model", default=bc.BID_MODEL)
     ap.add_argument("--play-model", default=bc.PLAY_MODEL)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--tag", default="", help="étiquette du run dans data/analysis/")
+    ap.add_argument("--no-log", action="store_true",
+                    help="ne rien écrire dans data/analysis/ (essais jetables)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -103,11 +107,17 @@ def main():
         df1 = [a - b for a, b in zip(diffs[far], diffs[top1], strict=True)]
         rows.append({
             "hand": " ".join(bc.card_name(c) for c in hand),
+            "hand_cards": hand,
             "top1": bc.action_label(top1), "top2": bc.action_label(top2),
             "far": bc.action_label(far),
+            "actions": {"top1": int(top1), "top2": int(top2), "far": int(far)},
+            "q": {"top1": q1, "top2": q2, "far": qf},
             "dq_21": q1 - q2, "dq_f1": q1 - qf,
             "d_21": statistics.fmean(d21), "se_21": bc.stderr_of(d21),
             "d_f1": statistics.fmean(df1), "se_f1": bc.stderr_of(df1),
+            # Le brut, monde par monde : c'est lui qui permet de ré-agréger autrement
+            # (médiane, bootstrap, sous-ensemble) sans repayer les déroulements.
+            "raw": {"top1": diffs[top1], "top2": diffs[top2], "far": diffs[far]},
             "source": source,
         })
         print(f"\r  {len(rows)}/{args.hands} mains  "
@@ -146,6 +156,24 @@ def main():
     print(f"  corrélation ΔQ(1,2) ↔ Δréel(1,2) : r = {pearson(dq21, [-x for x in d21]):+.3f}"
           f"   (positif = le Q ordonne juste)")
     print(f"  ΔQ médian sur ces paires : {statistics.median(dq21):.4f}")
+
+    if not args.no_log:
+        runlog.save(
+            "bid_q_flatness",
+            args.tag or (args.prior.replace(" ", "_") if args.prior else "ouverture"),
+            params={"hands": args.hands, "worlds": args.worlds, "seed": args.seed,
+                    "prior": args.prior, "far_rank": args.far_rank,
+                    "world_source": rows[0]["source"], "seat": bc.SEAT, "dealer": dealer},
+            summary={"n_hands": len(rows), "rollouts": len(rows) * args.worlds * 3,
+                     "d_21": statistics.fmean(d21), "se_21": bc.stderr_of(d21),
+                     "d_f1": statistics.fmean(df1), "se_f1": bc.stderr_of(df1),
+                     "top1_wins_pct": 100 * sum(1 for x in d21 if x < 0) / len(d21),
+                     "r_dq_dreal": pearson(dq21, [-x for x in d21]),
+                     "dq_median": statistics.median(dq21)},
+            payload={"rows": rows},
+            models=[args.bid_model, args.play_model],
+            took_s=time.monotonic() - t0,
+        )
 
 
 if __name__ == "__main__":
