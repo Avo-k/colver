@@ -60,7 +60,11 @@ Il y a **deux** fédérations françaises, et elles ne se reconnaissent pas.
 Et un troisième label, indépendant des deux : le **Championnat de France de Belote Contrée** de
 Cannes, organisé par BELOTE CONTREE MARALPINE au Festival International des Jeux
 (`tournois/festivaldesjeux_cannes_com_*`) — parties en **2001 points**, finale 4 × 2001 + 1 × 2501,
-148 équipes maximum.
+148 équipes maximum. **Son règlement de jeu a été retrouvé** (édition 2016, signée du responsable
+des tournois du FIJ) : [reglement-cannes.md](reglement-cannes.md) pour l'enquête et les réserves,
+[matrices/jeu-de-la-carte.md](matrices/jeu-de-la-carte.md) pour ce qu'il dit axe par axe. C'est la
+seule source du corpus qui tranche à la fois le barème et le jeu de la carte au nom d'une
+compétition nationale.
 
 Les quatre rédactions FFB :
 

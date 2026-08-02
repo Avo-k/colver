@@ -24,6 +24,16 @@ Avant toute chose, ce qui n'est **pas** un témoignage indépendant :
 Et surtout : **« la source est muette » ≠ « la source est d'accord »**. Le §11 recense ce sur quoi
 le corpus se tait.
 
+> **Ajout du 2026-08-02 — Cannes 2016.** Le règlement du Championnat de France de contrée du
+> Festival International des Jeux (édition 2016) a été retrouvé après l'établissement de cette
+> matrice et y est désormais cité sous l'alias **Cannes 2016**
+> (`tournois/web_archive_org_web_20160421181912if_http_festivaldesjeux_cannes_com_Documents_REGLEMENT_20DE_20LA_20BELOTE_20.txt`).
+> Ce n'est la copie de rien : sa rédaction est originale d'un bout à l'autre, et c'est **le seul
+> règlement de compétition du corpus dont le barème soit celui de la famille B**. Il change les
+> conclusions du **§12.2** (« ce qui n'est attesté nulle part »), qui a été corrigé en
+> conséquence. Réserves : document vieux de dix ans, porteur juridique changé en 2025 — détail
+> dans [reglement-cannes.md](../reglement-cannes.md).
+
 ---
 
 ## 1. Méthode de comptage : points faits / points annoncés / faits + demandés
@@ -43,14 +53,17 @@ le corpus se tait.
 | Position | Sources | Extrait |
 |---|---|---|
 | **Faits + demandés, imposé** | `federations/ffbelote_org_regles_coinche.txt` → <https://www.ffbelote.org/regles-coinche/> ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` → <https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-COINCHEE.pdf> ; `federations/LOCAL_regles_officielles_belote_contree.txt` (pas de ligne `SOURCE`) | FFB coinche HTML : « À la coinche, la manière de compter les points est **toujours** Points faits + points annoncés. » — La version « Équipe Ludique » ne mentionne aucune alternative : « Les preneurs marquent **leur total + le montant du contrat demandé**. » |
-| **Faits + demandés, imposé** (suite) | `divers/pagat_com_jass_coinche_html.txt` → <https://www.pagat.com/jass/coinche.html> (+ gambiter, reglesdejeux) ; `divers/fr_wikipedia_org_wiki_Coinche.txt` → <https://fr.wikipedia.org/wiki/Coinche> ; `apps-sites/gamerules_com_rules_coinche.txt` → <https://gamerules.com/rules/coinche/> ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` → <https://www.jeu-belote.fr/regles.php?part=regles-jeu-coinche> ; `divers/exoty_com_compter_points_coinche.txt` → <https://exoty.com/compter-points-coinche> ; `divers/maviedesenior_com_loisirs_comment_jouer_a_la_belote_coinchee.txt` → <https://maviedesenior.com/loisirs/comment-jouer-a-la-belote-coinchee> ; `divers/belotepoint_fr_regles_coinche.txt` → <https://www.belotepoint.fr/regles-coinche> ; `divers/regles_com_jeux_cartes_coinche_html.txt` → <https://www.regles.com/jeux-cartes/coinche.html> ; `open-source/valmathieu_ContrAI_main_contree-domain.md` | Pagat : « the bidding team scores **the number of points they took plus the number they bid** » — Wikipédia Coinche : « marque le nombre de points effectivement faits […] **auxquels s'ajoute la valeur du contrat annoncé** ». |
+| **Faits + demandés, imposé** (suite) | `divers/pagat_com_jass_coinche_html.txt` → <https://www.pagat.com/jass/coinche.html> (+ gambiter, reglesdejeux) ; `divers/fr_wikipedia_org_wiki_Coinche.txt` → <https://fr.wikipedia.org/wiki/Coinche> ; `apps-sites/gamerules_com_rules_coinche.txt` → <https://gamerules.com/rules/coinche/> ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` → <https://www.jeu-belote.fr/regles.php?part=regles-jeu-coinche> ; `divers/exoty_com_compter_points_coinche.txt` → <https://exoty.com/compter-points-coinche> ; `divers/maviedesenior_com_loisirs_comment_jouer_a_la_belote_coinchee.txt` → <https://maviedesenior.com/loisirs/comment-jouer-a-la-belote-coinchee> ; `divers/belotepoint_fr_regles_coinche.txt` → <https://www.belotepoint.fr/regles-coinche> ; `divers/regles_com_jeux_cartes_coinche_html.txt` → <https://www.regles.com/jeux-cartes/coinche.html> ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; **Cannes 2016** | Pagat : « the bidding team scores **the number of points they took plus the number they bid** » — Wikipédia Coinche : « marque le nombre de points effectivement faits […] **auxquels s'ajoute la valeur du contrat annoncé** » — Cannes : « **Contrat réussi : points de l'enchère demandée + points des plis réalisés par le demandeur** + belote éventuellement ». |
 | **Points annoncés seuls, imposé** | `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` → <https://www.fnasce.org/IMG/pdf/reglement.pdf> ; `tournois/fnasce_org_IMG_pdf_belote_reglement_cle1a43c7_pdf.txt` → <https://www.fnasce.org/IMG/pdf/belote_reglement_cle1a43c7.pdf> (**copies l'une de l'autre**, ASCEE 2A) ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` → <https://casimirdehauteclocque.fr/jeux/coinche.pdf> ; `divers/clubdejeux_com_belote_coinchee_online_regles.txt` → <https://www.clubdejeux.com/belote-coinchee-online/regles> ; `divers/adpoker_fr_belote_contree_html.txt` → <https://www.adpoker.fr/belote-contree.html> ; `open-source/slim0_contree_main_backend_game_scoring.py` | ASCEE 2A : « L'équipe qui annonce doit réaliser au minimum son contrat. Elle marque **le nombre de points annoncés, même si elle en a réalisé plus.** » — slim0 : `preneurs_score = contract_value` (rien d'autre). |
 | **Points faits (chaque camp garde ses points), imposé** | `open-source/CephaloSophie_kydos_main_packages_core_src_scoring_donneScoring.ts` | « contrat réussi → **chaque équipe marque ses points arrondis** (chacune garde sa belote) ». |
 
 **Divergence.** La ligne de fracture n'est pas « qui a raison » mais **qui tranche** : la FFB et
 les sites généralistes présentent la méthode comme un réglage de tournoi, tandis que les
 **règlements de concours réels** (ASCEE 2A, Casimir de Hauteclocque) en imposent un seul — et
-c'est presque toujours **points annoncés seuls**, le plus rapide à marquer à la main.
+c'est presque toujours **points annoncés seuls**, le plus rapide à marquer à la main. Presque :
+**Cannes impose le mode faits + demandés**, ce qui en fait le seul règlement de compétition du
+corpus à marquer la donne entière. Cohérent avec sa cible de partie, **2001 points** — la plus
+haute du corpus, et la seule qui suppose des donnes à ~250 points.
 Corollaire : **les trois méthodes produisent des scores d'échelles incomparables** (~100 pts par
 donne en annoncés seuls, ~250 en faits+demandés), ce qui explique les cibles de partie qui vont
 de 501 à 3000 selon les sources.
@@ -115,7 +128,7 @@ aident au contrat ; seule Belote.com dit le contraire.
 | Position | Sources | Extrait |
 |---|---|---|
 | **160 + le contrat** | `federations/ffbelote_org_belote_contree.txt` (mode faits+annoncés) ; `federations/ffbelote_org_regles_coinche.txt` ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `divers/carafons_fr_regles_de_la_coinche.txt` ; `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` → <https://cartesetcie.fr/regle-du-jeu-la-belote-coinchee/> ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `divers/iscool_helpshift_com_hc_fr_10_belote_mobile_faq_157_how_to_play_coinche_coinche_rules.txt` → <https://iscool.helpshift.com/hc/fr/10-belote-mobile/faq/157-how-to-play-coinche-coinche-rules/> ; `divers/drasill_github_io_bga_coinche_rules_fr_html.txt` → <https://drasill.github.io/bga-coinche/rules-fr.html> ; `apps-sites/ludicash_com_help_rules_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` | LOCAL : « Les défenseurs marquent **160 points de chute** + la belote + le montant du contrat demandé ». — Wikipédia contrée : « contrat 90 points […] L'équipe adverse obtient **90+160+20 = 270** points. » — Pagat : « Their opponents score **160 plus the amount of the bid**. » |
-| **162 + le contrat** | `divers/regles_com_jeux_cartes_coinche_html.txt` ; `divers/jeux_regles_com_regles_coinche.txt` → <https://jeux-regles.com/regles-coinche/> ; `divers/maviedesenior_com_loisirs_comment_jouer_a_la_belote_coinchee.txt` ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `divers/lemagloisirs_fr_regle_coinche.txt` → <https://www.lemagloisirs.fr/regle-coinche/> ; `apps-sites/regles_de_jeux_com_regle_coinche.txt` ; `apps-sites/contree_org_4_joueurs.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/ismo009_Coinche_main_game.js` | maviedesenior : « l'équipe qui défend comptabilise **162 points**, ainsi que les points du contrat annoncés […] ces derniers marquent **242 points (162 + 80)**. » — exoty : « les défenseurs auraient marqué **162 points + 100 (contrat) = 262 points**. » — belotepoint : « L'équipe adverse marque **la totalité des 162 points + la valeur du contrat**. » — BGA (code) : `$teamScores[$defenseTeam] += 162;` — ismo009 (code) : `const totalPoints = 162;` |
+| **162 + le contrat** | `divers/regles_com_jeux_cartes_coinche_html.txt` ; `divers/jeux_regles_com_regles_coinche.txt` → <https://jeux-regles.com/regles-coinche/> ; `divers/maviedesenior_com_loisirs_comment_jouer_a_la_belote_coinchee.txt` ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `divers/lemagloisirs_fr_regle_coinche.txt` → <https://www.lemagloisirs.fr/regle-coinche/> ; `apps-sites/regles_de_jeux_com_regle_coinche.txt` ; `apps-sites/contree_org_4_joueurs.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/ismo009_Coinche_main_game.js` ; **Cannes 2016** | Cannes : « **Contrat perdu : points de l'enchère demandée + 162 points ou 252** + belote éventuellement car "prenable" » — maviedesenior : « l'équipe qui défend comptabilise **162 points**, ainsi que les points du contrat annoncés […] ces derniers marquent **242 points (162 + 80)**. » — exoty : « les défenseurs auraient marqué **162 points + 100 (contrat) = 262 points**. » — belotepoint : « L'équipe adverse marque **la totalité des 162 points + la valeur du contrat**. » — BGA (code) : `$teamScores[$defenseTeam] += 162;` — ismo009 (code) : `const totalPoints = 162;` |
 | **160 tout court (sans le contrat)** | `tournois/cdf_missegre11_com_medias_files_belote_contre_e_pdf.txt` → <http://www.cdf-missegre11.com/medias/files/belote-contre-e.pdf> ; `divers/belotecontree_free_reglement.txt` ; `tournois/ainesruraux_saintsever_com_belote_BELOTE_20TRADITIONNELLE_pdf.txt` ; `divers/adpoker_fr_belote_contree_html.txt` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` | Missègre : « elle marque 0 point et l'équipe adversaire en marque alors **160**. » (le copiste a **retiré** le « + la valeur du contrat demandé » de sa source FFB). — « tournoi international » : « Si une équipe est "DEDANS" […] l'équipe adverse marque **160 points**, éventuellement augmentée des 20 points de "BELOTE" ». — kydos : « contrat chuté → **défense = 160 FIXE**, preneur = 0. » |
 | **162 tout court** | `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` (**belote classique**, pas de ligne `SOURCE`) ; `federations/ffbelote_org_regles_officielle_belote.txt` → <https://www.ffbelote.org/regles-officielle-belote/> ; `federations/ffbelote_org_reglements_de_la_belote_avec_ou_sans_annonce.txt` → <https://www.ffbelote.org/reglements-de-la-belote-avec-ou-sans-annonce/> ; `tournois/villeconin_fr_wp_content_uploads_2017_02_F_C3_A9d_C3_A9ration_fran_C3_A7aise_de_Belote_Informations_sur_le_jeu.txt` → <https://villeconin.fr/wp-content/uploads/2017/02/F%C3%A9d%C3%A9ration-fran%C3%A7aise-de-Belote-Informations-sur-le-jeu-de-belote.pdf> ; `tournois/web_myassoc_org_..._pdf.txt` (Lions Club) ; `tournois/pontdeclaix_fr_sites_default_files_2024_01_65a68d18ab985_rglementconcoursdebelote_pdf.txt` ; `tournois/lagrandcombe_fr_wp_content_uploads_2020_01_Reglement_belote_2020_pdf.txt` ; `tournois/fnasce_org_IMG_pdf_reglement_belote_pdf.txt` | **Belote classique** (il n'y a pas de contrat chiffré à ajouter). FFB : « En cas de chute, les preneurs ne marquent rien […] Leurs adversaires marquent **162 points de chute** + leurs annonces + les annonces des preneurs. » — Lions Club : « **La mise dedans compte pour 162 points.** » |
 | **Le contrat seul** | `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` (+ sa copie) ; `divers/adpoker_fr_belote_contree_html.txt` (variante b) ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` (§ points annoncés) ; `open-source/slim0_contree_main_backend_game_scoring.py` | ASCEE 2A : « L'équipe qui défend […] Si elle réussit, elle marque **le nombre de points annoncés par l'équipe adverse**. » — slim0 : `defenders_score = contract_value * multiplier`. |
@@ -125,7 +138,7 @@ aident au contrat ; seule Belote.com dit le contraire.
 | Position | Sources | Extrait |
 |---|---|---|
 | **0, sauf sa belote qui est imprenable** | `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/ffbelote_org_regles_coinche.txt` ; `divers/carafons_fr_regles_de_la_coinche.txt` ; `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/jeux_regles_com_regles_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/clubdejeux_com_belote_coinchee_online_regles.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` | FFB coinche PDF : « Les preneurs ne marquent rien, à l'exception éventuelle des **20 points de belote qui sont réputés imprenables**. » — BGA (code) : `if ($beloteTeamId === $bidTeam) { … ' + 20 (belote)'; }` dans la branche `Failure`. |
-| **0, la belote passe à l'adversaire** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_org_belote_contree.txt` (+ 4 copies) ; `divers/belotecontree_free_reglement.txt` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` | FFB contrée 2016 §7 : « **En cas de chute du contrat, la belote est perdue par les preneurs**, même s'ils n'ont pas dit "rebelote". » — LOCAL : « Les preneurs ne marquent rien. **La belote est prenable.** » — kydos : `[defense]: c.dedansBase + (hasBelote ? c.beloteBonus : 0)`. |
+| **0, la belote passe à l'adversaire** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_org_belote_contree.txt` (+ 4 copies) ; `divers/belotecontree_free_reglement.txt` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` ; **Cannes 2016** | FFB contrée 2016 §7 : « **En cas de chute du contrat, la belote est perdue par les preneurs**, même s'ils n'ont pas dit "rebelote". » — LOCAL : « Les preneurs ne marquent rien. **La belote est prenable.** » — Cannes : « Contrat perdu : […] + belote éventuellement **car "prenable"** » (le mot entre guillemets dans le PDF, comme un terme technique). — kydos : `[defense]: c.dedansBase + (hasBelote ? c.beloteBonus : 0)`. |
 | **0 tout court** | `open-source/slim0_contree_main_backend_game_scoring.py` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` | slim0 : `preneurs_score = 0` — Casimir : « La belote **ne sert pas en défense**. » |
 
 **Divergence dure, et de nouveau *interne* à la FFB** : la belote est **prenable** dans les
@@ -137,6 +150,12 @@ pas — cf. `matrices/arrondi.md`), et surtout **avec ou sans le contrat**. Le c
 massivement vers « + le contrat » ; le « 160 tout court » est le fait de règlements en **points
 faits** (Missègre, tournoi international), où le contrat n'entre jamais dans la marque.
 
+**Cannes 2016 est le seul règlement de compétition à écrire « 162 + le contrat »**, et il le fait
+en une ligne symétrique de celle du contrat réussi — même total de donne dans les deux cas,
+réparti ou non. Il faut noter qu'il **arrondit ensuite** (à la dizaine, bascule à 6, cf.
+`matrices/arrondi.md`) : chez lui, 162 est la base de calcul, pas le nombre inscrit sur la feuille.
+C'est exactement l'écart qui subsiste avec Colver — voir §12.2.
+
 ---
 
 ## 4. Contre / coinche : forfait fixe ou multiplicateur ?
@@ -147,7 +166,7 @@ faits** (Missègre, tournoi international), où le contrat n'entre jamais dans l
 |---|---|---|
 | **Forfait fixe 320 / 640** (le score de la donne est *remplacé*) | `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_saintsever_com_..._pdf.txt` ; `tournois/cdf_missegre11_com_..._pdf.txt` ; `federations/ffbelote_org_belote_contree.txt` (mode **points faits**) + ses copies ; `divers/adpoker_fr_belote_contree_html.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` | « tournoi international » : « **Le contre vaut 320 points, le surcontre vaut 640 points.** » — FFB HTML points faits : « Le contre vaut 320 points et le surcontre 640. À cela peut venir s'ajouter la belote en supplément, soit 340 ou 660 points. » — kydos : `const base = input.contre === 'surcontree' ? c.surcontreWin : c.contreWin; // 640 / 320` |
 | **Forfait 320/640 *plus* le contrat multiplié** (mode faits + demandés) | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (tableau p. 7, image, relevé à la main) ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` | Tableau p. 7 : contré réussi = **320 (640) + Contrat×2 (×4)** + belote ; défense 0. |
-| **160 + contrat×mult** (la base reste le tas, seul le contrat est multiplié) | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` **Note 1** ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `open-source/slim0_contree_main_backend_game_scoring.py` (sans base) | FFB Note 1 : « les organisateurs peuvent utiliser la comptabilisation suivante en cas de contre (surcontre) : **Contrat x 2 + 160** au lieu de Contrat x 2 + 320 (**Contrat x 4 + 160** au lieu de Contrat x 4 + 640) » — Pagat : « A coinche doubles the score **for the bid only** […] 160 + (100 × 2) = 360. » — belotepoint : « la valeur du contrat (**et non les points de pli**) est multipliée ». |
+| **160 + contrat×mult** (la base reste le tas, seul le contrat est multiplié) — **162 chez Cannes** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` **Note 1** ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `open-source/slim0_contree_main_backend_game_scoring.py` (sans base) ; **Cannes 2016** | FFB Note 1 : « les organisateurs peuvent utiliser la comptabilisation suivante en cas de contre (surcontre) : **Contrat x 2 + 160** au lieu de Contrat x 2 + 320 (**Contrat x 4 + 160** au lieu de Contrat x 4 + 640) » — Pagat : « A coinche doubles the score **for the bid only** […] 160 + (100 × 2) = 360. » — belotepoint : « la valeur du contrat (**et non les points de pli**) est multipliée ». — Cannes : « Total des points à marquer = **points de l'enchère demandée + 162 ou 252** + belote » puis « Le contre **double les points de l'enchère demandée**, le surcontre les triple » — mêmes deux termes, avec la base à 162/252 au lieu de 160. |
 | **(160 + contrat) × mult — tout multiplié** | `federations/ffbelote_org_regles_coinche.txt` ; `federations/ffbelote_org_belote_contree.txt` (mode faits+annoncés) ; `divers/carafons_fr...` ; `divers/cartesetcie_fr...` ; `divers/clubdejeux_com...` ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/ismo009_Coinche_main_game.js` ; `divers/jeux_regles_com_regles_coinche.txt` ; `divers/fr_wikipedia_org_wiki_Coinche.txt` | FFB HTML : « Si le preneur chute son contrat, le défendeur marque **(160 points + les points demandés) x 2** » — BGA (code) : `$teamScores[$defenseTeam] = $bid; … += 162; … *= $multiplier;` — Wikipédia coinche : « les points marqués par **l'équipe victorieuse sont doublés**. » |
 | **Multiplicateur sur le *forfait de chute* seulement, pas sur le contrat** | `tournois/data_over_blog_kiwi_com_1_05_17_17_20150128_ob_1f68a4_2015_01_27_reglement_table_coinche_pdf.txt` → <http://data.over-blog-kiwi.com/1/05/17/17/20150128/ob_1f68a4_2015-01-27-reglement-table-coinche.pdf> ; `tournois/maisondesessarts_fr_article116_html.txt` → <https://www.maisondesessarts.fr/article116.html> | Table coinche 2015 : « En cas de coinche : **160 x 2 + contrat + annonces** / En cas de surcoinche : **160 x 4 + contrat + annonces** » — Essarts : « Elle vaut **160 x 2 = 320 points + les points du contrat + les annonces** ». |
 | **Multiplicateur sur les points annoncés seuls** | `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` (+ copie) ; `open-source/slim0_contree_main_backend_game_scoring.py` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `federations/ffbelote_org_belote_contree.txt` (mode **points annoncés**) | ASCEE 2A : « Le contre et surcontre multiplie par 2, respectivement 4, **les points annoncés**. » — FFB HTML, points annoncés : « le contre vaut 2 fois la valeur de l'enchère. (si l'enchère est à 120, le contre rapporte 240 points aux 2 équipes). » |
@@ -157,7 +176,7 @@ faits** (Missègre, tournoi international), où le contrat n'entre jamais dans l
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Sur le contrat seul** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (**Note 1 seulement**) ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `open-source/slim0_contree_main_backend_game_scoring.py` | gamerules : « This **does not double the total points**. For example, if the bid of "100, hearts" was made then the bid of 100 would be doubled to 200. » — ContrAI : « the winning side […] scores `160 + C × M` ». |
+| **Sur le contrat seul** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (**Note 1 seulement**) ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `open-source/slim0_contree_main_backend_game_scoring.py` ; **Cannes 2016** | gamerules : « This **does not double the total points**. For example, if the bid of "100, hearts" was made then the bid of 100 would be doubled to 200. » — ContrAI : « the winning side […] scores `160 + C × M` ». |
 | **Sur tout le score de la donne** | `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/ffbelote_org_regles_coinche.txt` ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `divers/jeux_regles_com_regles_coinche.txt` ; `divers/clubdejeux_com...txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/ismo009_Coinche_main_game.js` | FFB contrée ~2015 : « Le **score de la donne** sera multiplié par 2 (hors belote). » — jeux-regles : « les **points totaux**, hors Belote et annonces, sont multipliés par deux ». — clubdejeux (exemple chiffré) : « l'équipe 2 réalise **140*2 + 160 = 400** points ». |
 | **Le multiplicateur remplace tout par un forfait** | voir §4.1, ligne « forfait 320/640 » | — |
 | **Reconnaissent explicitement les deux usages** | `divers/pagat_com_jass_coinche_html.txt` (+ copies) | « When coinche is said, **some apply the double not just to the bid but to the entire score**, so that for example when a team loses a 100 bid with coinche […] the opponent score **520 = 2 × (100 + 160)**. » |
@@ -167,7 +186,7 @@ faits** (Missègre, tournoi international), où le contrat n'entre jamais dans l
 | Position | Sources | Extrait |
 |---|---|---|
 | **×4** | `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (tableau p. 7 **et** Note 1 : « Contrat x 4 ») ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/ffbelote_org_belote_contree.txt` (+ 4 copies) ; `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` (+ copie) ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies, comme règle de base) ; `apps-sites/gamerules_com_rules_coinche.txt` ; `apps-sites/playjoy_com_en_coinche_rules.txt` → <https://playjoy.com/en/coinche/rules/> ; `divers/belotepoint_fr_regles_coinche.txt` ; `divers/exoty_com_compter_points_coinche.txt` ; `divers/jeux_regles_com_regles_coinche.txt` ; `apps-sites/regles_de_jeux_com_regle_coinche.txt` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/slim0_contree_main_backend_game_scoring.py` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` (`surcontreWin = 640`) ; `open-source/valmathieu_ContrAI_main_contree-domain.md` | FFB coinchée : « Le score de la donne sera multiplié par **4**. » — BGA (code) : `if ($countered == 2) { $multiplier = 4; }` — slim0 (code) : `{Double.NONE: 1, Double.CONTRE: 2, Double.SURCONTRE: 4}` |
-| **×3** | `federations/LOCAL_regles_officielles_belote_contree.txt` (version « Équipe Ludique », **la plus récente rédaction FFB du corpus**) ; `divers/iscool_helpshift_..._coinche_rules.txt` (Belote Mobile) ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies, **comme variante recensée**) | LOCAL : « Le score de l'annonce sera multiplié par **3**. » et « + le montant du contrat demandé […] multiplié par 2 (ou par **3** en cas de surcontre) ». — iscool : « Les points seront multipliés par **3** pour celle qui emporte la manche. » — jeu-belote : « Le coefficient multiplicateur passe à **trois**. » — ismo009 (code) : `if (this.contract.surcoinched) multiplier = 3;` — Pagat : « Some play that a surcoinche does not double the score again, but **only increases the multiplier from 2× to 3×**. » |
+| **×3** | `federations/LOCAL_regles_officielles_belote_contree.txt` (version « Équipe Ludique », **la plus récente rédaction FFB du corpus**) ; **Cannes 2016** (**le seul règlement de compétition**) ; `divers/iscool_helpshift_..._coinche_rules.txt` (Belote Mobile) ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies, **comme variante recensée**) | LOCAL : « Le score de l'annonce sera multiplié par **3**. » et « + le montant du contrat demandé […] multiplié par 2 (ou par **3** en cas de surcontre) ». — iscool : « Les points seront multipliés par **3** pour celle qui emporte la manche. » — jeu-belote : « Le coefficient multiplicateur passe à **trois**. » — Cannes : « Le contre double les points de l'enchère demandée, **le surcontre les triple** ». — ismo009 (code) : `if (this.contract.surcoinched) multiplier = 3;` — Pagat : « Some play that a surcoinche does not double the score again, but **only increases the multiplier from 2× to 3×**. » |
 | **×3 sous forme de forfait (160×3 = 480)** | `tournois/maisondesessarts_fr_article116_html.txt` | « La surcoinche vaut **160 x 3 = 480 points** + les points du contrat + les annonces ». |
 | **×4 sous forme de forfait (160×4)** | `tournois/data_over_blog_kiwi_com_..._reglement_table_coinche_pdf.txt` | « En cas de surcoinche : **160 x 4** + contrat + annonces ». |
 
@@ -177,15 +196,20 @@ Le ×3 est **minoritaire mais pas marginal**, et surtout il est porté par :
 
 1. **la rédaction FFB la plus récente** (`LOCAL_regles_officielles_belote_contree`, éditée par
    Équipe Ludique) — donc la FFB elle-même a **changé d'avis** entre 2016 et cette version ;
-2. **deux plateformes grand public** (Belote Mobile / iscool, jeu-belote.fr) ;
-3. **une implémentation** (ismo009) ;
-4. **Pagat**, qui le recense explicitement comme usage réel.
+2. **le règlement du Championnat de France de Cannes** (ajout du 2026-08-02) — c'est-à-dire **le
+   seul règlement de compétition du corpus qui tranche cette question**, et il tranche pour ×3 ;
+3. **deux plateformes grand public** (Belote Mobile / iscool, jeu-belote.fr) ;
+4. **une implémentation** (ismo009) ;
+5. **Pagat**, qui le recense explicitement comme usage réel.
 
 La lecture raisonnable du corpus : le ×4 est le barème *historique* (cohérent avec le forfait
 640 = 320×2), le ×3 est une **correction moderne** destinée à ce qu'un surcontre ne décide pas à
 lui seul d'une partie — exactement la motivation que la FFB écrit noir sur blanc dans sa Note 1
 de 2016 (« afin que l'issue de la partie ne soit pas définie par une simple donne »), même si la
-Note 1 elle-même conserve le ×4.
+Note 1 elle-même conserve le ×4. **Cannes est la preuve que cette correction est appliquée en
+compétition** : un tournoi de 148 équipes à 2001 points, dont le règlement écrit ×3 sur le contrat
+seul, et pas un forfait. C'est le témoignage qui manquait — le ×3 n'est pas seulement une variante
+d'éditeur d'application.
 
 ### 4.4 Que devient le score de la défense sur un contrat contré réussi ?
 
@@ -206,7 +230,7 @@ seulement là où elle est déclarée imprenable.
 | Position | Sources | Extrait |
 |---|---|---|
 | **250 (forfait qui remplace le tas de cartes)** | `federations/ffbelote_org_belote_contree.txt` (+ copies) ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `divers/belotecontree_free_reglement.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/clubdejeux_com...txt` ; `divers/bk_jeux_ducale_..._pdf.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `divers/exoty_com_compter_points_coinche.txt` | Pagat : « If the bidding team wins all the tricks (capot) they score **250 points plus the amount of the bid**. » — BGA (code) : `if ($teamPoints[0] == 0) { $teamPoints[1] = 250; $isCapot = true; }` — ContrAI : « the trick pile (152 + 10 = 162) is **replaced by a flat 250 substitute**. » |
-| **252 (= 152 cartes + dix de der à 100)** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` §9.2 ; `federations/LOCAL_regles_officielles_belote_contree.txt` §8.2 ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` §9.2 ; `federations/ffbelote_org_regles_officielle_belote.txt` ; `tournois/villeconin_fr_..._pdf.txt` ; `tournois/web_myassoc_org_..._pdf.txt` ; `tournois/geraudotloisirs_free_fr_...txt` → <http://geraudotloisirs.free.fr/index.php?option=com_content&view=article&id=116&Itemid=102> ; `tournois/tcvb_bruche_free_fr_dossomma_tournoibelotte2012_tournoibelote2012reglement_htm.txt` → <http://tcvb.bruche.free.fr/dossomma/tournoibelotte2012/tournoibelote2012reglement.htm> ; `tournois/pontdeclaix_fr_..._pdf.txt` ; `tournois/cdfcasson_fr_files_ugd_0df194_8c501176abb04e5b9237c65fcf80f584_pdf.txt` ; `tournois/sc4e58b2fce8a2e7a_jimcontent_com_..._Belote_20R_C3_A8glement_2.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `apps-sites/contree_org_4_joueurs.txt` | FFB 2016 : « le dix de der vaut **100 points**, portant ainsi le total à **252 points**. » — Lions Club : « Le capot compte alors pour **252 points**. » — ismo009 (code) : `// Capot non annoncé: 252 + points de l'annonce` puis `scoreNS = 252 + contractBonus;` |
+| **252 (= 152 cartes + dix de der à 100)** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` §9.2 ; `federations/LOCAL_regles_officielles_belote_contree.txt` §8.2 ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` §9.2 ; `federations/ffbelote_org_regles_officielle_belote.txt` ; `tournois/villeconin_fr_..._pdf.txt` ; `tournois/web_myassoc_org_..._pdf.txt` ; `tournois/geraudotloisirs_free_fr_...txt` → <http://geraudotloisirs.free.fr/index.php?option=com_content&view=article&id=116&Itemid=102> ; `tournois/tcvb_bruche_free_fr_dossomma_tournoibelotte2012_tournoibelote2012reglement_htm.txt` → <http://tcvb.bruche.free.fr/dossomma/tournoibelotte2012/tournoibelote2012reglement.htm> ; `tournois/pontdeclaix_fr_..._pdf.txt` ; `tournois/cdfcasson_fr_files_ugd_0df194_8c501176abb04e5b9237c65fcf80f584_pdf.txt` ; `tournois/sc4e58b2fce8a2e7a_jimcontent_com_..._Belote_20R_C3_A8glement_2.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `apps-sites/contree_org_4_joueurs.txt` ; **Cannes 2016** | FFB 2016 : « le dix de der vaut **100 points**, portant ainsi le total à **252 points**. » — Lions Club : « Le capot compte alors pour **252 points**. » — Cannes : « Total des points à marquer = points de l'enchère demandée **+162 ou 252** + belote éventuellement » (la même alternative revient aux deux lignes, contrat réussi et contrat perdu ; le 252 y est la base cartes, pas un forfait). — ismo009 (code) : `// Capot non annoncé: 252 + points de l'annonce` puis `scoreNS = 252 + contractBonus;` |
 | **162** | `tournois/aappmakoenigshoffen_e_monsite_com_medias_files_reglementtournoibelote_2_pdf.txt` → <http://aappmakoenigshoffen.e-monsite.com/medias/files/reglementtournoibelote-2.pdf> ; `tournois/lagrandcombe_fr_..._pdf.txt` | Koenigshoffen : « Le capot est marqué **162 points**. » — La Grand-Combe : « Aucune annonce – Dedans : 162 points **- Capot : 162 points**. » (le capot ne vaut rien de plus qu'une mise dedans) |
 | **150 + l'annonce** | `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` | « Capot non annoncé mais réalisé : L'attaque marque **150 pts + annonce** » — valeur unique dans le corpus, vraisemblablement une coquille pour 250, mais publiée telle quelle. |
 | **270 avec la belote** | `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_saintsever_com_..._pdf.txt` | « Le capot vaut **250 points, 270 avec la "BELOTE"**. » |
@@ -217,6 +241,13 @@ remplace le tas** (la donne cesse d'avoir un total de 162), **252 est le tas lui
 avec un dix de der à 100. Les deux coexistent **dans le même document FFB** : le règlement
 contrée 2016 dit 252 au §9.2 (dix de der) et 250/500 dans son tableau p. 7 (barème). La FFB
 n'explique jamais l'articulation.
+
+**Cannes est le texte qui articule le mieux les deux.** Il n'a qu'une formule de marque, valable
+pour toutes les donnes, où le seul terme variable est la base cartes : « +**162 ou 252** ». Le
+capot n'y est donc ni une prime ni un cas particulier — c'est la même donne, avec un tas plus gros
+parce que le dix de der y vaut 100. C'est précisément la construction de Colver
+(`TOTAL_PTS = 162` / `CAPOT_PTS = 252`), et le seul règlement du corpus à l'écrire aussi
+directement.
 
 ### 5.2 Le dix de der vaut-il 100 en cas de capot ?
 
@@ -234,17 +265,19 @@ n'explique jamais l'articulation.
 |---|---|---|
 | **500** | `federations/ffbelote_org_belote_contree.txt` (modes faits et faits+annoncés) + ses 4 copies ; `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_...` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/clubdejeux_com...txt` ; `divers/adpoker_fr_belote_contree_html.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` (250 + 250 d'annonce) ; `divers/exoty_com_compter_points_coinche.txt` | « Le capot demandé et réalisé, ou chuté, vaut **500 points**. » — Wikipédia contrée : « Une annonce de capot équivaut à 250 points. Un capot réussi rapporte donc **500 points**. » |
 | **250 (contrat comme un autre)** | `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (tableau p. 7 : « 250 points pour un capot demandé » ajouté aux points faits) ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/ffbelote_org_belote_contree.txt` (mode **points annoncés**) ; `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `divers/bk_jeux_ducale_..._pdf.txt` (points annoncés) ; `apps-sites/ludicash_com_help_rules_coinche.txt` ; `open-source/theosaulus_coinche_main_coinche_utils.py` | LOCAL : « Les preneurs marquent leur total + le montant du contrat demandé (**250 points pour un capot demandé**). » — ASCEE 2A : « **Capot annoncé = 250 points.** » — theosaulus (code) : `return (250, atout_suit) # capot is encoded as 250` |
+| **270 (contrat comme un autre, mais à 270 et non 250)** | **Cannes 2016** | « Les paroles d'enchère autorisées sont : le nombre de points suivi immédiatement de la couleur soit : "passe", "contre", "surcontre", "**générale ou capot**" ou "**270**" contrat le plus élevé. » Le capot est nommé comme l'enchère la plus haute et **chiffré 270** ; la marque lui applique ensuite la formule ordinaire (base 252 + contrat). Valeur unique dans le corpus — c'est le seul écart de fond entre le barème de Cannes et celui de Colver. |
 | **350** | `divers/bk_jeux_ducale_..._pdf.txt` (modes **points faits** et **faits + annoncés**) | « Le capot non annoncé rapporte 250 points et **le capot annoncé rapporte 350 points**. » — valeur unique dans le corpus (Ducale, le cartier). |
 | **500 mais comme *générale*** | `apps-sites/playjoy_com_en_coinche_rules.txt` | « If a single player succeeds in winning all 8 tricks […] adding **490 extra points** to the "last ten" (**500 in total**). » |
 
 **Divergence structurante.** Deux logiques :
 - **prime forfaitaire** : le capot demandé « vaut 500 », un nombre décomposable en 250 de capot
   fait + 250 de contrat (comme l'explicite Wikipédia coinche) ;
-- **contrat ordinaire à 250** : le capot est une enchère comme 80 ou 160, et le barème normal
-  s'applique. C'est la position de **`LOCAL` (la rédaction FFB la plus récente)** — et celle de
-  Colver (§12).
+- **contrat ordinaire** : le capot est une enchère comme 80 ou 160, et le barème normal
+  s'applique. C'est la position de **`LOCAL` (la rédaction FFB la plus récente)**, celle de
+  **Cannes**, et celle de Colver (§12).
 
-Ducale est seul à 350.
+Sur la *forme*, Cannes conforte donc `LOCAL` et Colver — un contrat, pas un forfait. Sur la
+*valeur*, il est seul : **270**, contre 250 partout ailleurs. Ducale est seul à 350.
 
 ### 5.4 Capot demandé et chuté
 
@@ -252,7 +285,7 @@ Ducale est seul à 350.
 |---|---|---|
 | **500 à la défense** | `federations/ffbelote_org_belote_contree.txt` + copies ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/adpoker_fr_belote_contree_html.txt` | Pagat : « If a bid of capot is lost, **the opponents score 500**. » |
 | **410 (= 160 + 250) à la défense** | `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `divers/pagat_com_jass_coinche_html.txt` (**comme variante recensée**) ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` | Wikipédia contrée : « un capot chuté rapporte **410 points** à l'équipe adverse (250 points plus 160 points). » — Pagat : « Some give **only 410 points (160+250)** to the opponents if it is bid and fails. » |
-| **base + 250×mult** (barème général appliqué au capot) | `federations/LOCAL_regles_officielles_belote_contree.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/slim0_contree_main_backend_game_scoring.py` | LOCAL : « Les défenseurs marquent 160 points de chute + la belote + le montant du contrat demandé (**250 points pour un capot demandé**) multiplié par 2 (ou par 3 en cas de surcontre). » |
+| **base + contrat-capot × mult** (barème général appliqué au capot) | `federations/LOCAL_regles_officielles_belote_contree.txt` (250) ; **Cannes 2016** (252 + 270, par composition de ses deux lignes) ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/slim0_contree_main_backend_game_scoring.py` | LOCAL : « Les défenseurs marquent 160 points de chute + la belote + le montant du contrat demandé (**250 points pour un capot demandé**) multiplié par 2 (ou par 3 en cas de surcontre). » |
 
 ### 5.5 Capot contré / surcontré
 
@@ -260,9 +293,9 @@ Ducale est seul à 350.
 |---|---|---|
 | **1000 / 2000** | `federations/ffbelote_org_belote_contree.txt` (modes **points faits** et **faits+annoncés**) ; `federations/ffbelote_org_regles_coinche.txt` ; `divers/carafons_fr...` ; `divers/cartesetcie_fr...` ; `tournois/cdf_missegre11_com_..._pdf.txt` ; `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_...` ; `divers/adpoker_fr_belote_contree_html.txt` | « Le capot contré vaut **1.000** points. Le capot surcontré vaut **2.000** points. » |
 | **500 / 1000** | `federations/ffbelote_org_belote_contree.txt` (mode **points annoncés**, **la même page**) | « Le capot demandé et réalisé vaut 250 points. Le capot contré vaut **500** points. Le capot surcontré vaut **1.000** points. » |
-| **250 × 2 ou × 3** (barème général) | `federations/LOCAL_regles_officielles_belote_contree.txt` | « + le montant du contrat demandé (250 points pour un capot demandé) **multiplié par 2 (ou 3 en cas de surcontre)** » → 500 / 750. |
+| **250 × 2 ou × 3** (barème général) | `federations/LOCAL_regles_officielles_belote_contree.txt` ; **Cannes 2016** (270 × 2 ou × 3) | « + le montant du contrat demandé (250 points pour un capot demandé) **multiplié par 2 (ou 3 en cas de surcontre)** » → 500 / 750 (LOCAL). Cannes n'a pas de clause spéciale : « le contre double les points de l'enchère demandée, le surcontre les triple » s'applique au capot comme à 80 → 540 / 810, plus la base 252. |
 | **Un capot ne peut pas être contré** | `divers/pagat_com_jass_coinche_html.txt` (+ copies), règle de base ; `apps-sites/gamerules_com_rules_coinche.txt` | Pagat : « A capot bid **ends the bidding and cannot be doubled**. » — puis, en variante : « Some allow a capot bid to be doubled and redoubled. » |
-| **Le capot peut être contré, et même surcontré** | `divers/belotecontree_free_reglement.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` | « Un capot demandé ne peut être que contré et éventuellement surcontré ». |
+| **Le capot peut être contré, et même surcontré** | `divers/belotecontree_free_reglement.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; **Cannes 2016** (implicite : « contre » et « surcontre » sont des paroles autorisées à tout moment, et la seule fin d'enchère est le surcontre ou trois passes) | « Un capot demandé ne peut être que contré et éventuellement surcontré ». |
 
 **Divergence — et la contradiction interne au site FFB la plus nette.** Voir §10 et §13.
 
@@ -282,6 +315,7 @@ Ducale est seul à 350.
 |---|---|---|
 | **Existe, vaut 500** | `divers/belotepoint_fr_regles_coinche.txt` ; `divers/maviedesenior_com_...txt` ; `divers/ange_heureux_free_fr_JeuxDeCartes_La_Coinche_html.txt` ; `apps-sites/playjoy_com_en_coinche_rules.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md` ; `open-source/ismo009_Coinche_main_game.js` | belotepoint : « un seul joueur s'engage à remporter tous les plis sans l'aide de son coéquipier. Ce dernier ne joue pas de la manche. En cas de réussite, le bonus est de **500 points**. » — ismo009 (code) : `// Générale: 500 points` |
 | **Existe, valeur à convenir** | `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) | Wikipédia : « celle-ci est primée et **sa valeur est à déterminer en début de partie** ». — Pagat : « If a bid of générale is allowed, **the score for it must be agreed** — for example 1000. » |
+| **Le mot désigne le capot, ce n'est pas une enchère distincte** | **Cannes 2016** | « "**générale ou capot**" ou "270" contrat le plus élevé » — les deux mots sont donnés comme synonymes de la même enchère, la plus haute. Cannes ne connaît donc pas de générale au sens « le preneur seul fait les 8 plis », et n'a rien au-dessus du capot. Même usage du mot que `contree.org`, valeur différente. |
 | **Existe, = 252 + 250 si réclamée** | `apps-sites/contree_org_4_joueurs.txt` | « "Générale" est le nom de la prime de capot attribuée à l'équipe ayant fait toutes les levées. Elle représente un forfait de **100 + 152 = 252 points**. Aux 100 points de capot s'ajoute une prime de **250 points** dès lors que la générale a été réclamée. » (usage du mot *générale* pour le capot d'équipe — unique dans le corpus) |
 | **Existe, contrat solo distinct** | `open-source/slim0_contree_main_backend_game_scoring.py` ; `apps-sites/ibelote_com_en_rules_belote_php.txt` ; `divers/iscool_helpshift_..._coinche_rules.txt` (mais confondue avec le capot) | slim0 (code) : `if r.contract.bid.is_generale: contract_made = all(t.winner == r.contract.bid.position for t in r.tricks)` — **le preneur seul**, pas son équipe. |
 | **N'existe pas / interdite** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `tournois/maisondesessarts_fr_article116_html.txt` | FFB 2016 : « Il n'existe pas d'enchère supérieure au capot » — Essarts : « Les autres expressions comme 10 au jeu, parole, mon homme verra, capote, **générale**… **ne sont pas autorisées**. » |
@@ -290,7 +324,10 @@ Ducale est seul à 350.
 documents s'arrêtent au capot. Elle vit dans la coinche « de table » et dans les plateformes, où
 le consensus le plus fréquent est **500** (le double du capot). Quand une source la définit
 sérieusement, elle exige que le **preneur seul** fasse les 8 plis (belotepoint, slim0, Wikipédia,
-Pagat) ; deux sources emploient le mot pour un capot d'équipe (contree.org, iscool).
+Pagat) ; **trois** sources emploient le mot pour un capot d'équipe (contree.org, iscool, et
+**Cannes**, qui écrit « générale ou capot » comme un seul et même nom d'enchère). Le fait qu'un
+règlement de championnat range le mot du côté du synonyme conforte la position FFB : en contrée
+de compétition, il n'y a **rien au-dessus du capot**.
 
 ---
 
@@ -299,7 +336,7 @@ Pagat) ; deux sources emploient le mot pour un capot d'équipe (contree.org, isc
 | Position | Sources | Extrait |
 |---|---|---|
 | **Imprenable — toujours à qui l'annonce, même en chute, même en capot** | `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; `federations/ffbelote_org_regles_coinche.txt` ; `divers/carafons_fr...` ; `divers/cartesetcie_fr...` ; `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` (**belote classique**) ; `federations/ffbelote_org_regles_officielle_belote.txt` ; `federations/ffbelote_org_reglements_de_la_belote_avec_ou_sans_annonce.txt` ; `tournois/villeconin_fr_..._pdf.txt` ; `tournois/web_myassoc_org_..._pdf.txt` ; `tournois/geraudotloisirs_free_fr_...txt` ; `tournois/rjcv_be_belote_regles_pdf.txt` → <https://www.rjcv.be/belote/regles.pdf> ; `tournois/cdfcasson_fr_..._pdf.txt` ; `tournois/sc4e58b2fce8a2e7a_jimcontent_com_...txt` ; `tournois/fnasce_org_IMG_pdf_reglement_belote_pdf.txt` ; `tournois/data_over_blog_kiwi_com_..._pdf.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) ; `divers/jeux_regles_com_regles_coinche.txt` ; `apps-sites/gamerules_com_rules_coinche.txt` ; `divers/clubdejeux_com...txt` ; `apps-sites/contree_org_4_joueurs.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` | FFB coinche HTML : « Elle est **imprenable même en cas de chute ou de capot**, le preneur/les défenseurs marqueront ces 20 points. » — RJCV : « Les points de la belote sont **inviolables**. » — Pagat : « The 20 points for Belote […] are scored by the bidding team, **even if the contract fails**. » — BGA : `+ 20 (belote)` dans la branche `Failure` du camp preneur. |
-| **Prenable — elle passe à l'adversaire si le preneur chute** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` (implicite via le tableau p. 7) ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_org_belote_contree.txt` (+ 4 copies) ; `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_...` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` | FFB contrée 2016 §7 : « **En cas de chute du contrat, la belote est perdue par les preneurs**, même s'ils n'ont pas dit "rebelote". » — FFB HTML contrée : « **La belote n'est pas imprenable.** Elle est également marquée par la défense si l'équipe qui a annoncé le contrat chute. » — « tournoi international » art. 7 : « Elle est toujours marquée par l'équipe l'ayant annoncée **sauf si celle-ci chute** dans le contrat qu'elle joue auquel cas elle est marquée par l'équipe adverse. » — kydos : « si le camp qui l'a annoncée PERD (chute simple ou contre) → **les 20 passent à l'adversaire** ». |
+| **Prenable — elle passe à l'adversaire si le preneur chute** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` ; `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` (implicite via le tableau p. 7) ; `federations/LOCAL_regles_officielles_belote_contree.txt` ; `federations/ffbelote_org_belote_contree.txt` (+ 4 copies) ; `divers/belotecontree_free_reglement.txt` + `tournois/ainesruraux_...` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` ; **Cannes 2016** | FFB contrée 2016 §7 : « **En cas de chute du contrat, la belote est perdue par les preneurs**, même s'ils n'ont pas dit "rebelote". » — FFB HTML contrée : « **La belote n'est pas imprenable.** Elle est également marquée par la défense si l'équipe qui a annoncé le contrat chute. » — « tournoi international » art. 7 : « Elle est toujours marquée par l'équipe l'ayant annoncée **sauf si celle-ci chute** dans le contrat qu'elle joue auquel cas elle est marquée par l'équipe adverse. » — kydos : « si le camp qui l'a annoncée PERD (chute simple ou contre) → **les 20 passent à l'adversaire** ». |
 | **Ni l'un ni l'autre — la belote n'entre pas dans la marque** | `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `open-source/slim0_contree_main_backend_game_scoring.py` | Casimir : elle réduit la cible de 20, et « La belote **ne sert pas en défense**. » — slim0 (code) : « La belote **ne profite jamais** à la défense » ; commentaire : « belote preneurs : **non comptée dans score final** ». |
 | **« Ça change souvent selon la région »** | `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `divers/pagat_com_jass_coinche_html.txt` (+ copies) | Wikipédia : « Les 20 points de belote vont aussi à l'adversaire (**cette partie de la règle change très souvent selon la région et les joueurs**). » — Pagat : « **Many also award the points for belote to the opponents** in this case […] it can be in the bidding team's interest to **suppress the belote announcement** when their contract is likely to fail. » |
 
@@ -307,7 +344,9 @@ Pagat) ; deux sources emploient le mot pour un capot d'équipe (contree.org, isc
 contrée / coinche + belote classique :**
 
 - **Contrée** → belote **prenable** (les quatre rédactions FFB de contrée, le règlement du
-  tournoi international, Wikipédia contrée, kydos).
+  tournoi international, Wikipédia contrée, kydos, **Cannes** — qui va jusqu'à mettre le mot
+  entre guillemets, « + belote éventuellement car "prenable" », signe que c'est un terme
+  technique acquis à la table).
 - **Coinche et belote classique** → belote **imprenable** (les deux rédactions FFB de coinche,
   les trois de belote classique, tous les règlements de concours de belote, Pagat, BGA).
 
@@ -321,7 +360,7 @@ pas été rédigés ensemble.
 | Position | Sources | Extrait |
 |---|---|---|
 | **Elle s'ajoute au forfait, pour le gagnant** | `divers/belotecontree_free_reglement.txt` ; `federations/ffbelote_org_belote_contree.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts` | « tournoi international » : « en cas de capot contré ou surcontré, **les 20 points sont rajoutés aux points du contre ou du surcontre** » — kydos : `[winner]: base + (hasBelote ? c.beloteBonus : 0)`, quel que soit le camp qui l'a annoncée. |
-| **Elle reste au camp qui l'a annoncée, hors multiplicateur** | `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (tableau p. 7) ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` | FFB ~2015 : « Le score de la donne sera multiplié par 2 (**hors belote**). » |
+| **Elle reste au camp qui l'a annoncée, hors multiplicateur** | `federations/ffbelote_REGLES-DE-LA-BELOTE-CONTREE.txt` ; `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` (tableau p. 7) ; `federations/ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.txt` ; **Cannes 2016** | FFB ~2015 : « Le score de la donne sera multiplié par 2 (**hors belote**). » — Cannes : « si la belote a été annoncée on ajoute 20 points de bonification **qui ne sont ni doublés ni triplés** » (la seule source du corpus à l'écrire pour les *deux* multiplicateurs). |
 | **Elle est multipliée comme le reste** | `apps-sites/contree_org_4_joueurs.txt` ; `federations/LOCAL_regles_officielles_belote_contree.txt` (formulation ambiguë) | contree.org : « **plus la belote multipliée par 2** ». |
 
 ### 7.2 Que devient la belote en cas de capot ?
@@ -405,12 +444,18 @@ deux copies ; Wikipédia (contrée et coinche) ; `divers/belotepoint_fr_...`, `d
 `apps-sites/gamerules_com_...`, `divers/maviedesenior_com_...`,
 `divers/drasill_github_io_bga_coinche_rules_fr_html.txt`,
 `open-source/valmathieu_ContrAI_...`, `open-source/drasill_bga-coinche_...php` (BoardGameArena),
-`open-source/ismo009_Coinche_main_game.js`. **C'est la famille dominante du corpus** et celle dont
-Colver dérive (§12).
+`open-source/ismo009_Coinche_main_game.js`, et — **seul règlement de compétition de la famille** —
+**Cannes 2016** (base 162/252, contrat ajouté, ×2 / ×3 sur le contrat seul). **C'est la famille
+dominante du corpus** et celle dont Colver dérive (§12).
 
 Ses deux lignes de faille internes : **160 vs 162** (arrondi ou pas), et **assiette du
-multiplicateur** — contrat seul (Note 1 FFB, Pagat, belotepoint, gamerules, ContrAI) vs score
-entier (FFB HTML, Wikipédia, BGA, ismo009).
+multiplicateur** — contrat seul (Note 1 FFB, Pagat, belotepoint, gamerules, ContrAI, **Cannes**)
+vs score entier (FFB HTML, Wikipédia, BGA, ismo009).
+
+**Cannes est la sous-famille la plus proche de Colver de tout le corpus** : base 162/252 (et non
+160), contrat ajouté, multiplicateur sur le contrat seul, surcontre ×3, capot traité comme un
+contrat. Quatre choix sur cinq. Les deux écarts restants sont la **valeur du capot** (270 contre
+250) et **l'arrondi** (Cannes arrondit à la dizaine, Colver marque au point près).
 
 ### Famille C — **Points annoncés seuls** : le contrat est la seule monnaie
 
@@ -549,8 +594,9 @@ famille E (le multiplicateur ne porte jamais sur la base).
 | **Réussi standard = points + contrat / défense = ses propres points** | `federations/LOCAL_regles_officielles_belote_contree.txt` (« leur total + le montant du contrat demandé […] Les défenseurs marquent leur total ») ; `divers/pagat_com_jass_coinche_html.txt` ; `divers/fr_wikipedia_org_wiki_Coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md`. |
 | **Chute = 162 + contrat** | `divers/exoty_com_compter_points_coinche.txt` (« les défenseurs auraient marqué **162 points + 100 (contrat) = 262 points** ») ; `divers/belotepoint_fr_regles_coinche.txt` (« L'équipe adverse marque la totalité des **162 points + la valeur du contrat** ») ; `divers/maviedesenior_com_...` (« **242 points (162 + 80)** ») ; `divers/jeux_regles_com_regles_coinche.txt` ; `divers/regles_com_jeux_cartes_coinche_html.txt` ; `apps-sites/regles_de_jeux_com_regle_coinche.txt` ; `divers/lemagloisirs_fr_regle_coinche.txt` ; `open-source/drasill_bga-coinche_master_coinche.game.php` ; `open-source/ismo009_Coinche_main_game.js`. **Bien attesté.** |
 | **Multiplicateur sur le contrat seul, jamais sur la base** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` **Note 1** (seule forme fédérale) ; `divers/pagat_com_jass_coinche_html.txt` (« doubles the score for the bid only ») ; `divers/belotepoint_fr_regles_coinche.txt` (« la valeur du contrat, **et non les points de pli** ») ; `apps-sites/gamerules_com_rules_coinche.txt` ; `open-source/valmathieu_ContrAI_main_contree-domain.md`. |
-| **Surcontre ×3** | `federations/LOCAL_regles_officielles_belote_contree.txt` ; `divers/iscool_helpshift_..._coinche_rules.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `divers/pagat_com_jass_coinche_html.txt` (variante recensée). |
-| **Capot = contrat ordinaire à 250** | `federations/LOCAL_regles_officielles_belote_contree.txt` ; tableau p. 7 du règlement FFB 2016 ; `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `apps-sites/ludicash_com_help_rules_coinche.txt` ; `open-source/theosaulus_coinche_main_coinche_utils.py`. |
+| **Surcontre ×3** | `federations/LOCAL_regles_officielles_belote_contree.txt` ; **Cannes 2016** (« le surcontre les triple ») ; `divers/iscool_helpshift_..._coinche_rules.txt` ; `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` ; `open-source/ismo009_Coinche_main_game.js` ; `divers/pagat_com_jass_coinche_html.txt` (variante recensée). |
+| **Capot = contrat ordinaire** (250 chez Colver) | `federations/LOCAL_regles_officielles_belote_contree.txt` ; tableau p. 7 du règlement FFB 2016 ; `tournois/fnasce_org_IMG_pdf_reglement_pdf.txt` ; `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `apps-sites/ludicash_com_help_rules_coinche.txt` ; `open-source/theosaulus_coinche_main_coinche_utils.py` ; **Cannes 2016** — mais **à 270**, pas 250. La *forme* est attestée en compétition, la *valeur* ne l'est pas. |
+| **Base cartes 162, ou 252 sur capot réalisé** | **Cannes 2016** : « points de l'enchère demandée **+162 ou 252** + belote », aux deux lignes (contrat réussi et contrat perdu). Seul règlement du corpus à poser 162/252 comme la base d'un barème *de contrée* avec contrat ajouté. |
 | **Dix de der à 100, total 252** | Consensus quasi unanime (§5.2). |
 | **Belote prenable en cas de chute** | Les **quatre** rédactions FFB de contrée ; `divers/belotecontree_free_reglement.txt` ; `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` ; `open-source/CephaloSophie_kydos_..._donneScoring.ts`. |
 | **Aucun arrondi, au point près** | `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` et les deux pages HTML FFB de belote classique (« A la belote, les points sont comptabilisés **au point près. Il n'y a pas d'arrondi.** ») ; `tournois/villeconin_fr_..._pdf.txt` ; `tournois/web_myassoc_org_..._pdf.txt` ; `tournois/geraudotloisirs_free_fr_...txt`. **Mais aucune de ces sources n'est un règlement de contrée** — voir 12.2. |
@@ -564,28 +610,49 @@ arrondit le résultat (`Math.round(v/10)*10`).
 
 ### 12.2 Ce qui n'est attesté nulle part
 
-1. **La base 162 (non arrondie) appliquée à un barème de *contrée*.** Le 162 exact est
-   solidement attesté — mais **en belote classique uniquement** (famille D), où il n'y a pas de
-   contrat à ajouter. Les sources de contrée/coinche qui écrivent « 162 + contrat » (exoty,
-   belotepoint, maviedesenior, BGA, ismo009) **arrondissent toutes par ailleurs**, sauf BGA. Le
-   couple « base 162 **et** aucun arrondi **et** contrat ajouté » n'apparaît dans aucun règlement
-   du corpus.
-2. **252 comme base d'un contré réussi sur capot réalisé.** Le seul texte qui traite ce cas
-   (`federations/LOCAL_...`, repris de la FFB coinchée 2015) écrit **250**, pas 252 :
-   « les preneurs marquent 160 points (**ou 250 points si capot réalisé**, même non demandé) ».
-   Colver y met 252. Personne n'écrit 252 à cet endroit.
-3. **Les valeurs numériques qui en découlent** — 322 (contré réussi sur 80), 502 (capot annoncé
-   réussi), 752 / 1002 (capot contré / surcontré) — **n'apparaissent dans aucune source**.
-   502 est toutefois la conséquence arithmétique littérale de `LOCAL` (« leur total » = 252, plus
-   250 de contrat) ; 752 et 1002 sont propres à Colver.
-4. **La combinaison des trois choix** : base 162 exacte **+** surcontre ×3 **+** capot-contrat à
-   250. Chacun est attesté séparément ; **aucune source ne porte les trois**. `LOCAL` en porte
-   deux (×3 et capot 250) mais garde la base 160 et un arrondi.
-5. **Le silence total du corpus** sur le capot réalisé par l'équipe **contrée** (§5.6) : Colver
-   le traite (`contre_base = CAPOT_PTS`), avec 252 là où les deux seules sources disent 250 ou
-   « 320 + 100 = 420 ».
+> **Révision du 2026-08-02.** Cette section a été écrite avant la découverte du règlement de
+> Cannes. Celui-ci **ferme deux des cinq points** et en réduit deux autres. Ce qui suit est la
+> version corrigée ; l'état antérieur est rappelé à chaque point pour qu'on voie ce que Cannes
+> a changé.
+
+1. ~~**La base 162 appliquée à un barème de *contrée*.**~~ **Fermé par Cannes**, qui écrit
+   « points de l'enchère demandée +162 ou 252 » dans un règlement de contrée, avec contrat ajouté.
+   Ce qui reste ouvert est **plus étroit** : le couple « base 162 **et aucun arrondi** ». Cannes a
+   la base mais arrondit à la dizaine ; les autres sources de contrée qui écrivent « 162 +
+   contrat » (exoty, belotepoint, maviedesenior, ismo009) arrondissent aussi. **BGA reste la seule
+   source du corpus à marquer 162 sans arrondi** — et c'est du code, pas un règlement.
+2. ~~**252 comme base d'un contré réussi sur capot réalisé.**~~ **Attesté par composition chez
+   Cannes** : sa formule de marque unique (« +162 ou 252 ») et sa clause de contre (« double les
+   points de l'enchère demandée ») donnent, appliquées ensemble, exactement `252 + contrat×2`.
+   Aucune phrase de Cannes ne traite ce cas nommément — mais son barème n'a pas de cas
+   particuliers, c'est là tout son intérêt. Le seul texte qui traite le cas *explicitement*
+   (`federations/LOCAL_...`) dit toujours 250.
+3. **Les valeurs numériques exactes** — 322 (contré réussi sur 80), 502 (capot annoncé réussi),
+   752 / 1002 (capot contré / surcontré) — **n'apparaissent littéralement dans aucune source**.
+   Nuance depuis Cannes : 322 est bien ce que produit son barème (162 + 80×2), et 502 celui de
+   `LOCAL` ; les valeurs de capot divergent parce que Cannes chiffre le capot 270 (→ 522, 792,
+   1062). C'est la *structure* qui est désormais attestée, pas la table de nombres.
+4. ~~**La combinaison des trois choix.**~~ **Cannes porte les trois** : base 162/252, surcontre
+   ×3, capot traité comme un contrat ordinaire. C'était le point le plus faible de la position de
+   Colver — « chacun attesté séparément, aucune source ne porte les trois » — et il est levé par
+   un règlement de championnat. **Deux écarts subsistent** : la valeur du capot (270 vs 250) et
+   l'arrondi (Cannes arrondit, Colver non).
+5. **Le silence du corpus sur le capot réalisé par l'équipe *contrée*** (§5.6) reste réel : deux
+   sources seulement le nomment (FFB 2016 Note 2 → 420 ; `LOCAL` → 250 substitué à 160). Cannes ne
+   le nomme pas non plus, mais son barème sans cas particulier le couvre mécaniquement à 252 —
+   ce que fait Colver (`contre_base = CAPOT_PTS`).
+
+**En une phrase** : avant Cannes, la position de Colver était une combinaison cohérente mais
+inédite, assemblée à partir de sources qui ne la portaient jamais ensemble ; depuis Cannes, elle
+est **la position d'un règlement de championnat à deux paramètres près** (capot à 250 plutôt que
+270, et pas d'arrondi).
 
 ### 12.3 La Note 1 de la FFB 2016 est-elle le plus proche parent fédéral ? — **Oui**
+
+> **À lire avec le §12.2 corrigé.** La Note 1 reste le plus proche parent **fédéral**. Mais le
+> plus proche parent *tout court* est désormais **Cannes 2016**, qui porte quatre des cinq choix
+> de Colver au lieu de trois, et qui a l'avantage d'être un règlement effectivement appliqué en
+> compétition plutôt qu'une note facultative.
 
 > « Lors de tournois organisés en réel, afin que l'issue de la partie ne soit pas définie par une
 > simple donne, en mode points fait + points demandés, les organisateurs peuvent utiliser la
@@ -599,13 +666,14 @@ en forfait (320/640, tableau p. 7), soit en « tout multiplié » ((160 + contra
 
 Colver = **Note 1, avec deux substitutions** :
 
-| | FFB Note 1 (2016) | Colver |
-|---|---|---|
-| Base | 160 (arrondi) | **162** (exact) — emprunté à la famille D / belote classique FFB |
-| Contre | Contrat × 2 | Contrat × 2 — **identique** |
-| Surcontre | Contrat × **4** | Contrat × **3** — emprunté à `LOCAL` / Équipe Ludique |
-| Camp perdant | 0 | 0 — **identique** |
-| Capot | 250 (tableau p. 7) | 250 — **identique** |
+| | FFB Note 1 (2016) | **Cannes 2016** | Colver |
+|---|---|---|---|
+| Base | 160 (arrondi) | **162 / 252** | **162 / 252** (exact) |
+| Contre | Contrat × 2 | Contrat × 2 | Contrat × 2 — **identique aux deux** |
+| Surcontre | Contrat × **4** | Contrat × **3** | Contrat × **3** — comme Cannes et `LOCAL` |
+| Camp perdant | 0 | 0 | 0 — **identique aux deux** |
+| Capot | 250 (tableau p. 7) | contrat à **270** | contrat à **250** |
+| Arrondi | à la dizaine | à la dizaine (**bascule à 6**) | **aucun**, au point près |
 
 Deux réserves à ne pas perdre de vue :
 - la Note 1 est **facultative et réservée aux tournois en réel** (« les organisateurs *peuvent*

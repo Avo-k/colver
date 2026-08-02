@@ -7,6 +7,13 @@ points relèvent d'autres matrices.
 Chaque source est citée par son **nom de fichier** (chemin relatif à `data/rules-corpus/`) et
 par son URL (première ligne du `.txt`, quand elle existe).
 
+> **Mise à jour du 2026-08-02 — le règlement de Cannes est entré dans les tableaux.** Le
+> règlement du Championnat de France de contrée du Festival International des Jeux (édition
+> 2016) a été retrouvé après l'établissement de cette matrice ; il est désormais cité axe par
+> axe sous l'alias **Cannes 2016**. Il tranche neuf des dix-huit axes, dont les trois les plus
+> disputés (7, 9, 10). Détail de la source, continuité avec le tournoi actuel et réserves :
+> [reglement-cannes.md](../reglement-cannes.md).
+
 ---
 
 ## 0. Préalable : les familles de copies
@@ -31,6 +38,15 @@ ci-dessous** : une famille y compte pour **une voix**, pas pour cinq.
 | **Concours « coupe à droite / roi en premier »** | `tournois/cdfcasson_fr_..._pdf.txt` · `tournois/sc4e58b2fce8a2e7a_jimcontent_com_..._Belote_20R_C3_A8glement_2.txt` · `tournois/lesamisdutempslibrevarennes_jimdofree_com_...concours_belote.txt` · `tournois/rjcv_be_belote_regles_pdf.txt` (Belgique) | Articles quasi identiques (« La coupe est obligatoire (minimum 3 cartes) et se fait à droite », « obligé de jouer Belote avec le Roi en premier »). Une voix, avec une extension belge. |
 | **ange.heureux.free.fr** | `divers/ange_heureux_free_fr_JeuxDeCartes_La_Coinche_html.txt` · `apps-sites/ange_heureux_free_fr_Jeux_LaCoinche_html.txt` | Deux URL du même site, même texte. Une voix. |
 | **iscool / Belote Mobile** | `divers/iscool_helpshift_com_..._faq_157_....txt` · `apps-sites/iscool_helpshift_com_hc_fr_17_belote_facebook_faq_497_game_rules_coinche.txt` | Même FAQ éditeur. Une voix. |
+| **Cannes 2016** *(ajouté le 2026-08-02)* | `tournois/web_archive_org_web_20160421181912if_http_festivaldesjeux_cannes_com_Documents_REGLEMENT_20DE_20LA_20BELOTE_20.txt` | Copie **isolée** : aucune parenté textuelle avec une autre source du corpus. Une voix, et la seule d'un championnat national. |
+
+**Statut particulier de Cannes 2016.** C'est le seul règlement du corpus qui régisse un
+*Championnat de France* — un label privé de son organisateur, mais le plus gros tournoi de
+contrée en réel du pays (plafond 148 équipes). Il n'appartient à aucune famille : sa rédaction
+est originale de bout en bout, ce qui en fait un témoignage indépendant partout où il parle.
+Deux réserves, valables pour toutes les lignes ci-dessous où il apparaît : **le document a dix
+ans** (aucune édition postérieure n'est publique) et **le porteur juridique a changé** en 2025.
+Il est donc cité comme « ce que le tournoi de Cannes a écrit en 2016 », pas comme l'état 2026.
 
 **Source secondaire, jamais citée comme règlement** :
 `open-source/ilyesbrh_twistedFate-belote_main_docs_games_coinche_SOURCES.md` est une matrice
@@ -48,7 +64,7 @@ listée à part.
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Antihoraire** (donne, parole, jeu ; donneur suivant = voisin de droite) | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` · famille FFB 2015 · famille FFB pages web (https://www.ffbelote.org/belote-contree/) · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` (https://fr.wikipedia.org/wiki/Belote_contr%C3%A9e) · `divers/fr_wikipedia_org_wiki_Belote.txt` (https://fr.wikipedia.org/wiki/Belote) · `divers/pagat_com_jass_coinche_html.txt` (https://www.pagat.com/jass/coinche.html) · `divers/belotecontree_free_reglement.txt` · famille ASCEE 2A (https://www.fnasce.org/IMG/pdf/reglement.pdf) · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` (https://en.wikipedia.org/wiki/Coinche) · `apps-sites/gamerules_com_rules_coinche.txt` (https://gamerules.com/rules/coinche/) · `divers/drasill_github_io_bga_coinche_rules_fr_html.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` · `apps-sites/coinchegratuit_fr_....txt` | « Le donneur distribue 8 cartes à chaque joueur, **dans le sens inverse des aiguilles d'une montre** en commençant par son voisin de droite » (FFB contrée 2016, §3.4). « Tout se fait dans le sens contraire des aiguilles d'une montre (distribution, enchères, jeu) » (Wikipédia contrée). « Deal and play are **anticlockwise** » (Pagat). |
+| **Antihoraire** (donne, parole, jeu ; donneur suivant = voisin de droite) | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` · famille FFB 2015 · famille FFB pages web (https://www.ffbelote.org/belote-contree/) · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` (https://fr.wikipedia.org/wiki/Belote_contr%C3%A9e) · `divers/fr_wikipedia_org_wiki_Belote.txt` (https://fr.wikipedia.org/wiki/Belote) · `divers/pagat_com_jass_coinche_html.txt` (https://www.pagat.com/jass/coinche.html) · `divers/belotecontree_free_reglement.txt` · famille ASCEE 2A (https://www.fnasce.org/IMG/pdf/reglement.pdf) · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` (https://en.wikipedia.org/wiki/Coinche) · `apps-sites/gamerules_com_rules_coinche.txt` (https://gamerules.com/rules/coinche/) · `divers/drasill_github_io_bga_coinche_rules_fr_html.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` · `apps-sites/coinchegratuit_fr_....txt` · **Cannes 2016** | « Le donneur distribue 8 cartes à chaque joueur, **dans le sens inverse des aiguilles d'une montre** en commençant par son voisin de droite » (FFB contrée 2016, §3.4). « Tout se fait dans le sens contraire des aiguilles d'une montre (distribution, enchères, jeu) » (Wikipédia contrée). « Deal and play are **anticlockwise** » (Pagat). « Le donneur distribue de gauche à droite, **dans le sens inverse des aiguilles d'une montre** […] Le donneur suivant, **situé à la droite du donneur précèdent**, repéré par une marque sur la feuille ou par un jeton visible par tous, ramasse les cartes » (Cannes 2016, 1°). |
 | **Horaire** | `tournois/tcvb_bruche_free_fr_..._tournoibelote2012reglement_htm.txt` (http://tcvb.bruche.free.fr/dossomma/tournoibelotte2012/tournoibelote2012reglement.htm) · `tournois/web_myassoc_org_..._pdf.txt` (Lions Club) · `tournois/geraudotloisirs_free_fr_....txt` · famille ASCEE/DDT 79 · famille « coupe à droite » (cdfcasson, jimcontent, Varennes, rjcv.be) · `divers/alhoa_free_fr_ALH_belote_rules_htm.txt` · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` (https://casimirdehauteclocque.fr/jeux/coinche.pdf) · `tournois/clublafontainedejouvence_fr_r%C3%A8glement_coinch%C3%A9e.txt` · `apps-sites/gameduell_helpshift_com_..._faq_1056_contree.txt` · famille iscool · `divers/belotepoint_fr_regles_coinche.txt` · `divers/lemagloisirs_fr_regle_coinche.txt` · `divers/exoty_com_regles_coinche_belote.txt` | « **LE SENS DE LA DONNE & DU JEU EST CELUI DES AIGUILLES D'UNE MONTRE** » (TCVB, art. 15). « Le jeu se joue dans le sens des aiguilles d'une montre » (Lions Club, art. 12 ; Géraudot, art. 2). « La distribution des cartes se fait dans le sens des aiguilles d'une montre » (ASCEE 79, art. 6). « La Contrée se joue […] dans le sens des aiguilles d'une montre » (Belote.com). |
 | **Les deux, au choix** | `divers/adpoker_fr_belote_contree_html.txt` (https://www.adpoker.fr/belote-contree.html) · `divers/pagat_com_jass_belote_html.txt` · `apps-sites/eryodsoft_com_fr_jeux_coinche.txt` (option de l'app) | « Donne : […] On peut jouer aussi **dans le sens des aiguilles d'une montre**. » (adpoker, section « Variante »). « People often play the whole game clockwise, rather than anticlockwise. » (Pagat belote, « Variations »). « **Sens de jeu** » figure dans la liste des options d'Eryod Soft (`apps-sites/play_google_com_..._eryodsoft_....txt`). |
 
@@ -59,6 +75,11 @@ Pyrénées, Aube, Deux-Sèvres, Isère, Belgique) plus une grappe de sites de co
 (`belotepoint`, `lemagloisirs`, `exoty`) qui décrivent la coinche en recopiant un patron de
 belote. Deux exceptions réelles au sein de la coinche : `casimirdehauteclocque` et
 `clublafontainedejouvence`, deux règlements de club qui assument l'horaire.
+
+L'entrée de **Cannes 2016** ne déplace pas la ligne, elle la confirme là où ça compte : le
+seul règlement de *championnat* du corpus est antihoraire, et il prend la peine de rendre la
+rotation matérielle (« repéré par une marque sur la feuille ou par un jeton visible par tous »),
+détail qu'aucune autre source ne donne.
 
 **Attention à un piège de lecture** : `divers/adpoker_fr_belote_contree_html.txt` se contredit
 lui-même — il annonce une donne antihoraire « en commençant par celui placé à sa droite »,
@@ -72,7 +93,7 @@ la première levée ». C'est une incohérence interne, pas une position.
 | Position | Sources | Extrait |
 |---|---|---|
 | **Obligatoire avant chaque donne** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web | « Le mélange du jeu est **obligatoire** avant chaque distribution. » (FFB contrée 2016, §3.2). La page web argumente : « Il y a bien longtemps, il était interdit de mélanger […] La recrudescence de ces cas de triche a rendu le mélange non plus optionnel mais **OBLIGATOIRE** ». |
-| **Au vouloir du donneur** | `federations/LOCAL_regles_officielles_belote_contree.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `tournois/cdf_missegre11_com_..._belote_contre_e_pdf.txt` · `tournois/maisondesessarts_fr_article116_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` · `divers/pagat_com_jass_coinche_html.txt` · famille « coupe à droite » (cdfcasson art. 12) | « Le mélange du jeu est **au vouloir du donneur** avant chaque distribution. » (LOCAL/Équipe Ludique, §3.2 — mutation directe du texte 2015). « Les cartes doivent être mélangées ou non, **à la discrétion du donneur**. » (Wikipédia contrée). « À chaque tour, **seul le donneur, s'il le souhaite** peut mélanger les cartes. » (Maison des Essarts, art. 2). « Le mélange des cartes avant chaque distribution est **optionnel**. » (Missègre — mutation de la page FFB qu'il recopie par ailleurs). |
+| **Au vouloir du donneur** | `federations/LOCAL_regles_officielles_belote_contree.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `tournois/cdf_missegre11_com_..._belote_contre_e_pdf.txt` · `tournois/maisondesessarts_fr_article116_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` · `divers/pagat_com_jass_coinche_html.txt` · famille « coupe à droite » (cdfcasson art. 12) · **Cannes 2016** | « Le mélange du jeu est **au vouloir du donneur** avant chaque distribution. » (LOCAL/Équipe Ludique, §3.2 — mutation directe du texte 2015). « Les cartes doivent être mélangées ou non, **à la discrétion du donneur**. » (Wikipédia contrée). « À chaque tour, **seul le donneur, s'il le souhaite** peut mélanger les cartes. » (Maison des Essarts, art. 2). « Le mélange des cartes avant chaque distribution est **optionnel**. » (Missègre — mutation de la page FFB qu'il recopie par ailleurs). « Il **peut** mélanger et présente le paquet à son adversaire de gauche » puis, pour la donne suivante, « ramasse les cartes, **mélange s'il veut** » (Cannes 2016, 1°). |
 | **Interdit, sauf circonstances énumérées** | `divers/belotecontree_free_reglement.txt` · `tournois/web_myassoc_org_..._pdf.txt` · `tournois/geraudotloisirs_free_fr_....txt` · famille ange.heureux · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` | « Le donneur **n'est pas obligé de mélanger** les cartes **sauf avant la première mène** ou après un incident de jeu […] Chaque fois que les cartes ont été exposées sur le tapis […] le mélange est alors obligatoire. » (belotecontree.free.fr). « Il est **interdit de brasser les cartes** pendant la partie. » (Lions Club, art. 12 ; Géraudot, art. 11). « le jeu **ne doit jamais être mélangé**, hormis avant le début d'une nouvelle manche » (ange.heureux). « The deck is **never shuffled**, but rather cut by the player who precedes the dealer » (Wikipédia EN Coinche). |
 | **Recommandé** (mutation) | `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` | Recopie la page FFB coinche mais remplace « OBLIGATOIRE » par « **fortement recommandé** ». |
 
@@ -85,6 +106,13 @@ estimate the likely distribution of cards in the current deal. » Fait notable :
 elle-même *raconte* qu'elle a changé d'avis, et l'édition « Équipe Ludique » du même texte
 a **retourné la règle** en « au vouloir ».
 
+**Cannes 2016 tranche contre sa fédération, et invente un troisième temps** : le mélange est
+optionnel donne après donne (« mélange s'il veut »), mais **obligatoire au tout début, et fait
+par les deux camps** — « Les cartes sont mélangées au départ par **un joueur de chaque équipe**
+puis étalées figures cachées ». Aucune autre source ne confie le mélange initial à un joueur de
+chacune des deux équipes ; c'est la réponse d'un tournoi au mobile anti-triche que la FFB
+invoque, sans imposer pour autant un mélange à chaque donne.
+
 ---
 
 ## 3. La coupe : obligatoire ? par qui ? taille minimale des tas ?
@@ -92,7 +120,7 @@ a **retourné la règle** en « au vouloir ».
 | Position | Sources | Extrait |
 |---|---|---|
 | **Obligatoire, par le joueur à gauche du donneur, minimum 3 cartes** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web (+ copies Missègre, Villeconin, cartesetcie, carafons) · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` (min. 3, mais par « le joueur qui précède le donneur ») | « Le joueur situé **à la gauche du donneur** effectue une coupe en 2 de manière franche sans compter le nombre de cartes qu'il souhaite couper. **Chaque tas doit contenir au moins 3 cartes.** Le donneur referme la coupe. » (FFB contrée 2016, §3.3). « At least three cards must be cut. » (Wikipédia EN). |
-| **Obligatoire, minimum 2 cartes** | `tournois/data_over_blog_kiwi_com_..._reglement_table_coinche_pdf.txt` (AIL Manissieux) · `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` | « le jeu sera coupé (**avec un minimum de 2 cartes**) par le joueur a gauche du donneur » (AIL Manissieux, art. 4). « Le jou[eur] placé à gauche du donneur devra **impérativement** couper le jeu **avec un minimum de deux cartes**. » (Coinche stéphanoise). |
+| **Obligatoire, minimum 2 cartes** | `tournois/data_over_blog_kiwi_com_..._reglement_table_coinche_pdf.txt` (AIL Manissieux) · `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` · **Cannes 2016** | « le jeu sera coupé (**avec un minimum de 2 cartes**) par le joueur a gauche du donneur » (AIL Manissieux, art. 4). « Le jou[eur] placé à gauche du donneur devra **impérativement** couper le jeu **avec un minimum de deux cartes**. » (Coinche stéphanoise). « présente le paquet à son adversaire de gauche **qui doit couper à au moins deux cartes** » (Cannes 2016, 1°). |
 | **Obligatoire, un seul tas ne peut pas être réduit à 1 carte** | `divers/belotecontree_free_reglement.txt` | « il doit faire couper le joueur situé à sa gauche **qui ne peut refuser** (la coupe est obligatoire). Celui-ci doit séparer le paquet de carte en 2 **sans que l'un ne soit constitué que d'une seule carte**. » |
 | **Obligatoire, mais coupée à droite** | famille « coupe à droite » (cdfcasson, jimcontent, Varennes, rjcv.be) | « La coupe est obligatoire (minimum 3 cartes) et **se fait à droite** » (rjcv.be ; cdfcasson art. 3). Cohérent avec le sens horaire que cette même famille impose (axe 1). |
 | **Coupe par « l'adversaire qui précède le donneur »** | famille ange.heureux · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` | « Une fois le jeu **coupé par l'adversaire qui le précède**, le joueur distribue 8 cartes » (ange.heureux). « les fait couper **au joueur avant lui** » (casimir). |
@@ -101,9 +129,17 @@ a **retourné la règle** en « au vouloir ».
 **Consensus sur le principe, divergence sur le chiffre.** La coupe est **obligatoire partout**
 où le corpus en parle — c'est une des rares règles à ne connaître aucune exception, y compris
 chez les sources qui interdisent le mélange (belotecontree : « la coupe est obligatoire »).
-La fracture est sur le seuil (**3** chez la FFB et tout ce qui en descend, **2** dans deux
-règlements de tournoi rhônalpins, **« pas une seule carte »** chez belotecontree) et sur le
-**côté** (gauche partout sauf dans la famille horaire, où elle passe mécaniquement à droite).
+La fracture est sur le seuil (**3** chez la FFB et tout ce qui en descend, **2** dans trois
+règlements de tournoi — deux rhônalpins et Cannes —, **« pas une seule carte »** chez
+belotecontree) et sur le **côté** (gauche partout sauf dans la famille horaire, où elle passe
+mécaniquement à droite).
+
+Le seuil à **2** cesse d'être une curiosité rhônalpine une fois Cannes ajouté : il est porté
+par **trois règlements de compétition indépendants** (Loire, Rhône, Alpes-Maritimes) et par
+aucune source doctrinale, tandis que le **3** vient de la FFB, de ce qui la recopie, et de la
+famille « coupe à droite » qui est par ailleurs la plus atypique du corpus (sens horaire,
+coupe à droite). Sur cet axe, **le seul règlement de championnat du corpus ne suit pas sa
+fédération**.
 
 Deux précisions qu'une seule source donne chacune, et qui ne sont contredites par personne :
 - **remontage** : « Le donneur doit reconstituer un seul paquet en posant **sur le dessus le paquet qui se situait, avant la coupe, au dessous** » (`divers/belotecontree_free_reglement.txt`), soit « en inversant l'ordre de coupe » (`divers/fr_wikipedia_org_wiki_Belote.txt`) ;
@@ -115,7 +151,7 @@ Deux précisions qu'une seule source donne chacune, et qui ne sont contredites p
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Les trois combinaisons de 3 et 2, au choix** | famille FFB 2015 · famille FFB 27.01.2016 · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` · famille ange.heureux · `divers/regles_com_jeux_cartes_coinche_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` (au titre des variantes) | « de l'une des manières suivantes : **3 cartes chacun puis 2 puis 3, ou 3 cartes puis 3 puis 2, ou encore 2 cartes puis 3 puis 3.** » (FFB contrée 2016, §3.4) |
+| **Les trois combinaisons de 3 et 2, au choix** | famille FFB 2015 · famille FFB 27.01.2016 · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` · famille ange.heureux · `divers/regles_com_jeux_cartes_coinche_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` (au titre des variantes) · **Cannes 2016** | « de l'une des manières suivantes : **3 cartes chacun puis 2 puis 3, ou 3 cartes puis 3 puis 2, ou encore 2 cartes puis 3 puis 3.** » (FFB contrée 2016, §3.4). « soit **3,3,2 ou 2,3,3 ou 3,2,3** toutes les cartes » (Cannes 2016, 1°) — les trois mêmes combinaisons, donc, mais sans reprendre l'interdiction FFB du 4-4 : Cannes énumère sans prohiber. |
 | **3-2-3 seulement** | `divers/clubdejeux_com_belote_coinchee_online_regles.txt` · `divers/bk_jeux_ducale_fr_..._belote_coinchee_pour_joueur_expert_pdf.txt` · `divers/lemagloisirs_fr_regle_coinche.txt` · `tournois/data_over_blog_kiwi_com_..._reglement_table_coinche_pdf.txt` · `tournois/clublafontainedejouvence_fr_....txt` · `apps-sites/gameduell_helpshift_com_..._faq_1056_contree.txt` | « trois cartes à chacun, puis deux cartes, puis trois cartes » (AIL Manissieux, art. 4) |
 | **Par 2 ou par 3, toutes variantes** | famille ASCEE 2A | « le donneur distribue les cartes **par groupe de 2 ou 3 (toutes variantes autorisées)**. » |
 | **4-4 admis** | `tournois/cdf_missegre11_com_..._belote_contre_e_pdf.txt` · `divers/alhoa_free_fr_ALH_belote_rules_htm.txt` · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` · `divers/pagat_com_jass_coinche_html.txt` (comme variante) · `open-source/valmathieu_ContrAI_main_contree-domain.md` | « – En 3 fois : 3 cartes chacun puis 2 ou inversement. – **En 2 fois : 4 cartes à la fois.** » (Missègre). « en 4-4 **existe dans le sud-est** » (alhoa). « **Corsica deal**: 4-4 dealing pattern instead of 3-2-3. » (ContrAI). |
@@ -139,7 +175,7 @@ joueurs de ramasser leurs cartes avant la fin de la distribution**. »
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Le joueur à droite du donneur parle *et* entame** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `divers/bk_jeux_ducale_fr_..._pdf.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `tournois/data_over_blog_kiwi_com_....txt` · `tournois/web_archive_org_..._coinche_stephanoise_....txt` · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` | « Le joueur situé **à droite du donneur** joue la carte de son choix : c'est l'entame. » (FFB contrée 2016, §5.1). « Le joueur placé à la droite du donneur (**c'est-à-dire celui qui a commencé les enchères**) pose la première carte du pli. » (Wikipédia contrée). « Le premier à parler étant le « **premier en carte** » c'est-à-dire celui situé tout de suite à la droite du donneur. » (belotecontree). |
+| **Le joueur à droite du donneur parle *et* entame** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `divers/bk_jeux_ducale_fr_..._pdf.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `tournois/data_over_blog_kiwi_com_....txt` · `tournois/web_archive_org_..._coinche_stephanoise_....txt` · `apps-sites/en_wikipedia_org_wiki_Coinche.txt` · **Cannes 2016** (*parole seulement — muet sur l'entame*) | « Le joueur situé **à droite du donneur** joue la carte de son choix : c'est l'entame. » (FFB contrée 2016, §5.1). « Le joueur placé à la droite du donneur (**c'est-à-dire celui qui a commencé les enchères**) pose la première carte du pli. » (Wikipédia contrée). « Le premier à parler étant le « **premier en carte** » c'est-à-dire celui situé tout de suite à la droite du donneur. » (belotecontree). |
 | **Le joueur à gauche du donneur** (corollaire du sens horaire) | famille ASCEE/DDT 79 (implicite) · `divers/alhoa_free_fr_ALH_belote_rules_htm.txt` · `divers/belotepoint_fr_regles_coinche.txt` · `divers/lemagloisirs_fr_regle_coinche.txt` · `divers/exoty_com_regles_coinche_belote.txt` · famille iscool · `apps-sites/gameduell_helpshift_com_..._faq_1054_coinche.txt` · `tournois/clublafontainedejouvence_fr_....txt` · `apps-sites/coinchegratuit_fr_....txt` | « le joueur situé **à la gauche** du distributeur commence les enchères » (alhoa). « Le joueur situé **à gauche du donneur** entame le premier pli » (belotepoint). |
 | **Le joueur qui suit le donneur** (formulation neutre) | famille ange.heureux | « Le premier joueur à jouer est **le joueur qui suit le donneur**, sauf en cas d'annonce "Générale", en quel cas c'est l'annonceur qui entame la partie. » |
 
@@ -147,6 +183,12 @@ joueurs de ramasser leurs cartes avant la fin de la distribution**. »
 **celui qui parle en premier entame**, sans exception dans tout le corpus. Le désaccord sur
 gauche/droite n'est donc pas un axe autonome — il est **entièrement dérivé de l'axe 1**
 (sens du jeu), et se répartit exactement selon les mêmes camps.
+
+**Cannes 2016 est le seul règlement du corpus qui ne dit pas qui entame.** Il fixe la parole
+sans ambiguïté (« La parole est donnée dans le même sens que la donne au joueur de droite, le
+premier à l'avoir étant celui **à la droite du donneur** ») puis passe au jeu de la carte sans
+jamais nommer l'entameur. Un tournoi peut se le permettre — l'usage y est acquis — mais, à la
+lettre, il ne l'écrit pas ; il n'est donc compté dans cette position que pour la parole.
 
 Exception unique et explicite, chez trois sources indépendantes : **l'annonceur d'une
 « générale » entame**, quel que soit son siège. « il est autorisé à jouer en premier **même
@@ -161,7 +203,7 @@ lead to the first trick »). La générale n'existe pas à la contrée FFB.
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Obligatoire, sans exception** | **Toutes les sources du corpus qui décrivent le jeu de la carte.** Notamment famille FFB (toutes rédactions) · `divers/fr_wikipedia_org_wiki_Belote.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `open-source/drasill_bga-coinche_master_coinche.game.php` · `open-source/ismo009_Coinche_main_game.js` | « **On doit toujours fournir la couleur demandée à l'entame si l'on en possède.** » (FFB, formule identique dans les quatre rédactions). « Players must **follow suit** if they can. » (Pagat). « **Follow suit.** If you have any card in the led suit, you must play one. » (ContrAI). |
+| **Obligatoire, sans exception** | **Toutes les sources du corpus qui décrivent le jeu de la carte.** Notamment famille FFB (toutes rédactions) · `divers/fr_wikipedia_org_wiki_Belote.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `open-source/drasill_bga-coinche_master_coinche.game.php` · `open-source/ismo009_Coinche_main_game.js` · **Cannes 2016** | « **On doit toujours fournir la couleur demandée à l'entame si l'on en possède.** » (FFB, formule identique dans les quatre rédactions). « Players must **follow suit** if they can. » (Pagat). « **Follow suit.** If you have any card in the led suit, you must play one. » (ContrAI). « **obligation de jouer une carte de la couleur demandée** » (Cannes 2016, 3° a — c'est la première clause de sa section « Jeu de la carte »). |
 
 **Consensus, le seul total du corpus.** C'est la seule règle de jeu de la carte sur laquelle
 aucune source, aucun tournoi, aucune app et aucune implémentation ne prévoit ni exception ni
@@ -174,7 +216,7 @@ l'atout, fournir ne suffit pas, il faut monter** — voir axe 8.
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Obligation de couper, SAUF si le partenaire est maître (on peut alors se défausser)** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web · `federations/LOCAL_regles_officielles_belote_contree.txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `tournois/maisondesessarts_fr_article116_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` · `divers/drasill_github_io_bga_coinche_rules_fr_html.txt` · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` · famille ASCEE 2A · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `open-source/drasill_bga-coinche_master_coinche.game.php` · `open-source/ismo009_Coinche_main_game.js` · `apps-sites/gamerules_com_rules_coinche.txt` · `apps-sites/playjoy_com_en_coinche_rules.txt` · famille « coupe à droite » · `divers/jeux_regles_com_regles_coinche.txt` · famille iscool | « Si l'on ne possède pas de carte dans la couleur demandée, et que **notre partenaire est maître** […] on peut alors jouer n'importe quelle carte ; on se "défausse". On peut également jouer atout si bon nous semble. » puis « Si […] notre partenaire **n'est pas maître ou n'a pas encore joué** : on est **tenu de jouer un atout** si l'on en possède » (FFB 2015, §5.2 2.1–2.2). « If a player is unable to follow suit, and if the highest card in the trick was played by an opponent, he **must** play a trump. […] However, if the highest card in the trick so far was played by his partner, he is **allowed to discard** even if he has a trump. » (Pagat). « **Partner exception.** If your partner is currently winning the trick […] you are *not* obligated to trump or to overtrump. You may discard freely. » (ContrAI). « Il n'est pas obligatoire de couper **si le pli appartient à son partenaire** » (rjcv.be). |
+| **Obligation de couper, SAUF si le partenaire est maître (on peut alors se défausser)** | famille FFB 2015 · famille FFB 27.01.2016 · famille FFB pages web · `federations/LOCAL_regles_officielles_belote_contree.txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `divers/pagat_com_jass_coinche_html.txt` · `divers/belotecontree_free_reglement.txt` · `tournois/maisondesessarts_fr_article116_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` · `divers/drasill_github_io_bga_coinche_rules_fr_html.txt` · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` · famille ASCEE 2A · `open-source/valmathieu_ContrAI_main_contree-domain.md` · `open-source/drasill_bga-coinche_master_coinche.game.php` · `open-source/ismo009_Coinche_main_game.js` · `apps-sites/gamerules_com_rules_coinche.txt` · `apps-sites/playjoy_com_en_coinche_rules.txt` · famille « coupe à droite » · `divers/jeux_regles_com_regles_coinche.txt` · famille iscool · **Cannes 2016** | « Si l'on ne possède pas de carte dans la couleur demandée, et que **notre partenaire est maître** […] on peut alors jouer n'importe quelle carte ; on se "défausse". On peut également jouer atout si bon nous semble. » puis « Si […] notre partenaire **n'est pas maître ou n'a pas encore joué** : on est **tenu de jouer un atout** si l'on en possède » (FFB 2015, §5.2 2.1–2.2). « If a player is unable to follow suit, and if the highest card in the trick was played by an opponent, he **must** play a trump. […] However, if the highest card in the trick so far was played by his partner, he is **allowed to discard** even if he has a trump. » (Pagat). « **Partner exception.** If your partner is currently winning the trick […] you are *not* obligated to trump or to overtrump. You may discard freely. » (ContrAI). « Il n'est pas obligatoire de couper **si le pli appartient à son partenaire** » (rjcv.be). « le joueur qui n'en a pas **peut défausser ou couper si son partenaire est maître** mais, **si l'adversaire est maître, il doit obligatoirement surcouper** » (Cannes 2016, 3° a). |
 | **Muettes sur l'exception partenaire** (elles n'énoncent que « on doit couper ») | `divers/exoty_com_regles_coinche_belote.txt` · `divers/bk_jeux_ducale_fr_..._pdf.txt` · `apps-sites/gameduell_helpshift_com_..._faq_1056_contree.txt` | « Couper : Si vous n'avez pas la couleur demandée, vous avez l'**obligation** de "couper" en jouant une carte d'Atout (si vous en avez une). » (exoty) — le cas du partenaire maître n'y est pas traité. **Silence, pas désaccord.** |
 | **Position contraire explicite : couper même sur son partenaire** | *aucune source du corpus* | — |
 
@@ -182,6 +224,12 @@ l'atout, fournir ne suffit pas, il faut monter** — voir axe 8.
 tient le pli » est, avec l'obligation de fournir, l'autre pilier non contesté. La formule
 française consacrée que le corpus donne pour cette règle est **« on ne pisse pas sur le
 partenaire »** (`divers/pagat_com_jass_belote_html.txt`).
+
+**Cannes 2016 est la formulation la plus économe du corpus** : une seule phrase enferme les
+deux moitiés de la règle et les oppose explicitement (« peut défausser ou couper **si son
+partenaire est maître** mais **si l'adversaire est maître**, il doit obligatoirement
+surcouper »). Elle dit en outre une chose que la FFB laisse implicite : face au partenaire
+maître, **couper reste permis**, ce n'est pas défausse ou rien.
 
 Nuance à ne pas confondre avec l'axe 9 : ce que l'exception « partenaire maître » autorise
 est la **défausse** ; savoir si elle autorise en plus le **sous-coup** (jouer un atout
@@ -204,6 +252,15 @@ règle que les règlements de concours **assortissent d'une pénalité chiffrée
 le signe qu'elle est appliquée à la table. Le camp souple est composé de quatre sources
 sans autorité comparable, et Pagat le classe explicitement comme une variante minoritaire.
 
+**Cannes 2016 n'est cité dans aucun des deux camps, et c'est délibéré.** Le règlement pose
+bien une obligation de montée — « **obligation de monter dans le jeu d'atouts pour couper ou
+surcouper sur l'adversaire** » (3° b) — mais il la formule en termes de *coupe* et de
+*surcoupe*, c'est-à-dire du cas où l'entame est d'une couleur ordinaire. **Le cas « l'atout
+est la couleur demandée » n'est nommé nulle part** dans le document. Par inférence il tomberait
+du côté souple, puisque toutes les obligations de montée y visent l'adversaire (3° b) et que
+3° d) exempte explicitement le partenaire — mais c'est une inférence, pas une phrase, et la
+matrice ne compte que les phrases.
+
 Ne pas confondre avec l'axe 9 : cet axe-ci porte sur le cas **« l'atout est la couleur
 demandée »**. Le cas « on coupe une couleur ordinaire » est un axe distinct.
 
@@ -219,7 +276,7 @@ pli ; je n'ai pas la couleur demandée ; j'ai de l'atout, mais aucun qui batte l
 |---|---|---|
 | **A — On PEUT se défausser (« on ne pisse pas »)** | famille **FFB 2015** (contrée + coinche) · `federations/LOCAL_regles_officielles_belote_contree.txt` · **`federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt`** · famille **FFB pages web** *contrée et coinche* (https://www.ffbelote.org/belote-contree/ , https://www.ffbelote.org/regles-coinche/) · `tournois/cdf_missegre11_com_....txt` · `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · `tournois/maisondesessarts_fr_article116_html.txt` · `divers/adpoker_fr_belote_contree_html.txt` · `divers/belotecontree_free_reglement.txt` · `tournois/clublafontainedejouvence_fr_....txt` | « **Précision : Si un adversaire a déjà coupé, et qu'il ne nous reste que des atouts inférieurs au sien, il n'est pas obligatoire d'en jouer un (on dit que l'on « ne pisse pas »), on peut se défausser.** » (FFB 2015, §5.2 2.2 — formule reprise mot pour mot en coinche et en contrée). « Si un joueur adverse a déjà coupé et tient le pli, si l'on doit couper, il est obligatoire de fournir un atout plus fort que lui (on dit que l'on « surcoupe »). Si c'est impossible, **on peut se défausser de n'importe quelle carte sans exception**. » (FFB **contrée** 2016, §5.2.2). « Lorsqu'un adversaire coupe […] si nous n'avons pas d'atout supérieur, **nous pouvons nous défausser**. C'est-à-dire que nous pouvons jouer n'importe quelle autre carte, **nous ne sommes pas obligés de jouer atout**. » (page FFB contrée). « Si une couleur est coupée par un adversaire, le joueur qui n'a pas de carte de la couleur demandée, doit couper lui aussi **mais uniquement s'il peut poser une carte d'atout supérieure** ; dans l'hypothèse inverse **il peut défausser la carte de son choix**. » (belotecontree.free.fr). « A la coinchée **"on ne pisse pas"**. » (Club La Fontaine de Jouvence). |
 | **B — On DOIT sous-couper (« obligation de pisser »)** | **`federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt`** (belote classique) + sa copie `divers/cartesetcie_fr_regles_officielles_de_la_belote.txt` · **`federations/ffbelote_org_reglements_de_la_belote_avec_ou_sans_annonce.txt`** + sa copie `tournois/villeconin_fr_....txt` · famille **ASCEE 2A** (https://www.fnasce.org/IMG/pdf/reglement.pdf) · famille **ASCEE/DDT 79** · `tournois/data_over_blog_kiwi_com_....txt` (AIL Manissieux) · `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` · famille **ange.heureux** · `divers/pagat_com_jass_coinche_html.txt` + `divers/pagat_com_jass_belote_html.txt` (**règle de base**) · `apps-sites/gamerules_com_rules_coinche.txt` · `divers/jeu_belote_fr_regles_php_part_regles_jeu_coinche.txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` (**règle de base**) · `open-source/ismo009_Coinche_main_game.js` · `open-source/drasill_bga-coinche_master_coinche.game.php` | « Si un joueur adverse a déjà coupé et tient le pli, si l'on doit couper, il est obligatoire de fournir un atout plus fort que lui (« surcoupe »). Si c'est impossible, **il faut fournir un atout plus faible (on dit que l'on « pisse »)**. » (FFB **belote** 2016, §5.2.2). « 4- Lorsqu'un adversaire coupe et que nous ne possédons pas la couleur demandée, **il est obligatoire de couper également (pisser dans le jargon de la belote), même si l'on est incapable de surmonter son atout.** » (page FFB belote). « **Obligation de « pisser » de l'atout sur son adversaire** : si un joueur ne peut fournir à la couleur d'entame et qu'un adversaire a déjà coupé avant lui, alors il doit surcouper avec une carte plus forte, **sinon il doit poser une carte d'atout plus faible**. » (ASCEE 2A). « Si l'un des joueurs d'un camp coupe une carte, l'adversaire qui n'aura pas la couleur demandée **devra fournir de l'atout, s'il en a**, et monter le cas échéant. » (ASCEE 79 art. 13). « If he has trumps but is unable to overtrump, **he must still play a trump**, although he does not benefit from doing so. This is termed "undertrumping", or "pisser" in French Belote jargon. » (Pagat). « Si on ne peut monter, **on doit tout de même jouer un atout**. » (Wikipédia Belote). « `// On ne peut pas monter, on doit quand même couper (pisser)` » (ismo009, `game.js` l. 228). |
-| **C — Au choix du joueur** | `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` | « Si votre adversaire a coupé vous devez surcouper ; dans le cas où vous ne le pouvez pas, **vous avez la possibilité de vous défausser**, en fournissant une autre couleur. **Mais vous pouvez également sous-couper** pour conserver une autre carte maîtresse à la couleur par exemple. C'est l'expression pour « Pisser à l'atout ». » |
+| **C — Au choix du joueur** | `tournois/web_archive_org_..._coinche_stephanoise_com_..._reglement_coinche_pdf.txt` · **Cannes 2016** | « Si votre adversaire a coupé vous devez surcouper ; dans le cas où vous ne le pouvez pas, **vous avez la possibilité de vous défausser**, en fournissant une autre couleur. **Mais vous pouvez également sous-couper** pour conserver une autre carte maîtresse à la couleur par exemple. C'est l'expression pour « Pisser à l'atout ». » (Coinche stéphanoise). « **non-obligation de fournir atout (pisser)** sur une coupe maîtresse de l'adversaire si la surcoupe est impossible (**il n'est pas interdit de pisser si le jeu s'avère plus intéressant en pissant**) » (Cannes 2016, 3° c). |
 | **D — C'est une convention à fixer avant la partie / une option de logiciel** | `divers/belotecontree_free_reglement.txt` (forum de l'auteur) · `apps-sites/eryodsoft_com_fr_jeux_coinche.txt` + `apps-sites/play_google_com_..._eryodsoft_....txt` · `apps-sites/play_google_com_store_apps_details_id_com_aandrill_belote_hl_fr.txt` · `divers/lemagloisirs_fr_regle_coinche.txt` | « Tu peux aussi décider en début de partie de convenir avec tes adversaires **d'autoriser ou non à "pisser"**. » (Hervé, belotecontree.free.fr). « **Obligation ou non de « pisser » à l'Atout.** » (liste d'options d'Eryod Soft ; idem « Obligation de pisser atout » chez Belote Andr). « surcoupe obligatoire **ou non** » (lemagloisirs, dans sa liste de points à trancher avant de jouer). |
 
 **Divergence maximale, et elle traverse la fédération elle-même.**
@@ -252,18 +309,28 @@ pli ; je n'ai pas la couleur demandée ; j'ai de l'atout, mais aucun qui batte l
    %s » dès que le partenaire n'est pas le plus fort, **sans exception pour l'absence
    d'atout supérieur**.
 
+5. **Cannes 2016 fait basculer le camp C, qui n'était jusque-là qu'une voix.** Le camp
+   « au choix » comptait un seul règlement, celui de la coinche stéphanoise ; il en compte
+   maintenant deux, dont **le règlement d'un championnat national**. Et Cannes ne se contente
+   pas d'autoriser la défausse : il **écrit la double permission**, en ajoutant entre
+   parenthèses qu'« il n'est pas interdit de pisser si le jeu s'avère plus intéressant en
+   pissant ». C'est le seul texte du corpus qui motive le sous-coup par la tactique plutôt que
+   par l'obligation. Autrement dit, sur l'axe le plus divisé du corpus, le tournoi qui a le
+   plus besoin d'une règle arbitrable a choisi de **ne pas trancher**, et de le dire.
+
 ---
 
 ## 10. Le partenaire a coupé et tient le pli — et je n'ai plus que des atouts
 
 Sous-cas de l'axe 7 que quatre rédactions FFB traitent séparément, et sur lequel elles ne
-disent **pas la même chose**.
+disent **pas la même chose**. Hors FFB, une seule source le traite de première main :
+**Cannes 2016**.
 
 | Position | Sources | Extrait |
 |---|---|---|
 | **Non obligé de monter — c'est le seul cas où un atout inférieur est permis** | famille **FFB 2015** (contrée + coinche) · famille **FFB pages web** (contrée, coinche **et** belote) · `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` · `divers/carafons_fr_regles_de_la_coinche.txt` · `tournois/cdf_missegre11_com_....txt` · `tournois/villeconin_fr_....txt` | « Lorsque notre partenaire, maître, a coupé une carte adverse et que nous ne possédons plus que de l'atout, **il n'est pas obligé de fournir un atout supérieur. C'est le seul cas de figure, plutôt rare, où il est permis de jouer un atout inférieur.** » (FFB 2015, §5.2 règle 4). |
 | **Obligé de monter** | **`federations/LOCAL_regles_officielles_belote_contree.txt`** | « Lorsque notre partenaire, maître, a coupé une carte adverse et que nous ne possédons plus que de l'atout, **il est obligé de fournir un atout supérieur.** » (§5.2 règle 4) |
-| **Non obligé de couper, sous-coup du partenaire explicitement autorisé** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` · `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` | « Si le joueur partenaire a déjà coupé et tient le pli, si on ne possède pas la couleur demandée, il n'est pas obligatoire de couper. On peut se défausser de n'importe quelle carte sans exception (**y compris un atout inférieur au sien**). » (FFB 2016, §5.2.3). « il peut également jouer un atout s'il le souhaite, **y compris inférieur à celui de son partenaire** » (Wikipédia Belote). |
+| **Non obligé de couper, sous-coup du partenaire explicitement autorisé** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` · `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` · **Cannes 2016** (*non-obligation de monter ; ne nomme pas le sous-coup*) | « Si le joueur partenaire a déjà coupé et tient le pli, si on ne possède pas la couleur demandée, il n'est pas obligatoire de couper. On peut se défausser de n'importe quelle carte sans exception (**y compris un atout inférieur au sien**). » (FFB 2016, §5.2.3). « il peut également jouer un atout s'il le souhaite, **y compris inférieur à celui de son partenaire** » (Wikipédia Belote). « **non-obligation de fournir atout ou de monter sur une coupe maîtresse de son partenaire** » (Cannes 2016, 3° d). |
 | **Non obligé de couper, mais sous-couper le partenaire est INTERDIT si on a mieux** | `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` · `divers/pagat_com_jass_belote_html.txt` | « Il est en revanche **interdit de sous couper** (couper avec une carte inférieure) si le partenaire est maître, avec un atout, **alors qu'on a des atouts supérieurs dans sa main**. » (casimir, règle 4). « if you are able to overtrump, you may either do so or you may throw away […] **but you are not allowed to undertrump** » (Pagat belote, variante « toujours obligé de pisser »). |
 
 **Divergence — et l'une d'elles est très probablement une coquille de réédition.**
@@ -277,7 +344,24 @@ voir la section « Où tombe Colver » en fin de document.
 
 Au fond, trois options se partagent le champ : (i) obligation de monter, (ii) liberté totale
 y compris sous-coup, (iii) liberté sauf sous-coup gratuit. Personne n'est majoritaire ; la
-FFB 2016 et Wikipédia Belote portent la (ii), ce qui en fait la lecture la mieux étayée.
+FFB 2016, Wikipédia Belote **et Cannes 2016** portent la (ii), ce qui en fait la lecture la
+mieux étayée — et la seule qu'un règlement de compétition écrive de première main (les autres
+règlements de concours qui figurent au tableau, Missègre et Villeconin, recopient la page FFB).
+
+**Ce que Cannes dit exactement, et ce qu'il ne dit pas.** Sa clause 3° d) est la réponse
+directe au cas de cet axe : « **non-obligation de fournir atout ou de monter sur une coupe
+maîtresse de son partenaire** ». La première moitié (« fournir atout ») est sans objet quand on
+n'a plus que de l'atout en main — on n'a rien d'autre à jouer ; c'est la seconde (« ni de
+monter ») qui tranche, et elle tranche pour la liberté : **on peut poser un petit atout sous
+celui du partenaire**. La lecture est confortée par le reste de la section, où **toutes** les
+obligations de montée sont écrites contre l'adversaire (3° a « si l'adversaire est maître, il
+doit obligatoirement surcouper » ; 3° b « obligation de monter […] **sur l'adversaire** »).
+
+La réserve est celle de la position (iii) : Cannes écrit qu'on n'est pas *obligé* de monter,
+il n'écrit nulle part qu'on aurait le *droit* de sous-couper alors qu'on a mieux — la nuance
+que `casimirdehauteclocque` et Pagat, eux, prennent la peine de formuler. Une lecture
+restrictive resterait donc soutenable à la table ; la lecture littérale, elle, donne la
+liberté pleine.
 
 ---
 
@@ -388,7 +472,7 @@ points. » (famille FFB pages web) — l'invariant 162 comme test de recomptage.
 
 | Position | Sources | Extrait |
 |---|---|---|
-| **Le dernier pli est consultable tant que le pli suivant n'a pas été ramassé** | famille **FFB 2015** · `federations/LOCAL_...` · famille **FFB pages web** (+ copies Missègre, Villeconin, cartesetcie, carafons) · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` | « Le dernier pli peut être consulté par n'importe quel joueur de la partie **tant que le pli suivant n'a pas été ramassé**. » (FFB 2015, §5.1). « **Seul le dernier pli peut être consulté.** » (Wikipédia contrée). |
+| **Le dernier pli est consultable tant que le pli suivant n'a pas été ramassé** | famille **FFB 2015** · `federations/LOCAL_...` · famille **FFB pages web** (+ copies Missègre, Villeconin, cartesetcie, carafons) · `divers/fr_wikipedia_org_wiki_Belote_contr_C3_A9e.txt` · **Cannes 2016** | « Le dernier pli peut être consulté par n'importe quel joueur de la partie **tant que le pli suivant n'a pas été ramassé**. » (FFB 2015, §5.1). « **Seul le dernier pli peut être consulté.** » (Wikipédia contrée). « **seul le dernier pli peut être exceptionnellement vérifié avant le ramassage du suivant** » (Cannes 2016, 4°) — même fenêtre que la FFB 2015, avec un adverbe en plus qui en fait une tolérance et non un droit. |
 | **Consultable seulement une fois le pli suivant complet, et jamais avant de jouer sa carte** | **`federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt`** · `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` · `divers/cartesetcie_fr_regles_officielles_de_la_belote.txt` | « Lorsqu'un pli est retourné, **il n'est consultable qu'à l'issue du pli suivant** (lorsque les quatre cartes sont jouées) avant que celui-ci ne soit retourné à son tour. **En aucun cas un joueur ne peut demander à consulter le pli précédent avant de jouer sa carte.** » (§5.1) |
 | **Consultable seulement après avoir joué sa propre carte** | `tournois/data_over_blog_kiwi_com_..._reglement_table_coinche_pdf.txt` | « On ne peut, éventuellement, regarder le pli précédent **qu'après avoir joué sa carte**. » (art. 15) |
 | **Consultable après la fin du coup, avant que le pli ne soit ramassé — jamais pendant** | `divers/belotecontree_free_reglement.txt` · `tournois/geraudotloisirs_free_fr_....txt` | « **Pendant le coup suivant le pli précédent ne peut être consulté.** Par contre après la fin du coup et avant de ramasser le pli, les quatre joueurs peuvent revoir le pli précédent uniquement (il n'est pas encore couvert). » (belotecontree). « On ne peut regarder que les cartes de la dernière levée et **AVANT** que le pli ne soit ramassé. » (Géraudot art. 7). |
@@ -398,10 +482,13 @@ points. » (famille FFB pages web) — l'invariant 162 comme test de recomptage.
 **Divergence sur la fenêtre, consensus sur le fond.** Personne n'autorise à revoir plus que
 **le dernier pli** ; le désaccord porte entièrement sur *quand* on peut le faire, et il
 s'ordonne du plus permissif au plus strict : (a) tant que le pli suivant n'est pas ramassé
-(FFB 2015 et le site), (b) seulement après avoir joué sa carte (AIL Manissieux), (c) seulement
-une fois le pli suivant achevé (FFB 2016), (d) jamais (Maison des Essarts, TCVB). Là encore la
-**FFB a durci sa propre règle entre 2015 et 2016**, et la formulation 2016 vise explicitement
-l'abus : consulter *avant* de jouer, c'est-à-dire pour décider de sa carte.
+(FFB 2015, le site **et Cannes**), (b) seulement après avoir joué sa carte (AIL Manissieux),
+(c) seulement une fois le pli suivant achevé (FFB 2016), (d) jamais (Maison des Essarts, TCVB).
+Là encore la **FFB a durci sa propre règle entre 2015 et 2016**, et la formulation 2016 vise
+explicitement l'abus : consulter *avant* de jouer, c'est-à-dire pour décider de sa carte.
+Cannes — arbitré, et exactement contemporain du durcissement fédéral (règlement FFB du
+27.01.2016, festival de Cannes fin février) — est pourtant sur la fenêtre large : le
+durcissement n'avait, à cette date, pas atteint la pratique des tournois.
 
 ---
 
@@ -413,7 +500,7 @@ l'abus : consulter *avant* de jouer, c'est-à-dire pour décider de sa carte.
 | **Toute carte SORTIE DU JEU doit être jouée, sauf accord des adversaires** | `federations/ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.txt` · `federations/ffbelote_regles-officielles-de-la-Belote-27-01-2016.txt` · `divers/cartesetcie_fr_regles_officielles_de_la_belote.txt` | « **Toute carte sortie du jeu** doit être jouée sauf autorisation ou avis contraire de la part des adversaires. » |
 | **Toute carte posée / tombée / jetée est jouée, sans échappatoire** | `tournois/web_myassoc_org_..._pdf.txt` · `tournois/geraudotloisirs_free_fr_....txt` · `tournois/aappmakoenigshoffen_..._pdf.txt` · famille « coupe à droite » · `divers/adpoker_fr_belote_contree_html.txt` | « Toute carte posée est jouée **et ne peut être changée**. » (Lions Club art. 14 ; Géraudot art. 7). « Toute carte **jetée** est considérée jouée. » (AAPPMA art. 11). « Toute carte **tombée sur la table** est considérée comme jouée. » (cdfcasson art. 9). « Si, au cours du jeu, un des joueurs se trompe en fournissant une carte, **il ne peut la reprendre.** » (adpoker). |
 | **Toute carte posée est jouée, SAUF si le joueur pouvait fournir — c'est alors une faute** | `tournois/tcvb_bruche_free_fr_....txt` | « TOUTE CARTE POSÉE EST CONSIDÉRÉE COMME JOUÉE, **SAUF SI LE JOUEUR PEUT FOURNIR. IL Y A ALORS FAUTE DE JEU.** TOUTE FAUTE DE JEU DONNE 162 POINTS À L'ADVERSAIRE. » |
-| **Interdits connexes** | famille FFB pages web · `tournois/cdf_missegre11_com_....txt` | « Il est **interdit de préparer sa carte avant son tour**. » ; « La carte devra être **posée sur le tapis de la même manière** tout au long de la partie. » |
+| **Interdits connexes** | famille FFB pages web · `tournois/cdf_missegre11_com_....txt` · **Cannes 2016** | « Il est **interdit de préparer sa carte avant son tour**. » ; « La carte devra être **posée sur le tapis de la même manière** tout au long de la partie. » (FFB). « La carte à jouer est prise **juste à son tour** pour être aussitôt posée lentement au centre du tapis » ; « **Seule la carte jouée doit être montrée. Si une carte est montrée par erreur c'est une faute de jeu.** » (Cannes 2016, 4°) |
 
 **Consensus sur la règle, divergence sur sa clémence.** Tout le corpus tient la carte pour
 jouée dès qu'elle quitte la main. La fracture est de nature disciplinaire : la FFB et ses
@@ -422,6 +509,17 @@ alors que les règlements de concours l'excluent (« ne peut être changée ») 
 la table est en compétition et qu'un arbitre existe. Un détail de rédaction FFB mérite
 attention : le passage de « montrée » (2015) à « **sortie du jeu** » (2016) élargit la règle
 aux cartes tombées face cachée.
+
+**Cannes prend le problème par l'autre bout et qualifie, au lieu de forcer** : montrer une
+carte par erreur n'oblige pas à la jouer, c'est « une **faute de jeu** » — donc un fait
+arbitrable, dont la sanction relève de la section V. C'est cohérent avec le reste de son
+règlement, presque entièrement consacré à la gestuelle (tenue des cartes en une seule main,
+position annoncée aux adversaires, main libre posée à plat, pose « lentement au centre du
+tapis »). Il y ajoute une règle **unique dans tout le corpus** : « Il est obligatoire de
+**jouer carte par carte même si toutes les cartes sont maîtresses** » — autrement dit,
+interdiction d'abattre son jeu et de réclamer les plis restants. Aucune autre source, pas
+même la FFB, ne l'écrit ; c'est typiquement le genre de règle qu'un moteur applique sans y
+penser, et qu'une table doit énoncer.
 
 ---
 
@@ -433,15 +531,37 @@ aux cartes tombées face cachée.
 | **Escalade en trois temps : redonne → interdiction de prendre → 160/162 points à l'adversaire** | famille FFB pages web (contrée, coinche, belote) · `tournois/cdf_missegre11_com_....txt` · `divers/fr_wikipedia_org_wiki_Belote.txt` | « En cas de **seconde irrégularité consécutive**, l'équipe ayant commis la faute se verra pénalisée et **interdite de toute prise** sur cette seconde donne […] En cas de **troisième irrégularité consécutive, 160 points** [162 sur la page belote] sont donnés à l'équipe adverse. » Wikipédia résume la même échelle : « Dans les règles officielles, la première fausse donne conduit à la première règle ; une seconde […] l'équipe fautive est interdite de prise ; et une troisième […] l'équipe adverse reçoit 162 points. » |
 | **Escalade en deux temps : redonne → 162 à l'adversaire dès la 2ᵉ** | famille « coupe à droite » (cdfcasson art. 8, jimcontent, Varennes) · `tournois/lagrandcombe_fr_....txt` · `tournois/aappmakoenigshoffen_..._pdf.txt` | « En cas de fausse donne, le coup est nul. Le même joueur recommence à redistribuer les cartes. **Une deuxième fausse donne sera pénalisée par 162 points** pour l'adversaire. » (cdfcasson). La Grand-Combe ajoute la privation de prise dès la 1ʳᵉ : « celle-ci refait la donne **et n'a pas le droit de prendre**. » |
 | **Pénalité de 162 dès la 3ᵉ tentative** | `tournois/web_myassoc_org_..._pdf.txt` · `tournois/geraudotloisirs_free_fr_....txt` | « En cas de fausse donne, le coup est NUL. Le même joueur recommence à distribuer les cartes. S'il y a récidive, **au 3ème essai, l'équipe adverse marque 162 points** et cela compte pour un coup de cartes. » |
+| **Pénalité selon le moment de la découverte : redonne avant la prise des cartes, 160 + le contrat après une annonce adverse — et le donneur change** | **Cannes 2016** | « 1° Toute carte retournée par le donneur en distribuant = **redonne**. 2° Constatée **avant la prise des cartes** par chacun = **redonne**. 3° Constatée **après une annonce de l'adversaire** = **pénalité de 160 points + le contrat, donne au suivant**. » (Cannes 2016, 1° « Fausse donne ») |
 | **Pénalité selon le moment : gratuite avant que l'atout soit fixé, 162 après** | famille ASCEE/DDT 79 + Pont-de-Claix · `tournois/s1_static_footeo_com_..._pdf.txt` · `tournois/rjcv_be_belote_regles_pdf.txt` | « Il n'y a **pas de pénalisation pour maldonne avant mise à l'atout**. Si une maldonne se produit **après** la mise à l'atout, l'équipe distribuant sera pénalisée, **162 pts** seront attribués à l'équipe adverse. » (ASCEE 79 art. 10). « En cas de maldonne **pendant les 5 premières cartes**, le même joueur remèle. Pendant la retouche, c'est pénalisé de **16** plus les annonces et **la main passe**. » (rjcv.be). |
 | **Redonne avec mélange et coupe obligatoires ; arbitre à la 2ᵉ récidive** | `divers/belotecontree_free_reglement.txt` | « il doit refaire la donne **avec obligation dans ce cas de mélanger le jeu et de refaire couper**. En cas de deuxième irrégularité, l'autre équipe pourra **exiger la présence d'un arbitre** à partir de la troisième donne. En cas d'irrégularités répétées, l'organisation pourra décider **d'exclure l'équipe**. » |
 
 **Consensus sur le premier coup, divergence sur l'escalade.** Aucune source ne pénalise une
-fausse donne isolée : partout, on redonne, et **le donneur ne change pas** — ce point est
-unanime et vaut la peine d'être noté, car il implique que la fausse donne ne fait pas
-tourner le tour. Au-delà, chaque organisateur a son barème (2 temps, 3 temps, ou seuil lié à
-la fixation de l'atout), et la sanction terminale est presque toujours la même :
-**162 points (ou 160) à l'adversaire**.
+fausse donne isolée : partout, on redonne. Au-delà, chaque organisateur a son barème (2 temps,
+3 temps, ou seuil lié à la fixation de l'atout), et la sanction terminale est presque toujours
+la même : **162 points (ou 160) à l'adversaire**.
+
+**Correction du 2026-08-02 — l'unanimité affirmée ici était fausse.** Cette section soutenait
+que « le donneur ne change pas » était un point unanime, et en tirait que la fausse donne ne
+fait jamais tourner le tour. **Cannes 2016 dit le contraire** : dans son troisième cas, la
+sanction est « pénalité de 160 points + le contrat, **donne au suivant** ». La rotation avance
+donc, et la faute coûte le tour de donne en plus des points. Une fois l'exception vue chez
+Cannes, elle se relit dans une source déjà présente au tableau : `rjcv.be` sanctionne la
+maldonne tardive de « 16 plus les annonces **et la main passe** ». Le bon énoncé est donc :
+*le donneur ne change pas tant que la donne est rattrapable* — quand elle ne l'est plus, deux
+règlements sur les treize font tourner le tour.
+
+Cannes est aussi **le seul du corpus à graduer par le moment de la *découverte* et non par la
+récidive**. Les autres barèmes comptent les fausses donnes successives d'une même équipe ;
+Cannes ne compte rien et regarde où en est la donne : rien n'est encore engagé (cartes non
+prises) → on redonne ; un adversaire a déjà parlé sur la base d'une donne faussée → la donne
+n'est plus rattrapable, on solde. C'est la logique d'un tournoi minuté, pas d'un barème
+disciplinaire. Le voisin le plus proche est l'ASCEE 79, qui place son seuil à la fixation de
+l'atout — soit un cran plus tard.
+
+Détail de rédaction déjà relevé dans [reglement-cannes.md](../reglement-cannes.md) : ce
+règlement écrit **160** ici alors que sa section Marque chiffre le total des cartes à **162**.
+Il n'est pas seul dans cette incohérence — la page FFB contrée pénalise à 160 et la page FFB
+belote, au même endroit du même texte, à 162.
 
 Cas particulier récurrent, en belote classique uniquement : « **Si personne ne prend à son
 tour, le même joueur redonne** jusqu'à ce que l'atout soit pris. » (Lions Club art. 10 ;
@@ -459,7 +579,7 @@ le donneur.
 | **162 points forfaitaires à l'adversaire pour toute faute de jeu** | famille « coupe à droite » (cdfcasson art. 13, jimcontent art. 10, Varennes) · `tournois/s1_static_footeo_com_..._pdf.txt` · famille ASCEE/DDT 79 + Pont-de-Claix · `tournois/web_myassoc_org_..._pdf.txt` · `tournois/tcvb_bruche_free_fr_....txt` · `tournois/aappmakoenigshoffen_..._pdf.txt` · `tournois/lagrandcombe_fr_....txt` | « Toute faute de jeu (**atout non fourni, coupe d'une couleur alors qu'on en possède, non-respect général du jeu de belote**) sera pénalisé par **162 points** pour l'adversaire. » (cdfcasson). Barème détaillé chez FC Plouay : « Omettre de couper : 162 points de pénalité » ; « **Ne pas monter à l'atout même sur son partenaire : 162 points de pénalité** ». « En cas d'**impasse à l'atout** ou à la couleur demandée, l'équipe adverse marque 162 points. » (La Grand-Combe art. 7). |
 | **Choix laissé à l'équipe lésée : rectifier, ou arrêter la mène et prendre tous les plis restants** | `divers/belotecontree_free_reglement.txt` | « Le principe est que **l'erreur ne doit pas bénéficier à l'équipe qui l'a commise**. […] l'équipe adverse pourra **soit accepter de continuer la mène après rectification** du coup erroné, **soit de l'arrêter au coup erroné et de devenir alors bénéficiaire des coups restant à jouer**. Cependant […] l'équipe ayant commis l'erreur **conservera les plis normalement faits avant cette erreur**. » Avec une clause de bonne foi : « En cas d'erreur manifestement de bonne foi faite à l'avant dernier coup […] s'il ressort à l'évidence que cette erreur n'a aucune incidence sur les deux derniers coups elle sera considérée comme **sans conséquence**. » |
 | **Renonce d'annonce (coinche) : le camp adverse marque ce que le fautif avait annoncé** | famille FFB pages web · famille FFB 2015 (coinche) · `tournois/rjcv_be_belote_regles_pdf.txt` | « Si un joueur se révèle **incapable de montrer les combinaisons qu'il a annoncées**, il y a **renonce** : le camp adverse marquera les points que le camp fautif avait annoncés. » (FFB coinche 2015, §8.4). « En cas d'erreur d'un joueur (**renon, coupe, fausse annonce**…), les points plus annonces reviendront à l'équipe adverse. » (rjcv.be) |
-| **Signaux et communication irrégulière = mise hors concours / 162 points** | `divers/belotecontree_free_reglement.txt` · famille FFB pages web · `tournois/aappmakoenigshoffen_..._pdf.txt` · `tournois/tcvb_bruche_free_fr_....txt` · `tournois/lagrandcombe_fr_....txt` | « Tout système consistant à fournir […] à son partenaire des indications **autrement que par ces deux moyens** [annonces et cartes jouées], serait assimilé à un **jeu irrégulier pouvant entraîner la mise hors concours de l'équipe**. » (belotecontree). « Il est interdit de faire connaître son jeu par n'importe quel moyen, **notamment en tapant sur la table**, dans ce cas l'adversaire marque **162 points**. » (AAPPMA art. 9). « Tous signes ou commentaires pourront **annuler la donne** sauf accord tacite des 4 joueurs. » (La Grand-Combe art. 5). |
+| **Signaux et communication irrégulière = mise hors concours / 162 points** | `divers/belotecontree_free_reglement.txt` · famille FFB pages web · `tournois/aappmakoenigshoffen_..._pdf.txt` · `tournois/tcvb_bruche_free_fr_....txt` · `tournois/lagrandcombe_fr_....txt` · **Cannes 2016** | « Tout système consistant à fournir […] à son partenaire des indications **autrement que par ces deux moyens** [annonces et cartes jouées], serait assimilé à un **jeu irrégulier pouvant entraîner la mise hors concours de l'équipe**. » (belotecontree). « Il est interdit de faire connaître son jeu par n'importe quel moyen, **notamment en tapant sur la table**, dans ce cas l'adversaire marque **162 points**. » (AAPPMA art. 9). « Tous signes ou commentaires pourront **annuler la donne** sauf accord tacite des 4 joueurs. » (La Grand-Combe art. 5). « Tout signe par cartes tenues ou jouées autrement que défini, par **paroles imprévues ou insolites** (d'annonce ou autre), par **geste ou mouvement inhabituel de la tête, des yeux, des mains, des doigts** etc. […] doit aussitôt être dénoncé au fautif par celui qui le constate **à titre d'avertissement** ou par appel de l'arbitre avant une éventuelle sanction. » ; « une **perte de temps non motivée** intervenant régulièrement pendant ou avant la "jouerie" pourra être répréhensible […] et pourra amener **l'exclusion de l'équipe fautive du tournoi en cours et des tournois à venir**. » (Cannes 2016, 5°) |
 | **Jouer avant son tour** | `tournois/tcvb_bruche_free_fr_....txt` | « LORSQU'UN JOUEUR JOUE AVANT SON TOUR, L'ADVERSAIRE MARQUE **162 POINTS**. » |
 
 **Consensus sur le principe, divergence sur le tarif.** Le principe est unanime et souvent
@@ -478,6 +598,23 @@ Point commun à noter : **les trois fautes que tous les règlements nomment sont
 trois obligations des axes 6 à 9** — ne pas fournir, ne pas couper, ne pas monter. C'est un
 indice de plus que ce sont bien les seules obligations dures du jeu de la carte.
 
+**Cannes 2016 est le seul à ne chiffrer aucune sanction de jeu de la carte** — et c'est
+révélateur de sa méthode. Là où les concours affichent un tarif (162 points), il n'a de
+barème chiffré que pour la fausse donne (160 + le contrat) et traite tout le reste par une
+échelle non monétaire : **avertissement, puis disqualification du tournoi en cours et des
+suivants**. Il invite d'ailleurs les tables à s'arranger avant l'arbitre (« Les deux équipes
+en présence doivent avoir la volonté d'appliquer le règlement et s'efforcer de s'accorder
+entre elles, **sans nécessairement faire appel à l'arbitre** », et « avant de démarrer la
+partie les joueurs sont invités à se mettre d'accord sur les points principaux pouvant les
+amener à débattre »). Cette dernière phrase est à lire à côté de son 3° c) : **un règlement
+qui laisse le sous-coup au choix du joueur a besoin que les tables s'accordent d'avance**, et
+il le dit.
+
+C'est aussi, de loin, le règlement le plus détaillé du corpus sur la **gestuelle** — tenue des
+cartes en une seule main dans une position annoncée aux adversaires, main libre à plat, carte
+prise juste à son tour, pli ramassé par un joueur désigné et rangé en croix. Sur un tournoi de
+148 équipes, l'essentiel du risque n'est pas la règle mal comprise, c'est le signal.
+
 ---
 
 ## Récapitulatif des lignes de fracture
@@ -487,20 +624,20 @@ indice de plus que ce sont bien les seules obligations dures du jeu de la carte.
 | 6. Fournir la couleur | **Consensus total** | — |
 | 11. Valeur des cartes (couleur) | **Consensus total** | Une variante nommée (Cavaillon, valeurs inversées) |
 | 14. Dix de der / 162 | **Consensus** | Deux concours aplatissent le capot à 162 |
-| 3. Coupe obligatoire | **Consensus sur le principe** | Seuil : 3 (FFB) vs 2 (Rhône-Alpes) ; côté gauche vs droit (suit le sens du jeu) |
-| 7. Couper sauf si le partenaire est maître | **Consensus** | Personne n'est contre ; quelques sources sont muettes |
+| 3. Coupe obligatoire | **Consensus sur le principe** | Seuil : 3 (FFB) vs 2 (les trois règlements de tournoi : Loire, Rhône, **Cannes**) ; côté gauche vs droit (suit le sens du jeu) |
+| 7. Couper sauf si le partenaire est maître | **Consensus** | Personne n'est contre ; quelques sources sont muettes. **Cannes** ajoute que couper reste permis face au partenaire maître |
 | 12. Sans Atout (As à 19) | **Consensus** | — |
 | 8. Monter à l'atout sur son partenaire | **Consensus large** | Strict (FFB, Wikipédia, Pagat, concours, BGA) vs souple (4 sites/apps) |
 | 16. Carte posée = jouée | **Consensus sur la règle** | Négociable (FFB) vs irrévocable (concours) |
-| 17. Fausse donne → redonne | **Consensus sur le 1er coup** | Escalade à 2 temps, 3 temps, ou seuil lié à la fixation de l'atout |
+| 17. Fausse donne → redonne | **Consensus sur le 1er coup** | Escalade à 2 temps, 3 temps, seuil lié à la fixation de l'atout, ou seuil lié à la 1ʳᵉ annonce adverse (**Cannes**). Le donneur ne change pas — **sauf** quand la donne n'est plus rattrapable (Cannes, rjcv.be) |
 | 1. Sens du jeu | **Divergence** | Contrée/coinche antihoraire vs concours de belote classique horaire |
 | 2. Mélange | **Divergence** | Fédération (obligatoire, anti-triche) vs tradition de table (interdit, pour lire la donne précédente) |
 | 4. Découpage de la donne | **Divergence mineure** | 3-2-3 & co. partout ; le 4-4 est interdit par la FFB, admis dans le Sud-Est et en Corse |
 | 12. Tout Atout | **Divergence** | FFB 2015 rééchelonne les cartes (total 162) vs FFB 2016 convertit ×162/258 |
 | 13. Belote : ordre & oubli | **Divergence** | Roi d'abord (Belgique, Est/Nord) vs indifférent (contrée) ; tolérance 2015 vs sanction sèche 2016 |
 | 15. Consultation du pli | **Divergence** | Quatre fenêtres, de « tant que le suivant n'est pas ramassé » à « jamais » |
-| 10. Partenaire a coupé, je n'ai que de l'atout | **Divergence** | Obligé de monter (LOCAL) vs libre y compris sous-coup (FFB 2016) vs libre sauf sous-coup gratuit (Pagat, casimir) |
-| 9. **« Pisser »** | **Divergence maximale** | **La FFB impose de pisser à la belote et l'exclut à la contrée, dans deux textes du même jour** ; Pagat lit la même fracture comme un clivage Nord/Midi |
+| 10. Partenaire a coupé, je n'ai que de l'atout | **Divergence** | Obligé de monter (LOCAL) vs libre y compris sous-coup (FFB 2016, **Cannes**) vs libre sauf sous-coup gratuit (Pagat, casimir). **Cannes est le seul règlement de compétition à trancher de première main, et il tranche pour la liberté** |
+| 9. **« Pisser »** | **Divergence maximale** | **La FFB impose de pisser à la belote et l'exclut à la contrée, dans deux textes du même jour** ; Pagat lit la même fracture comme un clivage Nord/Midi ; **Cannes refuse de trancher et écrit les deux permissions** |
 
 ---
 
@@ -550,6 +687,13 @@ Deux remarques utiles :
 belotecontree.free.fr et la tradition du Midi — et désaligné sur Pagat, BoardGameArena,
 ismo009, la FFB *belote*, et la moitié des règlements de concours du corpus.
 
+> **Renfort du 2026-08-02.** La remarque 1 disait que la position C n'avait « qu'un seul
+> témoin explicite dans tout le corpus ». Elle en a deux : **Cannes 2016** écrit exactement ce
+> que le moteur fait — non-obligation de pisser, « il n'est pas interdit de pisser si le jeu
+> s'avère plus intéressant en pissant ». Ce que `legal_plays()` rend (`in_trump | non_trump`)
+> est mot pour mot la double permission d'un règlement de championnat. Le choix reste un choix,
+> mais il n'est plus une extrapolation sans texte.
+
 ### Axe 10 — partenaire a coupé, je n'ai que des atouts : **corrigé le 2026-08-01**
 
 > **Le constat ci-dessous décrit l'état du moteur au moment de l'étude ; il a depuis été
@@ -560,6 +704,11 @@ ismo009, la FFB *belote*, et la moitié des règlements de concours du corpus.
 > légaux, donc toute donnée DD antérieure est périmée.
 >
 > On garde le constat d'origine parce que c'est lui qui justifie le changement.
+>
+> **Confirmation du 2026-08-02** : le règlement de Cannes, retrouvé après le correctif, va dans
+> le même sens — « non-obligation de fournir atout **ou de monter** sur une coupe maîtresse de
+> son partenaire » (3° d). Le seul règlement de compétition du corpus qui traite ce cas dit
+> donc, comme la FFB 2015 et la FFB 2016, l'inverse de ce que le moteur appliquait.
 
 `play.rs`, l. 67-94, branche `partner_is_master(state)` — **avant correction** :
 
@@ -646,7 +795,7 @@ information que de vrais joueurs exploitent**.
 
 | Divergence | Camp appliqué par Colver | Alignement dans le corpus |
 |---|---|---|
-| 9. « Pisser » | **On ne pisse pas** — défausse *et* sous-coup autorisés | FFB contrée/coinche + Midi. La liberté de sous-couper en plus n'est explicitement écrite que par la Coinche stéphanoise |
-| 10. Partenaire a coupé, je n'ai que de l'atout | ~~Montée obligatoire~~ → **choix libre**, corrigé le 2026-08-01 | Suivait une **source unique** (`LOCAL_…`, édition « Équipe Ludique ») contre FFB 2015, FFB 2016 et Wikipédia Belote. Désormais aligné sur la FFB |
+| 9. « Pisser » | **On ne pisse pas** — défausse *et* sous-coup autorisés | FFB contrée/coinche + Midi. La double permission n'est écrite noir sur blanc que par la Coinche stéphanoise **et Cannes 2016** |
+| 10. Partenaire a coupé, je n'ai que de l'atout | ~~Montée obligatoire~~ → **choix libre**, corrigé le 2026-08-01 | Suivait une **source unique** (`LOCAL_…`, édition « Équipe Ludique ») contre FFB 2015, FFB 2016, Wikipédia Belote **et Cannes 2016**. Désormais aligné sur la FFB et sur le seul règlement de championnat du corpus |
 | 1. Sens du jeu | **Antihoraire**, parole = entame | Consensus contrée/coinche |
 | 2. Mélange | **Non modélisé** (tirage uniforme) | Équivaut au camp « mélange obligatoire » de la FFB |

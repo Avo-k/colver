@@ -130,6 +130,15 @@ arrondis. L'arrondi est donc la règle, l'exactitude l'exception.
   pissant) ; d) non-obligation de fournir atout ou de monter sur une coupe maîtresse de son
   partenaire. » En revanche « si l'adversaire est maître, il doit obligatoirement surcouper » et
   « obligation de monter dans le jeu d'atouts pour couper ou surcouper sur l'adversaire ».
+- **Partenaire maître qui a coupé, et je n'ai plus que de l'atout : pas d'obligation de monter.**
+  C'est la seconde moitié du d) ci-dessus. La première (« fournir atout ») est sans objet quand
+  on n'a rien d'autre en main ; c'est « **ni de monter** » qui tranche, et il autorise donc à
+  poser un petit atout sous celui du partenaire. Toutes les obligations de montée du règlement
+  visent l'adversaire, jamais le partenaire. Cannes rejoint ici la FFB 2015, la FFB 2016 et
+  Wikipédia Belote — contre la seule réimpression « Équipe Ludique », qui est ce que Colver
+  appliquait jusqu'au correctif du 2026-08-01. Réserve : le texte dit qu'on n'est pas *obligé*
+  de monter, il n'écrit pas qu'on aurait le *droit* de sous-couper en ayant mieux ; deux sources
+  du corpus (Pagat, casimirdehauteclocque) prennent soin de l'interdire, Cannes reste muet.
 - **Le contre fige le contrat** : « Le "contre" bloque l'enchère sauf s'il y a "surcontre". »
   Idem Colver.
 - **Fin des enchères** : « La parole est retirée lorsque l'annonce "surcontre" est dite ou après
@@ -154,6 +163,36 @@ arrondis. L'arrondi est donc la règle, l'exactitude l'exception.
 | **Registres d'association** | `recherche-entreprises.api.gouv.fr` donne la fiche complète (voir ci-dessus). L'API RNA `entreprise.data.gouv.fr` ne répond plus. Aucun site web ni dirigeant publié. |
 | **Presse / agrégateurs** (`123belote`, `flanerbouger`, `beloteenligne`, `club-belote`, `tournoi-belote.com`, `jeu-belote.fr`, tag `cannes-la-bocca` de la FFB) | Annonces d'événements uniquement. Le tag FFB « Cannes La Bocca » ne concerne qu'un autre club (Club Azur Tarot, 2015). |
 | **Recherches web ciblées** (une dizaine de formulations sur le barème de Cannes) | Ne remontent que des règlements *génériques* (FFB, FNASCE, Missègre…), sans valeur probante ici. |
+
+---
+
+## Où ce règlement est exploité dans le survey
+
+- **Barème, arrondi, fin de partie** : [SYNTHESE.md](SYNTHESE.md) §6 « Où tombe Colver » —
+  Cannes valide la chute à `162 + contrat`, le surcontre ×3 sur le contrat seul et le capot
+  traité comme contrat ordinaire ; il diverge sur la valeur du capot (270 contre 250) et sur
+  l'arrondi (à la dizaine, bascule à 6).
+- **Détail du barème** : [matrices/bareme.md](matrices/bareme.md), axes 1, 3.1, 3.2, 4.1, 4.2,
+  4.3, 5.1, 5.3, 5.4, 5.5, 6, 7 et 7.1, plus la typologie (§9, famille B) et **le §12.2, qui a
+  été corrigé** : deux des cinq points « attestés nulle part » sont fermés par Cannes, dont le
+  plus gênant — « aucune source ne porte les trois choix de Colver ensemble ». Cannes les porte.
+- **Enchères** : [matrices/encheres.md](matrices/encheres.md), axes 1, 2, 2b, 6a, 6d, 7, 9, 9b,
+  10, 11a, 13a, 13b et 13c. Deux apports propres : la **valeur 270 du capot** (seule du corpus)
+  et la **sanction du contre à la volée**, laissée au choix du camp lésé — personne d'autre
+  n'écrit ce qui se passe quand la règle est violée. Deux silences notables : le cas des
+  **quatre passes** et le sort du **partenaire du contreur**.
+- **Jeu de la carte et distribution** : [matrices/jeu-de-la-carte.md](matrices/jeu-de-la-carte.md),
+  sous l'alias **Cannes 2016** — cité aux axes 1, 2, 3, 4, 5, 6, 7, 9, 10, 15, 16, 17 et 18.
+  Trois apports qu'aucune autre source ne fournissait :
+  1. **axe 9 (« pisser »)** — il double le camp « au choix du joueur », qui n'avait qu'un témoin,
+     et il est le seul texte du corpus à *motiver* le sous-coup par la tactique ;
+  2. **axe 10 (partenaire maître, je n'ai que de l'atout)** — il est le seul règlement de
+     compétition à trancher ce cas, et il tranche pour la liberté ;
+  3. **axe 17 (fausse donne)** — il gradue par le moment de la découverte et non par la récidive,
+     et il **fait tourner le donneur** (« donne au suivant »), ce que la matrice donnait à tort
+     pour impossible.
+  Il est en revanche **muet sur l'entame** (axe 5) et sur le cas « l'atout est la couleur
+  demandée » (axe 8) ; il n'est compté dans aucune position sur ce dernier.
 
 ---
 

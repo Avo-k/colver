@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 500" width="880" height="500" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-label="Distribution des contrats annoncés, des points faits et des points atteignables en jeu parfait">
+<style>
+  .surface{fill:#fcfcfb}.band{fill:#f2f1ed}
+  .t1{fill:#0b0b0b}.t2{fill:#52514e}.t3{fill:#7a7973}
+  .grid{stroke:#e6e5e1;stroke-width:1}
+  .s0{stroke:#2a78d6}.s1{stroke:#eb6834}.s2{stroke:#1baf7a}
+  .f0{fill:#2a78d6}.f1{fill:#eb6834}.f2{fill:#1baf7a}
+  .ring{stroke:#fcfcfb;stroke-width:2}
+  @media (prefers-color-scheme:dark){
+    .surface{fill:#1a1a19}.band{fill:#242422}
+    .t1{fill:#ffffff}.t2{fill:#c3c2b7}.t3{fill:#8f8e85}
+    .grid{stroke:#333330}
+    .s0{stroke:#3987e5}.s1{stroke:#d95926}.s2{stroke:#199e70}
+    .f0{fill:#3987e5}.f1{fill:#d95926}.f2{fill:#199e70}
+    .ring{stroke:#1a1a19}
+  }
+  .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+</style>
+<rect class="surface" width="880" height="500"/>
+<text class="t1" x="24" y="36" font-size="16" font-weight="600">Ce qui est annoncé, ce qui est fait, ce qui était là</text>
+<text class="t2" x="24" y="57" font-size="12.5">60 000 donnes jouées — mêmes donnes, même camp preneur, même atout</text>
+<rect class="f0" x="24" y="72" width="9" height="9" rx="2"/>
+<text class="t2" x="39" y="81" font-size="12">Contrat annoncé</text>
+<rect class="f1" x="160.5" y="72" width="9" height="9" rx="2"/>
+<text class="t2" x="175.5" y="81" font-size="12">Points faits par le preneur</text>
+<rect class="f2" x="375.0" y="72" width="9" height="9" rx="2"/>
+<text class="t2" x="390.0" y="81" font-size="12">Atteignable en jeu parfait (DD)</text>
+<rect class="band" x="750.0" y="96" width="96" height="320" rx="4"/>
+<line class="grid" x1="62" y1="416.0" x2="846" y2="416.0"/>
+<text class="t3" x="52" y="420.0" font-size="11.5" text-anchor="end">0 %</text>
+<line class="grid" x1="62" y1="339.0" x2="846" y2="339.0"/>
+<text class="t3" x="52" y="343.0" font-size="11.5" text-anchor="end">6 %</text>
+<line class="grid" x1="62" y1="262.0" x2="846" y2="262.0"/>
+<text class="t3" x="52" y="266.0" font-size="11.5" text-anchor="end">12 %</text>
+<line class="grid" x1="62" y1="185.0" x2="846" y2="185.0"/>
+<text class="t3" x="52" y="189.0" font-size="11.5" text-anchor="end">18 %</text>
+<line class="grid" x1="62" y1="108.0" x2="846" y2="108.0"/>
+<text class="t3" x="52" y="112.0" font-size="11.5" text-anchor="end">24 %</text>
+<text class="t3" x="62.0" y="438.0" font-size="11.5" text-anchor="middle">60</text>
+<text class="t3" x="194.4" y="438.0" font-size="11.5" text-anchor="middle">80</text>
+<text class="t3" x="326.8" y="438.0" font-size="11.5" text-anchor="middle">100</text>
+<text class="t3" x="459.2" y="438.0" font-size="11.5" text-anchor="middle">120</text>
+<text class="t3" x="591.6" y="438.0" font-size="11.5" text-anchor="middle">140</text>
+<text class="t3" x="724.0" y="438.0" font-size="11.5" text-anchor="middle">160</text>
+<text class="t3" x="798.0" y="438.0" font-size="11.5" text-anchor="middle" font-weight="600">capot</text>
+<text class="t3" x="393.0" y="458.0" font-size="11.5" text-anchor="middle">points de la donne</text>
+<polyline class="line s0" points="62.0,416.0 128.2,416.0 194.4,386.5 260.6,301.8 326.8,250.6 393.0,120.3 459.2,124.6 525.4,166.4 591.6,312.2 657.8,389.7 724.0,409.1"/>
+<circle class="f0 ring" cx="62.0" cy="416.0" r="3.4"/>
+<circle class="f0 ring" cx="128.2" cy="416.0" r="3.4"/>
+<circle class="f0 ring" cx="194.4" cy="386.5" r="3.4"/>
+<circle class="f0 ring" cx="260.6" cy="301.8" r="3.4"/>
+<circle class="f0 ring" cx="326.8" cy="250.6" r="3.4"/>
+<circle class="f0 ring" cx="393.0" cy="120.3" r="3.4"/>
+<circle class="f0 ring" cx="459.2" cy="124.6" r="3.4"/>
+<circle class="f0 ring" cx="525.4" cy="166.4" r="3.4"/>
+<circle class="f0 ring" cx="591.6" cy="312.2" r="3.4"/>
+<circle class="f0 ring" cx="657.8" cy="389.7" r="3.4"/>
+<circle class="f0 ring" cx="724.0" cy="409.1" r="3.4"/>
+<circle class="f0 ring" cx="798.0" cy="415.6" r="4.2"/>
+<text class="t2" x="787.0" y="419.6" font-size="11.5" text-anchor="end">0,03 %</text>
+<text class="t2" x="393.0" y="104.3" font-size="11.5" text-anchor="middle" font-weight="500">Contrat annoncé</text>
+<polyline class="line s1" points="62.0,377.8 128.2,356.8 194.4,335.1 260.6,308.8 326.8,282.9 393.0,257.9 459.2,235.4 525.4,239.7 591.6,255.5 657.8,384.0 724.0,414.7"/>
+<circle class="f1 ring" cx="62.0" cy="377.8" r="3.4"/>
+<circle class="f1 ring" cx="128.2" cy="356.8" r="3.4"/>
+<circle class="f1 ring" cx="194.4" cy="335.1" r="3.4"/>
+<circle class="f1 ring" cx="260.6" cy="308.8" r="3.4"/>
+<circle class="f1 ring" cx="326.8" cy="282.9" r="3.4"/>
+<circle class="f1 ring" cx="393.0" cy="257.9" r="3.4"/>
+<circle class="f1 ring" cx="459.2" cy="235.4" r="3.4"/>
+<circle class="f1 ring" cx="525.4" cy="239.7" r="3.4"/>
+<circle class="f1 ring" cx="591.6" cy="255.5" r="3.4"/>
+<circle class="f1 ring" cx="657.8" cy="384.0" r="3.4"/>
+<circle class="f1 ring" cx="724.0" cy="414.7" r="3.4"/>
+<circle class="f1 ring" cx="798.0" cy="301.8" r="4.2"/>
+<text class="t2" x="787.0" y="305.8" font-size="11.5" text-anchor="end">8,9 %</text>
+<polyline class="line s2" points="62.0,382.2 128.2,367.6 194.4,345.5 260.6,321.5 326.8,294.0 393.0,280.4 459.2,251.0 525.4,249.8 591.6,234.2 657.8,392.4 724.0,415.9"/>
+<circle class="f2 ring" cx="62.0" cy="382.2" r="3.4"/>
+<circle class="f2 ring" cx="128.2" cy="367.6" r="3.4"/>
+<circle class="f2 ring" cx="194.4" cy="345.5" r="3.4"/>
+<circle class="f2 ring" cx="260.6" cy="321.5" r="3.4"/>
+<circle class="f2 ring" cx="326.8" cy="294.0" r="3.4"/>
+<circle class="f2 ring" cx="393.0" cy="280.4" r="3.4"/>
+<circle class="f2 ring" cx="459.2" cy="251.0" r="3.4"/>
+<circle class="f2 ring" cx="525.4" cy="249.8" r="3.4"/>
+<circle class="f2 ring" cx="591.6" cy="234.2" r="3.4"/>
+<circle class="f2 ring" cx="657.8" cy="392.4" r="3.4"/>
+<circle class="f2 ring" cx="724.0" cy="415.9" r="3.4"/>
+<circle class="f2 ring" cx="798.0" cy="217.9" r="4.2"/>
+<text class="t2" x="787.0" y="221.9" font-size="11.5" text-anchor="end">15,4 %</text>
+<line class="grid" x1="62" y1="96" x2="62" y2="416"/>
+<text class="t3" x="24" y="474" font-size="11.5">Les preneurs annoncent 110-120 quand le jeu parfait en offre 140 — et convertissent 8,9 % de capots sur les 15,4 % disponibles.</text>
+<text class="t3" x="24" y="491" font-size="10.5">Donnes sous 60 points exclues (~3 %). Au-delà de 160, plus aucune annonce : l'échelle s'arrête là où le jeu s'arrête.</text>
+</svg>

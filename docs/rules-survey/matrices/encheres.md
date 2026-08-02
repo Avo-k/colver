@@ -3,6 +3,16 @@
 Sources : le corpus de [../README.md](../README.md). Collecte du 2026-08-01.
 Pendant de [arrondi.md](arrondi.md), sur l'autre moitié du règlement.
 
+> **Ajout du 2026-08-02 — Cannes 2016.** Le règlement du Championnat de France de contrée du
+> Festival International des Jeux (édition 2016) a été retrouvé après cette collecte ; il est
+> cité ci-dessous sous l'alias **Cannes 2016**
+> (`tournois/web_archive_org_web_20160421181912if_http_festivaldesjeux_cannes_com_Documents_REGLEMENT_20DE_20LA_20BELOTE_20.txt`).
+> Sa section « 2° Les enchères » tient en quinze lignes et tranche **huit** des axes ci-dessous,
+> dont deux où il apporte quelque chose que personne d'autre n'écrit : la **valeur 270 pour le
+> capot** et la **sanction du contre à la volée**. Ce n'est la copie de rien, et c'est le seul
+> règlement de championnat du corpus. Réserves (document de 2016, organisateur changé en 2025) :
+> [reglement-cannes.md](../reglement-cannes.md).
+
 ---
 
 ## Avant de lire : ce qui compte comme un témoignage
@@ -103,6 +113,7 @@ sont dans ce cas. Ils sont cités par nom de fichier seul, sans URL inventée.
 | min = 80 | `open-source/ilyesbrh_twistedFate-belote_main_docs_games_coinche_GAME_RULES.md` | « **Minimum bid**: 80 » |
 | min = 80 (code) | `open-source/theosaulus_coinche_main_coinche_utils.py` | `bid_value = 80 + ((action - 1) // 4) * 10` |
 | min = 80 (code) | `open-source/ismo009_Coinche_main_game.js` | `const validPoints = [80, 90, 100, 110, 120, 130, 140, 150, 160, 250, 270, 500];` |
+| min = 80 | **Cannes 2016** (pas d'URL, PDF archivé) | « Les enchères **par dizaines débutent à 80**, la surenchère étant de **10 au moins** au-dessus de l'enchère précédente. » — noter « au moins » : Cannes autorise explicitement de sauter des paliers |
 
 ### Position B — « on dit 80, il faut faire 82 »
 
@@ -164,7 +175,10 @@ minimum ». Trois exceptions, toutes annoncées comme telles :
 | pas de 10 sur base 82 | `apps-sites/contree_org_4_joueurs.txt` | 82-92-102-…-162, puis **182**, puis **222** |
 
 **Consensus.** La seule vraie question est le point de départ de l'échelle (axe 1), pas son
-incrément.
+incrément. **Cannes 2016** rejoint le consensus en le formulant comme un plancher et non comme
+un pas fixe — « la surenchère étant de **10 au moins** au-dessus de l'enchère précédente » — ce
+qui revient à la lecture de drasill (« 10 en 10 **ou plus** ») et non à celle d'un escalier
+obligatoire. Personne n'écrit qu'il faudrait monter exactement de 10.
 
 ### Plafond : c'est là que ça casse
 
@@ -185,6 +199,7 @@ incrément.
 | **650** | `divers/cartesetcie_fr_regle_du_jeu_la_belote_coinchee.txt` · [url](https://cartesetcie.fr/regle-du-jeu-la-belote-coinchee/) | « un contrat de **80 à 650 points**, ou annoncer un capot » (copie de la page FFB coinche) |
 | **650** | `open-source/ilyesbrh_twistedFate-belote_main_docs_games_coinche_GAME_RULES.md` | « up to 160 (**and beyond by mutual escalation**) … **Maximum: 650, or capot** » |
 | **aucun** | `tournois/maisondesessarts_fr_article116_html.txt` ; `tournois/fnasce_org_IMG_pdf_reglement` | aucun plafond énoncé ; Les Essarts donne « (ex : 90 pique, 120 trèfle, **250 cœur**…) » |
+| **270**, et c'est le capot | **Cannes 2016** | « Les paroles d'enchère autorisées sont : le nombre de points suivi immédiatement de la couleur soit : « passe », « contre », « surcontre », « générale ou capot » ou « **270** » **contrat le plus élevé**. » — aucun plafond n'est posé sur les enchères de couleur ; le seul plafond nommé est le capot, chiffré 270 |
 | **muet** | `pagat` (+ copies), `regles_com`, `lemagloisirs`, `gamerules`, `en_wikipedia`, `gameduell (en)`, `exoty` | pas de plafond chiffré ; le seul plafond est le capot |
 
 **Divergence, et elle est arithmétique.** Trois familles :
@@ -195,6 +210,116 @@ incrément.
 3. **650** — plafond qui intègre **les annonces** (162 + carré de valets 200 + cent 100 + …).
    C'est la coinche : quand les annonces comptent pour le contrat, le plafond des plis ne veut
    plus rien dire.
+
+**Cannes 2016 relève d'une quatrième posture, la plus économe** : ne pas poser de plafond du
+tout sur les enchères de couleur, et ne nommer que le sommet — « 270 contrat le plus élevé ».
+Le corpus contient donc, sur le plafond, **un seul règlement de championnat, et il ne dit pas
+160**. À ne pas surinterpréter : ne pas écrire de plafond n'est pas autoriser 200 pique, c'est
+laisser à l'usage le soin de le borner. Mais un moteur, lui, doit trancher — cf. l'étude des
+paliers 170/180 ci-dessous.
+
+### Où se situent réellement les enchères
+
+Avant de discuter du plafond, il faut voir où le jeu se passe. Sur 60 000 donnes réellement
+jouées du corpus auto-joué (`data/training/playgen_games_9M.bin`), pour **la même donne, le même
+camp preneur et le même atout** :
+
+![Contrats annoncés, points faits et points atteignables en jeu parfait](bid-curves.svg)
+
+Trois lectures, dans l'ordre d'intérêt :
+
+1. **Le plafond de 160 n'est pas une contrainte, c'est une frontière vide.** Les annonces
+   s'effondrent à 0,54 % à 160 et 0,03 % au capot. Personne ne bute contre le plafond — la
+   distribution meurt avant de l'atteindre. C'est l'argument le plus solide contre l'ouverture de
+   l'échelle, et il est indépendant de la mesure du § suivant.
+2. **Les preneurs sous-annoncent.** Le pic d'annonce est à 110-120 quand le maximum atteignable,
+   *dans la couleur qu'ils ont eux-mêmes choisie*, culmine à 140. Le contrat annoncé est
+   systématiquement à gauche de ce que la donne offrait.
+3. **Le jeu réel laisse des capots sur la table** : 15,4 % des donnes en offraient un, 8,9 % ont
+   été convertis. Presque la moitié s'échappe — et ces donnes-là retombent précisément dans la
+   bande 170-182 étudiée plus bas, ce qui explique qu'elle soit plus fournie en jeu réel qu'en
+   jeu parfait.
+
+Il n'y a **pas de courbe « annoncé » pour le jeu parfait** : le double-mort ne fait pas
+d'enchères, il évalue une donne. Les deux quantités qu'on peut lui demander sont sur le
+graphique.
+
+Reproduire : `scripts/analysis/bid_distribution.py` (extraction) puis
+`bid_curves_chart.py` (rendu).
+
+---
+
+### Mesure : les paliers 170 et 180 sont-ils vivants ? — non
+
+Ouvrir l'échelle au-dessus de 160 n'a de sens que si les paliers ajoutés désignent des mains
+réelles. Deux mesures indépendantes disent que non.
+
+Le raisonnement d'abord. Sans capot, le maximum de points de plis est **162** (les huit plis moins
+un pli concédé à 0, dix de der compris), donc **170 et 180 ne sont atteignables qu'avec la
+belote** — respectivement en concédant au plus 12 et au plus **2** points. Et **tout palier ≥ 190
+exige le capot**, puisque le seul total au-dessus de 182 est 252. Les paliers 190-260 ne sont donc
+pas des contrats intermédiaires : ce sont des capots facturés moins cher.
+
+Le point décisif est que **le preneur ne contrôle pas la valeur du pli qu'il concède** : c'est la
+défense qui y jette ses cartes, et elle y met ses points. Pour qu'un pli concédé vaille ≤ 2 points,
+il faut que la défense n'ait rien à y mettre — c'est-à-dire que le capot passait.
+
+![Fréquence des paliers 170 et 180 comparée au capot](bid-ceiling.svg)
+
+*Échelle linéaire volontairement : l'argument est que ces paliers ne sont rien à côté du capot, et
+un axe logarithmique le masquerait. Graphique régénérable par
+`scripts/analysis/bid_ceiling_chart.py`.*
+
+Les chiffres, en double-mort (jeu parfait des deux côtés), sur le meilleur atout de chaque camp :
+
+| | 20 000 donnes fraîches (40 000 couples donne-camp) | pool `base_5M.bin` (5 M donnes, camp NS) |
+|---|---|---|
+| capot réalisable | 16,40 % | 16,08 % |
+| **180 réalisable, pas capot** | **0,007 %** (3 cas) | **0,0039 %** (195 cas) |
+| **170 réalisable, pas capot** | **0,217 %** | **0,2398 %** |
+| 160-169 | 2,54 % | 2,36 % |
+| < 160 | 80,83 % | 81,32 % |
+
+Et en **jeu réel**, sur le même pool, via les couches de scores DouDou (DMC) et IS-DD :
+
+| source | capot | 180+ | 170-179 | 160-169 | **170+180** |
+|---|---|---|---|---|---|
+| DD (jeu parfait) | 16,08 % | 0,0048 % | 0,240 % | 2,36 % | **0,244 %** |
+| DouDou (DMC) | 4,82 % | 0,0146 % | 0,339 % | 1,51 % | **0,354 %** |
+| IS-DD | 7,01 % | 0,0128 % | 0,340 % | 2,22 % | **0,353 %** |
+
+Le jeu réel **augmente** la bande 170-182 (0,24 % → 0,35 %) tout en **divisant le capot par trois**
+(16 % → 5-7 %). Ce n'est pas contradictoire, c'est mécanique : le DD suppose une défense parfaite,
+donc un camp peut y dépasser sa valeur DD quand la défense faiblit, et surtout les donnes où le
+capot était théoriquement là mais où un pli s'échappe retombent précisément dans la bande 170-182.
+La bande est donc alimentée par le haut autant que par le bas.
+
+Conclusion inchangée malgré cela : **0,35 % contre 4,8 % de capots réalisés**, soit un rapport de
+1 à 14. Le palier 180 seul reste à 0,013 %, une donne sur 7 000.
+
+**Ce qu'ajouteraient les paliers 170 + 180 : 0,22 % des mains en jeu parfait, 0,35 % en jeu réel** — et le palier 180 seul,
+moins d'une main sur 20 000. À comparer aux 16 % de mains où le capot est réalisable : chaque fois
+que 180 serait tenable, le capot l'est presque toujours aussi et rapporte bien davantage.
+
+Reproduire : `scripts/analysis/bid_ceiling_170_180.py` (solve à neuf, graine 42) et
+`scripts/analysis/bid_ceiling_pool.py` (pool pré-résolu).
+
+> **Réserve sur le pool.** `base_5M.bin` est antérieur au correctif `quick_tricks` (2026-07-23) et
+> au correctif d'atout (2026-08-02). La mesure l'a d'ailleurs attrapé en flagrant délit : il
+> contient **58 valeurs DD impossibles** (comprises entre 241 et 249, alors que le maximum hors
+> capot est 162 et le capot 252), sur 57 donnes, qui sont écartées par le script. C'est la
+> signature du bug corrigé — une borne rendue au lieu d'une valeur. Le pool sert donc de
+> confirmation d'ordre de grandeur, la mesure faite à neuf faisant foi. Que les deux coïncident à
+> 0,005 point près indique au passage que ces deux correctifs n'ont pas déplacé cette
+> statistique-là.
+
+**Conséquence retenue pour Colver** : on garde l'échelle 80-160 + capot, soit 43 actions. Monter
+jusqu'à 260 la porterait à 83 actions — presque le double de la tête d'enchère — pour des paliers
+qu'une politique optimale n'emploierait quasiment jamais et qu'il faudrait pourtant apprendre à
+éviter. L'échelle cannoise jusqu'à 270 se lit comme une règle de complétude du texte (« toute somme
+atteignable est une enchère légale »), pas comme un espace stratégique.
+
+---
 
 La ligne de fracture est donc **« les annonces comptent-elles ? »** (axe 12), pas une
 préférence de plafond. Et **c'est la FFB qui l'illustre le mieux, contre elle-même** : sa page
@@ -338,6 +463,7 @@ lecteur peut en déduire à tort qu'un passe est définitif.
 | enchère bloquante | `divers/iscool_…faq_157…txt` | « **Si la dernière annonce n'est pas un capot**, surenchérir d'au moins 10 points » |
 | enchère bloquante | `tournois/web_archive_org_…coinche_stephanoise…` | les enchères s'arrêtent quand « Un joueur demande **« LE CAPOT »** » |
 | enchère bloquante | `open-source/ilyesbrh_…coinche_GAME_RULES.md` | « **ends bidding but can be coinched** » |
+| enchère insurpassable | **Cannes 2016** | « « générale ou capot » ou « 270 » **contrat le plus élevé** » — le capot est nommé comme le sommet de l'échelle, mais rien n'est dit de ce qui reste légal après lui |
 | enchère bloquante, asymétrique | `open-source/valmathieu_ContrAI_main_contree-domain.md` | « Slam outranks any numeric bid: **once declared, no further contract bid is legal** (numeric, Slam, or Solo Slam). *Contre* and *surcontre* remain available against a Slam. » |
 
 ### 6b. …et il n'est même pas contrable
@@ -374,6 +500,7 @@ locale, c'est la démonstration que « le capot ferme l'enchère » est une conv
 | **250** | `ange_heureux`, `iscool`, `jeux_regles`, `playjoy`, `clubdejeux`, `exoty`, `belotepoint`, `ludicash`, `alhoa`, `casimir`, `maviedesenior` | « Le Capot vaut 250 points » |
 | **250** (code) | `open-source/theosaulus_…utils.py` ; `open-source/valmathieu_ContrAI…md` ; `open-source/ismo009_…game.js` | `return (250, atout_suit) # capot is encoded as 250` ; « Contract base value **250** points » ; `validPoints = [… 160, 250, 270, 500]` |
 | **250 + 270 « capot beloté »** | `open-source/ismo009_Coinche_main_game.js` | `// Capot beloté (270): tous les plis + belote/rebelote de l'attaque` — corrobore la variante Wikipédia « les annonces capot beloté et générale belotée sont supérieures respectivement aux capot et générale » |
+| **270** | **Cannes 2016** | « « générale ou capot » ou « **270** » contrat le plus élevé » — et la marque lui applique la formule ordinaire (contrat + base cartes). **Seule source du corpus à chiffrer le capot 270 comme valeur de contrat** ; ismo009 utilise le même nombre pour autre chose (le « capot beloté » = capot + belote, soit 250 + 20). La coïncidence est probablement de même nature : 250 + belote |
 | **260** | `apps-sites/gameduell_…faq_1056_contree` | échelle « …, 150, 160, **260 (capot)**, 500 (générale) » |
 | **350** (aux points faits) | `divers/bk_jeux_ducale_…pdf.txt` | « Le capot non annoncé rapporte 250 points et le **capot annoncé rapporte 350 points** » |
 | **500** (forfait, pas une enchère) | `federations/ffbelote_org_belote_contree.txt` ; `divers/belotecontree_free_reglement.txt` ; `tournois/cdf_missegre11_…` | « Le capot demandé et réalisé, ou chuté, vaut **500 points**. Le capot contré vaut 1.000. Le capot surcontré vaut 2.000. » |
@@ -384,6 +511,14 @@ locale, c'est la démonstration que « le capot ferme l'enchère » est une conv
 sur ce qu'est le capot** : une enchère (majorité), un forfait de score (FFB ancienne, tournoi
 international), une prime non annonçable (contree.org, BGA), ou un simple contrat à 250 qu'il
 est interdit d'appeler « capot » (Les Essarts).
+
+**Le 270 de Cannes est l'écart le plus intéressant**, parce qu'il vient du seul règlement de
+championnat du corpus et qu'il est *cohérent avec sa propre échelle* : Cannes ne pose pas de
+plafond à 160, ne connaît pas la générale, et n'a qu'un sommet — 270. La lecture littérale du
+PDF n'est toutefois pas parfaitement nette : la valeur 270 est explicite, son rattachement au
+mot « capot » l'est un peu moins (les deux sont séparés par un « ou » dans une énumération de
+paroles autorisées). C'est le seul des points d'enchère de Cannes qui laisse place à
+l'interprétation.
 
 ---
 
@@ -417,13 +552,17 @@ est interdit d'appeler « capot » (Les Essarts).
 | **interdite en concours** | `tournois/maisondesessarts_fr_article116_html.txt` | « Les autres expressions comme … capote, **générale… ne sont pas autorisées** » |
 | **c'est le nom du capot** | `apps-sites/contree_org_4_joueurs.txt` | « « **Générale** » est le nom de la prime de capot attribuée à l'équipe ayant fait toutes les levées. » |
 | **c'est le nom du capot** | `divers/iscool_…faq_157…txt` | « Seule exception : « **la générale** » qui est la plus grande annonce possible (« **mettre les adversaires capot** » : faire tous les plis) » |
+| **c'est le nom du capot** | **Cannes 2016** | « « **générale ou capot** » ou « 270 » contrat le plus élevé » — les deux mots sont donnés comme deux noms d'une seule et même enchère, la plus haute. Pas de contrat solo, rien au-dessus |
 
 **Divergence, et la ligne de fracture est le nom du jeu.** La générale est **une enchère de
 coinche, pas de contrée** : présente chez les sites de coinche et les apps, absente de *tous*
 les textes qui se disent « contrée » et de l'intégralité du corpus FFB. Wikipédia FR le
 confirme par construction, en la rangeant dans sa liste de variantes de la coinche. **Sa valeur
-n'a aucun consensus** (350 / 500 / 700 / 1 000, ou « à convenir »), et **deux sources ont gardé
-le mot en lui donnant le sens de « capot »** — ce qui le rend dangereux à table. Le seul point
+n'a aucun consensus** (350 / 500 / 700 / 1 000, ou « à convenir »), et **trois sources ont gardé
+le mot en lui donnant le sens de « capot »** — dont **Cannes**, ce qui est l'argument le plus
+lourd du lot : un règlement de championnat qui écrit « générale ou capot » comme un seul nom
+d'enchère confirme que, en contrée de compétition, le mot ne désigne pas un contrat solo. Il
+rend aussi le mot **dangereux à table**, puisqu'ailleurs il en désigne un. Le seul point
 d'accord réel : le preneur y joue seul. Sur ce que devient le partenaire, deux sources seulement
 tranchent, et **elles ne disent pas la même chose** : il « ne joue pas de la manche »
 (belotepoint) vs il « joue normalement mais n'a pas le droit de gagner un pli » (ContrAI).
@@ -512,6 +651,7 @@ case à cocher d'organisateur.
 | à son tour, formellement | `tournois/web_archive_org_…coinche_stephanoise…` | « Il est **formellement interdit** de surenchérir, coincher ou surcoincher « **A LA VOLEE** ». On doit s'exprimer l'un après l'autre. **Il faut que le précédent joueur ait dit « Je Passe »** pour annoncer son enchère. » |
 | à son tour, en tournoi | `divers/belotecontree_free_reglement.txt` (fil de discussion de la page) | « Le contre, dans le règlement officiel, se fait au tour, **jamais à la volée**. … Nous avons nous-même débuté en contrant à la volée, ce qui est indéniablement **plus fun… mais interdit en tournoi.** » |
 | à son tour (code) | `open-source/ismo009_Coinche_main_game.js` | contrôle `playerPosition !== this.currentPlayer` en tête de `placeBid()` — la coinche y passe comme les autres actions |
+| à son tour, **avec une sanction négociée** | **Cannes 2016** | « **On ne contre pas à la volée** donc le joueur doit attendre son tour de parole pour contrer. **Si cela n'est pas respectée l'adversaire décidera de la suite à donner : soit on continue la partie en assumant le résultat soit on redonne.** » |
 
 ### Position B — à la volée
 
@@ -554,6 +694,15 @@ et le forum de belotecontree.free.fr en donne la raison sociale : « indéniable
 mais interdit en tournoi ». **Et le désaccord traverse une copie verbatim** : carafons et
 cartesetcie reprennent la même page FFB et se contredisent sur ce point précis.
 
+**Cannes 2016 est le seul du corpus à écrire la sanction**, et elle n'est ni forfaitaire ni
+arbitrale : « l'adversaire décidera de la suite à donner : soit on continue la partie en
+assumant le résultat soit on redonne ». Tout le reste du corpus se contente d'interdire. C'est
+la même philosophie que sa section arbitrage (« s'efforcer de s'accorder entre elles, sans
+nécessairement faire appel à l'arbitre ») : la faute rend la donne **annulable au gré du lésé**,
+pas nulle de plein droit. Elle penche aussi la balance du décompte : **deux règlements de
+compétition sur trois** interdisent désormais la volée (Cannes, la Coinche Stéphanoise), contre
+l'ASCEE 2A qui l'autorise nommément.
+
 ### 9b. Le contre gèle-t-il les enchères ?
 
 | Règle | Source | Ce qu'elle dit |
@@ -562,6 +711,7 @@ cartesetcie reprennent la même page FFB et se contredisent sur ce point précis
 | gèle | FFB (autres versions), `fr_wikipedia_Belote_contrée`, `belotecontree_free`, `ainesruraux`, `adpoker`, `clubdejeux`, `ange_heureux`, `drasill (doc)`, `ducale`, `alhoa`, `regles_com`, `casimir`, `gamerules`, `pagat` (base), `maisondesessarts` | « les enchères sont **immédiatement stoppées** » / « A coinche **ends the bidding** » / « Une "coinche" **stoppe les enchères** » |
 | gèle (code) | `open-source/ismo009_…game.js` ; `…coinche.game.php` | `'Enchère coinchée, vous pouvez seulement passer ou surcoincher'` ; `if ($countered > 0) { … nextState('waitForRedouble'); }` |
 | gèle | `open-source/valmathieu_ContrAI…md` | « This **freezes** the auction at the current contract » |
+| gèle | **Cannes 2016** | « Le « **contre** » **bloque l'enchère sauf s'il y a « surcontre »**. » — formule identique en substance à celle de Colver |
 | **ne gèle pas** (variante) | `divers/pagat_com_jass_coinche_html.txt` | « Some play that a coinche can only be said in turn and **does not end the bidding**. So if South bids 100 Hearts and East says "coinche", **North can escape by bidding a different suit** … The bidding will only end after three consecutive passes. » — et Pagat rattache **explicitement ce cas au nom « contrée »** |
 | **ne gèle pas : on peut « décoincher »** | `tournois/web_archive_org_…coinche_stephanoise…` | « **Si un joueur est coinché les deux autres joueurs peuvent décoincher en faisant une enchère supérieure.** » |
 | **ne gèle pas** (variante) | `divers/fr_wikipedia_org_wiki_Coinche.txt` | « on peut **décoincher** en annonçant une annonce supérieure à celle qui a été coinchée » |
@@ -572,7 +722,10 @@ cartesetcie reprennent la même page FFB et se contredisent sur ce point précis
 
 **Divergence.** Le gel est très majoritaire, mais **le décoinchage existe et il est porté par
 un règlement de compétition** (la Coinche Stéphanoise, qui se réclame du « Championnat de
-France, National de Coinche »), pas seulement par une liste de variantes. Pagat fait de la
+France, National de Coinche »), pas seulement par une liste de variantes. **Cannes 2016 est le
+contre-témoignage exact** : autre « Championnat de France » (label privé lui aussi, cf.
+[../README.md](../README.md)), même niveau de compétition, et il gèle. Les deux tournois
+nationaux du corpus ne jouent donc pas la même contrée sur cet axe. Pagat fait de la
 combinaison *contre à son tour + contre non bloquant* **la définition même de « contrée »** par
 opposition à « coinche » — exactement l'inverse de l'usage français, où la FFB appelle
 « contrée » un jeu où le contre gèle et se fait à son tour.
@@ -589,6 +742,7 @@ opposition à « coinche » — exactement l'inverse de l'usage français, où l
 | par le preneur ou son partenaire | `divers/pagat_com_jass_coinche_html.txt` | « either **the bidder or his partner** can surcoincher » |
 | par l'un des membres, clôt tout | `divers/belotepoint_fr_regles_coinche.txt` | « **l'un de ses membres** peut surcoincher … **Après une surcoinche, les enchères sont définitivement closes** et le jeu commence. » |
 | clôt tout | `apps-sites/en_wikipedia_org_wiki_Coinche.txt` | fin des enchères : « one player has "surcoinchéd" » |
+| clôt tout | **Cannes 2016** | « **La parole est retirée lorsque l'annonce « surcontre » est dite** ou après que trois (3) joueurs successifs ont dit « passe », rendant ainsi définitive la dernière enchère. » |
 | clôt tout (code) | `open-source/ismo009_…game.js` | `// La sur-coinche lance directement le jeu` → `return this.startPlaying();` |
 | par le camp du preneur, clôt tout (code) | `open-source/drasill_bga-coinche_master_coinche.game.php` | `'Cannot redouble on yourself'` / `'Cannot redouble on your partner'` puis `nextState('endBidding')` ; un joueur peut décliner (`nosurcoinche()` → « ${player_name} does not redouble. ») |
 | **on ne peut pas surcontrer son propre camp** | `federations/ffbelote_…Contree-27-01-2016` §4.2.3 | « Le partenaire du joueur ayant contré **ne doit pas parler** » — le surcontre ne peut venir que du camp contré |
@@ -597,6 +751,7 @@ opposition à « coinche » — exactement l'inverse de l'usage français, où l
 | **interdite sur une « voiture »** | `tournois/clublafontainedejouvence_fr_règlement_coinchée.txt` | « Une voiture peut être coinchée **mais pas surcoinchée**. » |
 | multiplicateur ×4 | `ffbelote_REGLES-DE-LA-BELOTE-CONTREE`, `ffbelote_org_belote_contree` (640), `missègre` (640), `belotecontree_free` (640), `pagat` (base), `ange_heureux`, `regles_com`, `casimir`, `exoty`, `maviedesenior`, `ASCEE`, `ilyesbrh`, `slim0`, `theosaulus` | « Le score de la donne sera multiplié par 4 » |
 | multiplicateur ×3 | `federations/LOCAL_regles_officielles_belote_contree.txt` | « Le score de l'annonce sera **multiplié par 3**. » |
+| multiplicateur ×3 **sur le contrat seul** | **Cannes 2016** | « Le contre double les points de l'enchère demandée, **le surcontre les triple** ; si la belote a été annoncée on ajoute 20 points de bonification **qui ne sont ni doublés ni triplés**. » |
 | multiplicateur ×3 | `divers/iscool_…faq_157…`, `apps-sites/iscool_…faq_701…`, `divers/jeu_belote_fr_…`, `open-source/ismo009_…game.js` | « Les points seront **multipliés par 3** » / « Le coefficient multiplicateur passe à **trois** » / `if (this.contract.surcoinched) multiplier = 3;` |
 | ×3 en variante | `divers/pagat_com_jass_coinche_html.txt` | « Some play that a surcoinche does not double the score again, but **only increases the multiplier from 2× to 3×**. » |
 | **×3 mais 480, pas 640** | `tournois/maisondesessarts_fr_article116_html.txt` | « La coinche vaut **160 × 2 = 320** … La surcoinche vaut **160 × 3 = 480** » |
@@ -604,8 +759,10 @@ opposition à « coinche » — exactement l'inverse de l'usage français, où l
 **Consensus sur la mécanique, divergence sur le multiplicateur.** Tout le monde s'accorde sur
 deux points : *seul le camp contré peut surcontrer*, et *ça termine les enchères*. En revanche
 le multiplicateur se partage nettement **×4** (tradition, FFB ancienne, Pagat) contre **×3**
-(**FFB récente** « Équipe Ludique », IsCool, jeu-belote.fr, ismo009, Les Essarts) — c'est
-exactement le même clivage entre rédactions FFB que celui relevé dans [arrondi.md](arrondi.md).
+(**FFB récente** « Équipe Ludique », **Cannes**, IsCool, jeu-belote.fr, ismo009, Les Essarts) —
+c'est exactement le même clivage entre rédactions FFB que celui relevé dans
+[arrondi.md](arrondi.md). **Cannes fait basculer le camp ×3 du côté de la pratique attestée** :
+c'est le seul règlement de compétition à trancher, et il triple le contrat seul, sans forfait.
 À signaler : **quatre sources ne connaissent pas la surcoinche du tout**, dont la documentation
 drasill/BGA — alors que son propre code l'implémente.
 
@@ -624,6 +781,7 @@ drasill/BGA — alors que son propre code l'implémente.
 | 3 passes | `apps-sites/gameduell_…faq_1054_coinche` | « as soon as **3 people have passed since the last offer** » |
 | 3 passes | `open-source/valmathieu_ContrAI_main_contree-domain.md` | « The auction ends when **three consecutive players pass after the last bid** » |
 | 3 passes (code) | `open-source/ismo009_Coinche_main_game.js` | `if (this.lastBidder && this.passCount >= 3) { return this.startPlaying(); }` |
+| 3 passes | **Cannes 2016** | « La parole est retirée … après que **trois (3) joueurs successifs ont dit « passe »**, rendant ainsi définitive la dernière enchère. » |
 
 ### 11b. …sauf pour ceux qui comptent quatre passes
 
@@ -646,7 +804,7 @@ drasill/BGA — alors que son propre code l'implémente.
 | redonne | `jeux_regles`, `clubdejeux`, `belotepoint`, `jeu_belote_fr`, `alhoa`, `casimir`, `drasill`, `pagat`, `gamerules`, `coinche_stephanoise`, `gameduell (fr et en)`, `en_boardgamearena` | « If all four players pass, the cards are thrown in and the next dealer deals a new hand. » |
 | redonne **même donneur** | `open-source/valmathieu_ContrAI_main_contree-domain.md` | « the round is annulled, cards are collected and **redealt (with the same dealer)** » |
 | redonne + rotation (code) | `open-source/ismo009_…game.js` ; `…coinche.game.php` | `if (this.passCount >= 4 && !this.lastBidder) { this.dealer = getNextPlayer(this.dealer); … 'redistribute' }` ; `clienttranslate('Everybody passes, no bid')` + `setNextFirstPlayer()` |
-| **muets** | carafons, cartesetcie, missègre, ASCEE, regles.com, lemagloisirs, adpoker, ange_heureux, exoty, ducale, iscool, maviedesenior, maisondesessarts, ilyesbrh | ne disent rien du cas des 4 passes |
+| **muets** | carafons, cartesetcie, missègre, ASCEE, regles.com, lemagloisirs, adpoker, ange_heureux, exoty, ducale, iscool, maviedesenior, maisondesessarts, ilyesbrh, **Cannes 2016** | ne disent rien du cas des 4 passes. Pour Cannes c'est notable : sa règle de fin d'enchère (« trois joueurs successifs ») ne couvre littéralement que le cas où quelqu'un a enchéri, et il ne dit nulle part ce qu'on fait quand personne ne prend |
 
 **Consensus fort sur 11a et 11c** — trois passes après une enchère, redonne après quatre.
 **Divergence sur 11b** (drasill/BGA compte quatre passes, ange.heureux et alhoa rouvrent
@@ -740,7 +898,7 @@ Trois points qui divergent et qu'on n'attendait pas.
 
 | Règle | Source | Ce qu'elle dit |
 |---|---|---|
-| **à droite du donneur**, sens antihoraire | FFB (les 6), `fr_wikipedia_Belote_contrée`, `belotecontree_free`, `ainesruraux`, `missègre`, `pagat`, `adpoker`, `ange_heureux`, `contree_org`, `coinche_stephanoise`, `ducale`, `ludicash` | « Les joueurs s'expriment chacun à leur tour **en commençant par le joueur placé à droite du donneur**. » |
+| **à droite du donneur**, sens antihoraire | FFB (les 6), `fr_wikipedia_Belote_contrée`, `belotecontree_free`, `ainesruraux`, `missègre`, `pagat`, `adpoker`, `ange_heureux`, `contree_org`, `coinche_stephanoise`, `ducale`, `ludicash`, **Cannes 2016** | « Les joueurs s'expriment chacun à leur tour **en commençant par le joueur placé à droite du donneur**. » — Cannes : « La parole est donnée **dans le même sens que la donne** au joueur de droite, le premier à l'avoir étant celui **à la droite du donneur**. À son tour **chacun est obligé de parler** soit pour enchérir soit pour dire « passe ». » |
 | **à gauche du donneur** | `apps-sites/gameduell_…faq_1054_coinche` | « The player **to the left of the dealer** starts the bidding » |
 | à gauche | `divers/iscool_…faq_157…`, `apps-sites/exoty_com_regles_contree_belote`, `apps-sites/coinchegratuit_fr_…` · [url](https://www.coinchegratuit.fr/quelles-sont-les-regles-du-jeu-de-coinche/), `apps-sites/regles_de_jeux_com_…` | « Le joueur se situant **à gauche du donneur** commence à parler. » |
 | **sens horaire** | `tournois/casimirdehauteclocque_fr_jeux_coinche_pdf.txt` ; `apps-sites/gameduell_…faq_1056_contree` ; `tournois/clublafontainedejouvence_…` | « On distribue et change de premier joueur **dans le sens des aiguilles d'une montre** » ; « **Les cartes sont distribuées dans le sens des aiguilles d'une montre : 3 puis 2 puis 3** » |
@@ -750,6 +908,11 @@ les éditeurs de jeux en ligne**, qui appliquent le sens du bridge. Le corpus fr
 traditionnel est unanime : à droite, sens antihoraire. À noter que `casimir` est cohérent avec
 lui-même (il fait tourner *tout* dans le sens horaire), ce qui est une variante réelle et non
 une coquille.
+
+**Cannes apporte au passage une règle que presque personne n'écrit** : « à son tour **chacun est
+obligé de parler**, soit pour enchérir soit pour dire "passe" ». Le silence n'est donc pas une
+option — ce qui est le corollaire indispensable d'un règlement qui compte les fins d'enchère en
+« trois passes successifs », et le pendant en parole de son interdiction des signaux.
 
 ### 13b. Formulation obligatoire de l'enchère
 
@@ -763,6 +926,7 @@ une coquille.
 | **« Je passe », « Passe » ou « Allez » AUTORISÉS** | `tournois/cdf_missegre11_…` (pourtant copie du texte FFB) | « « Je passe », « Passe » ou « Allez » et **toujours utiliser la même expression** au long de la partie. Les autres expressions sont interdites. » |
 | « je passe » **ou** « allez », mais constant | `divers/belotecontree_free_reglement.txt` / `tournois/ainesruraux_…` | « Celui qui n'a pas d'annonce particulière à formuler devra dire « je passe » **ou « allez »**. … Quelle que soit l'expression employée, elle devra **rester identique pendant toute la partie**. » |
 | « parole » | `apps-sites/contree_org_4_joueurs.txt` | « soit passer en prononçant « **parole** » » |
+| valeur puis couleur, **liste fermée de paroles** | **Cannes 2016** | « Les paroles d'enchère autorisées sont : le **nombre de points suivi immédiatement de la couleur** soit : « passe », « contre », « surcontre », « générale ou capot » ou « 270 » contrat le plus élevé. **Exemple : 80 pique, passe, 100 trèfle, 120 carreau, contre, passe, passe, surcontre.** » — même ordre valeur-puis-couleur que la FFB, et le seul règlement du corpus à donner une enchère complète en exemple |
 | **pas de délai de réflexion** | `divers/belotecontree_free_reglement.txt` | « Si un joueur passe, il doit le dire **immédiatement, sans délai de réflexion**. De la même manière toute annonce doit être formulée sans délai de réflexion qui apparaîtrait anormalement long. » |
 | idem | `federations/ffbelote_org_belote_contree.txt` | « lors de la prise, celle-ci doit être annoncée **distinctement et sans temps d'hésitation** … il est strictement interdit de faire transparaître un soupçon d'hésitation ou bien une **intonation d'interrogation** dans la voix » |
 
@@ -781,13 +945,20 @@ deux sources codifient.
 | l'adversaire peut annuler la mène | idem | « Si le contrat doit être joué par l'équipe ayant commis l'erreur d'annonce, l'autre équipe pourra décider l'annulation de la mène **mais à condition qu'elle prenne cette décision immédiatement** » |
 | interdiction de prise à la 2e maldonne | `federations/ffbelote_org_belote_contree.txt` ; `tournois/cdf_missegre11_…` | « l'équipe ayant commis la faute se verra pénalisée et **interdite de toute prise sur cette seconde donne** » |
 | le donneur fautif ne peut plus enchérir | `tournois/web_archive_org_…coinche_stephanoise…` | « En cas de maldonne, le donneur redistribue, **mais il ne pourra pas faire d'enchère.** » |
+| **le lésé choisit** (contre à la volée) | **Cannes 2016** | « Si cela n'est pas respectée **l'adversaire décidera de la suite à donner : soit on continue la partie en assumant le résultat soit on redonne.** » |
+| **fausse donne découverte après une annonce adverse : 160 + le contrat** | **Cannes 2016** | « Constatée **après une annonce de l'adversaire** = pénalité de **160 points + le contrat**, donne au suivant. » — c'est l'annonce adverse qui rend la donne irrattrapable, cf. [jeu-de-la-carte.md](jeu-de-la-carte.md) axe 17 |
 | contrat irrévocable | `federations/ffbelote_org_belote_contree.txt`, `carafons`, `cartesetcie`, `missègre`, `ilyesbrh` | « **Tout contrat annoncé ne peut être annulé.** » / « A bid, once announced, **cannot be cancelled** » |
 
 **Consensus de principe** (« l'erreur ne doit pas bénéficier à l'équipe qui l'a commise »),
 **divergence sur la sanction** : privation de prise pour la donne, annonce nulle avec équipe
-réduite au silence, ou annulation de la mène au choix de l'adversaire. Seuls cinq documents du
+réduite au silence, ou annulation de la mène au choix de l'adversaire. Seuls **six** documents du
 corpus abordent la question — **tous des règlements de compétition ou des specs de projet**.
 Les sites de règles sont muets.
+
+Cannes range **deux** fautes d'enchère dans la même famille de sanction, et c'est la même
+famille que celle du tournoi international : **on rend la décision au camp lésé** plutôt que
+d'appliquer un tarif. Une seule faute échappe à ce principe chez lui — la fausse donne
+découverte trop tard, qui coûte 160 + le contrat et **fait tourner le donneur**.
 
 ---
 
@@ -797,7 +968,7 @@ Les sites de règles sont muets.
 |---|---|---|
 | 1. Enchère minimale | **Divergence** | 80 (FFB + francophones) vs 82 (Pagat, anglophones, implémentations) — vestige de la règle « faire plus que la défense », que la FFB a supprimée |
 | 2. Pas | **Consensus** (10) | seules variantes annoncées : 5 en 5 (Wikipédia), « 10 ou plus » (drasill) |
-| 2b. Plafond | **Divergence** | 160 si les annonces ne comptent pas ; 170/180 si la belote compte ; 650 si les annonces comptent. **La FFB dit 160 sur sa page contrée et 650 sur sa page coinche** |
+| 2b. Plafond | **Divergence** | 160 si les annonces ne comptent pas ; 170/180 si la belote compte ; 650 si les annonces comptent. **La FFB dit 160 sur sa page contrée et 650 sur sa page coinche** ; **Cannes n'en pose aucun** et ne nomme que le sommet, « 270 contrat le plus élevé » |
 | 3. Surenchère en couleur | **Consensus** (valeur seule) | 4 sources le disent *contre le bridge* ; hiérarchie de couleurs = variante Pagat + « conventions locales » (belotepoint) |
 | 4a. Parler sur soi-même | **Consensus** (interdit) | 11 sources, aucune opposition frontale |
 | 4b. …sauf en changeant de couleur | **Divergence** | 4 sources indépendantes rouvrent l'enchère au dernier parleur ; conséquence directe sur l'axe 11 |
@@ -805,17 +976,17 @@ Les sites de règles sont muets.
 | 5. Reparler après avoir passé | **Consensus** (oui) | 13 sources pour, **zéro contre** — le plus net de la matrice |
 | 6a. Capot ferme l'enchère chiffrée | **Consensus** | « il n'existe pas d'enchère supérieure au capot » |
 | 6b. Capot contrable | **Divergence** | FFB et tradition FR : oui (capot contré 1 000) ; Pagat + gamerules : **« cannot be doubled »** |
-| 6c. Valeur du capot | **Consensus** (250) | sauf 260 (gameduell), 270 « capot beloté » (ismo009), 350 (Ducale), 500 forfait (FFB ancienne), et Les Essarts qui interdit de dire « capot » — et en tire la conséquence que **les enchères continuent** |
-| 7. Générale | **Divergence** | enchère de **coinche**, absente de tous les textes « contrée » et de toute la FFB ; valeur sans consensus (350/500/700/1000) ; deux sources l'emploient au sens de « capot » ; désaccord sur ce que fait le partenaire |
+| 6c. Valeur du capot | **Consensus** (250) | sauf 260 (gameduell), **270 (Cannes — le seul règlement de championnat)**, 270 « capot beloté » (ismo009), 350 (Ducale), 500 forfait (FFB ancienne), et Les Essarts qui interdit de dire « capot » — et en tire la conséquence que **les enchères continuent** |
+| 7. Générale | **Divergence** | enchère de **coinche**, absente de tous les textes « contrée » et de toute la FFB ; valeur sans consensus (350/500/700/1000) ; **trois** sources l'emploient au sens de « capot », dont **Cannes** ; désaccord sur ce que fait le partenaire |
 | 8. SA/TA | **Consensus** sur le principe et sur As=19 à SA ; **divergence totale** sur TA | six barèmes incompatibles (deux à l'intérieur de la seule FFB), trois ratios, une table non linéaire, un règlement qui double le contrat. « None of them particularly elegant » (Pagat) |
-| 9. Coinche à la volée | **Divergence maximale** | FFB + ses copies + 3 règlements de concours contre presque tout le reste. **Ce n'est pas « tournoi vs bistrot »** : l'ASCEE 2A est un règlement de tournoi et autorise la volée. Le désaccord traverse même une copie verbatim (carafons vs cartesetcie) |
-| 9b. Le contre gèle | **Consensus majoritaire**, mais | le « décoinchage » est porté par un règlement de championnat (Stéphanoise) ; Pagat fait du contre *non bloquant* la définition de « contrée », à l'inverse de l'usage français |
-| 10. Surcoinche | **Consensus** (camp contré, fin immédiate) ; **divergence** sur ×3 vs ×4 | même clivage FFB ancienne/récente que dans arrondi.md ; 4 sources ne la connaissent pas, dont la doc drasill alors que son code l'implémente |
+| 9. Coinche à la volée | **Divergence maximale** | FFB + ses copies + 4 règlements de concours (dont **Cannes**) contre presque tout le reste. **Ce n'est pas « tournoi vs bistrot »** : l'ASCEE 2A est un règlement de tournoi et autorise la volée. Le désaccord traverse même une copie verbatim (carafons vs cartesetcie). **Seul Cannes écrit la sanction** — et il la laisse au choix du lésé |
+| 9b. Le contre gèle | **Consensus majoritaire**, mais | le « décoinchage » est porté par un règlement de championnat (Stéphanoise) — **et l'autre championnat du corpus (Cannes) gèle** ; Pagat fait du contre *non bloquant* la définition de « contrée », à l'inverse de l'usage français |
+| 10. Surcoinche | **Consensus** (camp contré, fin immédiate) ; **divergence** sur ×3 vs ×4 | même clivage FFB ancienne/récente que dans arrondi.md ; **Cannes tranche pour ×3 sur le contrat seul**, ce qui donne au camp ×3 son premier règlement de compétition ; 4 sources ne la connaissent pas, dont la doc drasill alors que son code l'implémente |
 | 11. Fin des enchères | **Consensus** (3 passes ; 4 passes = redonne) | drasill compte 4 passes, ange.heureux/alhoa rouvrent au dernier parleur — c'est l'axe 4b vu de l'autre bout. Divergence secondaire : le donneur tourne (FFB) ou pas (ContrAI) |
 | 12. Annonces | **Pas un désaccord : une définition** | contrée = sans annonces ni SA/TA ; coinche = avec. Divergences réelles : comptent-elles pour *faire* le contrat (FFB oui, IsCool/belotepoint/ilyesbrh non, gameduell les deux, jeux-regles.com les deux dans la même phrase) ; une carte peut-elle servir à deux annonces (FFB non, Stéphanoise et contree.org oui) |
 | 13a. Sens de la parole | **Consensus** (à droite du donneur) | les éditeurs en ligne disent « à gauche » — vraisemblablement une erreur importée du bridge |
 | 13b. Formulation | **Divergence** | la FFB **interdit** « 20 de mieux » ; un règlement de table l'**autorise nommément** ; la copie FFB de Missègre rouvre « Passe » et « Allez » |
-| 13c. Enchère irrégulière | **Consensus de principe, divergence de sanction** | cinq documents seulement, tous des règlements de compétition |
+| 13c. Enchère irrégulière | **Consensus de principe, divergence de sanction** | six documents seulement, tous des règlements de compétition. Deux écoles : **tarif** (162 points) ou **choix du lésé** (tournoi international, **Cannes**) |
 
 ---
 
@@ -834,7 +1005,14 @@ pas divisé.
 - **Le partenaire du contreur doit-il parler ?** Une seule source tranche, la FFB : « Le
   partenaire du joueur ayant contré **ne doit pas parler (ne pas dire je passe)** ». Toutes les
   autres laissent la question ouverte, ce qui rend le « 3 passes » ambigu après un contre — et
-  c'est exactement là que le code de drasill diverge en exigeant 4 passes.
+  c'est exactement là que le code de drasill diverge en exigeant 4 passes. **Cannes aggrave
+  l'ambiguïté au lieu de la lever** : il écrit à la fois « à son tour **chacun est obligé de
+  parler** » et « la parole est retirée … après que **trois joueurs successifs** ont dit passe »,
+  sans dire lequel des deux l'emporte après un contre.
+- **Que fait-on quand les quatre joueurs passent ?** Ajouté ici depuis Cannes : son règlement,
+  qui est pourtant celui d'un championnat, **ne prévoit pas le cas**. Sa règle de fin d'enchère
+  suppose qu'une enchère a eu lieu (« rendant ainsi définitive la dernière enchère »). Quatorze
+  autres sources sont dans le même silence (cf. axe 11c).
 - **Peut-on contrer après avoir soi-même passé ?** Deux sources seulement, et elles disent oui :
   ContrAI (« Intervening passes do not close the Coinche / Surcoinche window ») et, de fait, le
   code de BGA. Toutes les autres sont muettes, alors que la question se pose à chaque donne.

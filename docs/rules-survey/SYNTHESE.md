@@ -225,7 +225,8 @@ France » de Cannes est encore un troisième label, propre à son organisateur.
 | Capot | contrat ordinaire à 250 | FFB Équipe Ludique, tableau FFB 2016 p. 7 |
 | Belote | prenable en cas de chute | FFB contrée, toutes rédactions |
 | Arrondi | aucun, marque au point près | FFB belote classique, Lions Club, Géraudot Loisirs |
-| Pisser | défausse **et** sous-coup au choix (`play.rs` l. 106-110) | Camp FFB contrée |
+| Pisser | défausse **et** sous-coup au choix (`play.rs` l. 106-110) | Camp FFB contrée ; la double permission est écrite telle quelle par **Cannes** (3° c) et la Coinche stéphanoise |
+| Partenaire maître qui a coupé, je n'ai que de l'atout | choix libre (corrigé le 2026-08-01) | FFB 2015, FFB 2016, Wikipédia Belote, **Cannes** (3° d) — contre la seule réimpression « Équipe Ludique » |
 | Sens du jeu | antihoraire, parole = entame | Unanime en contrée |
 
 **Le parent fédéral le plus proche est la Note 1 du règlement FFB contrée 2016** — la seule forme
@@ -246,6 +247,13 @@ Après la découverte du règlement de Cannes, il ne reste **qu'un seul écart r
 2. **Le plafond d'enchère lui-même.** Colver s'arrête à 160 puis saute au capot ; Cannes autorise
    toute la dizaine jusqu'à 270. C'est un écart sur l'**espace d'actions**, pas seulement sur le
    barème — il touche l'encodage des enchères et tout ce qui s'entraîne dessus.
+   **Tranché par la mesure, 2026-08-02 : on ne bouge pas.** Un camp peut réaliser 170 sans pouvoir
+   faire capot dans **0,22 % des mains en jeu parfait, 0,35 % en jeu réel** ; le palier 180 seul
+   reste sous **0,015 %**, une donne sur 7 000. À comparer aux capots effectivement réalisés,
+   4,8 % — un rapport de 1 à 14. Quatre mesures concordantes : 20 000 donnes résolues à neuf, le
+   pool DD de 5 M, et les couches de scores DouDou et IS-DD sur ce même pool. Détail et méthode :
+   [matrices/encheres.md](matrices/encheres.md) § « Mesure : les paliers 170 et 180 sont-ils
+   vivants ? ».
 
 En revanche, ce que je donnais hier pour non attesté **l'est désormais** : la base 252 d'un
 contré réussi sur capot réalisé, le couple base 162 + surcontre ×3, et le capot-contrat. Cannes
