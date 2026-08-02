@@ -8,6 +8,26 @@ qu'on rouvrira dans six mois.
 Référence courante du solveur : [dd_solver.md](dd_solver.md). Ici, c'est l'historique du
 raisonnement.
 
+## Bilan
+
+| | avant | livré | |
+|---|---:|---:|---:|
+| `solve_with_scores`, donne complète | 1 448 045 nœuds | 1 163 727 | **0,804×** |
+| `solve_with_scores`, mondes IS-DD | 55 862 | 48 994 | **0,877×** |
+| `solve_with_scores`, mi-donne / finale | 9 061 / 89 | 8 707 / 88 | 0,961× / 0,989× |
+| **au chronomètre** (10 tours entrelacés, 10/10) | 4,89 s | 3,94 s | **0,806×** |
+| **`gen_pool`, vrai binaire** | 33,2 s | 22,8 s | **0,686×** |
+
+Deux changements le portent : une **recherche courte au sommet** pour choisir le premier coup
+(§6) et une **fenêtre entre cartes racine** dans `solve_with_scores` (§8). Aucune valeur DD ne
+bouge — 11 527 valeurs par carte, 0 écart, et 392 tests.
+
+**Et le reste de ce document est surtout une liste de choses qui ne marchent pas**, chacune avec
+son chiffre : agrandir la TT (§2.1, §2.1bis), MTD(f) (§2.2), l'amorçage entre mondes (§2.3,
+§2.3bis), un `apply_play` allégé (§2.4), `-C target-cpu=native` (§2.5), quatre raffinements
+écrits à la main de l'ordre statique (§6), un calendrier de profondeur (§6), l'ordre racine par
+regard (§8), et toute fonction d'évaluation (§7). C'est le contenu principal, pas l'annexe.
+
 ---
 
 ## 0. Le point de départ, et pourquoi il fallait d'abord mesurer
