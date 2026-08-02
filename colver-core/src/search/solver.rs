@@ -337,8 +337,98 @@ mod ordering_oracle {
     thread_local! {
         pub static MODE: Cell<u8> = const { Cell::new(0) };
         pub static MAP: RefCell<HashMap<u64, u8>> = RefCell::new(HashMap::new());
+        /// Fraction of nodes at which the recorded move is actually used, as a u32 threshold
+        /// over a hash of the position. See [`super::oracle_set_hint_rate`].
+        pub static RATE: Cell<u32> = const { Cell::new(u32::MAX) };
+        /// Half-open ply window the hint applies in, **relative to the root of the search**.
+        /// See [`super::oracle_set_ply_window`].
+        pub static PLY: Cell<(u8, u8)> = const { Cell::new((0, 32)) };
+        /// Absolute ply the current search started at, so the window can be relative.
+        pub static ROOT_PLY: Cell<u8> = const { Cell::new(0) };
+        /// Histogram of the rank the eventual best move held in the produced ordering.
+        /// Index 8 collects everything past 7; index 0 is a first-move cutoff.
+        pub static RANKS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
+        /// `[early/late][what was tried first][what should have been]`, counted only where
+        /// today's ordering got it wrong. Split early (tricks 0-2) / late because a failure
+        /// near the root costs orders of magnitude more than one near a leaf, and a raw count
+        /// would be dominated by the cheap ones.
+        pub static CONFUSION: RefCell<[[[u64; 8]; 8]; 2]> = const { RefCell::new([[[0; 8]; 8]; 2]) };
     }
 }
+
+/// Coarse description of what a card *does* at this node — the vocabulary a Contrée-aware
+/// ordering rule would be written in. Diagnostic only: it never influences the search, so an
+/// imprecision here misleads a table, it cannot corrupt a value.
+#[cfg(feature = "solver_oracle")]
+fn move_category(state: &GameState, card: u8, trump: u8) -> usize {
+    let ct = state.contract.contract_type();
+    let suit = card_suit_u8(card);
+    let is_trump = suit == trump;
+
+    if state.trick_count == 0 {
+        return if is_trump {
+            0 // lead trump
+        } else if card_points(card, ct) >= 10 {
+            1 // lead a point card
+        } else {
+            2 // lead a small plain card
+        };
+    }
+
+    // Best card in the trick so far. `trick::trick_winner` needs a complete trick, so this
+    // walks only the seats that have actually played — same rules, partial trick.
+    let lead_seat = state.trick_lead as usize;
+    let lead_card = state.current_trick[lead_seat];
+    let lead_suit = card_suit_u8(lead_card);
+    let mut best_trump: Option<u8> = None;
+    let mut best_plain = card_rank(lead_card);
+    if lead_suit == trump {
+        best_trump = Some(TRUMP_STRENGTH[card_rank(lead_card) as usize]);
+    }
+    for i in 1..state.trick_count as usize {
+        let c = state.current_trick[(lead_seat + i) % 4];
+        let s = card_suit_u8(c);
+        if s == trump {
+            let st = TRUMP_STRENGTH[card_rank(c) as usize];
+            if best_trump.is_none_or(|b| st > b) {
+                best_trump = Some(st);
+            }
+        } else if s == lead_suit && card_rank(c) > best_plain {
+            best_plain = card_rank(c);
+        }
+    }
+
+    if is_trump {
+        let st = TRUMP_STRENGTH[card_rank(card) as usize];
+        let wins = best_trump.is_none_or(|b| st > b);
+        if wins {
+            5 // a ruff (or trump raise) that takes the trick
+        } else {
+            6 // trump that does not take it — undertrump, or discarding trump
+        }
+    } else if suit == lead_suit {
+        let wins = best_trump.is_none() && card_rank(card) > best_plain;
+        if wins {
+            3 // follows and takes the trick
+        } else {
+            4 // follows without taking it
+        }
+    } else {
+        7 // discard
+    }
+}
+
+/// Names for [`move_category`], in index order.
+pub const MOVE_CATEGORIES: [&str; 8] = [
+    "lead trump",
+    "lead points",
+    "lead small",
+    "follow+win",
+    "follow",
+    "ruff+win",
+    "trump-lose",
+    "discard",
+];
 
 /// No oracle: ordinary move ordering.
 pub const ORACLE_OFF: u8 = 0;
@@ -350,16 +440,89 @@ pub const ORACLE_USE: u8 = 2;
 pub const ORACLE_USE_RECORD: u8 = 3;
 
 #[inline(always)]
-fn oracle_hint(_hash: u64) -> u8 {
+fn oracle_hint(_hash: u64, _ply: usize) -> u8 {
     #[cfg(feature = "solver_oracle")]
     {
         if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_USE != 0 {
+            // Depth window. A predictor too expensive to run at every node — a policy net at
+            // ~1 ms against a 22 ns node — could still pay for itself at the top few plies,
+            // where one decision governs an enormous subtree. This says whether it would.
+            let (lo, hi) = ordering_oracle::PLY.with(|p| p.get());
+            if lo != 0 || hi != 32 {
+                let d = _ply.saturating_sub(ordering_oracle::ROOT_PLY.with(|r| r.get()) as usize);
+                if d < lo as usize || d >= hi as usize {
+                    return EMPTY;
+                }
+            }
+            // Partial coverage: the hint applies only at a deterministic subset of nodes,
+            // selected by the position hash so the same nodes are chosen on every pass and
+            // across runs. Elsewhere the search falls back to today's ordering — which models
+            // a rule that fires sometimes and is right when it does, not one that guesses
+            // wrong. That makes the curve an upper bound for any partial rule.
+            let rate = ordering_oracle::RATE.with(|r| r.get());
+            if rate != u32::MAX {
+                let mix = _hash.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                if ((mix >> 32) as u32) >= rate {
+                    return EMPTY;
+                }
+            }
             return ordering_oracle::MAP
                 .with(|m| m.borrow().get(&_hash).copied())
                 .unwrap_or(EMPTY);
         }
     }
     EMPTY
+}
+
+/// Rank the eventual best move held in the ordering actually produced at this node.
+/// Rank 0 means the first move tried caused the cutoff — the classic first-move-cutoff rate,
+/// and the direct measure of how good today's ordering already is.
+#[inline(always)]
+fn oracle_note_rank(
+    _state: &GameState,
+    _ordered: &[u8; 8],
+    _count: usize,
+    _best: u8,
+    _trump: u8,
+) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_RECORD == 0 {
+            return;
+        }
+        let mut rank = 8usize;
+        for i in 0.._count.min(8) {
+            if _ordered[i] == _best {
+                rank = i.min(8);
+                break;
+            }
+        }
+        ordering_oracle::RANKS.with(|h| {
+            let mut v = h.get();
+            v[rank] += 1;
+            h.set(v);
+        });
+        if rank == 0 || _count == 0 {
+            return;
+        }
+        // Only the failures. What was tried first, and what should have been.
+        let tricks = (_state.tricks_won[0] + _state.tricks_won[1]) as usize;
+        let bucket = usize::from(tricks >= 3);
+        let got = move_category(_state, _ordered[0], _trump);
+        let want = move_category(_state, _best, _trump);
+        ordering_oracle::CONFUSION.with(|c| c.borrow_mut()[bucket][got][want] += 1);
+    }
+}
+
+/// The failure table since the last call, and reset: `[early/late][tried first][should have
+/// been]` over [`MOVE_CATEGORIES`], counting only nodes where today's ordering missed.
+pub fn oracle_take_confusion() -> [[[u64; 8]; 8]; 2] {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::CONFUSION.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    [[[0; 8]; 8]; 2]
 }
 
 #[inline(always)]
@@ -385,6 +548,52 @@ pub fn oracle_set_mode(_mode: u8) {
 pub fn oracle_clear() {
     #[cfg(feature = "solver_oracle")]
     ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+}
+
+/// Fraction of nodes at which a recorded move is applied, in `[0.0, 1.0]`. `1.0` (the default)
+/// is the full oracle; anything less models a rule with partial coverage, falling back to
+/// today's ordering at the nodes it skips.
+pub fn oracle_set_hint_rate(_p: f64) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let t = if _p >= 1.0 {
+            u32::MAX
+        } else if _p <= 0.0 {
+            0
+        } else {
+            (_p * u32::MAX as f64) as u32
+        };
+        ordering_oracle::RATE.with(|r| r.set(t));
+    }
+}
+
+/// Restrict the hint to plies in `[lo, hi)` **counted from the root of the search**, so the
+/// windows mean the same thing for a full deal and for a mid-game position. Depth 0 is the
+/// root itself — one node, one decision. Default `(0, 32)`: everywhere.
+pub fn oracle_set_ply_window(_lo: u8, _hi: u8) {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::PLY.with(|p| p.set((_lo, _hi)));
+}
+
+/// Absolute ply the position about to be solved sits at, so [`oracle_set_ply_window`] can be
+/// relative to it. Getting this wrong shifts every window silently.
+pub fn oracle_set_root_ply(_state: &GameState) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let p = (_state.tricks_won[0] + _state.tricks_won[1]) * 4 + _state.trick_count;
+        ordering_oracle::ROOT_PLY.with(|r| r.set(p));
+    }
+}
+
+/// Rank histogram since the last call, and reset. Index 0 = the first move tried caused the
+/// cutoff; index 8 collects rank 8 and beyond. All zeros without the feature.
+pub fn oracle_take_ranks() -> [u64; 9] {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::RANKS.with(|h| h.replace([0; 9]));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    [0; 9]
 }
 
 /// Distinct positions currently recorded on this thread.
@@ -423,6 +632,7 @@ mod ablation {
         pub no_pvs: bool,
         pub no_killers: bool,
         pub no_history: bool,
+        pub order_variant: u8,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -436,6 +646,10 @@ mod ablation {
             no_pvs: env_flag("COLVER_DD_NO_PVS"),
             no_killers: env_flag("COLVER_DD_NO_KILLERS"),
             no_history: env_flag("COLVER_DD_NO_HISTORY"),
+            order_variant: std::env::var("COLVER_DD_ORDER")
+                .ok()
+                .and_then(|v| v.trim_start_matches('v').parse().ok())
+                .unwrap_or(0),
         })
     }
 }
@@ -637,7 +851,10 @@ fn alphabeta(
 
     // A recorded move outranks the TT's: it comes from a completed search of this exact
     // position, where the TT's is whatever survived eviction. Compiled out by default.
-    let hinted = oracle_hint(hash);
+    let hinted = oracle_hint(
+        hash,
+        (state.tricks_won[0] + state.tricks_won[1]) as usize * 4 + state.trick_count as usize,
+    );
     if hinted != EMPTY && (legal & card_to_bit(hinted)) != 0 {
         hash_move = hinted;
     }
@@ -729,6 +946,7 @@ fn alphabeta(
 
     tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move, stamp);
     oracle_note(hash, best_move);
+    oracle_note_rank(state, &ordered.0, ordered.1, best_move, state.contract.trump);
     best_score
 }
 
@@ -991,11 +1209,23 @@ fn order_moves(
     let mut scored: [(i32, u8); 8] = [(0, 0); 8];
     let mut scount = 0usize;
 
+    // Computed once per node rather than per card — the whole point of hoisting it here.
+    let variant = order_variant();
+    let master = if variant != 0 && state.trick_count > 0 {
+        Some(TrickMaster::of(state, trump))
+    } else {
+        None
+    };
+
     let mut mask = remaining;
     while mask != 0 {
         let card = mask.trailing_zeros() as u8;
         mask &= mask - 1;
-        let static_score = move_order_score(state, card, trump, ct) as i32;
+        let static_score = if variant == 0 {
+            move_order_score(state, card, trump, ct) as i32
+        } else {
+            move_order_score_v(state, card, trump, ct, master.as_ref(), variant) as i32
+        };
         let hist_bonus = if no_history() { 0 } else { history[team][card as usize] as i32 };
         scored[scount] = (static_score + hist_bonus, card);
         scount += 1;
@@ -1009,6 +1239,137 @@ fn order_moves(
     }
 
     (result, count)
+}
+
+/// The best card in the trick so far. `trick::trick_winner` needs a complete trick; this walks
+/// only the seats that have played. Computed **once per node** by `order_moves`, not per card.
+#[derive(Clone, Copy)]
+struct TrickMaster {
+    lead_suit: u8,
+    /// Trump strength of the best trump played so far, if any.
+    best_trump: Option<u8>,
+    /// Plain rank of the best lead-suit card so far.
+    best_plain: u8,
+}
+
+impl TrickMaster {
+    fn of(state: &GameState, trump: u8) -> TrickMaster {
+        let lead_seat = state.trick_lead as usize;
+        let lead_card = state.current_trick[lead_seat];
+        let lead_suit = card_suit_u8(lead_card);
+        let mut m = TrickMaster {
+            lead_suit,
+            best_trump: None,
+            best_plain: card_rank(lead_card),
+        };
+        if lead_suit == trump {
+            m.best_trump = Some(TRUMP_STRENGTH[card_rank(lead_card) as usize]);
+        }
+        for i in 1..state.trick_count as usize {
+            let c = state.current_trick[(lead_seat + i) % 4];
+            let s = card_suit_u8(c);
+            if s == trump {
+                let st = TRUMP_STRENGTH[card_rank(c) as usize];
+                if m.best_trump.is_none_or(|b| st > b) {
+                    m.best_trump = Some(st);
+                }
+            } else if s == lead_suit && card_rank(c) > m.best_plain {
+                m.best_plain = card_rank(c);
+            }
+        }
+        m
+    }
+
+    /// Would playing `card` take the trick as it stands?
+    fn taken_by(&self, card: u8, trump: u8) -> bool {
+        let suit = card_suit_u8(card);
+        if suit == trump {
+            let st = TRUMP_STRENGTH[card_rank(card) as usize];
+            self.best_trump.is_none_or(|b| st > b)
+        } else if suit == self.lead_suit {
+            self.best_trump.is_none() && card_rank(card) > self.best_plain
+        } else {
+            false
+        }
+    }
+}
+
+/// Which move-ordering variant is live. Always 0 (today's) unless the ablation switches are
+/// compiled in and `COLVER_DD_ORDER` names another — so with the feature off, every branch
+/// below folds away and the generated code is unchanged.
+#[inline(always)]
+fn order_variant() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().order_variant;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    0
+}
+
+/// Ordering variants under test. The confusion table says ~70 % of ordering failures are
+/// *within* a move category — the right card and the tried card do the same kind of thing —
+/// so these discriminate inside a category rather than between categories.
+///
+/// - `v1`: the current `can_win` is a coarse "is trump or follows suit" that never looks at
+///   what is already on the table, so a 7 of the lead suit under an ace, and an undertrump,
+///   both rank as winners. This tests the real predicate.
+/// - `v2`: within the lead suit, order by rank (the true beating order) rather than by card
+///   points, which collapse 9/8/7 into a tie.
+/// - `v3`: discards — the single biggest failure cell, 27 % early and 50 % late — shed from
+///   the **shortest** side suit first, which is the one a void is cheapest to create in.
+/// - `v4`: all three.
+fn move_order_score_v(
+    state: &GameState,
+    card: u8,
+    trump: u8,
+    ct: ContractType,
+    master: Option<&TrickMaster>,
+    variant: u8,
+) -> i16 {
+    let suit = card_suit_u8(card);
+    let is_trump = suit == trump;
+    let rank = card_rank(card);
+    let pts = card_points(card, ct) as i16;
+
+    if state.trick_count == 0 {
+        return if is_trump {
+            100 + TRUMP_STRENGTH[rank as usize] as i16
+        } else {
+            pts
+        };
+    }
+
+    let m = master.expect("mid-trick scoring needs the master");
+    let takes = m.taken_by(card, trump);
+    let follows = suit == m.lead_suit;
+    let want_beats = matches!(variant, 1 | 4);
+    let want_rank = matches!(variant, 2 | 4);
+    let want_shed = matches!(variant, 3 | 4);
+
+    if want_beats {
+        if takes {
+            return 100 + pts;
+        }
+        if follows {
+            return 50 + if want_rank { rank as i16 } else { pts };
+        }
+        if is_trump {
+            return 10 - pts; // cannot win: an undertrump is a discard that costs trump
+        }
+    } else if is_trump || follows {
+        let within = if want_rank && follows { rank as i16 } else { pts };
+        return 50 + within;
+    }
+
+    // A discard.
+    if want_shed {
+        // Shortest side suit first, cheapest card within it. `hands` is indexed by seat.
+        let hand = state.hands[state.current_player as usize];
+        let len = (hand & SUIT_MASK[suit as usize]).count_ones() as i16;
+        return -8 * len - pts;
+    }
+    -pts
 }
 
 fn move_order_score(state: &GameState, card: u8, trump: u8, ct: ContractType) -> i16 {
