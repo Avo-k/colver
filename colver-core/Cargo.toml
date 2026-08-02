@@ -55,6 +55,11 @@ path = "src/bin/bench_playgen_gpu.rs"
 required-features = ["dmc_train"]
 
 [[bin]]
+name = "bench_playgen_batch"
+path = "src/bin/bench_playgen_batch.rs"
+required-features = ["gpu_server"]
+
+[[bin]]
 name = "playgen_gpu_server"
 path = "src/bin/playgen_gpu_server.rs"
 required-features = ["gpu_server"]

@@ -20,11 +20,25 @@ use crate::suit_perm::permute_mask;
 
 use super::infer::{
     bid_token, masked_logp, sample_bid_masked, sample_masked, AuctionLogp, GenState,
-    PlaygenModel, PlaygenSampler, Tok, WorldLogp,
+    PlayGenSpec, PlaygenModel, PlaygenSampler, Tok, WorldLogp,
 };
 use super::tokens::{
     MAX_BID_ENTRIES_V2, NUM_BID_ACTIONS, P_ACT0, P_RANK0, SEG_BID, SEG_PLAY, S_NULL,
 };
+
+/// One position in a [`GpuPlaygen::generate_worlds_multi`] batch.
+///
+/// Holds borrows rather than owned state so the caller — typically an HTTP
+/// handler that has just replayed the deal — hands over what it already has.
+pub struct WorldBatchItem<'a> {
+    pub sampler: &'a PlaygenSampler,
+    pub state: &'a GameState,
+    pub n_worlds: usize,
+    /// Per item, deliberately: a batch mixes unrelated callers, and letting one
+    /// of them set the sampling temperature for the others would silently
+    /// change a distribution the caller never asked to change.
+    pub temperature: f32,
+}
 
 struct GpuBlock {
     attn_norm: Tensor, // [d]
@@ -260,6 +274,305 @@ impl GpuPlaygen {
             )?;
         }
         Ok(worlds)
+    }
+
+    /// Sample worlds for **several unrelated positions in one GPU batch**.
+    ///
+    /// ## Why this exists
+    ///
+    /// A `/play_worlds` call costs ~220 ms whether it returns 1 world or 256:
+    /// the whole cost is the sequential token loop (prefill + 2 steps per card),
+    /// and each step is kernel-launch bound, not FLOP bound. So a caller like
+    /// IS-DD — which wants 20 worlds per decision, from a different position
+    /// every time — runs the GPU at ~8% of its achievable throughput, and no
+    /// amount of client concurrency fixes that against a serial server.
+    ///
+    /// Batching *within* one position is what [`generate_worlds_scored`] already
+    /// does. This batches *across* positions, which is the axis that was missing.
+    ///
+    /// ## How the positions share a batch despite differing
+    ///
+    /// Two things differ per position: the prefix length, and the number of
+    /// cards left to generate. Both are handled the way [`auction_round`]
+    /// already handles desynchronized auction lanes — "lockstep paddé":
+    ///
+    /// - **Prefill** runs `max(prefix_len)` steps at batch K, with each lane's
+    ///   prefix **right-aligned** so every lane finishes its prefix on the same
+    ///   step. Padding steps emit a dummy token whose KV entry is then excluded
+    ///   from all future attention by the additive mask. The *logical* position
+    ///   fed to the position embedding is the token's index within its own
+    ///   sequence, which is why `embed` takes per-lane `pos_ids`.
+    /// - **Decode** runs `max(steps)` rounds over `sum(n_worlds)` lanes. A lane
+    ///   that has finished its own position stops being active and is masked out
+    ///   exactly like a dead one, but is *kept* in the result.
+    ///
+    /// Between the two phases the K prefix lanes are fanned out to
+    /// `sum(n_worlds)` decode lanes with an `index_select` on the batch axis —
+    /// the multi-position analogue of the `expand` the single-position path does.
+    ///
+    /// ## Equivalence
+    ///
+    /// With one item this is bit-identical to [`generate_worlds_scored`] for the
+    /// same seed: K=1 means no padding, so the prefill is the same B=1 loop, and
+    /// the per-lane sampling order is unchanged. `gpu_multi_matches_single`
+    /// pins that.
+    ///
+    /// Returns one vector per item, in input order. An item whose position
+    /// cannot generate (no perm, dead sampler, not in play phase) yields an
+    /// empty vector rather than an error — same contract as the single path.
+    pub fn generate_worlds_multi(
+        &self,
+        items: &[WorldBatchItem],
+        rng: &mut impl Rng,
+    ) -> Result<Vec<Vec<([u32; 4], WorldLogp)>>> {
+        let mut out: Vec<Vec<([u32; 4], WorldLogp)>> = vec![Vec::new(); items.len()];
+
+        // ---- Keep only the items that can actually generate ----
+        struct Active<'a> {
+            item: usize,
+            spec: PlayGenSpec,
+            prefix: Vec<Tok>,
+            n: usize,
+            state: &'a GameState,
+            temperature: f32,
+        }
+        let mut act: Vec<Active> = Vec::with_capacity(items.len());
+        for (i, it) in items.iter().enumerate() {
+            if it.n_worlds == 0 || it.state.phase != Phase::Playing {
+                continue;
+            }
+            if let Some(spec) = it.sampler.play_gen_spec(it.state) {
+                act.push(Active {
+                    item: i,
+                    spec,
+                    prefix: it.sampler.prefix_tokens(),
+                    n: it.n_worlds,
+                    state: it.state,
+                    temperature: it.temperature,
+                });
+            }
+        }
+        if act.is_empty() {
+            return Ok(out);
+        }
+
+        let k_lanes = act.len();
+        let dummy = Tok { primary: P_ACT0, suit: S_NULL, actor: 0, segment: SEG_PLAY };
+        let neg = -1e9f32;
+
+        // ══ Phase 1 — batched prefill, prefixes right-aligned ══
+        let plen: Vec<usize> = act.iter().map(|a| a.prefix.len()).collect();
+        let lmax = *plen.iter().max().expect("act non-empty");
+        let pad: Vec<usize> = plen.iter().map(|&l| lmax - l).collect();
+
+        let mut caches: Vec<Option<(Tensor, Tensor)>> = vec![None; self.blocks.len()];
+        let mut pre_mask: Option<Tensor> = None;
+        let mut toks = vec![dummy; k_lanes];
+        let mut pos_ids = vec![0u32; k_lanes];
+        let mut col = vec![0f32; k_lanes];
+
+        for t in 0..lmax {
+            for j in 0..k_lanes {
+                let real = t >= pad[j];
+                if real {
+                    let idx = t - pad[j];
+                    toks[j] = act[j].prefix[idx];
+                    pos_ids[j] = idx as u32;
+                } else {
+                    toks[j] = dummy;
+                    pos_ids[j] = 0;
+                }
+                col[j] = if real { 0.0 } else { neg };
+            }
+            let x = self.embed(&toks, &pos_ids)?;
+            self.forward_step(&x, &mut caches, pre_mask.as_ref())?;
+            let col_t = Tensor::from_slice(&col, (k_lanes, 1, 1, 1), &self.device)?;
+            pre_mask = Some(match pre_mask {
+                Some(m) => Tensor::cat(&[&m, &col_t], 3)?,
+                None => col_t,
+            });
+        }
+
+        // ══ Phase 2 — fan K prefix lanes out to sum(n) decode lanes ══
+        let mut lane_of: Vec<u32> = Vec::new();
+        for (j, a) in act.iter().enumerate() {
+            lane_of.extend(std::iter::repeat(j as u32).take(a.n));
+        }
+        let m_lanes = lane_of.len();
+        let sel = Tensor::from_slice(&lane_of, m_lanes, &self.device)?;
+
+        for c in caches.iter_mut() {
+            if let Some((k, v)) = c.take() {
+                *c = Some((
+                    k.index_select(&sel, 0)?.contiguous()?,
+                    v.index_select(&sel, 0)?.contiguous()?,
+                ));
+            }
+        }
+        let mut mask = pre_mask
+            .expect("lmax >= 1: every play prefix has at least a header")
+            .index_select(&sel, 0)?
+            .contiguous()?;
+
+        // ══ Phase 3 — decode ══
+        let mut gens: Vec<GenState> = Vec::with_capacity(m_lanes);
+        let mut obs_remaining: Vec<u32> = Vec::with_capacity(m_lanes);
+        let mut pos: Vec<u32> = Vec::with_capacity(m_lanes);
+        for &j in &lane_of {
+            let a = &act[j as usize];
+            gens.push(a.spec.base.clone());
+            obs_remaining.push(a.spec.observer_hand_now);
+            pos.push(plen[j as usize] as u32);
+        }
+        let mut assigned = vec![[0u32; 4]; m_lanes];
+        let mut alive = vec![true; m_lanes];
+        let mut logps = vec![WorldLogp::default(); m_lanes];
+        let mut act_toks = vec![dummy; m_lanes];
+        let mut card_toks = vec![dummy; m_lanes];
+        let mut mpos = vec![0u32; m_lanes];
+        let mut mcol = vec![0f32; m_lanes];
+
+        let steps_max = act.iter().map(|a| a.spec.steps).max().expect("act non-empty");
+
+        // A lane is *active* while it is alive and has not yet reached its own
+        // position's step count. Finished lanes are masked out like dead ones
+        // but are still harvested at the end.
+        let active_at = |step_i: usize, m: usize, alive: &[bool], lane_of: &[u32], act: &[Active]| {
+            alive[m] && step_i < act[lane_of[m] as usize].spec.steps
+        };
+
+        for step_i in 0..steps_max {
+            // --- ACT query token ---
+            for m in 0..m_lanes {
+                let on = active_at(step_i, m, &alive, &lane_of, &act);
+                if on {
+                    let a = &act[lane_of[m] as usize];
+                    let r = (gens[m].current + 4 - a.spec.observer) % 4;
+                    act_toks[m] =
+                        Tok { primary: P_ACT0 + r, suit: S_NULL, actor: r, segment: SEG_PLAY };
+                    mpos[m] = pos[m];
+                } else {
+                    act_toks[m] = dummy;
+                    mpos[m] = 0;
+                }
+                mcol[m] = if on { 0.0 } else { neg };
+            }
+            let x = self.embed(&act_toks, &mpos)?;
+            let hidden = self.forward_step(&x, &mut caches, Some(&mask))?;
+            let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
+            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+            let card_lg = self.card_logits(&hidden)?;
+
+            // --- sample one card per active lane ---
+            for m in 0..m_lanes {
+                if !active_at(step_i, m, &alive, &lane_of, &act) {
+                    card_toks[m] = act_toks[m];
+                    continue;
+                }
+                let a = &act[lane_of[m] as usize];
+                let observer = a.spec.observer;
+                let actor = gens[m].current;
+                let r = (actor + 4 - observer) % 4;
+
+                let mask_phys = if actor == observer {
+                    gens[m].legal_for_hand(obs_remaining[m], actor)
+                } else {
+                    let unseen =
+                        card::ALL_CARDS & !a.spec.observer_initial_hand & !gens[m].played;
+                    let mut mm = 0u32;
+                    for c in 0..32u8 {
+                        let bit = 1u32 << c;
+                        if unseen & bit == 0 {
+                            continue;
+                        }
+                        let suit = c / 8;
+                        if gens[m].voids[actor as usize] & (1 << suit) != 0 {
+                            continue;
+                        }
+                        if suit == gens[m].contract.trump
+                            && gens[m].ceiling[actor as usize] & (1 << (c % 8)) != 0
+                        {
+                            continue;
+                        }
+                        mm |= bit;
+                    }
+                    mm
+                };
+                if mask_phys == 0 || gens[m].remaining[actor as usize] == 0 {
+                    alive[m] = false;
+                    card_toks[m] = act_toks[m];
+                    continue;
+                }
+
+                let mask_canon = permute_mask(mask_phys, &a.spec.perm);
+                let mut logits = [0.0f32; 32];
+                logits.copy_from_slice(&card_lg[m]);
+                let canon_card = sample_masked(&logits, mask_canon, a.temperature, rng);
+                if actor != observer {
+                    let lp = masked_logp(&logits, mask_canon as u64, canon_card);
+                    logps[m].sum += lp;
+                    logps[m].n += 1;
+                    if step_i * 2 < a.spec.steps {
+                        logps[m].half_sum += lp;
+                        logps[m].half_n += 1;
+                    }
+                }
+                let phys_card = {
+                    let cs = canon_card / 8;
+                    let rank = canon_card % 8;
+                    let mut ps = 0u8;
+                    for s in 0..4u8 {
+                        if a.spec.perm[s as usize] == cs {
+                            ps = s;
+                            break;
+                        }
+                    }
+                    ps * 8 + rank
+                };
+                card_toks[m] = Tok {
+                    primary: P_RANK0 + canon_card % 8,
+                    suit: canon_card / 8,
+                    actor: r,
+                    segment: SEG_PLAY,
+                };
+                assigned[m][actor as usize] |= 1u32 << phys_card;
+                if actor == observer {
+                    obs_remaining[m] &= !(1u32 << phys_card);
+                }
+                gens[m].step(actor, phys_card);
+            }
+
+            // --- card token ---
+            for m in 0..m_lanes {
+                let on = active_at(step_i, m, &alive, &lane_of, &act);
+                if on {
+                    mpos[m] = pos[m] + 1;
+                    pos[m] += 2;
+                } else {
+                    mpos[m] = 0;
+                }
+                mcol[m] = if on { 0.0 } else { neg };
+            }
+            let x = self.embed(&card_toks, &mpos)?;
+            self.forward_step(&x, &mut caches, Some(&mask))?;
+            let col_t = Tensor::from_slice(&mcol, (m_lanes, 1, 1, 1), &self.device)?;
+            mask = Tensor::cat(&[&mask, &col_t], 3)?;
+        }
+
+        // ══ Phase 4 — harvest, per item ══
+        for m in 0..m_lanes {
+            if !alive[m] {
+                continue;
+            }
+            let a = &act[lane_of[m] as usize];
+            let mut hands = assigned[m];
+            hands[a.spec.observer as usize] = a.spec.observer_hand_now;
+            if (0..4).any(|p| card::card_count(hands[p]) != card::card_count(a.state.hands[p])) {
+                continue;
+            }
+            out[a.item].push((hands, logps[m]));
+        }
+        Ok(out)
     }
 
     /// Sample worlds from a mid-play position — GPU equivalent of
