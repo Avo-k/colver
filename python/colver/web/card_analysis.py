@@ -283,8 +283,9 @@ def world_job(dealer, actions, upto, played, world, candidates, team,
               play_model=None, want_real=False):
     """Solve one world, and optionally play each candidate out in it.
 
-    Runs in a worker thread: both the solver and the DMC forward pass release
-    the GIL, so these genuinely overlap. Every parameter is positional —
+    Runs in a worker thread: `solve_scores` (since 2026-08-02) and the DMC forward
+    pass both release the GIL, so these genuinely overlap. Do not assume it of every
+    solver binding — check the PyO3 wrapper before offloading a new one. Every parameter is positional —
     `run_in_executor` cannot pass keywords.
     """
     hands = [sorted(list(played[s]) + [int(c) for c in world[s]]) for s in range(4)]

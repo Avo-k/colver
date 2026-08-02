@@ -62,7 +62,7 @@ fn main() {
         let checksum: u64 = hands
             .par_iter()
             .map(|h| {
-                let mut tt = vec![0u64; n_entries];
+                let mut tt = colver_core::solver::TtBuf::with_log2_size(n_entries.trailing_zeros());
                 let mut acc = 0u64;
                 for suit in 0..4u8 {
                     acc += solve_for_trump_reuse_tt(*h, 0, suit, &mut tt)[0] as u64;

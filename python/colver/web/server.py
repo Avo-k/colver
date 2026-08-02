@@ -660,8 +660,9 @@ async def api_bug_report(game_id: str, request: Request):
 
 # ===== Annonces simulation tasks (cancellable) =====
 
-# Dedicated pool for oracle DD solves — solve_all_suits releases the GIL, so
-# these actually run in parallel (one solve ≈ 300ms; 8 workers ≈ 8× wall-clock).
+# Dedicated pool for oracle DD solves — `solve_all_suits` and `solve_scores` release the
+# GIL, so these actually run in parallel (four suits ≈ 70 ms on a median deal, up to
+# ~300 ms on the tail: the worst 10 % of solves carry 40 % of the nodes; 8 workers ≈ 8×).
 import concurrent.futures as _cf
 import threading as _threading
 

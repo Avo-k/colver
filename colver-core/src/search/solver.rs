@@ -26,17 +26,83 @@ const TT_SIZE: usize = 1 << 18; // 256K entries = 2MB (L2 cache friendly)
 /// bits 39-24: future_score as u16 (16 bits)
 /// bits 23-21: flag (3 bits)
 /// bits 20-16: best_move card index (5 bits)
-/// bits 15-1:  unused
-/// bit 0:      occupied sentinel
+/// bits 15-1:  epoch (15 bits) — see [`TtBuf`]
+/// bit 0:      unused
+const EPOCH_MASK: u64 = 0xFFFE; // bits 15-1
+const EPOCH_MAX: u32 = 0x7FFF; // 32767 solves between clears
+
+/// Transposition table for the DD solver.
+///
+/// The table is only valid for **one** (deal, trump) pair: [`position_hash`] keys on the cards
+/// played and the trick in progress, and derives the hands from them — which only works while
+/// the initial deal is fixed. It also does not key on trump. So the table has to be invalidated
+/// between solves, and it used to be `memset` to zero on every entry point.
+///
+/// That memset costs a flat **28.8 µs** on this 2 MB table, which is nothing next to a 46 ms
+/// full-deal solve and *everything* next to an endgame: measured on the benchmark corpus, a
+/// position with 8 cards left searches 89 nodes and took 32.9 µs — 88 % of it was the memset.
+/// Those are exactly the positions IS-DD and `/analyse/jeu` spend their time on.
+///
+/// So instead of clearing, each solve bumps a 15-bit epoch stamped into every entry, and a probe
+/// rejects any entry not stamped with the current one. The clear happens once per 32767 solves,
+/// when the epoch wraps.
+pub struct TtBuf {
+    entries: Vec<u64>,
+    epoch: u32,
+    /// Emulate the pre-epoch behaviour (memset every solve). Benchmarks only — it lets one
+    /// process A/B the two schemes **interleaved**, which is the only way to compare them on
+    /// a machine that is also running something else. Never set in production code.
+    legacy_clear: bool,
+}
+
+impl TtBuf {
+    /// A table of `1 << log2_entries` slots. 8 bytes each.
+    pub fn with_log2_size(log2_entries: u32) -> TtBuf {
+        TtBuf { entries: vec![0u64; 1usize << log2_entries], epoch: 0, legacy_clear: false }
+    }
+
+    /// Benchmark-only: go back to clearing the whole table on every solve. See `legacy_clear`.
+    pub fn set_legacy_clear(&mut self, on: bool) {
+        self.legacy_clear = on;
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Invalidate everything and hand back the raw table plus this solve's stamp.
+    ///
+    /// Returning the slice rather than keeping `&mut TtBuf` in the recursion is not
+    /// cosmetic: with the table behind a struct field the hot path re-loads the `Vec`'s
+    /// pointer at every probe and every store, which measured **-16 % nodes/s** on the
+    /// benchmark corpus — more than the memset this whole scheme removes.
+    ///
+    /// O(1) except once every 32767 calls, when the epoch wraps and the table is cleared.
+    #[inline]
+    fn begin_solve(&mut self) -> (&mut [u64], u64) {
+        if self.legacy_clear || self.epoch >= EPOCH_MAX {
+            self.entries.iter_mut().for_each(|x| *x = 0);
+            self.epoch = 1;
+        } else {
+            self.epoch += 1;
+        }
+        ((&mut self.entries) as &mut [u64], (self.epoch as u64) << 1)
+    }
+}
 
 /// Solve a playing-phase state: returns [team0_points, team1_points] with perfect play.
 pub fn solve(state: &GameState) -> [u8; 2] {
     debug_assert_eq!(state.phase, Phase::Playing);
 
-    let mut tt = vec![0u64; TT_SIZE];
+    let mut tt = new_tt_buffer();
+    let (entries, stamp) = tt.begin_solve();
     let mut history = [[0u32; 32]; 2]; // [team][card] — cutoff history
     let mut killers = [[EMPTY; 2]; 32]; // [ply][0..2] — killer moves per ply
-    let ns_pts = alphabeta(state, 0, 252, &mut tt, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -48,16 +114,15 @@ pub fn solve(state: &GameState) -> [u8; 2] {
 }
 
 /// Solve a playing-phase state using an external TT buffer (avoids repeated 2MB allocations).
-/// The TT is cleared at the start of each call. History and killers are stack-allocated.
-pub fn solve_reuse_tt(state: &GameState, tt_buf: &mut [u64]) -> [u8; 2] {
+/// The TT is invalidated at the start of each call. History and killers are stack-allocated.
+pub fn solve_reuse_tt(state: &GameState, tt_buf: &mut TtBuf) -> [u8; 2] {
     debug_assert_eq!(state.phase, Phase::Playing);
 
-    // Clear TT for this solve
-    tt_buf.iter_mut().for_each(|x| *x = 0);
+    let (entries, stamp) = tt_buf.begin_solve();
 
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    let ns_pts = alphabeta(state, 0, 252, tt_buf, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -83,15 +148,15 @@ pub fn solve_for_trump(hands: [CardSet; 4], dealer: u8, trump: u8) -> [u8; 2] {
 /// one hand — where a good guess is available from the worlds already solved.
 pub fn solve_windowed_reuse_tt(
     state: &GameState,
-    tt_buf: &mut [u64],
+    tt_buf: &mut TtBuf,
     alpha: i16,
     beta: i16,
 ) -> i16 {
     debug_assert_eq!(state.phase, Phase::Playing);
-    tt_buf.iter_mut().for_each(|x| *x = 0);
+    let (entries, stamp) = tt_buf.begin_solve();
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    alphabeta(state, alpha, beta, tt_buf, &mut history, &mut killers)
+    alphabeta(state, alpha, beta, entries, stamp, &mut history, &mut killers)
 }
 
 /// Windowed solve from a full deal + trump. See [`solve_windowed_reuse_tt`].
@@ -99,7 +164,7 @@ pub fn solve_for_trump_windowed(
     hands: [CardSet; 4],
     dealer: u8,
     trump: u8,
-    tt_buf: &mut [u64],
+    tt_buf: &mut TtBuf,
     alpha: i16,
     beta: i16,
 ) -> i16 {
@@ -112,16 +177,15 @@ pub fn solve_for_trump_reuse_tt(
     hands: [CardSet; 4],
     dealer: u8,
     trump: u8,
-    tt_buf: &mut [u64],
+    tt_buf: &mut TtBuf,
 ) -> [u8; 2] {
     let state = GameState::setup_dd(dealer, hands, trump);
     solve_reuse_tt(&state, tt_buf)
 }
 
-/// Allocate a fresh TT buffer for reuse across multiple `solve_with_scores` calls.
-/// Returns a 2MB Vec suitable for passing to `solve_with_scores`.
-pub fn new_tt_buffer() -> Vec<u64> {
-    vec![0u64; TT_SIZE]
+/// Allocate a fresh TT for reuse across many solves. 2 MB.
+pub fn new_tt_buffer() -> TtBuf {
+    TtBuf::with_log2_size(TT_SIZE.trailing_zeros())
 }
 
 /// Per-card DD scores returned by `solve_with_scores`.
@@ -140,22 +204,22 @@ pub struct SolveScores {
 /// Like `solve_best_card` but collects `(card, ns_score)` for every root move.
 /// An optional external TT buffer can be passed to avoid repeated 2MB allocations
 /// across determinizations. The TT is cleared at the start of each call.
-pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut Vec<u64>>) -> SolveScores {
+pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> SolveScores {
     debug_assert_eq!(state.phase, Phase::Playing);
     debug_assert!(!state.is_terminal());
 
     let mut owned_tt;
-    let tt: &mut Vec<u64> = match tt_buf {
-        Some(buf) => {
-            // Clear TT for this solve (different determinized worlds = different trees)
-            buf.iter_mut().for_each(|x| *x = 0);
-            buf
-        }
+    let tt: &mut TtBuf = match tt_buf {
+        Some(buf) => buf,
         None => {
-            owned_tt = vec![0u64; TT_SIZE];
+            owned_tt = new_tt_buffer();
             &mut owned_tt
         }
     };
+    // Invalidate: a different determinized world is a different tree under the same hashes.
+    // The root moves below deliberately share one table — that sharing is most of why
+    // scoring all 8 root moves costs far less than 8 independent solves.
+    let (entries, stamp) = tt.begin_solve();
 
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
@@ -182,7 +246,7 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut Vec<u64>>) -> So
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, 0, 252, tt, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
         };
 
         result.scores[i] = (card, score);
@@ -206,7 +270,8 @@ pub fn solve_best_card(state: &GameState) -> u8 {
     debug_assert_eq!(state.phase, Phase::Playing);
     debug_assert!(!state.is_terminal());
 
-    let mut tt = vec![0u64; TT_SIZE];
+    let mut tt = new_tt_buffer();
+    let (entries, stamp) = tt.begin_solve();
     let mut history = [[0u32; 32]; 2];
 
     let legal = play::legal_plays(state);
@@ -226,7 +291,7 @@ pub fn solve_best_card(state: &GameState) -> u8 {
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, 0, 252, &mut tt, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
         };
 
         if maximizing {
@@ -243,16 +308,51 @@ pub fn solve_best_card(state: &GameState) -> u8 {
     best_card
 }
 
+// ---- Node counting (feature `solver_stats`) ----
+//
+// Wall-clock on a hybrid P/E-core CPU cannot separate "better pruning" from "landed on
+// a P-core"; node counts can, and they are exact. Zero cost when the feature is off.
+
+#[cfg(feature = "solver_stats")]
+thread_local! {
+    static NODES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+#[inline(always)]
+fn count_node() {
+    #[cfg(feature = "solver_stats")]
+    NODES.with(|c| c.set(c.get() + 1));
+}
+
+/// Alpha-beta nodes visited **by this thread** since the last call, and reset to 0.
+/// Always 0 unless built with the `solver_stats` feature — check [`stats_enabled`]
+/// rather than reporting a silent zero.
+pub fn take_nodes() -> u64 {
+    #[cfg(feature = "solver_stats")]
+    {
+        NODES.with(|c| c.replace(0))
+    }
+    #[cfg(not(feature = "solver_stats"))]
+    {
+        0
+    }
+}
+
+/// Whether node counting is compiled in.
+pub const fn stats_enabled() -> bool {
+    cfg!(feature = "solver_stats")
+}
+
 // ---- Core alpha-beta ----
 
 #[inline(always)]
-fn tt_pack(key: u32, future_score: i16, flag: u8, best_move: u8) -> u64 {
+fn tt_pack(key: u32, future_score: i16, flag: u8, best_move: u8, stamp: u64) -> u64 {
     let k = (key & 0x00FF_FFFF) as u64;
     (k << 40)
         | (((future_score as u16) as u64) << 24)
         | (((flag & 0x7) as u64) << 21)
         | (((best_move & 0x1F) as u64) << 16)
-        | 1
+        | stamp
 }
 
 #[inline(always)]
@@ -269,9 +369,11 @@ fn alphabeta(
     mut alpha: i16,
     mut beta: i16,
     tt: &mut [u64],
+    stamp: u64,
     history: &mut [[u32; 32]; 2],
     killers: &mut [[u8; 2]; 32],
 ) -> i16 {
+    count_node();
     if state.is_terminal() {
         return state.points[0] as i16;
     }
@@ -298,7 +400,7 @@ fn alphabeta(
         return if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, alpha, beta, tt, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
         };
     }
 
@@ -308,10 +410,11 @@ fn alphabeta(
     let tt_idx = (hash as usize) & (tt.len() - 1);
     let tt_key = (hash >> 40) as u32 & 0x00FF_FFFF;
 
-    // TT probe
+    // TT probe. The epoch stamp stands in for the per-solve memset: an entry written for
+    // another (deal, trump) carries another stamp and is invisible here.
     let mut hash_move = EMPTY;
     let packed = tt[tt_idx];
-    if packed != 0 {
+    if packed & EPOCH_MASK == stamp {
         let (stored_key, stored_future, stored_flag, stored_move) = tt_unpack(packed);
         if stored_key == tt_key {
             let stored_abs = stored_future + ns_base;
@@ -361,13 +464,13 @@ fn alphabeta(
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else if i == 0 {
-            alphabeta(&child, alpha, beta, tt, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
         } else {
             // PVS: null window search after first move
             let scout = if maximizing {
-                alphabeta(&child, alpha, alpha + 1, tt, history, killers)
+                alphabeta(&child, alpha, alpha + 1, tt, stamp, history, killers)
             } else {
-                alphabeta(&child, beta - 1, beta, tt, history, killers)
+                alphabeta(&child, beta - 1, beta, tt, stamp, history, killers)
             };
             let needs_research = if maximizing {
                 scout > alpha && scout < orig_beta
@@ -375,7 +478,7 @@ fn alphabeta(
                 scout < beta && scout > orig_alpha
             };
             if needs_research {
-                alphabeta(&child, alpha, beta, tt, history, killers)
+                alphabeta(&child, alpha, beta, tt, stamp, history, killers)
             } else {
                 scout
             }
@@ -421,11 +524,40 @@ fn alphabeta(
         TT_EXACT
     };
 
-    tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move);
+    tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move, stamp);
     best_score
 }
 
 // ---- Card equivalence ----
+//
+// This runs at every interior node, so it is one of the few things that can be worth a
+// table. Both halves collapse, and the collapse is *derived from the point tables*, not
+// guessed — `test_plain_lut_matches_reference` and `test_trump_rule_matches_reference`
+// check the replacements against the original loops over every possible input, so these
+// are proofs by exhaustion rather than samples.
+//
+// PLAIN_POINTS = [0,0,0,2,3,4,10,11]: only the 7, 8 and 9 can ever tie (all worth 0), and
+// only the pair {7,9} can have a card between it (the 8). So the plain reduction is a
+// function of three legal bits plus one outstanding bit — 16 cases.
+//
+// TRUMP_POINTS = [0,0,14,20,3,4,10,11] with TRUMP_STRENGTH = [0,1,6,7,2,3,4,5]: the only
+// tie is {7,8}, whose strengths are 0 and 1 — adjacent, so nothing can ever lie between
+// them and the "is anything outstanding in between" test is vacuously false. The whole
+// trump reduction is therefore: if the trump 7 and trump 8 are both legal, drop the 7.
+
+/// `reduce_plain_equiv` as a lookup. Indexed by `[legal & 0b111][the 8 is outstanding]`,
+/// yielding the low-rank bits to clear.
+const PLAIN_DROP: [[u8; 2]; 8] = [
+    //  8 absent, 8 outstanding
+    [0b000, 0b000], // ---- nothing
+    [0b000, 0b000], // --7  single card
+    [0b000, 0b000], // -8-
+    [0b001, 0b001], // -87  adjacent, always merge: drop the 7
+    [0b000, 0b000], // 9--
+    [0b001, 0b000], // 9-7  merge only when the 8 is gone from the other hands
+    [0b010, 0b010], // 98-  adjacent: drop the 8
+    [0b011, 0b011], // 987  cascades: drop the 7, then the 8
+];
 
 /// Reduce legal moves by removing equivalent cards.
 /// Two cards in the same suit are equivalent if:
@@ -461,8 +593,21 @@ pub fn reduce_equivalent(legal: CardSet, state: &GameState) -> CardSet {
     result
 }
 
-/// Reduce equivalent cards in a plain suit.
+/// Reduce equivalent cards in a plain suit. See [`PLAIN_DROP`] for why this is a lookup.
+#[inline(always)]
 fn reduce_plain_equiv(
+    result: CardSet,
+    legal_bits: u8,
+    outstanding_bits: u8,
+    shift: u8,
+) -> CardSet {
+    let drop = PLAIN_DROP[(legal_bits & 0b111) as usize][((outstanding_bits >> 1) & 1) as usize];
+    result & !((drop as u32) << shift)
+}
+
+/// The original loop, kept as the reference the table is proved against.
+#[cfg(test)]
+fn reduce_plain_equiv_reference(
     mut result: CardSet,
     legal_bits: u8,
     outstanding_bits: u8,
@@ -492,8 +637,29 @@ fn reduce_plain_equiv(
     result
 }
 
-/// Reduce equivalent cards in a trump suit using trump strength ordering.
+/// Reduce equivalent cards in a trump suit.
+///
+/// Two sorts and an O(n·m) scan collapse to one bit test: see the derivation above
+/// [`PLAIN_DROP`]. `_outstanding_bits` is unused because the only mergeable trump pair is
+/// {7, 8}, whose strengths are adjacent — no card can be "in between" them, so what the
+/// other players hold cannot affect the answer.
+#[inline(always)]
 fn reduce_trump_equiv(
+    result: CardSet,
+    legal_bits: u8,
+    _outstanding_bits: u8,
+    shift: u8,
+) -> CardSet {
+    if legal_bits & 0b11 == 0b11 {
+        result & !(1u32 << shift) // both the 7 and the 8 are legal: the 7 is redundant
+    } else {
+        result
+    }
+}
+
+/// The original loop, kept as the reference the rule above is proved against.
+#[cfg(test)]
+fn reduce_trump_equiv_reference(
     mut result: CardSet,
     legal_bits: u8,
     outstanding_bits: u8,
@@ -778,6 +944,79 @@ mod tests {
         assert_eq!(reduced.count_ones(), 2);
     }
 
+    /// The plain-suit table must agree with the loop it replaced on **every** input:
+    /// 256 legal masks × 256 outstanding masks × 4 suit shifts. Exhaustive, so this is a
+    /// proof rather than a sample — which matters because a wrong reduction removes a card
+    /// from the search and silently returns a non-exact DD value, the `quick_tricks` failure
+    /// mode, and no existing test could see it (both sides of
+    /// `test_root_scores_match_independent_solve` reduce identically).
+    #[test]
+    fn test_plain_lut_matches_reference() {
+        for &shift in &SUIT_SHIFT {
+            for legal in 0u16..256 {
+                for outstanding in 0u16..256 {
+                    let base = (legal as u32) << shift;
+                    let got = reduce_plain_equiv(base, legal as u8, outstanding as u8, shift);
+                    let want =
+                        reduce_plain_equiv_reference(base, legal as u8, outstanding as u8, shift);
+                    assert_eq!(
+                        got, want,
+                        "plain shift={shift} legal={legal:08b} outstanding={outstanding:08b}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Same, for the trump rule. Note the replacement ignores `outstanding` entirely; this
+    /// is what shows that is sound.
+    #[test]
+    fn test_trump_rule_matches_reference() {
+        for &shift in &SUIT_SHIFT {
+            for legal in 0u16..256 {
+                for outstanding in 0u16..256 {
+                    let base = (legal as u32) << shift;
+                    let got = reduce_trump_equiv(base, legal as u8, outstanding as u8, shift);
+                    let want =
+                        reduce_trump_equiv_reference(base, legal as u8, outstanding as u8, shift);
+                    assert_eq!(
+                        got, want,
+                        "trump shift={shift} legal={legal:08b} outstanding={outstanding:08b}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The tables above are only valid while the point tables have the shape they were
+    /// derived from. If a rule change re-values a card, this fails and the derivation must
+    /// be redone rather than the table patched.
+    #[test]
+    fn test_equivalence_derivation_assumptions_still_hold() {
+        // Plain: exactly ranks 0,1,2 (7,8,9) tie, all others are unique.
+        assert_eq!(PLAIN_POINTS, [0, 0, 0, 2, 3, 4, 10, 11]);
+        for a in 0..8usize {
+            for b in (a + 1)..8usize {
+                if PLAIN_POINTS[a] == PLAIN_POINTS[b] {
+                    assert!(a < 3 && b < 3, "new plain tie ({a},{b}) — redo PLAIN_DROP");
+                }
+            }
+        }
+        // Trump: the only tie is {0,1} (7,8) and their strengths are adjacent.
+        assert_eq!(TRUMP_POINTS, [0, 0, 14, 20, 3, 4, 10, 11]);
+        for a in 0..8usize {
+            for b in (a + 1)..8usize {
+                if TRUMP_POINTS[a] == TRUMP_POINTS[b] {
+                    assert_eq!((a, b), (0, 1), "new trump tie ({a},{b}) — redo the trump rule");
+                    let (sa, sb) = (TRUMP_STRENGTH[a], TRUMP_STRENGTH[b]);
+                    let lo = sa.min(sb);
+                    let hi = sa.max(sb);
+                    assert_eq!(hi, lo + 1, "trump tie no longer strength-adjacent");
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_between_bits() {
         assert_eq!(between_bits(0, 1), 0); // adjacent
@@ -859,12 +1098,76 @@ mod tests {
         let flag = TT_EXACT;
         let best_move = 17u8;
 
-        let packed = tt_pack(key, future_score, flag, best_move);
+        let stamp = 1234u64 << 1;
+
+        let packed = tt_pack(key, future_score, flag, best_move, stamp);
         let (k, fs, f, bm) = tt_unpack(packed);
         assert_eq!(k, key & 0x00FF_FFFF);
         assert_eq!(fs, future_score);
         assert_eq!(f, flag);
         assert_eq!(bm, best_move);
+        // The epoch must survive packing untouched — it is what stands in for the memset.
+        assert_eq!(packed & EPOCH_MASK, stamp);
+    }
+
+    /// A negative score must not bleed into the epoch field. `future_score` is stored as a
+    /// `u16` two's-complement in bits 39-24, so a sign-extension slip would flood bits 15-1
+    /// and make stale entries look current.
+    #[test]
+    fn test_tt_pack_negative_score_leaves_epoch_intact() {
+        for score in [-1i16, -252, i16::MIN, 0, 252, i16::MAX] {
+            for epoch in [1u64, 2, 0x7FFF] {
+                let stamp = epoch << 1;
+                let packed = tt_pack(0x00AB_CDEF, score, TT_LOWER, 31, stamp);
+                assert_eq!(packed & EPOCH_MASK, stamp, "score {score} epoch {epoch}");
+                let (_, fs, f, bm) = tt_unpack(packed);
+                assert_eq!(fs, score);
+                assert_eq!(f, TT_LOWER);
+                assert_eq!(bm, 31);
+            }
+        }
+    }
+
+    /// The epoch replaces a memset, so it must actually invalidate: a table reused for a
+    /// different deal must not serve entries from the previous one.
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_epoch_invalidates_across_deals() {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(77);
+        let mut shared = new_tt_buffer();
+        for _ in 0..40 {
+            let hands = GameState::deal_random(0, &mut rng).hands;
+            for trump in 0..4u8 {
+                let reused = solve_for_trump_reuse_tt(hands, 0, trump, &mut shared);
+                // A pristine table cannot be polluted by anything.
+                let mut fresh = new_tt_buffer();
+                let clean = solve_for_trump_reuse_tt(hands, 0, trump, &mut fresh);
+                assert_eq!(reused, clean, "dirty TT changed the value (trump {trump})");
+            }
+        }
+    }
+
+    /// Wrapping the 15-bit epoch must clear the table, not silently revalidate old entries.
+    #[test]
+    #[cfg(feature = "rand")]
+    fn test_epoch_wrap_is_sound() {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+        let hands = GameState::deal_random(0, &mut rng).hands;
+        let expected = solve_for_trump(hands, 0, 2);
+
+        let mut tt = new_tt_buffer();
+        // Land just below the wrap without paying for 32k real solves.
+        tt.epoch = EPOCH_MAX - 1;
+        let before = solve_for_trump_reuse_tt(hands, 0, 2, &mut tt);
+        assert_eq!(tt.epoch, EPOCH_MAX);
+        let at_wrap = solve_for_trump_reuse_tt(hands, 0, 2, &mut tt);
+        assert_eq!(tt.epoch, 1, "wrap must restart the epoch");
+        let after = solve_for_trump_reuse_tt(hands, 0, 2, &mut tt);
+        assert_eq!(before, expected);
+        assert_eq!(at_wrap, expected);
+        assert_eq!(after, expected);
     }
 
     #[test]

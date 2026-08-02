@@ -23,7 +23,7 @@ for callers that only want the finished blob.
 The result is cached in the `agent_review` table and computed once. Cost is
 dominated by IS-DD — `COLVER_REVIEW_ISDD_MS` per card, minus the forced ones
 and minus early termination, so ~9s per deal at the 500ms default. Every step
-runs in a thread (the Rust search releases the GIL) so the event loop stays
+runs in a thread (the Rust search releases the GIL — true of `Agent.decide`, `solve_scores` and, since 2026-08-02, `action_oracle_dd`) so the event loop stays
 free, and reviews are serialised across games so a burst of replay loads
 cannot pile searches onto the playgen sidecar.
 """

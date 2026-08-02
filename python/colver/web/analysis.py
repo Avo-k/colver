@@ -11,8 +11,10 @@ from that seat's own view (its 43-way bid head, v2 models only), and the
 DD-best contract each team could have declared on the deal (oracle annonce,
 one solve per trump suit).
 
-Results are cached in the `analysis` table; computation runs in a thread
-(pure Rust solver, a few seconds per game).
+Results are cached in the `analysis` table; computation runs in a thread — genuinely so
+only since 2026-08-02, when `Env.solve_scores` started releasing the GIL; before that this
+whole pass blocked the event loop. Cost is dominated by `_oracle_bids` (four full-deal
+solves, ~70 ms); the per-card solves run 34.6 ms at trick 1 down to 1.5 µs at trick 8.
 """
 
 import asyncio

@@ -640,7 +640,7 @@ pub struct BidTrainingEnv {
     /// How to compute reward points.
     reward_mode: RewardMode,
     /// Reusable TT buffer (2MB) to avoid repeated allocation.
-    tt_buf: Vec<u64>,
+    tt_buf: crate::solver::TtBuf,
     /// Buffered transitions for this episode.
     transitions: Vec<BidTransition>,
     /// Score-aware mode: match scores (NS cumulative, EW cumulative).
@@ -695,7 +695,7 @@ impl BidTrainingEnv {
             dd_pts: deal.dd_pts,
             real_pts: deal.real_pts,
             reward_mode,
-            tt_buf: Vec::new(),
+            tt_buf: solver::new_tt_buffer(),
             transitions: Vec::with_capacity(12),
             score_aware: None,
             sa_obs_dim: BID_OBS_DIM_SCORE_AWARE,
@@ -972,7 +972,7 @@ pub fn load_score_points(path: &str) -> std::io::Result<Vec<(i32, i32)>> {
 }
 
 /// DD-solve all 4 trump suits, returning [ns_pts; 4].
-fn solve_all_suits(state: &GameState, tt_buf: &mut [u64]) -> [u8; 4] {
+fn solve_all_suits(state: &GameState, tt_buf: &mut crate::solver::TtBuf) -> [u8; 4] {
     let mut pts = [0u8; 4];
     for suit in 0..4u8 {
         let result = solver::solve_for_trump_reuse_tt(

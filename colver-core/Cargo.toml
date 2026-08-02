@@ -10,6 +10,10 @@ rand = ["dep:rand"]
 parallel = ["dep:rayon", "rand"]
 dmc_train = ["rand", "dep:candle-core", "dep:candle-nn", "dep:clap"]
 gpu_server = ["dmc_train", "dep:tiny_http", "dep:serde", "dep:serde_json"]
+# Count alpha-beta nodes in the DD solver. Off by default: a node is only ~29 ns, so the
+# thread-local increment is not free. On a hybrid P/E-core CPU wall-clock alone cannot
+# separate "better pruning" from "landed on a P-core", so every solver benchmark needs this.
+solver_stats = []
 
 [dependencies]
 rand = { version = "0.8", optional = true }

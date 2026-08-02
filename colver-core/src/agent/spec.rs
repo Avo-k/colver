@@ -465,7 +465,7 @@ impl AgentSpec {
             }
             "heuristic" => Ok(Box::new(HeuristicPlayer)),
             "rule" => Ok(Box::new(RulePlayer)),
-            "oracle_dd" => Ok(Box::new(OraclePlayer)),
+            "oracle_dd" => Ok(Box::new(OraclePlayer::default())),
             "oracle" => Ok(Box::new(OracleMctsPlayer::new(
                 MctsConfig {
                     iterations: self.play.oracle_iters,

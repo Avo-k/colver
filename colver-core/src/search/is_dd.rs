@@ -258,7 +258,7 @@ pub struct IsDdSearch {
     /// search ends, so a later search at another position cannot consume
     /// worlds sampled for the previous one.
     world_queue: Vec<World>,
-    tt_buf: Vec<u64>,
+    tt_buf: crate::solver::TtBuf,
 }
 
 impl IsDdSearch {
@@ -1042,7 +1042,7 @@ fn solve_chunk_size(parallel: bool) -> usize {
 fn solve_worlds(
     worlds: &[GameState],
     parallel: bool,
-    tt_buf: &mut Vec<u64>,
+    tt_buf: &mut crate::solver::TtBuf,
 ) -> Vec<crate::solver::SolveScores> {
     use rayon::prelude::*;
     if parallel {
@@ -1062,7 +1062,7 @@ fn solve_worlds(
 fn solve_worlds(
     worlds: &[GameState],
     _parallel: bool,
-    tt_buf: &mut Vec<u64>,
+    tt_buf: &mut crate::solver::TtBuf,
 ) -> Vec<crate::solver::SolveScores> {
     worlds
         .iter()
