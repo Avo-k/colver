@@ -1,7 +1,7 @@
 // Annonces view — hand builder + bidding NN evaluation
 // Supports local WASM computation (BidNet + Oracle) and server fallback.
 
-import { send, onMessage, offMessage } from '../ws.js';
+import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import { RANKS, SUITS, cardSvgPath, renderHand, renderHandMini, actionName, bidChipHtml, SUIT_DISPLAY_ORDER, cardCode, parseCardToken } from '../shared/cards.js';
 import { suitHtml, createSuitPicker } from '../shared/suits.js';
 import { SEAT_COLOR_VARS } from '../shared/seats.js';
@@ -169,6 +169,45 @@ function currentForced() {
 // Partie d'origine, quand on arrive depuis Rejouer. Conservée telle quelle à
 // travers les réécritures d'URL — cf. syncUrl.
 let backParams = {};
+
+// ── La vraie donne ──
+// Quand on arrive depuis Rejouer, on connaît les quatre mains : le solveur dit
+// exactement ce que cette distribution-là permettait. C'est une ligne de plus
+// dans le Jeu parfait, jamais un ingrédient des mondes échantillonnés — les
+// conditionner sur la donne réelle changerait la question de « cette annonce
+// était-elle bonne ? » en « a-t-elle marché ? », la seule des deux qui
+// n'apprend rien. Absente hors de ce chemin : une main tapée à la main n'a pas
+// de donne derrière elle, c'est le cas nominal de la page.
+let trueWorld = null;        // {pts: [4], best, seat, hand}
+let trueWorldPending = null; // requête à rejouer si le socket n'était pas ouvert
+
+function requestTrueWorld() {
+    if (!backParams.from || backParams.i === null || backParams.i === undefined) return;
+    trueWorldPending = { game_id: backParams.from, action_idx: Number(backParams.i) };
+    send({ type: 'annonces_true_world', ...trueWorldPending });
+}
+
+// `send()` jette en silence tant que le socket n'est pas ouvert : à froid (lien
+// partagé, signet, F5) la requête partirait dans le vide.
+function flushTrueWorld() {
+    if (trueWorldPending) send({ type: 'annonces_true_world', ...trueWorldPending });
+}
+
+function handleTrueWorld(data) {
+    trueWorldPending = null;
+    // Pas de message d'erreur : la ligne est un bonus du chemin « depuis
+    // Rejouer », son absence ne doit rien coûter au reste de la page.
+    trueWorld = data.error ? null : data;
+    renderOracle();
+}
+
+// La ligne ne vaut que pour la donne d'où elle vient : dès que la main à
+// l'écran n'est plus celle du siège analysé, elle décrit une autre donne.
+function trueWorldShown() {
+    if (!trueWorld || annoncesHand.size !== 8) return null;
+    const cur = Array.from(annoncesHand).sort((a, b) => a - b).join(',');
+    return cur === trueWorld.hand.join(',') ? trueWorld : null;
+}
 
 // Keep the URL in sync with the current hand/history, hand as two-char card
 // codes ("7S,KH,...") rather than raw indices.
@@ -602,12 +641,36 @@ function renderOracleStrips(successCounts, completed) {
     return html;
 }
 
+// Plus haut palier tenu par un total de points cartes, ou -1 sous 80.
+function trueWorldLevel(pts) {
+    let idx = -1;
+    for (let t = 0; t < THRESHOLDS.length; t++) {
+        if (pts >= THRESHOLDS[t]) idx = t;
+    }
+    return idx;
+}
+
+// Cellule « vraie donne » : une valeur exacte, donc aucun des codes visuels du
+// tableau échantillonné (Wilson, opacité de confiance, taille variable) — sans
+// quoi n = 1 se lirait comme la mesure la plus sûre de la page.
+function trueWorldCell(tw, suit) {
+    const pts = tw.pts[suit];
+    const lvl = trueWorldLevel(pts);
+    const isBest = pts === Math.max(...tw.pts);
+    return `<td class="ow-cell${isBest ? ' ow-best' : ''}" ` +
+        `title="Sur cette donne, ${pts} points cartes en double-dummy">` +
+        `<span class="ow-pts">${pts}</span>` +
+        `<span class="ow-level">${lvl >= 0 ? THRESHOLD_LABELS[lvl] : '—'}</span></td>`;
+}
+
 // Per-suit synthesis: average/median NS double-dummy points, % of worlds where
 // this suit is NS's best trump, plus compact Sûr/Tendu thresholds (ex-Paliers).
 function renderOracleSynth(synth, successCounts, completed) {
+    const tw = trueWorldShown();
     let html = '<table class="oracle-quant-table"><thead><tr><th></th>' +
         '<th>Points Nord-Sud <span class="oracle-quant-sub">moy. DD</span></th>' +
         '<th>Méd.</th>' +
+        (tw ? '<th class="ow-col">Vraie donne <span class="oracle-quant-sub">pts · contrat</span></th>' : '') +
         '<th>Meilleure couleur <span class="oracle-quant-sub">% mondes</span></th>' +
         '<th class="oracle-mini-col">Sûr <span class="oracle-quant-sub">≥80%</span></th>' +
         '<th class="oracle-mini-col">Tendu <span class="oracle-quant-sub">≥20%</span></th>' +
@@ -620,11 +683,17 @@ function renderOracleSynth(synth, successCounts, completed) {
         const sur = oracleCrossing(pcts, 80);
         const tendu = oracleCrossing(pcts, 20);
         html += `<tr><td>${suitHtml(suit)}</td><td>${avg}</td><td>${med !== null ? med : '—'}</td>` +
+            (tw ? trueWorldCell(tw, suit) : '') +
             `<td>${bestPct} %</td>` +
             `<td class="oracle-mini-col">${sur >= 0 ? THRESHOLD_LABELS[sur] : '—'}</td>` +
             `<td class="oracle-mini-col">${tendu >= 0 ? THRESHOLD_LABELS[tendu] : '—'}</td></tr>`;
     }
     html += '</tbody></table>';
+    if (tw) {
+        html += '<div class="ow-note">Vraie donne : la distribution telle qu’elle ' +
+            'était, résolue en double-dummy — une valeur exacte, sur une seule donne. ' +
+            'Elle dit ce que cette donne-là permettait, pas si l’annonce était bonne.</div>';
+    }
     return html;
 }
 
@@ -1456,6 +1525,10 @@ function markCurrentSaved() {
 }
 
 function loadSavedEntry(entry) {
+    // Une main enregistrée ne porte pas la donne dont elle vient : sa clé est
+    // (main, enchères précédentes). On perd donc la vraie donne au
+    // rechargement, plutôt que de risquer de la rattacher à une autre.
+    trueWorld = null;
     annoncesHand = new Set(entry.hand);
     annoncesHistory = (entry.history || []).slice();
     renderAnnoncesHistory();
@@ -1492,6 +1565,8 @@ export function mount(container) {
     activeTabId = null;
     v6BestAction = null;
     oracleState = null;
+    trueWorld = null;
+    trueWorldPending = null;
 
     initAnnoncesGrid();
     actionSelector = buildBidSelector(document.getElementById('annonces-action-select'));
@@ -1508,6 +1583,7 @@ export function mount(container) {
     // Retour vers la partie d'où l'on vient, quand on arrive depuis Rejouer.
     backParams = { from: params.get('from'), i: params.get('i') };
     renderBackLink('annonces-back', backParams.from, backParams.i);
+    requestTrueWorld();
     if (handParam) {
         annoncesHand = new Set(handParam.split(',').map(parseCardToken).filter(n => n >= 0 && n < 32));
     }
@@ -1577,6 +1653,8 @@ export function mount(container) {
         }
     });
 
+    onOpen(flushTrueWorld);
+    onMessage('annonces_true_world', handleTrueWorld);
     onMessage('bid_eval_result', handleBidEvalResult);
     onMessage('annonces_sim_update', handleSimUpdate);
     onMessage('annonces_sim_done', handleSimDone);
@@ -1585,6 +1663,8 @@ export function mount(container) {
 }
 
 export function unmount() {
+    offOpen(flushTrueWorld);
+    offMessage('annonces_true_world', handleTrueWorld);
     offMessage('bid_eval_result', handleBidEvalResult);
     offMessage('annonces_sim_update', handleSimUpdate);
     offMessage('annonces_sim_done', handleSimDone);
@@ -1599,4 +1679,6 @@ export function unmount() {
     v6BestAction = null;
     backParams = {};
     oracleState = null;
+    trueWorld = null;
+    trueWorldPending = null;
 }

@@ -2200,6 +2200,25 @@ async def _websocket_session(ws: WebSocket):
                 sim_task = asyncio.create_task(
                     _run_annonces_sim(ws, data))
 
+            elif msg_type == "annonces_true_world":
+                # Ce que la vraie donne permettait, quand on arrive depuis
+                # Rejouer. Hors du verrou des simulations : c'est un solve déjà
+                # en cache le plus souvent, et il ne dépend pas de l'annonce
+                # analysée — donc il ne doit pas interrompre le Jeu réel en
+                # cours, ni être interrompu par lui.
+                import colver.web.analysis as analysis
+                try:
+                    tw, err = await analysis.true_world(
+                        (data.get("game_id") or "").strip().lower(),
+                        int(data.get("action_idx", -1)))
+                except (TypeError, ValueError):
+                    tw, err = None, "Requête invalide"
+                except Exception as e:
+                    logger.exception("annonces_true_world : échec")
+                    tw, err = None, str(e)
+                await ws.send_json({"type": "annonces_true_world",
+                                    **({"error": err} if err else tw)})
+
             elif msg_type == "annonces_doudou":
                 await _cancel_sim_task()
                 sim_task = asyncio.create_task(

@@ -61,6 +61,16 @@ def _best_contract(suits, team):
     return {"suit": best_suit, "pts": p, "value": value}
 
 
+def _oracle_bids(env):
+    """DD points per trump suit on the deal as it really was, both teams."""
+    dd = env.solve_all_suits()
+    suits = [[int(ns), int(ew)] for ns, ew in dd["suits"]]
+    return {
+        "suits": suits,
+        "best": [_best_contract(suits, 0), _best_contract(suits, 1)],
+    }
+
+
 def _playgen_analysts(env, model_path):
     """One playgen analyst per seat, or None if the model can't be loaded.
 
@@ -88,12 +98,7 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None):
     # Oracle annonces: DD solve of the full deal, one solve per trump suit
     oracle_bids = None
     try:
-        dd = env.solve_all_suits()
-        suits = [[int(ns), int(ew)] for ns, ew in dd["suits"]]
-        oracle_bids = {
-            "suits": suits,
-            "best": [_best_contract(suits, 0), _best_contract(suits, 1)],
-        }
+        oracle_bids = _oracle_bids(env)
     except Exception:
         pass
 
@@ -214,6 +219,70 @@ def _is_fresh(cached, playgen_model_path):
     if cached is None or cached.get("version") != ANALYSIS_VERSION:
         return False
     return bool(cached.get("playgen")) or not playgen_model_path
+
+
+def _seat_at(game, action_idx):
+    """(phase, seat) at `action_idx` of a stored game, replaying the journal."""
+    env = colver.Env.deal_with_hands(game["dealer"], game["hands"])
+    for entry in game["actions"][:action_idx]:
+        if env.is_terminal():
+            return None, None
+        env.step(int(entry["action"]))
+    if env.is_terminal():
+        return None, None
+    return int(env.phase()), int(env.current_player())
+
+
+async def true_world(game_id, action_idx):
+    """Ce que la donne réelle permettait, du point de vue du siège qui parle.
+
+    Le pendant, pour une annonce, de `card_analysis.true_world` : une valeur
+    **exacte** sur la distribution telle qu'elle était, à ne jamais fusionner
+    avec les mondes échantillonnés de la page annonces. Ces mondes répondent à
+    « cette annonce était-elle bonne ? » ; cette ligne-ci répond à « qu'est-ce
+    que cette donne-là autorisait ? ». Les confondre transformerait la première
+    question en « a-t-elle marché ? ».
+
+    Les points sont rendus du côté de l'équipe du siège analysé — la page
+    l'assied toujours en Sud, donc dans son repère c'est Nord-Sud.
+
+    Le solve est déjà en cache dès que Rejouer a analysé la donne ; sinon il
+    coûte quatre solves (~300 ms) et n'est pas mis en cache : une ligne
+    `analysis` partielle serait relue comme une analyse complète.
+    """
+    game = await db.get_game(game_id)
+    if game is None:
+        return None, "Partie introuvable"
+    if not 0 <= action_idx < len(game["actions"]):
+        return None, "Index hors de la donne"
+
+    phase, seat = _seat_at(game, action_idx)
+    if phase != 0:
+        return None, "Ce coup n'est pas une annonce"
+
+    cached = await db.get_analysis(game_id)
+    bids = cached.get("oracle_bids") if cached else None
+    # Une version antérieure a pu être calculée sous d'autres règles de jeu :
+    # un barème ou un coup légal qui change périme les valeurs DD.
+    if not bids or cached.get("version") != ANALYSIS_VERSION:
+        try:
+            bids = await asyncio.to_thread(
+                lambda: _oracle_bids(
+                    colver.Env.deal_with_hands(game["dealer"], game["hands"])))
+        except Exception as e:  # noqa: BLE001 — la page vit très bien sans
+            return None, f"Solve impossible : {e}"
+
+    team = seat % 2
+    return {
+        "seat": seat,
+        "team": team,
+        "pts": [int(s[team]) for s in bids["suits"]],
+        "best": bids["best"][team],
+        # La main du siège, pour que le client n'affiche cette ligne que tant
+        # que la main à l'écran est bien celle de la donne (cf. les mains
+        # enregistrées, dont la clé ne porte pas la donne d'origine).
+        "hand": sorted(int(c) for c in game["hands"][seat]),
+    }, None
 
 
 async def get_or_compute(game_id, bid_model_path=None, playgen_model_path=None):

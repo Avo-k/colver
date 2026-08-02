@@ -446,62 +446,74 @@ Ce qu'il faudrait :
   de plus (`?ns=&ew=`) pour que la situation reste partageable — c'est le
   principe déjà en place sur ces deux pages.
 
-### 4.2 Le « vrai monde » sur la page annonces
+### 4.2 Le « vrai monde » sur la page annonces — FAIT (2026-08-02) par le chemin Rejouer
 
-`/analyse/jeu` sépare deux questions que la page annonces confond en n'en posant
-qu'une : *le vrai monde* (un solve sur la donne réelle, information parfaite) et
-*les mondes de l'information set* (échantillonnés depuis ce que le siège pouvait
-savoir). Le raisonnement est dans [web_analyse_jeu.md](web_analyse_jeu.md) §2 et
-l'implémentation dans `card_analysis.true_world()` — une fonction à part, une
-colonne à part, **jamais fusionnée** avec les mondes échantillonnés.
+`/analyse/jeu` sépare deux questions que la page annonces confondait en n'en
+posant qu'une : *le vrai monde* (un solve sur la donne réelle, information
+parfaite) et *les mondes de l'information set* (échantillonnés depuis ce que le
+siège pouvait savoir). Le raisonnement est dans
+[web_analyse_jeu.md](web_analyse_jeu.md) §2 et l'implémentation dans
+`card_analysis.true_world()` — une fonction à part, une colonne à part,
+**jamais fusionnée** avec les mondes échantillonnés.
 
-L'annonce mérite le même traitement. Aujourd'hui la page répond « ton 130♥ passe
-dans 68 % des mondes que tu pouvais imaginer » et ne peut pas ajouter « …et
-cette donne-là était dans les 32 % ». C'est pourtant la phrase qui referme la
-boucle avec Rejouer : elle distingue une bonne annonce punie par la donne d'une
+L'annonce méritait le même traitement. La page répondait « ton 130♥ passe dans
+68 % des mondes que tu pouvais imaginer » sans pouvoir ajouter « …et cette
+donne-là était dans les 32 % ». C'est pourtant la phrase qui referme la boucle
+avec Rejouer : elle distingue une bonne annonce punie par la donne d'une
 mauvaise annonce sauvée par elle.
 
-**Ça n'enlève rien.** Le bandeau couleur × palier, la synthèse Oracle et le Jeu
-réel restent tels quels ; c'est une ligne de plus dans la box Jeu parfait.
+**Ce qui est fait.** `analysis.true_world(game_id, action_idx)` rend les points
+DD par couleur, du côté de l'équipe du siège qui parle (la page l'assied
+toujours en Sud, donc dans son repère c'est Nord-Sud), plus sa main pour que le
+client sache à quelle donne la ligne appartient. Le solve est déjà en cache dès
+que Rejouer a analysé la donne (`analysis.oracle_bids`) ; sinon il coûte quatre
+solves (~300 ms) et **n'est pas mis en cache** — une ligne `analysis` partielle
+serait relue comme une analyse complète. Côté client, message WS
+`annonces_true_world` envoyé à l'arrivée quand l'URL porte `from`/`i` (rejoué
+sur `onOpen` : `send()` jette en silence tant que le socket n'est pas ouvert),
+et une colonne « Vraie donne » dans le tableau du Jeu parfait, points + palier
+tenu.
 
-**Et surtout, ça n'entre pas dans le tirage des mondes.** Conditionner le pool
-sur la donne réelle transformerait « cette annonce était-elle bonne ? » en
-« a-t-elle marché ? » — la seule des deux questions qui n'apprend rien. Les
-pourcentages et les teintes de confiance de la page deviendraient du rétroviseur
-sans le dire.
+**Ça n'a rien enlevé** : le bandeau couleur × palier, la synthèse Oracle et le
+Jeu réel sont inchangés. **Et ça n'entre pas dans le tirage des mondes** :
+conditionner le pool sur la donne réelle transformerait « cette annonce
+était-elle bonne ? » en « a-t-elle marché ? » — la seule des deux questions qui
+n'apprend rien. Les pourcentages et les teintes de confiance de la page
+deviendraient du rétroviseur sans le dire.
 
-Conditions d'affichage : **il faut connaître les quatre mains**. Deux entrées,
-et deux seulement —
+Conditions d'affichage : **il faut connaître les quatre mains**. Deux entrées
+possibles, une seule faite —
 
-- on arrive depuis Rejouer (`from=<gameId>`) : rien à calculer, `analysis.py:88`
-  fait déjà `solve_all_suits()` sur la vraie donne et cache `suits` + `best` par
-  équipe dans la table `analysis` ;
+- on arrive depuis Rejouer (`from=<gameId>` + `i`) : **fait** ;
 - on colle un CFN complet 4 sections, comme `/analyse/jeu` (la page annonces ne
-  prend aujourd'hui que `?hand=` + `?history=`, il faut donc lui ajouter cette
-  entrée).
+  prend que `?hand=` + `?history=`, il faudrait donc lui ajouter cette entrée).
+  **Reste à faire** — c'est la seule part non couverte.
 
 Main saisie à la main = pas de vraie donne, pas de ligne. C'est le cas nominal
 de la page, la ligne est donc **conditionnelle par construction**, comme le lien
 « ← Retour à la partie ».
 
-Pièges :
+Pièges, et ce qu'ils ont donné :
 
 - **n = 1, et la page encode la taille d'échantillon dans son rendu** (Wilson,
-  classes `doudou-high/mid/low`, taille de police croissante avec le nombre
-  d'observations). Rien de tout ça ne doit toucher cette ligne : une valeur
-  exacte unique ne doit pas emprunter le langage visuel d'un pourcentage
-  échantillonné, sinon elle se lit comme la cellule la plus sûre du tableau.
+  classes `doudou-high/mid/low`, opacité croissante avec le nombre
+  d'observations). Rien de tout ça ne touche cette colonne : elle se distingue
+  par des filets verticaux. Une valeur exacte unique ne doit pas emprunter le
+  langage visuel d'un pourcentage échantillonné, sinon elle se lit comme la
+  cellule la plus sûre du tableau.
 - **Elle appartient au Jeu parfait, donc à l'état partagé entre onglets**, pas à
   l'onglet courant : comme l'Oracle, elle ne dépend pas de l'annonce analysée.
 - **Échelle** : points cartes DD, dans la box Oracle, sur les mêmes axes couleur
-  × palier. La page a déjà le piège des deux échelles (Oracle en points cartes
-  vs Jeu réel en points de donne marqués) ; ne pas en introduire une troisième
-  présentation.
+  × palier — pas de troisième présentation à côté des deux échelles existantes
+  (Oracle en points cartes vs Jeu réel en points de donne marqués).
 - **Clé de déduplication des mains enregistrées** : elle porte sur (main,
-  enchères précédentes). La même main venue d'une partie et tapée à la main s'y
-  confondraient, l'une portant une vraie donne et l'autre non. Le plus simple
-  est de perdre la vraie donne au rechargement plutôt que d'élargir la clé — à
-  arbitrer avec §4.1, qui veut y ajouter le score de partie.
+  enchères précédentes), donc la même main venue d'une partie et tapée à la main
+  s'y confondraient, l'une portant une vraie donne et l'autre non. Tranché comme
+  prévu : on **perd la vraie donne au rechargement** d'une main enregistrée
+  plutôt que d'élargir la clé. Le rendu vérifie en plus que la main à l'écran est
+  toujours celle du siège analysé — sinon la ligne décrirait une autre donne.
+- **Le cache d'une autre `ANALYSIS_VERSION` n'est pas relu** : un barème ou un
+  coup légal qui change périme les valeurs DD (cf. la règle du 2026-08-01).
 
 ### 4.3 Minuteur sur le coup d'un joueur — seulement quand d'autres humains attendent
 

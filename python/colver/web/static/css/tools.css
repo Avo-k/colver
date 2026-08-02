@@ -361,6 +361,41 @@
     color: #999;
 }
 
+/* Colonne « vraie donne » : une valeur exacte au milieu de moyennes
+   échantillonnées. Elle se distingue par des filets verticaux, pas par une
+   teinte de confiance ni une taille variable — ces codes-là appartiennent aux
+   pourcentages, et une valeur unique ne doit pas les emprunter. */
+.oracle-quant-table th.ow-col,
+.oracle-quant-table td.ow-cell {
+    border-left: 1px solid var(--c-border);
+    border-right: 1px solid var(--c-border);
+    /* Serrée : une colonne de plus au gabarit courant poussait Sûr / Tendu
+       hors du cadre — atteignables au défilement, mais plus visibles. */
+    padding-left: var(--sp-1);
+    padding-right: var(--sp-1);
+}
+/* L'en-tête passe à la ligne (les autres sont en `nowrap`) plutôt que
+   d'écourter les mots : c'est lui, et non le sous-titre, qui fixait la largeur
+   de la colonne. */
+.oracle-quant-table th.ow-col {
+    font-size: var(--fs-2xs);
+    white-space: normal;
+}
+.ow-pts { font-variant-numeric: tabular-nums; }
+.ow-level {
+    display: block;
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-weight: var(--fw-regular);
+}
+.oracle-quant-table td.ow-best .ow-pts { color: var(--c-accent); }
+.ow-note {
+    margin-top: var(--sp-2);
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    line-height: 1.4;
+}
+
 /* Lien « ? » vers la section correspondante du À propos */
 .doc-link {
     display: inline-flex;
