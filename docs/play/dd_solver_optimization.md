@@ -721,16 +721,21 @@ C'est la porte `diff` qui prouve que la distinction a tenu, et elle a tenu à ch
 
 | forme | avant | après | |
 |---|---:|---:|---:|
-| full | 1 448 045 | 1 296 735 | **0,896×** |
-| worlds | 55 862 | 53 990 | **0,966×** |
+| full | 1 448 045 | 1 287 334 | **0,889×** |
+| worlds | 55 862 | 53 609 | **0,960×** |
 | mid | 9 061 | 9 061 | 1,000× |
 | end | 89 | 89 | 1,000× |
-| **ALL** | **566 953** | **509 219** | **0,898×** |
+| **ALL** | **566 953** | **505 542** | **0,892×** |
 
-Au chronomètre, A/B **entrelacé** à 8 threads, minimum sur 8 tours : **0,916×** (référence
-7,17-7,48 s, IID 6,57-6,84 s). Les nœuds comptés **incluent la recherche d'ordonnancement au
-prix fort**, alors qu'un de ses nœuds est moins cher qu'un vrai (pas de sonde TT, pas de
-hachage, pas de tenue de tueurs) : le gain réel est donc au moins celui-là.
+Au chronomètre, A/B **entrelacé** a 8 threads, minimum sur 8 tours : **0,913×** (reference
+6,77-7,07 s, IID 6,18-6,53 s).
+
+Deux details valent la moitie du gain. Le regard rend une valeur pour **chaque** coup de la
+position, pas seulement pour le meilleur ; la premiere version n'en gardait qu'un et jetait le
+reste, alors que classer les huit ne coute qu'un tri (0,895 -> 0,892). Et l'horizon **credite le
+pli en cours** a qui le prend : sans ca un regard de 6 plis s'arrete au milieu d'un pli et note
+pareil la ligne qui vient d'emporter 20 points et celle qui les a donnes (0,919 -> 0,904 a 4
+plis de regard).
 
 ### La garde n'est pas un réglage, c'est la différence entre un gain et un désastre
 
@@ -742,10 +747,35 @@ et supprime toute régression. **C'est le corpus à quatre formes qui a attrapé
 mesure agrégée aurait montré 0,902× et caché un facteur 3,8 sur les positions exactes où
 `/analyse/jeu` et `agent_review` passent leur temps.
 
+### Deux leçons de méthode, tirées du réglage lui-même
+
+**1. Le compte de nœuds cesse d'être un bon substitut du temps dès qu'on change la *nature* des
+nœuds.** Une variante plus profonde et plus large (8/8 avec calendrier décroissant) fait **1,3
+point de moins en nœuds totaux** — surcharge comprise, facturée au prix fort — et pourtant elle
+**égalise au chronomètre** (0,917× contre 0,913×). Un nœud de regard n'est pas interchangeable
+avec un nœud de recherche. La règle du dépôt « les nœuds d'abord » vaut pour comparer deux
+recherches de même nature ; ici il a fallu trancher au chrono.
+
+**2. L'agrégat du corpus aurait choisi les mauvaises constantes.** Il est dominé par les donnes
+complètes (1 158 M nœuds sur 1 202 M), alors que les heures DD réelles du projet sont surtout
+dans les **mondes** (~2 800 core-h pour une couche de scores contre ~180 pour `gen_pool`).
+Optimiser le total désigne 8/8/calendrier et une garde à 28 — deux choix qui **abandonnent tout
+le gain sur les mondes** :
+
+| config | full | worlds | mid | end |
+|---|---:|---:|---:|---:|
+| 8/8/calendrier, garde 28 | 0,869 | **1,000** | 1,00 | 1,00 |
+| 8/8/calendrier, garde 24 | 0,880 | 0,969 | 1,00 | 1,00 |
+| **6/4/plat, garde 24** | 0,889 | **0,960** | 1,00 | 1,00 |
+| 8/8/calendrier, garde 22 | 0,880 | 0,968 | **1,07** | 1,00 |
+
+**Toujours choisir par forme, jamais sur le total** — et la garde à 22, qui semble gagner sur
+les mondes, fait régresser la mi-donne de 7 %, c'est-à-dire le chemin d'analyse du web.
+
 ### Les constantes, et leur plateau
 
-`IID_DEPTH = 6`, `IID_TOP = 4`, `IID_MIN_CARDS = 24`. Chacune est au milieu d'un plateau, pas
-sur une pointe — c'est ce qui les rend sûres :
+`IID_DEPTH = 6`, `IID_TOP = 4`, `IID_MIN_CARDS = 24`, `IID_EVAL = 1`, `IID_SCHED = 0`. Chacune
+est au milieu d'un plateau, pas sur une pointe — c'est ce qui les rend sûres :
 
 | profondeur | 4 | 5 | **6** | 7 | 8 | 9 |
 |---|---:|---:|---:|---:|---:|---:|

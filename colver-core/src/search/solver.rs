@@ -700,6 +700,8 @@ mod ablation {
         pub iid_depth: u8,
         pub iid_top: u8,
         pub iid_min_cards: u8,
+        pub iid_eval: u8,
+        pub iid_sched: u8,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -729,6 +731,14 @@ mod ablation {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(super::IID_MIN_CARDS),
+            iid_eval: std::env::var("COLVER_DD_IID_EVAL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_EVAL),
+            iid_sched: std::env::var("COLVER_DD_IID_SCHED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_SCHED),
         })
     }
 }
@@ -989,6 +999,7 @@ fn alphabeta(
     let ply = (state.tricks_won[0] + state.tricks_won[1]) as usize * 4
         + state.trick_count as usize;
 
+    let mut iid_list: Option<([u8; 8], usize)> = None;
     // Internal iterative deepening. Only near the top, and only when nothing better is on
     // offer: below that the subtree is too small to repay even a very short look. The window
     // counts from the root, so an IS-DD world resolved from mid-deal gets it on the same terms
@@ -1000,9 +1011,21 @@ fn alphabeta(
             && ply.saturating_sub(root_ply as usize) < iid_top as usize
             && 32usize.saturating_sub(ply) >= iid_min_cards as usize
         {
-            let m = shallow_best_move(state, iid_depth);
-            if m != EMPTY && (legal & card_to_bit(m)) != 0 {
-                hash_move = m;
+            // With a schedule, one ply deeper costs one ply of lookahead: the top node gets
+            // the full look and the fringe of the window gets a token one, which is where the
+            // cost would otherwise pile up.
+            let d = ply.saturating_sub(root_ply as usize) as u8;
+            let look = if iid_sched() == 0 {
+                iid_depth
+            } else {
+                iid_depth.saturating_sub(d * iid_sched()).max(2)
+            };
+            let (list, n) = shallow_rank_moves(state, look);
+            if n > 0 {
+                if legal & card_to_bit(list[0]) != 0 {
+                    hash_move = list[0];
+                }
+                iid_list = Some((list, n));
             }
         }
     }
@@ -1010,7 +1033,7 @@ fn alphabeta(
     // Apply card equivalence + order with hash move first, then killers, then by history
     let reduced = reduce_equivalent(legal, state);
     let killer_pair = if ply < 32 && !no_killers() { killers[ply] } else { [EMPTY; 2] };
-    let ordered = order_moves(state, reduced, hash_move, history, killer_pair);
+    let ordered = order_moves_iid(state, reduced, hash_move, history, killer_pair, iid_list);
 
     let orig_alpha = alpha;
     let orig_beta = beta;
@@ -1323,6 +1346,20 @@ fn order_moves(
     history: &[[u32; 32]; 2],
     killer_pair: [u8; 2],
 ) -> ([u8; 8], usize) {
+    order_moves_iid(state, legal, hash_move, history, killer_pair, None)
+}
+
+/// As [`order_moves`], but the last tier is ranked by the ordering lookahead when one ran.
+/// The lookahead scores every move, so using only its best card — which is what the first
+/// version did — discards most of what it computed.
+fn order_moves_iid(
+    state: &GameState,
+    legal: CardSet,
+    hash_move: u8,
+    history: &[[u32; 32]; 2],
+    killer_pair: [u8; 2],
+    iid_list: Option<([u8; 8], usize)>,
+) -> ([u8; 8], usize) {
     let trump = state.contract.trump;
     let ct = state.contract.contract_type();
     let team = GameState::player_team(state.current_player) as usize;
@@ -1365,10 +1402,15 @@ fn order_moves(
     while mask != 0 {
         let card = mask.trailing_zeros() as u8;
         mask &= mask - 1;
-        let static_score = if variant == 0 {
-            move_order_score(state, card, trump, ct) as i32
-        } else {
-            move_order_score_v(state, card, trump, ct, master.as_ref(), variant) as i32
+        let static_score = match iid_list {
+            // A lookahead rank dominates: it comes from actually playing the card out, where
+            // the static score only looks at it. History still breaks ties inside a rank.
+            Some((list, n)) => match list[..n].iter().position(|&c| c == card) {
+                Some(r) => (8 - r as i32) * 10_000,
+                None => 0,
+            },
+            None if variant == 0 => move_order_score(state, card, trump, ct) as i32,
+            None => move_order_score_v(state, card, trump, ct, master.as_ref(), variant) as i32,
         };
         let hist_bonus = if no_history() { 0 } else { history[team][card as usize] as i32 };
         scored[scount] = (static_score + hist_bonus, card);
@@ -1398,12 +1440,62 @@ fn order_moves(
 // estimate of the rest, no claim about the future. `quick_tricks` was a defect for the opposite
 // reason: its approximation reached a *returned value*. An ordering can be arbitrarily wrong and
 // only cost time, and the exactness gate is what proves the distinction held.
+/// Points sitting in the unfinished trick, credited to whoever is currently taking it.
+///
+/// Without this the horizon is systematically unfair between siblings: a 6-ply look from an
+/// even ply stops **mid-trick**, so a line that has just played the winning card to a fat trick
+/// scores identically to one that has thrown it away. The points are on the table either way;
+/// only the crediting differs.
+fn horizon_trick_credit(state: &GameState, trump: u8, ct: ContractType) -> i16 {
+    if state.trick_count == 0 {
+        return 0;
+    }
+    let lead_seat = state.trick_lead as usize;
+    let lead_card = state.current_trick[lead_seat];
+    let lead_suit = card_suit_u8(lead_card);
+    let mut pts = card_points(lead_card, ct) as i16;
+    let mut win_seat = lead_seat;
+    let mut best_trump: Option<u8> = if lead_suit == trump {
+        Some(TRUMP_STRENGTH[card_rank(lead_card) as usize])
+    } else {
+        None
+    };
+    let mut best_plain = card_rank(lead_card);
+
+    for i in 1..state.trick_count as usize {
+        let seat = (lead_seat + i) % 4;
+        let c = state.current_trick[seat];
+        pts += card_points(c, ct) as i16;
+        let sc = card_suit_u8(c);
+        if sc == trump {
+            let st = TRUMP_STRENGTH[card_rank(c) as usize];
+            if best_trump.is_none_or(|b| st > b) {
+                best_trump = Some(st);
+                win_seat = seat;
+            }
+        } else if sc == lead_suit && best_trump.is_none() && card_rank(c) > best_plain {
+            best_plain = card_rank(c);
+            win_seat = seat;
+        }
+    }
+    if GameState::player_team(win_seat as u8) == 0 {
+        pts
+    } else {
+        0
+    }
+}
+
 fn shallow_order_search(state: &GameState, alpha0: i16, beta0: i16, plies_left: u8) -> i16 {
     count_shallow_node();
     if state.is_terminal() || plies_left == 0 {
         // Horizon: what has actually been won. Two siblings compared here differ by the points
         // captured on the way, which is the whole signal being extracted.
-        return state.points[0] as i16;
+        let base = state.points[0] as i16;
+        return if iid_eval() == 0 {
+            base
+        } else {
+            base + horizon_trick_credit(state, state.contract.trump, state.contract.contract_type())
+        };
     }
     let legal = play::legal_plays(state);
     let reduced = reduce_equivalent(legal, state);
@@ -1440,32 +1532,39 @@ fn shallow_order_search(state: &GameState, alpha0: i16, beta0: i16, plies_left: 
     best
 }
 
-/// First move to try according to a `plies`-deep look, or [`EMPTY`] when there is nothing to
-/// order. Not counted as solver nodes: it is overhead, and folding it into the node count
-/// would hide exactly the cost being weighed.
-fn shallow_best_move(state: &GameState, plies: u8) -> u8 {
+/// **All** moves ranked by a `plies`-deep look, best first; the count is 0 when there is
+/// nothing to order.
+///
+/// The first version returned only the best card, which threw away most of what had just been
+/// computed: the lookahead scores every root move, so ranking them all costs nothing beyond a
+/// sort of at most eight elements. That matters at nodes where the first move fails to cut —
+/// there the second and third choice are what the search actually pays for.
+fn shallow_rank_moves(state: &GameState, plies: u8) -> ([u8; 8], usize) {
     let legal = play::legal_plays(state);
     let reduced = reduce_equivalent(legal, state);
     if reduced == 0 || reduced & (reduced - 1) == 0 {
-        return EMPTY;
+        return ([EMPTY; 8], 0);
     }
     let maximizing = GameState::player_team(state.current_player) == 0;
-    let mut best_card = EMPTY;
-    let mut best = if maximizing { i16::MIN } else { i16::MAX };
+    let mut scored: [(i16, u8); 8] = [(0, EMPTY); 8];
+    let mut n = 0usize;
     let mut mask = reduced;
-    while mask != 0 {
+    while mask != 0 && n < 8 {
         let card = mask.trailing_zeros() as u8;
         mask &= mask - 1;
         let mut child = *state;
         play::apply_play(&mut child, card);
         let v = shallow_order_search(&child, 0, 252, plies.saturating_sub(1));
-        let better = if maximizing { v > best } else { v < best };
-        if better || best_card == EMPTY {
-            best = v;
-            best_card = card;
-        }
+        // Sort descending for NS, ascending for EW — one comparison key for both sides.
+        scored[n] = (if maximizing { -v } else { v }, card);
+        n += 1;
     }
-    best_card
+    scored[..n].sort_unstable();
+    let mut out = [EMPTY; 8];
+    for i in 0..n {
+        out[i] = scored[i].1;
+    }
+    (out, n)
 }
 
 /// Absolute ply of a position — the origin the IID window is measured from.
@@ -1482,12 +1581,56 @@ fn root_ply_of(state: &GameState) -> u8 {
 /// searches 89 nodes, the lookahead is larger than the entire search it is meant to help.
 /// Mid-game went 1.56x. Only full deals have a tree deep enough to repay a look, and they are
 /// also where the nodes are, so the guard costs nothing and removes every regression.
-/// Production defaults, measured on the frozen corpus: depth 6 is the flat top of the curve
-/// (0.898x against 0.919x at 4 and 0.938x at 9), 4 plies of window beats 3 and 5, and 24 is
-/// anywhere in the 20-26 plateau. Sweeps: `docs/play/dd_solver_optimization.md` § 6.
+/// Production defaults, measured on the frozen corpus. Sweeps, the guard that keeps the
+/// lookahead out of shallow trees, and why this is not a second `quick_tricks`:
+/// `docs/play/dd_solver_optimization.md` § 6.
+///
+/// Every one of these is chosen **per shape, never on the aggregate**, and twice that mattered.
+/// A deeper, wider variant (8/8 with the schedule on) wins on the corpus total and on full
+/// deals, ties it on the clock, and is **worse on sampled worlds** — the shape carrying most of
+/// this project's DD hours (~2800 core-h for a score layer against ~180 for `gen_pool`). The
+/// aggregate is dominated by full deals and does not describe the real cost mix.
+///
+/// Same for the guard: optimising the total picks 28, which gives up the entire worlds gain.
+/// 24 is the smallest value with **no regression on any shape** — 22 buys 0.001 on worlds and
+/// costs 7 % on mid-game, the web's analysis path.
+///
+/// Historical `IID_MIN_CARDS` note. The corpus total is
+/// dominated by full deals, and optimising it picks 28 — which gives up the entire gain on
+/// sampled worlds, the shape carrying most of this project's DD hours (~2800 core-h for a
+/// score layer against ~180 for `gen_pool`). 24 is the smallest guard with **no regression on
+/// any shape**: 22 buys 0.001 on worlds and costs 7 % on mid-game, the web's analysis path.
 pub const IID_DEPTH: u8 = 6;
 pub const IID_TOP: u8 = 4;
 pub const IID_MIN_CARDS: u8 = 24;
+/// Horizon evaluation of the ordering lookahead: 0 = points captured, 1 = plus the unfinished
+/// trick credited to whoever is taking it.
+pub const IID_EVAL: u8 = 1;
+
+/// Shrink the lookahead as the node gets deeper, so the window can reach further without the
+/// cost exploding — the cost is what kills a wide window (a flat depth 6 over 8 plies measures
+/// 1,085x, i.e. it spends more than it saves). 0 = flat depth everywhere.
+pub const IID_SCHED: u8 = 0;
+
+#[inline(always)]
+fn iid_sched() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().iid_sched;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    IID_SCHED
+}
+
+#[inline(always)]
+fn iid_eval() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().iid_eval;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    IID_EVAL
+}
 
 #[inline(always)]
 fn iid_config() -> (u8, u8, u8) {
