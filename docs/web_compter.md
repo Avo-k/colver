@@ -269,7 +269,7 @@ statistiques différente, qui plus est, puisque la relecture force `method =
 
 ## 7. Réglages
 
-Trois préréglages (Débutant 3 plis · 1 s, Confirmé 5 plis · 0,7 s, Expert 8 plis
+Trois préréglages (Débutant 3 plis · 1,5 s, Confirmé 5 plis · 0,7 s, Expert 8 plis
 · 0,5 s · deux camps · partie entière) qui **écrivent tous les réglages fins**,
 pour qu'on voie ce qu'on a choisi. Toucher un réglage fin bascule sur `perso`,
 et les statistiques changent de clé : un record Expert ne se mélange pas à un

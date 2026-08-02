@@ -52,7 +52,7 @@ const END_HOLD_MS = 1200;
 const FLY_MS = 320;
 
 const PRESETS = {
-    debutant: { nTricks: 3, speedMs: 1000, method: 'chrono', count: 'un', side: 0, rules: 'simple' },
+    debutant: { nTricks: 3, speedMs: 1500, method: 'chrono', count: 'un', side: 0, rules: 'simple' },
     confirme: { nTricks: 5, speedMs: 700, method: 'chrono', count: 'un', side: -1, rules: 'simple' },
     expert:   { nTricks: 8, speedMs: 500, method: 'chrono', count: 'deux', side: 0, rules: 'realiste' },
 };
@@ -73,7 +73,7 @@ const TEMPLATE = `
       <span id="pc-preset-note" class="pc-badge-perso hidden"></span></div>
     <div id="pc-presets" class="pc-seg" role="radiogroup" aria-label="Niveau">
       <button type="button" class="pc-seg-btn" role="radio" data-preset="debutant" aria-checked="true">
-        Débutant<small>3 plis · 1 s · un camp</small></button>
+        Débutant<small>3 plis · 1,5 s · un camp</small></button>
       <button type="button" class="pc-seg-btn" role="radio" data-preset="confirme" aria-checked="false">
         Confirmé<small>5 plis · 0,7 s · un camp</small></button>
       <button type="button" class="pc-seg-btn" role="radio" data-preset="expert" aria-checked="false">
@@ -93,8 +93,8 @@ const TEMPLATE = `
       </div>
       <div class="pc-row" id="pc-row-speed">
         <span class="pc-row-label">Temps par carte</span>
-        <input type="range" id="pc-speed" min="300" max="2000" step="100" value="1000">
-        <output id="pc-speed-out">1,0 s</output>
+        <input type="range" id="pc-speed" min="300" max="2000" step="100" value="1500">
+        <output id="pc-speed-out">1,5 s</output>
       </div>
       <div class="pc-row" id="pc-row-ntricks">
         <span class="pc-row-label">Nombre de plis</span>
@@ -257,7 +257,12 @@ function loadCfg() {
     try {
         const o = JSON.parse(localStorage.getItem(K_CFG) || 'null');
         if (!o || typeof o !== 'object') return base;
-        return { ...base, ...o };
+        const cfg = { ...base, ...o };
+        // Un préréglage est défini par la table, pas par ce qui traîne en
+        // localStorage : sinon changer « Débutant » ne changerait rien pour
+        // ceux qui y ont déjà joué. Seul `perso` garde ses valeurs.
+        if (PRESETS[cfg.preset]) return { ...cfg, ...PRESETS[cfg.preset] };
+        return cfg;
     } catch { return base; }
 }
 function saveCfg() { try { localStorage.setItem(K_CFG, JSON.stringify(cfg)); } catch { /* quota */ } }
