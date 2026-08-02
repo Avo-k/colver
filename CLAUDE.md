@@ -154,7 +154,12 @@ DD solver values are a **training signal** (direction to optimize toward), never
 
 **DMC play obs — canonical (411):** Fully canonical suit encoding: trump in slot 0, non-trump sorted by (card_count, rank_pattern) descending — `canonical_play_order(trump, initial_hand)`. No suit augmentation needed. [0:32] hand, [32:160] trick 4×32, [160:256] played 3×32, [256:259] value/team/coinche (no trump one-hot), [259:271] voids 3×4, [271:275] scores, [275:347] bid history 12×6, [347:379] card trick idx, [379:411] card seq idx. Used by DouDou50 (default play model) and joint training. `card_to_canonical`/`card_to_physical` convert between spaces; `current_player_order` computes the ordering from state+tracking.
 
-**Bid obs (108):** [0:32] hand, [32:104] bid history 12×6, [104:108] position. Auction state (bid value, suit, coinche) removed — redundant with bid history.
+**Bid obs (108):** [0:32] hand, [32:104] bid history 12×6, [104:108] position. Auction state (bid value, suit, coinche) removed — redundant with bid history. Score-aware tails: 110 (2 raw scores), 113 (5 derived), **117 = v6** (113 + 4 self-belote bits, one per suit — suit-dependent, they must move with any permutation).
+
+**Bid obs — canonique (v7, même largeur).** `write_bid_observation_canonical` trie les couleurs par (longueur, motif de rangs) décroissant — pas d'atout pour ancrer la couleur 0, contrairement à l'obs de jeu — puis **départage les ex æquo par l'enchère** (valeur la plus haute annoncée dans la couleur, puis slot le plus précoce). Le départage par indice physique paraît inoffensif (lanes égales ⇒ même bloc main) et ne l'est pas : si l'enchère nomme une des deux couleurs à égalité, un renommage déplace cette mention et les deux positions cessent de se canonicaliser pareil. Épinglé par `canonical_bid_obs_is_invariant_under_suit_renaming`.
+- **Un réseau canonique a exactement la même taille de fichier qu'un réseau physique** : la largeur ne le trahit pas. D'où `canonical = true` dans le TOML (`[bid]`) et `--canonical` à l'entraînement — se tromper est **silencieux**, le réseau rend une annonce légale dans la mauvaise couleur. Même famille que `cardset_to_canonical` / `card_to_physical` côté jeu.
+- Contrat d'appel : masque légal **vers** l'espace canonique avant l'argmax (`permute_bid_mask_u64` avec `perm_from_order`), action choisie **depuis** cet espace (`permute_bid_action` avec l'`order`). Un seul endroit le fait à l'inférence (`agent/bid.rs`), un seul à l'entraînement (`VecBidEnv` + `record_transition`).
+- **La canonicalisation remplace l'augmentation de couleurs**, elle ne s'y ajoute pas : la forme canonique est déjà invariante, donc `--canonical` coupe `augment_bid_batch`.
 
 **Replay buffers** (`dmc/dmc_replay.rs`): `PrioritizedReplayBuffer` is hardcoded to OBS_DIM=415/MASK=32. Use `FlexReplayBuffer` for other dims (e.g. joint training play: 411/32, bid: 114/43).
 
@@ -298,6 +303,7 @@ strategy = "nn"                    # heuristic|improved|improved_v2|improved_v3|
 model = "models/bid_nn_final.bin"  # required if strategy = "nn" or "playgen" (a playgen v2 .bin)
 hidden = 512                       # hidden-size hint (auto-detected from the file when possible)
 score_aware = true                 # endgame adjustments for nets that can't see the match score
+canonical = false                  # v7+: net trained on the canonical suit ordering (NOT auto-detectable)
 
 [play]
 method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|oracle_dd|heuristic|rule

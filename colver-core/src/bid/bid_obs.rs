@@ -147,6 +147,72 @@ pub fn write_bid_observation_score_aware_v3(
     }
 }
 
+/// Write whichever observation layout `obs_dim` names. One place, so a new
+/// consumer cannot silently pick a different dispatch than the trainer's.
+pub fn write_bid_observation_dim(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+    obs_dim: usize,
+) {
+    match obs_dim {
+        BID_OBS_DIM_SCORE_AWARE_V3 => write_bid_observation_score_aware_v3(
+            buf, offset, state, bid_history, my_score, opp_score,
+        ),
+        BID_OBS_DIM_SCORE_AWARE_V2 => write_bid_observation_score_aware_v2(
+            buf, offset, state, bid_history, my_score, opp_score,
+        ),
+        BID_OBS_DIM_SCORE_AWARE => write_bid_observation_score_aware(
+            buf, offset, state, bid_history, my_score, opp_score,
+        ),
+        _ => write_bid_observation(buf, offset, state, bid_history),
+    }
+}
+
+/// Write the observation in **canonical suit order** and return `order`, the
+/// mapping `order[canonical] = physical` needed to bring an action back out.
+///
+/// ## Why
+///
+/// Two hands identical up to renaming the suits are the same bidding problem, but
+/// nothing in an MLP fed raw card bits enforces that. Measured on v6: **24.6% of
+/// opening bids flip** under a suit renaming, because the symmetry noise is 8.8×
+/// the top1−top2 margin (`bid_v7_plan.md` §1.1). Canonicalising divides the
+/// effective input space by ~22 and makes the equivariance exact by construction
+/// rather than something training has to rediscover 24 times.
+///
+/// ## Contract for callers
+///
+/// The returned `order` is not optional bookkeeping. A model trained on this layout
+/// answers in canonical action space, so the caller **must**:
+///
+/// 1. map the legal mask into canonical space before selecting
+///    (`permute_bid_mask_u64(legal, &perm_from_order(&order))`), and
+/// 2. map the chosen action back with `permute_bid_action(a, &order)`.
+///
+/// Skip either and the model still returns a legal-looking bid — in the wrong suit.
+/// This is the bid-side twin of the `cardset_to_canonical` / `card_to_physical`
+/// warning that governs the 411-dim play observation.
+pub fn write_bid_observation_canonical(
+    buf: &mut [f32],
+    offset: usize,
+    state: &GameState,
+    bid_history: &[(u8, u8)],
+    my_score: i32,
+    opp_score: i32,
+    obs_dim: usize,
+) -> [u8; 4] {
+    write_bid_observation_dim(buf, offset, state, bid_history, my_score, opp_score, obs_dim);
+    let me = state.current_player() as usize;
+    let order = crate::suit_perm::canonical_bid_order(state.hands[me], bid_history);
+    let perm = crate::suit_perm::perm_from_order(&order);
+    crate::suit_perm::permute_bid_obs_dim(&mut buf[offset..offset + obs_dim], obs_dim, &perm);
+    order
+}
+
 /// Write the 43-float legal bid mask into `buf[offset..offset+43]`.
 pub fn write_bid_mask(buf: &mut [f32], offset: usize, state: &GameState) {
     debug_assert!(buf.len() >= offset + BID_MASK_DIM);
@@ -275,6 +341,164 @@ mod tests {
         assert!(buf[110] > 0.5 && buf[110] < 1.0); // win_prob > 0.5 (we're ahead)
         assert!((buf[111] - 0.25).abs() < 1e-6);   // (2000-1500)/2000
         assert!((buf[112] - 0.35).abs() < 1e-6);   // (1500-800)/2000
+    }
+
+    /// Deal 32 cards deterministically from a seed, so a test can build a real
+    /// auction without pulling in `rand`.
+    fn deal(seed: u64) -> [u32; 4] {
+        let mut cards: Vec<u8> = (0..32).collect();
+        let mut s = seed | 1;
+        for i in (1..32).rev() {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = (s >> 33) as usize % (i + 1);
+            cards.swap(i, j);
+        }
+        let mut hands = [0u32; 4];
+        for (i, &c) in cards.iter().enumerate() {
+            hands[i / 8] |= 1 << c;
+        }
+        hands
+    }
+
+    /// The property §3.1 buys: renaming the suits of an entire position — the four
+    /// hands *and* every action already bid — must leave the canonical observation
+    /// bit-identical. That is what lets one training sample teach all 24 relabelings.
+    #[test]
+    fn canonical_bid_obs_is_invariant_under_suit_renaming() {
+        use crate::suit_perm::{permute_bid_action, ALL_PERMS};
+
+        for seed in 0..40u64 {
+            let hands = deal(seed);
+            for perm in ALL_PERMS.iter() {
+                // The same deal with the suits renamed.
+                let mut permuted = [0u32; 4];
+                for (seat, &h) in hands.iter().enumerate() {
+                    for s in 0..4u32 {
+                        let lane = (h >> (s * 8)) & 0xFF;
+                        permuted[seat] |= lane << (perm[s as usize] as u32 * 8);
+                    }
+                }
+
+                // An auction that names suits, so the history block is exercised too.
+                let script = [
+                    crate::bidding::encode_bid(10, 1), // 100♥
+                    0,                                 // pass
+                    crate::bidding::encode_bid(12, 3), // 120♣
+                ];
+
+                let mut a = GameState::new(0, hands);
+                let mut b = GameState::new(0, permuted);
+                let (mut ha, mut hb) = (Vec::new(), Vec::new());
+                for &act in script.iter() {
+                    let pa = act;
+                    let pb = permute_bid_action(act, perm);
+                    assert!(a.legal_actions() & (1u64 << pa) != 0);
+                    assert!(b.legal_actions() & (1u64 << pb) != 0);
+                    ha.push((a.current_player(), pa));
+                    hb.push((b.current_player(), pb));
+                    a.step(pa);
+                    b.step(pb);
+                }
+
+                let dim = BID_OBS_DIM_SCORE_AWARE_V3;
+                let mut oa = vec![0.0f32; dim];
+                let mut ob = vec![0.0f32; dim];
+                let order_a = write_bid_observation_canonical(&mut oa, 0, &a, &ha, 700, 400, dim);
+                let order_b = write_bid_observation_canonical(&mut ob, 0, &b, &hb, 700, 400, dim);
+
+                assert_eq!(oa, ob, "seed {seed}, perm {perm:?}: obs differs after renaming");
+
+                // The two decode a canonical bid back to the *same* suit — up to a
+                // tie. When two suits hold identical lanes the sort breaks the tie by
+                // physical index, which renaming changes, so A and B can pick the
+                // other member of the pair. That is not an error: the obs is
+                // bit-identical precisely because the hand cannot tell them apart.
+                let me = a.current_player() as usize;
+                let hb = b.hands[me];
+                let lane = |s: u8| (hb >> (s * 8)) & 0xFF;
+                for c in 0..4usize {
+                    let via_a = perm[order_a[c] as usize];
+                    let direct = order_b[c];
+                    assert_eq!(
+                        lane(via_a),
+                        lane(direct),
+                        "seed {seed}, perm {perm:?}: canonical slot {c} decodes to \
+                         suits that are not interchangeable ({via_a} vs {direct})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// `order` and `perm` are inverses, and the canonical→physical→canonical round
+    /// trip is the identity on all 43 actions. Confusing the two is *the* canonical
+    /// obs bug: everything stays legal and the model answers about another suit.
+    #[test]
+    fn canonical_order_and_perm_are_inverse() {
+        use crate::suit_perm::{canonical_bid_order, perm_from_order, permute_bid_action};
+        for seed in 0..64u64 {
+            let hand = deal(seed)[0];
+            let order = canonical_bid_order(hand, &[]);
+            let perm = perm_from_order(&order);
+            for s in 0..4usize {
+                assert_eq!(perm[order[s] as usize] as usize, s);
+            }
+            for a in 0..43u8 {
+                assert_eq!(permute_bid_action(permute_bid_action(a, &order), &perm), a);
+            }
+            // Canonical lanes are sorted by (count, pattern), descending.
+            let key = |s: u8| {
+                let lane = (hand >> (s * 8)) & 0xFF;
+                (lane.count_ones() << 8) | lane
+            };
+            for i in 0..3 {
+                assert!(key(order[i]) >= key(order[i + 1]), "order not sorted for {hand:#x}");
+            }
+        }
+    }
+
+    /// The minimal case that broke the first implementation, kept as an anchor.
+    ///
+    /// My ♠ and ♥ lanes are identical, so the hand alone cannot order them and the
+    /// sort falls to a tie-break. An opponent has bid one of the two. Renaming ♠↔♥
+    /// moves that bid to the other suit, so a tie-break on physical index sends the
+    /// mention to a different canonical slot and the two positions — which are the
+    /// same problem — stop canonicalising to the same observation.
+    #[test]
+    fn canonical_bid_obs_tie_broken_by_the_auction() {
+        use crate::suit_perm::canonical_bid_order;
+
+        let lane: u32 = 0b1000_1010; // A, J, 8 — three cards
+        // ♠ and ♥ identical, ♦ holds two more so the hand has 8 cards.
+        let hand = lane | (lane << 8) | (0b0000_0011u32 << 16);
+        assert_eq!(hand.count_ones(), 8);
+
+        let swap = |h: u32| ((h & 0xFF) << 8) | ((h >> 8) & 0xFF) | (h & 0xFFFF_0000);
+        assert_eq!(swap(hand), hand, "the hand itself is symmetric under ♠↔♥");
+
+        let dim = BID_OBS_DIM_SCORE_AWARE_V3;
+        let bid_s = crate::bidding::encode_bid(10, 0); // 100♠
+        let bid_h = crate::bidding::encode_bid(10, 1); // 100♥
+
+        // Same hand, same dealer; the opponent names ♠ in one line and ♥ in the other.
+        let mut out = Vec::new();
+        for &(opening, other) in &[(bid_s, bid_h), (bid_h, bid_s)] {
+            let mut st = GameState::new(2, [hand, 0, 0, 0]); // dealer 2 → seat 3 speaks
+            let hist = vec![(st.current_player(), opening)];
+            st.step(opening);
+            assert_eq!(st.current_player(), 0, "we speak next");
+
+            let order = canonical_bid_order(hand, &hist);
+            // The suit that was actually bid must land in the same canonical slot
+            // in both lines — that is the whole point of the auction tie-break.
+            let bid_suit = crate::bidding::decode_bid(opening).1;
+            let slot = order.iter().position(|&s| s == bid_suit).unwrap();
+            let mut obs = vec![0.0f32; dim];
+            write_bid_observation_canonical(&mut obs, 0, &st, &hist, 0, 0, dim);
+            out.push((slot, obs, other));
+        }
+        assert_eq!(out[0].0, out[1].0, "the bid suit lands in different canonical slots");
+        assert_eq!(out[0].1, out[1].1, "the two symmetric positions differ");
     }
 
     #[test]

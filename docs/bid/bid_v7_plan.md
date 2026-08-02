@@ -413,9 +413,15 @@ se concentre là où on ne le cherchait pas.
 *Test* : entraîner v7 à budget identique avec et sans canonicalisation.
 *Critère* : flip rate mesuré à 0 % **dans les trois régimes** (non-régression, gratuit),
 plus une sonde appariée en pts/décision par régime via l'outil de §4.
-⚠️ **Le critère « ≥ 52 % en h2h 1000 matchs » qui figurait ici est retiré** : à quelques
-points par décision, l'écart attendu est sous l'erreur type de l'arène. Il testait la
-puissance de l'instrument, pas l'hypothèse. Cf. §2.9.
+⚠️ **Le critère « ≥ 52 % en h2h 1000 matchs » a d'abord été retiré ici, puis rétabli.**
+Le retrait supposait « quelques points par décision, donc sous l'erreur type ». §1.8 a
+depuis fait la conversion : l'effet se chiffre à **~10,7 pts/donne**, contre un seuil de
+détectabilité de **4 à 10 pts/donne à 1000 matchs**. C'est donc à la limite basse du
+visible — *critère retenu* : **h2h 2000 matchs** (seuil 2-10), l'arène en confirmation et
+la sonde appariée par régime en mesure principale. Le premier raisonnement confondait
+points par *décision* et par *donne*.
+*Implémentation* : **faite le 2026-08-02** (`write_bid_observation_canonical`,
+`--canonical`, `canonical = true` dans le TOML). Reste l'entraînement.
 
 **2.2 — Le Q plat est-il un défaut de calibration ou la réalité du jeu ?**
 **Fermée le 2026-08-02 : c'est le jeu, et v6 ordonne juste** — mais seulement à
@@ -521,12 +527,31 @@ effets de plus de ~4-5 pp. Le réflexe existe déjà dans ce document sous forme
 Par rapport valeur/coût décroissant.
 
 ### 3.1 Canonicaliser l'obs d'annonce *(coût faible, effet structurel)*
-Comme l'obs de jeu 411 (`canonical_play_order`). Avant l'enchère il n'y a pas d'atout
-pour ancrer l'ordre : trier les couleurs par (longueur, motif de rangs) décroissant.
-La sortie devant nommer une couleur, il faut remapper l'action comme le fait
-`card_to_physical`. Espace d'entrée effectif ÷ ~22, équivariance gratuite, et une
-source de bruit qui vaut 8,8× la marge de décision à l'ouverture qui disparaît. Le tri
-existe dans [suit_perm.rs](../../colver-core/src/suit_perm.rs).
+**Implémentée le 2026-08-02.** Comme l'obs de jeu 411 (`canonical_play_order`), à ceci
+près qu'avant l'enchère il n'y a pas d'atout pour ancrer l'ordre : les couleurs sont
+triées par (longueur, motif de rangs) décroissant. Espace d'entrée effectif ÷ ~22,
+équivariance gratuite, et disparition d'une source de bruit qui vaut 8,8× la marge de
+décision à l'ouverture.
+
+Ce que l'écriture a appris, et qui ne se voyait pas depuis le plan :
+
+- **Le départage des ex æquo doit lire l'enchère.** 7,5 % des mains ont deux couleurs de
+  lanes identiques. Départager par indice physique semble inoffensif — mêmes lanes, même
+  bloc main — et ne l'est pas : si l'enchère nomme une des deux, un renommage déplace
+  cette mention vers l'autre et les deux positions, qui sont le même problème, cessent de
+  se canonicaliser pareil. Le départage se fait donc par la valeur la plus haute annoncée
+  dans la couleur, puis le slot le plus précoce ; l'indice physique n'est plus qu'un
+  dernier recours, atteint seulement quand les deux couleurs sont indiscernables dans
+  *toute* l'observation. Trouvé par le test d'invariance sur 40 donnes × 24 permutations,
+  pas à la lecture.
+- **Un réseau canonique pèse exactement le même nombre d'octets qu'un réseau physique**,
+  donc rien ne le distingue à l'ouverture du fichier. D'où un drapeau explicite des deux
+  côtés (`--canonical`, `canonical = true`) — se tromper est silencieux et rend une
+  annonce légale dans la mauvaise couleur, exactement le piège
+  `cardset_to_canonical` / `card_to_physical` du côté jeu.
+- **La canonicalisation *remplace* l'augmentation de couleurs**, elle ne s'y ajoute pas :
+  la forme canonique est déjà invariante, donc permuter un échantillon ne ferait que
+  décorréler son obs de son action. `--canonical` coupe `augment_bid_batch`.
 *Effet secondaire utile* : rend la §3.6 bien définie.
 *Ce qu'on en attend, depuis §1.7* : le gisement n'est pas l'ouverture (2,2 pts/décision)
 mais la **contestation** (3,9 pts/décision), où le bruit ne franchit la marge que 5 % du

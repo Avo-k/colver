@@ -113,6 +113,7 @@ hidden = 512
 penalty = 0.0          # discount on high bids (counters DD-trained optimism)
 temperature = 0.0      # >0 = softmax-sample instead of argmax
 score_aware = true     # endgame adjustments, for nets that cannot see the score
+canonical = false      # v7+: the net was trained on the canonical suit ordering
 
 [play]
 method = "isdd"        # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|oracle_dd|heuristic|rule

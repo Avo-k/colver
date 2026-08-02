@@ -8,6 +8,12 @@
 //! bid nets come in a plain 108-dim flavour and score-aware 110/113/117-dim
 //! flavours, and feeding one the other's layout produces confident nonsense
 //! rather than an error. Detecting it in one place is the point of this type.
+//!
+//! The one thing the file *cannot* say is whether the net was trained on the
+//! canonical suit ordering — a canonical net is byte-for-byte the same size as a
+//! physical one. That comes from `BidSpec::canonical`, and this module is where the
+//! consequence lives: the mask goes into canonical space before the argmax, and the
+//! winner comes back out of it. Everything a caller sees stays in physical space.
 
 use std::sync::Arc;
 
@@ -21,6 +27,7 @@ use crate::bid_obs::{
     BID_OBS_DIM_SCORE_AWARE_V3,
 };
 use crate::state::GameState;
+use crate::suit_perm;
 
 use super::models::BidWeights;
 use super::{AgentError, BidPolicy, Decision, MatchContext, Stats};
@@ -60,6 +67,8 @@ pub struct BidNetPolicy {
     /// non-score-aware net; score-aware nets receive the scores in their
     /// observation and are left alone.
     score_aware: bool,
+    /// The net answers in **canonical** suit space (see `BidSpec::canonical`).
+    canonical: bool,
     rng: StdRng,
 }
 
@@ -69,22 +78,39 @@ impl BidNetPolicy {
         penalty: f32,
         temperature: f32,
         score_aware: bool,
+        canonical: bool,
         seed: u64,
     ) -> Self {
         let net = weights.instantiate();
         let obs = vec![0.0f32; net.obs_dim()];
-        BidNetPolicy { net, obs, penalty, temperature, score_aware, rng: StdRng::seed_from_u64(seed) }
+        BidNetPolicy {
+            net,
+            obs,
+            penalty,
+            temperature,
+            score_aware,
+            canonical,
+            rng: StdRng::seed_from_u64(seed),
+        }
     }
 
     pub fn obs_dim(&self) -> usize {
         self.net.obs_dim()
     }
 
-    /// Fill `self.obs` with the layout this particular network was trained on.
-    fn write_obs(&mut self, state: &GameState, ctx: &MatchContext, seat: u8) {
+    /// Fill `self.obs` with the layout this particular network was trained on, and
+    /// return the suit ordering its answers are expressed in (identity when the net
+    /// is a physical-order one).
+    fn write_obs(&mut self, state: &GameState, ctx: &MatchContext, seat: u8) -> [u8; 4] {
         let (mine, theirs) = ctx.scores_for(seat);
         let history = &ctx.tracking.bid_history;
-        match self.net.obs_dim() {
+        let dim = self.net.obs_dim();
+        if self.canonical {
+            return bid_obs::write_bid_observation_canonical(
+                &mut self.obs, 0, state, history, mine, theirs, dim,
+            );
+        }
+        match dim {
             BID_OBS_DIM_SCORE_AWARE_V3 => bid_obs::write_bid_observation_score_aware_v3(
                 &mut self.obs, 0, state, history, mine, theirs,
             ),
@@ -96,30 +122,48 @@ impl BidNetPolicy {
             ),
             _ => bid_obs::write_bid_observation(&mut self.obs, 0, state, history),
         }
+        [0, 1, 2, 3]
     }
 }
 
 impl BidPolicy for BidNetPolicy {
     fn decide(&mut self, state: &GameState, ctx: &MatchContext) -> Result<Decision, AgentError> {
         let seat = state.current_player();
-        self.write_obs(state, ctx, seat);
+        let order = self.write_obs(state, ctx, seat);
         let legal = state.legal_actions();
         let q = self.net.evaluate(&self.obs);
+
+        // `q` is indexed in the *net's* action space. For a canonical net that is not
+        // the physical one, so the legal mask has to be pushed in before selecting and
+        // the winner pulled back out. Omitting either still produces a legal bid — in
+        // the wrong suit — which is exactly why it is done here and only here.
+        let legal_net = if self.canonical {
+            suit_perm::permute_bid_mask_u64(legal, &suit_perm::perm_from_order(&order))
+        } else {
+            legal
+        };
 
         // Score adjustments only apply to nets that cannot see the score.
         let score_aware = self.score_aware && self.net.obs_dim() <= BID_OBS_DIM;
         let (mine, theirs) = ctx.scores_for(seat);
 
         let mut candidates: Vec<(u8, f32)> = (0..43u8)
-            .filter(|a| legal & (1u64 << a) != 0)
+            .filter(|a| legal_net & (1u64 << a) != 0)
             .map(|a| {
+                // Back to physical immediately: penalties, stats and the returned
+                // action are all in the caller's space.
+                let phys = if self.canonical {
+                    suit_perm::permute_bid_action(a, &order)
+                } else {
+                    a
+                };
                 let adjusted = if self.temperature > 0.0 {
                     q[a as usize]
                 } else {
-                    q[a as usize] - bid_penalty(a, self.penalty)
-                        + endgame_delta(a, mine, theirs, score_aware)
+                    q[a as usize] - bid_penalty(phys, self.penalty)
+                        + endgame_delta(phys, mine, theirs, score_aware)
                 };
-                (a, adjusted)
+                (phys, adjusted)
             })
             .collect();
 

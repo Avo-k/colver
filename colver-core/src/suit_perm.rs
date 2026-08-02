@@ -275,6 +275,114 @@ pub fn permute_bid_obs(obs: &mut [f32], perm: &[u8; 4]) {
     // Block 3 [104:108]: Position — unchanged
 }
 
+/// Permute the suit-dependent parts of a bid observation of any known width.
+///
+/// `permute_bid_obs` only covers the base 108. The score-aware tails differ:
+/// [108..113] are match-score scalars and suit-invariant, but the v3 belote bits
+/// at [113..117] are one per suit and **must** move with the rest. Forgetting them
+/// is silent — the obs stays well-formed and merely lies about which suit carries
+/// the belote.
+pub fn permute_bid_obs_dim(obs: &mut [f32], obs_dim: usize, perm: &[u8; 4]) {
+    debug_assert!(obs.len() >= obs_dim);
+    permute_bid_obs(&mut obs[..crate::bid_obs::BID_OBS_DIM], perm);
+    if obs_dim == crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 {
+        let off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V2;
+        permute_suit_onehot(&mut obs[off..off + 4], perm);
+    }
+}
+
+/// Canonical suit ordering for the **bidding** observation — `order[canon] = phys`.
+///
+/// Unlike [`crate::dmc_obs::canonical_play_order`] there is no trump to anchor slot 0:
+/// a bid is made before any trump exists. Suits are therefore sorted by (card count,
+/// rank pattern) descending — a pure function of the hand.
+///
+/// Anchoring the *primary* key on the hand rather than on the auction is deliberate:
+/// an auction-anchored order would change under the observer's feet as opponents bid,
+/// so one hand would take different canonical forms at different points of one auction.
+///
+/// ## Why the tie-break reads the auction
+///
+/// 7.5% of hands have two suits with identical lane bits (cf. `hand_class`). Breaking
+/// that tie by physical suit index looks harmless — the two lanes are equal, so the
+/// hand block comes out the same either way — and it is **wrong**, because the
+/// observation contains more than the hand. If the auction has named one of the two
+/// tied suits, renaming the deal moves that mention to the other member of the pair and
+/// the two positions no longer canonicalise to the same thing. Caught by
+/// `canonical_bid_obs_is_invariant_under_suit_renaming`, not by inspection.
+///
+/// So ties fall back to the auction, through keys renaming cannot touch: the highest
+/// value bid in the suit, then the earliest slot it appeared at. Physical index remains
+/// the last resort — and when it is reached the two suits are genuinely
+/// indistinguishable in the *whole* observation (equal lanes, equal auction footprint,
+/// and Q/K live inside the lane so the belote bits match too), which makes either
+/// choice produce a bit-identical obs.
+pub fn canonical_bid_order(hand: u32, bid_history: &[(u8, u8)]) -> [u8; 4] {
+    // Same window the observation encodes, so the tie-break sees what the net sees.
+    let history = if bid_history.len() > 12 {
+        &bid_history[bid_history.len() - 12..]
+    } else {
+        bid_history
+    };
+    let mut top = [0u32; 4]; // highest value bid in the suit
+    let mut first = [u32::MAX; 4]; // earliest slot it was named at
+    for (i, &(_seat, action)) in history.iter().enumerate() {
+        if !(1..=40).contains(&action) {
+            continue;
+        }
+        let (val, suit) = crate::bidding::decode_bid(action);
+        let s = suit as usize;
+        top[s] = top[s].max(val as u32);
+        first[s] = first[s].min(i as u32);
+    }
+
+    let mut suits = [(0u8, 0u32, 0u32, 0u32); 4];
+    for s in 0..4usize {
+        let lane = (hand >> (s * 8)) & 0xFF;
+        suits[s] = (
+            s as u8,
+            (lane.count_ones() << 8) | lane,
+            top[s],
+            // Earliest-first, expressed so that plain descending order works.
+            if first[s] == u32::MAX { 0 } else { 13 - first[s] },
+        );
+    }
+    suits.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then(b.2.cmp(&a.2))
+            .then(b.3.cmp(&a.3))
+            .then(a.0.cmp(&b.0))
+    });
+    [suits[0].0, suits[1].0, suits[2].0, suits[3].0]
+}
+
+/// Invert an ordering. `order[canon] = phys` ⇒ `perm[phys] = canon`.
+///
+/// The two are not interchangeable and mixing them up is the classic canonical-obs
+/// bug: the observation still looks legal, the model just answers about a different
+/// suit. Use `perm` to push an observation *into* canonical space, and `order`
+/// itself to bring an action back out.
+#[inline]
+pub fn perm_from_order(order: &[u8; 4]) -> [u8; 4] {
+    let mut perm = [0u8; 4];
+    for (canon, &phys) in order.iter().enumerate() {
+        perm[phys as usize] = canon as u8;
+    }
+    perm
+}
+
+/// Permute a 43-bit legal-bid mask (the `u64` shape `legal_actions` returns).
+#[inline]
+pub fn permute_bid_mask_u64(mask: u64, perm: &[u8; 4]) -> u64 {
+    let mut out = 0u64;
+    for a in 0..43u8 {
+        if mask & (1u64 << a) != 0 {
+            out |= 1u64 << permute_bid_action(a, perm);
+        }
+    }
+    out
+}
+
 /// Permute a card index (0-31) action by suit remapping.
 /// Card layout: suit = card/8, rank = card%8.
 #[inline]
@@ -465,8 +573,6 @@ pub fn augment_bid_batch_with_obs_dim(
     rng: &mut impl rand::Rng,
 ) {
     let batch = actions.len();
-    let base_dim = crate::bid_obs::BID_OBS_DIM; // 108: the suit-dependent part
-    let v3_belote_off = crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V2; // 113
     for i in 0..batch {
         let perm_idx = rng.gen_range(0..24usize);
         if perm_idx == 0 {
@@ -474,14 +580,7 @@ pub fn augment_bid_batch_with_obs_dim(
         }
         let perm = &ALL_PERMS[perm_idx];
         let obs_start = i * obs_dim;
-        permute_bid_obs(&mut obs_data[obs_start..obs_start + base_dim], perm);
-        if obs_dim == crate::bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 {
-            // 4 belote bits, one per suit → permute like a suit one-hot.
-            permute_suit_onehot(
-                &mut obs_data[obs_start + v3_belote_off..obs_start + v3_belote_off + 4],
-                perm,
-            );
-        }
+        permute_bid_obs_dim(&mut obs_data[obs_start..obs_start + obs_dim], obs_dim, perm);
         let mask_start = i * 43;
         permute_bid_mask_f32(&mut mask_data[mask_start..mask_start + 43], perm);
         actions[i] = permute_bid_action(actions[i], perm);

@@ -26,6 +26,7 @@ use crate::rollout;
 use crate::scoring::compute_deal_score;
 use crate::solver;
 use crate::state::{GameState, Phase};
+use crate::suit_perm;
 
 /// Calibrated match win probability: σ(1.7 × Δ / (R_sum^0.8 + 340))
 /// Fitted from 10k full matches. v3_max: δ=320, v4_sa: δ=360 → average 340.
@@ -649,6 +650,11 @@ pub struct BidTrainingEnv {
     pub sa_obs_dim: usize,
     /// Optional clip applied to Δ-winprob reward (post scale). None = no clip.
     pub reward_clip: Option<f32>,
+    /// Store transitions in **canonical** suit space (v7). Only meaningful with
+    /// `score_aware`, which is the only path v7 uses. When set, suit augmentation
+    /// must be turned off: the canonical form is already invariant, so permuting a
+    /// sample would decorrelate its obs from its action rather than add anything.
+    pub canonical: bool,
     /// Score-aware transitions (variable-dim obs). Used instead of `transitions` when score_aware is Some.
     sa_transitions: Vec<ScoreAwareBidTransition>,
 }
@@ -671,6 +677,7 @@ impl BidTrainingEnv {
             score_aware: None,
             sa_obs_dim: BID_OBS_DIM_SCORE_AWARE,
             reward_clip: None,
+            canonical: false,
             sa_transitions: Vec::new(),
         }
     }
@@ -693,6 +700,7 @@ impl BidTrainingEnv {
             score_aware: None,
             sa_obs_dim: BID_OBS_DIM_SCORE_AWARE,
             reward_clip: None,
+            canonical: false,
             sa_transitions: Vec::new(),
         }
     }
@@ -746,7 +754,7 @@ impl BidTrainingEnv {
         let team = GameState::player_team(self.state.current_player());
 
         if let Some((ns_cum, ew_cum)) = self.score_aware {
-            // Score-aware: variable-dim obs (110 v1, 113 v2)
+            // Score-aware: variable-dim obs (110 v1, 113 v2, 117 v3)
             let dim = self.sa_obs_dim;
             let mut obs = vec![0.0f32; dim];
             let (my_score, opp_score) = if team == 0 {
@@ -754,21 +762,24 @@ impl BidTrainingEnv {
             } else {
                 (ew_cum, ns_cum)
             };
-            if dim == BID_OBS_DIM_SCORE_AWARE_V3 {
-                bid_obs::write_bid_observation_score_aware_v3(
-                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
-                );
-            } else if dim == BID_OBS_DIM_SCORE_AWARE_V2 {
-                bid_obs::write_bid_observation_score_aware_v2(
-                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
-                );
-            } else {
-                bid_obs::write_bid_observation_score_aware(
-                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score,
-                );
-            }
             let mut mask = [0.0f32; BID_MASK_DIM];
-            bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+            let mut action = action;
+            if self.canonical {
+                // Obs, mask and action must all land in canonical space together, or
+                // the stored sample teaches the net to answer about another suit.
+                let order = bid_obs::write_bid_observation_canonical(
+                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score, dim,
+                );
+                let perm = suit_perm::perm_from_order(&order);
+                bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+                suit_perm::permute_bid_mask_f32(&mut mask, &perm);
+                action = suit_perm::permute_bid_action(action, &perm);
+            } else {
+                bid_obs::write_bid_observation_dim(
+                    &mut obs, 0, &self.state, &self.bid_history, my_score, opp_score, dim,
+                );
+                bid_obs::write_bid_mask(&mut mask, 0, &self.state);
+            }
             self.sa_transitions.push(ScoreAwareBidTransition {
                 obs, mask, action, team,
             });
@@ -989,6 +1000,14 @@ pub struct VecBidEnv {
     /// the dealer 0→1→2→3 across deals until one team reaches 2000. Requires
     /// the pool to have a dealer index built (DealPool::build_dealer_index).
     pub match_sim: bool,
+    /// Observations and masks are written in **canonical** suit space (v7).
+    pub canonical: bool,
+    /// Per env, the ordering the current observation was written in —
+    /// `orders[i][canonical] = physical`. The caller **must** use it to bring the
+    /// net's chosen action back to physical space before stepping the env; identity
+    /// when `canonical` is off. Refreshed by `refresh_env_inner` alongside the obs,
+    /// so it always describes the observation currently in `obs_buf`.
+    pub orders: Vec<[u8; 4]>,
 }
 
 impl VecBidEnv {
@@ -999,7 +1018,10 @@ impl VecBidEnv {
         let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false };
+        let orders = vec![[0u8, 1, 2, 3]; n_envs];
+        let mut vec_env = VecBidEnv {
+            envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false, canonical: false, orders,
+        };
         vec_env.refresh_observations();
         vec_env
     }
@@ -1024,7 +1046,10 @@ impl VecBidEnv {
         let obs_buf = vec![0.0f32; n_envs * obs_dim];
         let mask_buf = vec![0.0f32; n_envs * BID_MASK_DIM];
 
-        let mut vec_env = VecBidEnv { envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false };
+        let orders = vec![[0u8, 1, 2, 3]; n_envs];
+        let mut vec_env = VecBidEnv {
+            envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false, canonical: false, orders,
+        };
         vec_env.refresh_observations();
         vec_env
     }
@@ -1219,6 +1244,17 @@ impl VecBidEnv {
     /// Enable match simulation mode: cumulative scores + dealer rotation across
     /// deals, reset on 2000-point match end. Requires the pool to have a dealer
     /// index built (call `pool.build_dealer_index()` before).
+    /// Switch every env — and this vec's own obs/mask buffers — into canonical
+    /// suit space. Call after `enable_score_aware_with_dim`: it refreshes the
+    /// observations, which is what puts `orders` in sync with `obs_buf`.
+    pub fn set_canonical(&mut self, enabled: bool) {
+        self.canonical = enabled;
+        for env in &mut self.envs {
+            env.canonical = enabled;
+        }
+        self.refresh_observations();
+    }
+
     pub fn set_match_sim(&mut self, enabled: bool) {
         self.match_sim = enabled;
         if enabled {
@@ -1244,43 +1280,47 @@ impl VecBidEnv {
 
     fn refresh_env_inner(&mut self, i: usize) {
         let od = self.obs_dim;
-        if od == BID_OBS_DIM_SCORE_AWARE
-            || od == BID_OBS_DIM_SCORE_AWARE_V2
-            || od == BID_OBS_DIM_SCORE_AWARE_V3
-        {
-            let (my, opp) = if let Some((ns, ew)) = self.envs[i].score_aware {
-                let player = self.envs[i].state.current_player();
-                let team = GameState::player_team(player);
-                if team == 0 { (ns, ew) } else { (ew, ns) }
-            } else {
-                (0, 0)
-            };
-            if od == BID_OBS_DIM_SCORE_AWARE_V3 {
-                bid_obs::write_bid_observation_score_aware_v3(
-                    &mut self.obs_buf, i * od,
-                    &self.envs[i].state, &self.envs[i].bid_history,
-                    my, opp,
-                );
-            } else if od == BID_OBS_DIM_SCORE_AWARE_V2 {
-                bid_obs::write_bid_observation_score_aware_v2(
-                    &mut self.obs_buf, i * od,
-                    &self.envs[i].state, &self.envs[i].bid_history,
-                    my, opp,
-                );
-            } else {
-                bid_obs::write_bid_observation_score_aware(
-                    &mut self.obs_buf, i * od,
-                    &self.envs[i].state, &self.envs[i].bid_history,
-                    my, opp,
-                );
-            }
+        let (my, opp) = if let Some((ns, ew)) = self.envs[i].score_aware {
+            let player = self.envs[i].state.current_player();
+            if GameState::player_team(player) == 0 { (ns, ew) } else { (ew, ns) }
         } else {
-            bid_obs::write_bid_observation(
+            (0, 0)
+        };
+
+        self.orders[i] = if self.canonical {
+            bid_obs::write_bid_observation_canonical(
                 &mut self.obs_buf, i * od,
-                &self.envs[i].state, &self.envs[i].bid_history,
+                &self.envs[i].state, &self.envs[i].bid_history, my, opp, od,
+            )
+        } else {
+            bid_obs::write_bid_observation_dim(
+                &mut self.obs_buf, i * od,
+                &self.envs[i].state, &self.envs[i].bid_history, my, opp, od,
+            );
+            [0, 1, 2, 3]
+        };
+
+        bid_obs::write_bid_mask(&mut self.mask_buf, i * BID_MASK_DIM, &self.envs[i].state);
+        if self.canonical {
+            // The mask has to follow the obs into canonical space, or the argmax is
+            // taken over the wrong suits.
+            let perm = suit_perm::perm_from_order(&self.orders[i]);
+            suit_perm::permute_bid_mask_f32(
+                &mut self.mask_buf[i * BID_MASK_DIM..(i + 1) * BID_MASK_DIM],
+                &perm,
             );
         }
-        bid_obs::write_bid_mask(&mut self.mask_buf, i * BID_MASK_DIM, &self.envs[i].state);
+    }
+
+    /// Bring an action the net chose for env `i` back into physical space.
+    /// Identity when canonicalisation is off.
+    #[inline]
+    pub fn to_physical(&self, i: usize, action: u8) -> u8 {
+        if self.canonical {
+            suit_perm::permute_bid_action(action, &self.orders[i])
+        } else {
+            action
+        }
     }
 }
 
@@ -1811,6 +1851,52 @@ mod tests {
                 assert_eq!(d.dealer, target, "dealer index returned wrong dealer");
             }
         }
+    }
+
+    /// The canonical mask must be an exact relabelling of the legal mask, and the
+    /// action must survive the round trip. This is the invariant that breaks first if
+    /// `orders` ever drifts out of sync with `obs_buf` — and when it breaks, nothing
+    /// else complains: the net still returns a legal-looking bid, in another suit.
+    #[test]
+    fn canonical_vec_env_mask_is_a_relabelling_of_the_legal_mask() {
+        let pool = DealPool::generate(64, 7);
+        let mut vec_env = VecBidEnv::new_with_pool_and_mode(4, 3, &pool, RewardMode::DdOnly);
+        vec_env.enable_score_aware_with_dim(BID_OBS_DIM_SCORE_AWARE_V3, &[], 0.0);
+        vec_env.set_canonical(true);
+
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut checked = 0usize;
+        for _ in 0..400 {
+            for i in 0..4usize {
+                let legal = vec_env.envs[i].state.legal_actions();
+                let mask = &vec_env.mask_buf[i * BID_MASK_DIM..(i + 1) * BID_MASK_DIM];
+                let set: Vec<u8> = (0..BID_MASK_DIM)
+                    .filter(|&j| mask[j] > 0.5)
+                    .map(|j| j as u8)
+                    .collect();
+
+                assert_eq!(
+                    set.len(),
+                    legal.count_ones() as usize,
+                    "canonical mask has a different number of options than the legal mask"
+                );
+                // Every canonical option decodes to a distinct legal physical action.
+                let mut seen = 0u64;
+                for &a in &set {
+                    let phys = vec_env.to_physical(i, a);
+                    assert!(legal & (1u64 << phys) != 0, "canonical {a} → illegal {phys}");
+                    assert!(seen & (1u64 << phys) == 0, "two canonical options collide");
+                    seen |= 1u64 << phys;
+                }
+                assert_eq!(seen, legal);
+                checked += 1;
+
+                let action = vec_env.random_action(i);
+                vec_env.step_env_pooled_score_aware(i, action, &pool, 1.0, &[], 0.0);
+            }
+            let _ = rng.gen::<u8>();
+        }
+        assert!(checked > 1000, "test did not exercise enough positions");
     }
 
     #[test]

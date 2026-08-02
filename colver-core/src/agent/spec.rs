@@ -67,6 +67,14 @@ pub struct BidSpec {
     pub temperature: f32,
     /// Apply endgame match-score adjustments to a non-score-aware net.
     pub score_aware: bool,
+    /// The net was trained on the **canonical** suit ordering (v7 and later).
+    ///
+    /// This cannot be auto-detected: a canonical net has exactly the same weight-file
+    /// size as a physical one of the same width, so the flag is the only thing that
+    /// distinguishes them. Getting it wrong is silent — the net returns a legal bid,
+    /// in the wrong suit. Same footgun as `residual` on the play side, and the same
+    /// reason it is explicit.
+    pub canonical: bool,
 }
 
 impl Default for BidSpec {
@@ -78,6 +86,7 @@ impl Default for BidSpec {
             penalty: 0.0,
             temperature: 0.0,
             score_aware: false,
+            canonical: false,
         }
     }
 }
@@ -236,6 +245,7 @@ impl AgentSpec {
                 ("bid", "penalty") => spec.bid.penalty = num(0.0),
                 ("bid", "temperature") => spec.bid.temperature = num(0.0),
                 ("bid", "score_aware") => spec.bid.score_aware = flag(),
+                ("bid", "canonical") => spec.bid.canonical = flag(),
 
                 ("play", "method") => spec.play.method = val.into(),
                 ("play", "model") => spec.play.model = Some(val.into()),
@@ -333,6 +343,7 @@ impl AgentSpec {
                 self.bid.penalty,
                 self.bid.temperature,
                 self.bid.score_aware,
+                self.bid.canonical,
                 seed,
             )));
         }

@@ -305,6 +305,17 @@ struct Args {
     /// Implies --sa-features-v2 semantics for the first 5 extras; overrides if both set.
     #[arg(long)]
     sa_features_v3: bool,
+    /// Train on the **canonical** suit ordering (v7). Suits are sorted by
+    /// (length, rank pattern) descending, ties broken by the auction, so two hands
+    /// identical up to renaming become one training sample instead of 24.
+    ///
+    /// Turns suit augmentation off — the canonical form is already invariant, so
+    /// permuting a sample would only decorrelate its obs from its stored action.
+    ///
+    /// A net trained this way is **not** interchangeable with a physical-order one of
+    /// the same width: arena bots must declare `canonical = true` under `[bid]`.
+    #[arg(long)]
+    canonical: bool,
     /// Enable match simulation: cumulative scores + dealer rotation across deals
     /// until one team reaches 2000. Replaces the random score injection at reset.
     /// Requires --score-aware. Builds a dealer index on the pool at startup.
@@ -346,6 +357,7 @@ fn evaluate_full_matches(
     play_model_path: &str,
     baseline_bid_path: &str,
     baseline_bid_hidden: usize,
+    canonical: bool,
 ) -> (usize, usize, f64) {
     let weights = match trainer.eval_snapshot() {
         Ok(w) => w,
@@ -404,45 +416,31 @@ fn evaluate_full_matches(
                 let player = state.current_player();
                 let team = GameState::player_team(player);
 
+                let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
                 let action = if team == train_team {
-                    if score_aware {
-                        let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
-                        if obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
-                            bid_obs::write_bid_observation_score_aware_v3(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        } else if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
-                            bid_obs::write_bid_observation_score_aware_v2(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        } else {
-                            bid_obs::write_bid_observation_score_aware(
-                                &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        }
+                    let (my, opp) = if score_aware { (my, opp) } else { (0, 0) };
+                    if canonical {
+                        // Same round trip as inference: obs and mask into canonical
+                        // space, chosen action back out. Skipping it here would make
+                        // the eval report a plausible, meaningless win rate.
+                        let order = bid_obs::write_bid_observation_canonical(
+                            &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp, obs_dim,
+                        );
+                        let perm = suit_perm::perm_from_order(&order);
+                        let legal = suit_perm::permute_bid_mask_u64(state.legal_actions(), &perm);
+                        let a = train_bid.best_action_fast(&bid_obs_buf, legal);
+                        suit_perm::permute_bid_action(a, &order)
                     } else {
-                        bid_obs::write_bid_observation(&mut bid_obs_buf, 0, &state, &tracking.bid_history);
+                        bid_obs::write_bid_observation_dim(
+                            &mut bid_obs_buf, 0, &state, &tracking.bid_history, my, opp, obs_dim,
+                        );
+                        train_bid.best_action_fast(&bid_obs_buf, state.legal_actions())
                     }
-                    train_bid.best_action_fast(&bid_obs_buf, state.legal_actions())
                 } else {
-                    if base_score_aware {
-                        let (my, opp) = if team == 0 { (ns_cum, ew_cum) } else { (ew_cum, ns_cum) };
-                        if base_obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
-                            bid_obs::write_bid_observation_score_aware_v3(
-                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        } else if base_obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
-                            bid_obs::write_bid_observation_score_aware_v2(
-                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        } else {
-                            bid_obs::write_bid_observation_score_aware(
-                                &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp,
-                            );
-                        }
-                    } else {
-                        bid_obs::write_bid_observation(&mut base_obs_buf, 0, &state, &tracking.bid_history);
-                    }
+                    let (my, opp) = if base_score_aware { (my, opp) } else { (0, 0) };
+                    bid_obs::write_bid_observation_dim(
+                        &mut base_obs_buf, 0, &state, &tracking.bid_history, my, opp, base_obs_dim,
+                    );
                     base_bid.best_action_fast(&base_obs_buf, state.legal_actions())
                 };
 
@@ -558,6 +556,11 @@ fn main() {
     }
     if args.sa_features_v3 && !args.score_aware {
         panic!("--sa-features-v3 requires --score-aware");
+    }
+    if args.canonical && !args.score_aware {
+        // The canonical path only exists on the score-aware transition type; a plain
+        // 108-dim run would silently store physical samples under a canonical banner.
+        panic!("--canonical requires --score-aware");
     }
     if args.ema_tau > 0.0 {
         trainer.set_ema_tau(args.ema_tau);
@@ -697,6 +700,13 @@ fn main() {
             vec_env.set_match_sim(true);
             println!("Match simulation enabled: cumulative scores + dealer rotation, reset @ 2000.");
         }
+        if args.canonical {
+            vec_env.set_canonical(true);
+            println!(
+                "Canonical suit ordering: obs, mask and stored actions in canonical space; \
+                 suit augmentation disabled."
+            );
+        }
         pool_data
     } else {
         Vec::new()
@@ -784,7 +794,13 @@ fn main() {
         };
 
         // --- Determine final actions: NN or opponent ---
+        // The net answered in its own action space. Under --canonical that is not the
+        // physical one, so every NN action goes back through the env's ordering before
+        // anything else looks at it; opponent strategies below already speak physical.
         let mut actions = nn_actions;
+        for i in 0..n {
+            actions[i] = vec_env.to_physical(i, actions[i]);
+        }
         for i in 0..n {
             if opp_modes[i] != OpponentMode::SelfPlay {
                 let player = vec_env.envs[i].state.current_player();
@@ -841,14 +857,19 @@ fn main() {
         if replay_buffer.size() >= args.min_buffer && step % args.train_freq == 0 {
             let mut sample = replay_buffer.sample(args.batch_size, beta, &mut rng);
 
-            // 24× suit augmentation: random permutation per sample
-            suit_perm::augment_bid_batch_with_obs_dim(
-                &mut sample.obs_data,
-                &mut sample.mask_data,
-                &mut sample.actions,
-                obs_dim,
-                &mut rng,
-            );
+            // 24× suit augmentation: random permutation per sample.
+            // Canonical samples are already invariant — the 24 relabelings collapsed
+            // to one at collection time — so permuting here would add no information
+            // and would move the obs away from the canonical form the net expects.
+            if !args.canonical {
+                suit_perm::augment_bid_batch_with_obs_dim(
+                    &mut sample.obs_data,
+                    &mut sample.mask_data,
+                    &mut sample.actions,
+                    obs_dim,
+                    &mut rng,
+                );
+            }
 
             match trainer.train_step(
                 &sample.obs_data,
@@ -914,6 +935,7 @@ fn main() {
                 &args.eval_play_model,
                 &args.eval_baseline_bid,
                 args.eval_baseline_hidden,
+                args.canonical,
             );
             let wr = if total > 0 {
                 wins as f64 / total as f64
@@ -974,6 +996,7 @@ fn main() {
         &args.eval_play_model,
         &args.eval_baseline_bid,
         args.eval_baseline_hidden,
+        args.canonical,
     );
     let wr = if total > 0 {
         wins as f64 / total as f64
