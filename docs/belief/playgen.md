@@ -384,6 +384,52 @@ Two consequences worth carrying:
   the CPU/GPU bit-identity the web's CPU fallback rests on. A product decision,
   not an optimization.
 
+## Perplexité pli par pli (`bench_playgen_ppl`, 2026-08-03)
+
+Perplexité teacher-forcing sur un corpus **retenu** (`heldout_20k_s90210.bin`),
+restreinte aux coups des sièges **cachés** — les seuls qui parlent du monde. La CE
+par pli qu'affiche `train_playgen` existait déjà ; ce binaire ajoute un point
+d'entrée autonome (n'importe quel checkpoint, n'importe quel corpus), la
+restriction aux acteurs cachés, et le **plancher de contrainte** : la même
+quantité sous une loi uniforme sur le masque.
+
+```bash
+cargo run -p colver-core --bin bench_playgen_ppl --release --features parallel -- \
+  --model models/playgen/playgen_v2_final.bin \
+  --games data/training/heldout_20k_s90210.bin --n 500
+```
+
+`playgen_v2_final`, 500 donnes × 4 observateurs (5 988 prédictions cachées/pli) :
+
+| pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| branchement modèle | 4,76 | 4,47 | 4,32 | 3,94 | 3,35 | 2,63 | 1,88 | 1,13 |
+| branchement uniforme | 22,96 | 19,57 | 16,27 | 13,04 | 9,89 | 6,90 | 4,10 | 1,56 |
+| **gain** | **4,82×** | 4,38× | 3,77× | 3,31× | 2,95× | 2,63× | 2,18× | **1,38×** |
+
+**Le gain du modèle sur l'arithmétique d'ensembles décroît de bout en bout,
+4,8× au pli 1 contre 1,4× au pli 8.** C'est la version résolue en temps du
+constat de `bench_world_cred` (« un tirage uniforme contraint atteint déjà 70 %
+d'argmax en jeu ») : les contraintes dures ne portent pas l'essentiel du signal
+*partout*, elles le portent **en fin de donne**, là où elles déterminent presque
+la position. Conséquence pour IS-DD : la valeur d'un monde playgen sur un monde
+uniforme est concentrée dans les premiers plis.
+
+**Piège d'unités, corrigé après coup.** Le cumul `exp(Σ nll restantes)` compte des
+**continuations**, pas des mondes : plusieurs ordres de jeu réalisent la même
+distribution des mains. Le premier tirage annonçait « 2,59e11 mondes » au pli 1,
+alors qu'il n'existe que `24!/(8!)³ = 9,47e9` distributions — cent fois moins.
+La table imprime donc ce plafond combinatoire à côté, et **seul le rapport
+modèle/uniforme est lisible**, le facteur d'ordres s'y simplifiant. Le compte de
+mondes proprement dit demande de l'échantillonnage (taux de monde exact) :
+c'est une autre mesure, pas une autre présentation de celle-ci.
+
+**Ce que ça ne mesure pas** : le corpus est joué par bid v6 + DouDou50, donc la
+question posée est « sait-il prédire *ces bots-là* ». Comparer deux checkpoints
+sur le même corpus est légitime ; en tirer un chiffre absolu ne l'est pas.
+Aucun échantillonnage n'intervient, donc ce bench est immunisé par construction
+contre le piège maison des questions tirées du flux mesuré.
+
 ## Next steps
 - [ ] **v3 : la belote dans le masque observable** (voir « Ce que le masque ne dit
       pas encore »). 15,4 % de mondes impossibles aux positions concernées, filtrés
