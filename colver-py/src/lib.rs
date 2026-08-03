@@ -1771,5 +1771,10 @@ fn _colver(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(matadors, m)?)?;
     m.add("NUM_HAND_CLASSES", hand_class::NUM_HAND_CLASSES)?;
     m.add("NUM_HAND_CLASSES_TRUMP", hand_class::NUM_HAND_CLASSES_TRUMP)?;
+    // Empreinte des sources playgen/engine de *ce* binaire — donc de celles du
+    // conteneur web, puisque c'est le même build. `playgen_gpu.probe` la compare
+    // à celle que le sidecar publie sur son /health : c'est ce qui permet à
+    // /health de dire qu'un sidecar déployé à la main a pris du retard.
+    m.add("PLAYGEN_SURFACE", colver_core::playgen::SURFACE)?;
     Ok(())
 }

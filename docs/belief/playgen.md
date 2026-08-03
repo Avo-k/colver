@@ -283,7 +283,7 @@ curl -s http://localhost:8003/health
 | `POST /play_worlds` | remaining hands per seat | **`worlds::SidecarWorldSource`** — the IS-DD agent |
 | `POST /auction_deals` | full 8-card deals, conditioned on the auction | web analysis pages |
 | `POST /beliefs` | card marginals `[4][32]` | web analysis pages |
-| `GET /health` | status + device | agent construction check |
+| `GET /health` | status + device + `surface` | agent construction check, **contrôle de fraîcheur** |
 
 The request carries the *replayable deal* (dealer, initial hands, action prefix,
 observer); the server rebuilds the sampler by replay before sampling a batch. So
@@ -295,6 +295,39 @@ the client holds no session and a restarted sidecar needs no coordination.
 `$COLVER_PLAYGEN_GPU_URL` or a `[worlds] url` in the bot spec. The Python client
 [`web/playgen_gpu.py`](../../python/colver/web/playgen_gpu.py) now only serves
 the **analysis** pages; it no longer feeds IS-DD.
+
+### Fraîcheur du sidecar : `surface` (2026-08-03)
+
+**Joignable ne veut pas dire à jour.** Le sidecar se déploie à la main, donc
+décider s'il est à jour se faisait en lisant les titres de commits — et un
+commit titré « feat(elo) » (`989d1e7`) a livré la contrainte belote **dans le
+sampler** sans le mentionner. La prod a tourné **21 h** sur un sidecar périmé :
+il fabriquait des mondes que `worlds::retain_valid` rejetait ensuite (~15,4 % aux
+positions à belote), donc Dédé cherchait sur moins de mondes qu'il n'en
+demandait. `/health` le voyait joignable, et il l'était.
+
+`build.rs` calcule à la compilation une empreinte des sources qui décident du
+comportement du sidecar — **`src/playgen/` + `src/engine/` en entier** — exposée
+en `playgen::SURFACE`. Le sidecar la publie sur `GET /health` ; le conteneur web
+porte la sienne (`colver._colver.PLAYGEN_SURFACE`, même build) et les compare
+dans `playgen_gpu.probe()`.
+
+**Pourquoi une empreinte de sources et pas le SHA git** : le SHA change à chaque
+commit, y compris web-only. Une alerte qui s'allume à chaque déploiement est du
+bruit, et une alerte qui est du bruit ne se lit plus. `worlds.rs` est
+volontairement **hors** surface — il tourne côté web, pas dans le sidecar.
+Vérifié : éditer `engine/play.rs` change l'empreinte, éditer `worlds.rs` ne la
+change pas.
+
+Trois états, et **« inconnu » n'est pas « périmé »** : un sidecar antérieur à
+cette fonctionnalité ne publie pas `surface`, et le crier périmé apprendrait à
+ignorer le champ. `/health` ne dégrade que sur `fresh: false`, et seulement là où
+le sidecar est attendu (`COLVER_REQUIRE_SIDECAR`) — même arbitrage que la
+joignabilité, pour qu'une machine de dev ne crie pas pour rien.
+
+**Ne couvre pas** les poids du checkpoint, les drapeaux de compilation ni la
+version de CUDA. Le checkpoint reste à vérifier par sha256 — voir juste en
+dessous ; l'automatiser demanderait une dépendance `sha2`, absente du lock.
 
 > **Keep the served model aligned with the released one.** Prod ran
 > `playgen_v2_half.bin` (an intermediate checkpoint) from 2026-07-23 to

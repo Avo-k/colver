@@ -36,6 +36,34 @@ PROBE_TTL = float(os.environ.get("COLVER_PLAYGEN_GPU_PROBE_TTL", "30"))
 
 _probe_cache = None  # (instant monotone, résultat)
 
+# Empreinte des sources playgen/engine de *ce* binaire. Le sidecar publie la
+# sienne ; deux valeurs identiques disent que les deux ont été construits sur le
+# même code. C'est le seul contrôle automatique de la fraîcheur du sidecar, qui
+# se déploie à la main et que le webhook ne touche pas.
+try:
+    from colver._colver import PLAYGEN_SURFACE as _OUR_SURFACE
+except ImportError:  # binding trop ancien pour porter la constante
+    _OUR_SURFACE = None
+
+
+def _freshness(remote_surface):
+    """`(fresh, detail)` — l'écart de code entre ce conteneur et le sidecar.
+
+    Trois états, et **« inconnu » n'est pas « périmé »** : un sidecar d'avant
+    cette fonctionnalité ne publie pas de `surface`, et le crier périmé
+    apprendrait aux lecteurs à ignorer le champ. On ne conclut que quand les
+    deux côtés savent répondre.
+    """
+    if _OUR_SURFACE is None or not remote_surface:
+        return None, "inconnue (un des deux côtés ne la publie pas)"
+    if remote_surface == _OUR_SURFACE:
+        return True, _OUR_SURFACE
+    return False, (
+        f"sidecar {remote_surface} ≠ web {_OUR_SURFACE} — "
+        "sidecar construit sur d'autres sources playgen/engine, "
+        "le rebâtir (docs/belief/playgen.md)"
+    )
+
 
 def enabled() -> bool:
     return bool(GPU_URL)
@@ -51,7 +79,8 @@ def probe(force=False):
     global _probe_cache
     if not GPU_URL:
         return {"configured": False, "reachable": False,
-                "detail": "COLVER_PLAYGEN_GPU_URL non définie", "age_s": 0.0}
+                "detail": "COLVER_PLAYGEN_GPU_URL non définie", "age_s": 0.0,
+                "fresh": None, "surface": "sidecar non configuré"}
     now = time.monotonic()
     if not force and _probe_cache is not None and now - _probe_cache[0] < PROBE_TTL:
         cached = dict(_probe_cache[1])
@@ -60,12 +89,16 @@ def probe(force=False):
     try:
         with urllib.request.urlopen(GPU_URL + "/health", timeout=PROBE_TIMEOUT) as resp:
             body = json.loads(resp.read())
+        fresh, surface = _freshness(body.get("surface"))
         result = {"configured": True, "reachable": True,
                   "detail": f"model {body.get('model')}, "
-                            f"max_worlds {body.get('max_worlds')}"}
+                            f"max_worlds {body.get('max_worlds')}",
+                  "fresh": fresh, "surface": surface}
     except Exception as e:  # noqa: BLE001 — toute panne se rapporte pareil
+        # Injoignable : la fraîcheur n'est pas « fausse », elle est indécidable.
         result = {"configured": True, "reachable": False,
-                  "detail": f"{type(e).__name__}: {e}"}
+                  "detail": f"{type(e).__name__}: {e}",
+                  "fresh": None, "surface": "sidecar injoignable"}
     _probe_cache = (now, result)
     out = dict(result)
     out["age_s"] = 0.0

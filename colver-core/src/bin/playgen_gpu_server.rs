@@ -405,11 +405,17 @@ fn main() {
             let t0 = std::time::Instant::now();
 
             let response = match (method, url.as_str()) {
+                // `surface` : empreinte des sources playgen/engine sur
+                // lesquelles ce binaire a été construit. Le conteneur web la
+                // compare à la sienne pour dire si ce sidecar — déployé à la
+                // main, donc facile à oublier — tourne bien le code de master.
                 (tiny_http::Method::Get, "/health") => json_response(
                     200,
                     format!(
-                        "{{\"status\":\"ok\",\"model\":\"{}\",\"max_worlds\":{}}}",
-                        d, MAX_WORLDS
+                        "{{\"status\":\"ok\",\"model\":\"{}\",\"max_worlds\":{},\"surface\":\"{}\"}}",
+                        d,
+                        MAX_WORLDS,
+                        colver_core::playgen::SURFACE
                     ),
                 ),
                 (tiny_http::Method::Post, path @ ("/beliefs" | "/auction_deals" | "/play_worlds")) => {

@@ -468,7 +468,18 @@ async def health():
     # absence est la raison pour laquelle la prod a tourné un jour entier sur
     # des mondes uniformes sans que /health s'en émeuve.
     sidecar_ok = sidecar["reachable"] or not _agents.sidecar_expected()
-    healthy = db_ok and sidecar_ok
+    # Le sidecar se déploie **à la main**, séparément du webhook : joignable ne
+    # veut donc pas dire à jour. Un sidecar périmé ne casse rien de visible — il
+    # fabrique des mondes que `retain_valid` rejette ensuite, donc Dédé cherche
+    # sur moins de mondes qu'il n'en demande, en silence. C'est exactement le
+    # genre de panne que seul un contrôle explicite attrape : celle du
+    # 2026-08-03 a duré 21 h. Même règle que la joignabilité — ce n'est une
+    # alerte que là où ce déploiement a déclaré attendre un sidecar, sinon une
+    # machine de dev au sidecar plus vieux que son checkout crierait pour rien.
+    # `fresh is None` (inconnu) ne dégrade pas : on n'alerte pas sur une
+    # ignorance, sous peine d'apprendre à ignorer le champ.
+    fresh_ok = sidecar["fresh"] is not False or not _agents.sidecar_expected()
+    healthy = db_ok and sidecar_ok and fresh_ok
     payload = {
         "status": "ok" if healthy else "degraded",
         "db": db_ok,

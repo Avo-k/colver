@@ -87,6 +87,70 @@ class TestProbe:
         assert playgen_gpu.probe(force=True) and len(calls) == 2
 
 
+class TestFraicheur:
+    """Joignable ne veut pas dire à jour.
+
+    Le sidecar se déploie **à la main**, séparément du webhook. Le 2026-08-03 un
+    commit titré « feat(elo) » a livré la contrainte belote dans le sampler
+    playgen sans le dire, et la prod a tourné 21 h sur un sidecar périmé : il
+    fabriquait des mondes que `retain_valid` rejetait ensuite (~15,4 % aux
+    positions à belote), donc Dédé cherchait sur moins de mondes qu'il n'en
+    demandait. Rien ne le disait — `/health` le voyait joignable, et il l'était.
+    """
+
+    def _probe_with_surface(self, monkeypatch, remote, ours):
+        class _Resp:
+            def read(self):
+                body = '{"status":"ok","model":"384","max_worlds":512'
+                if remote is not None:
+                    body += f',"surface":"{remote}"'
+                return (body + "}").encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(playgen_gpu, "GPU_URL", "http://sidecar:8003")
+        monkeypatch.setattr(playgen_gpu, "_OUR_SURFACE", ours)
+        monkeypatch.setattr(playgen_gpu.urllib.request, "urlopen",
+                            lambda *a, **k: _Resp())
+        return playgen_gpu.probe()
+
+    def test_memes_sources_est_frais(self, monkeypatch):
+        p = self._probe_with_surface(monkeypatch, "abc123", "abc123")
+        assert p["fresh"] is True
+
+    def test_sources_differentes_est_perime(self, monkeypatch):
+        """Le cas du 2026-08-03, cette fois visible."""
+        p = self._probe_with_surface(monkeypatch, "vieux1", "neuf99")
+        assert p["fresh"] is False
+        # …et le message doit dire quoi faire, pas seulement que c'est faux.
+        assert "vieux1" in p["surface"] and "neuf99" in p["surface"]
+
+    def test_sidecar_muet_est_inconnu_pas_perime(self, monkeypatch):
+        """Un sidecar d'avant cette fonctionnalité ne publie pas de `surface`.
+        Le déclarer périmé apprendrait à ignorer le champ — une alerte qui crie
+        au loup ne se lit plus, exactement comme les 14 fausses alertes de
+        `_note_degraded` sur les coups forcés."""
+        p = self._probe_with_surface(monkeypatch, None, "neuf99")
+        assert p["fresh"] is None
+
+    def test_binding_muet_est_inconnu_aussi(self, monkeypatch):
+        p = self._probe_with_surface(monkeypatch, "abc123", None)
+        assert p["fresh"] is None
+
+    def test_injoignable_ne_conclut_rien(self, monkeypatch):
+        """Injoignable est déjà signalé par `reachable`. Le compter aussi comme
+        périmé ferait crier deux fois la même panne."""
+        monkeypatch.setattr(playgen_gpu, "GPU_URL", "http://127.0.0.1:1")
+        monkeypatch.setattr(playgen_gpu, "PROBE_TIMEOUT", 0.5)
+        p = playgen_gpu.probe()
+        assert p["reachable"] is False
+        assert p["fresh"] is None
+
+
 class TestHealth:
     def test_sans_sidecar_attendu_le_service_reste_ok(self, client, monkeypatch):
         """Une machine de dev sans GPU est un cas normal, pas une panne."""
@@ -117,6 +181,56 @@ class TestHealth:
         assert body["status"] == "degraded"
         assert body["sidecar"]["configured"] is True
         assert body["sidecar"]["reachable"] is False
+
+    def _sidecar_replying(self, monkeypatch, surface):
+        class _Resp:
+            def read(self):
+                return (
+                    '{"status":"ok","model":"384","max_worlds":512,'
+                    f'"surface":"{surface}"}}'
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        monkeypatch.setattr(playgen_gpu, "GPU_URL", "http://sidecar:8003")
+        monkeypatch.setattr(playgen_gpu.urllib.request, "urlopen",
+                            lambda *a, **k: _Resp())
+
+    def test_sidecar_exige_et_perime_degrade(self, client, monkeypatch):
+        """Joignable, donc l'ancien /health disait « ok » — c'est précisément le
+        silence de 21 h du 2026-08-03."""
+        self._sidecar_replying(monkeypatch, "vieux1")
+        monkeypatch.setattr(playgen_gpu, "_OUR_SURFACE", "neuf99")
+        monkeypatch.setattr(agents, "REQUIRE_SIDECAR", True)
+        r = client.get("/health")
+        body = r.json()
+        assert body["sidecar"]["reachable"] is True
+        assert body["sidecar"]["fresh"] is False
+        assert body["status"] == "degraded"
+        # …mais on sert : un sidecar périmé affaiblit le jeu, il ne l'empêche pas.
+        assert r.status_code == 200
+
+    def test_perime_mais_non_exige_ne_degrade_pas(self, client, monkeypatch):
+        """Sur une machine de dev, un sidecar plus vieux que le checkout est la
+        règle et non une panne. Même arbitrage que la joignabilité."""
+        self._sidecar_replying(monkeypatch, "vieux1")
+        monkeypatch.setattr(playgen_gpu, "_OUR_SURFACE", "neuf99")
+        monkeypatch.setattr(agents, "REQUIRE_SIDECAR", False)
+        body = client.get("/health").json()
+        assert body["sidecar"]["fresh"] is False
+        assert body["status"] == "ok"
+
+    def test_a_jour_et_exige_reste_ok(self, client, monkeypatch):
+        self._sidecar_replying(monkeypatch, "pareil")
+        monkeypatch.setattr(playgen_gpu, "_OUR_SURFACE", "pareil")
+        monkeypatch.setattr(agents, "REQUIRE_SIDECAR", True)
+        body = client.get("/health").json()
+        assert body["sidecar"]["fresh"] is True
+        assert body["status"] == "ok"
 
     def test_une_url_configuree_ne_suffit_plus_a_dire_que_tout_va_bien(
             self, client, monkeypatch):
