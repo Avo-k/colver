@@ -677,12 +677,14 @@ fn print_world_telemetry() {
     }
     println!();
     println!("  Par stade de donne (cartes restantes en main) :");
-    println!("    {:>6} {:>8} {:>8} {:>7} {:>9} {:>9} {:>8} {:>8} {:>7}",
-        "cartes", "décis.", "cherché", "a/r", "demandés", "reçus", "remplis", "résolus", "utilisés");
+    println!("    {:>6} {:>8} {:>7} {:>9} {:>9} {:>7} {:>8} {:>8} {:>9} {:>8}",
+        "cartes", "cherché", "a/r", "demandés", "reçus", "remplis", "résolus",
+        "utilisés", "ms/a-r", "attente");
     for l in &lanes {
-        println!("    {:>6} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7.0}% {:>8} {:>6.0}%",
-            l.cards_left, l.decisions, l.searched, l.rounds,
-            l.requested, l.delivered, l.fill_pct(), l.solved, l.used_pct());
+        println!("    {:>6} {:>8} {:>7} {:>9} {:>9} {:>6.0}% {:>8} {:>7.0}% {:>9.1} {:>7.0}%",
+            l.cards_left, l.searched, l.rounds,
+            l.requested, l.delivered, l.fill_pct(), l.solved, l.used_pct(),
+            l.ms_per_round(), l.wait_pct());
     }
     let delivered: u64 = lanes.iter().map(|l| l.delivered).sum();
     let discarded: u64 = lanes.iter().map(|l| l.discarded).sum();

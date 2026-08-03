@@ -160,7 +160,11 @@ impl CardPlayer for IsDdPlayer {
             None => self.search.search_with_stats(state, &self.config, &mut self.rng),
         };
 
-        telemetry::record(&result.worlds, &result.source, result.determinizations);
+        let elapsed = start.elapsed();
+        telemetry::record(
+            &result.worlds, &result.source, result.determinizations,
+            elapsed.as_micros() as u64,
+        );
 
         Ok(Decision {
             action: result.best_action,
@@ -169,7 +173,7 @@ impl CardPlayer for IsDdPlayer {
                 candidates: result.card_scores,
                 determinizations: result.determinizations,
                 worlds: result.worlds,
-                elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
+                elapsed_ms: elapsed.as_secs_f64() * 1000.0,
             },
         })
     }
@@ -212,6 +216,8 @@ pub mod telemetry {
     lanes!(L_DELIVERED);
     lanes!(L_SOLVED);
     lanes!(L_DISCARDED);
+    lanes!(L_SOURCE_US);
+    lanes!(L_TOTAL_US);
 
     static DECISIONS: AtomicU64 = AtomicU64::new(0);
     static NO_SAMPLING: AtomicU64 = AtomicU64::new(0);
@@ -284,6 +290,10 @@ pub mod telemetry {
         pub delivered: u64,
         pub solved: u64,
         pub discarded: u64,
+        /// Temps passé à attendre la source, cumulé (µs).
+        pub source_us: u64,
+        /// Temps total des décisions de cette tranche (µs).
+        pub total_us: u64,
     }
 
     impl Lane {
@@ -298,6 +308,25 @@ pub mod telemetry {
                 / self.delivered as f64
         }
 
+        /// Part du temps de décision passée à attendre la source plutôt qu'à
+        /// résoudre. Au-delà de ~50 % la recherche n'est plus limitée par le
+        /// solveur : demander moins de mondes, ou les demander plus tôt,
+        /// devient le seul levier.
+        pub fn wait_pct(&self) -> f64 {
+            if self.total_us == 0 {
+                return 0.0;
+            }
+            100.0 * self.source_us as f64 / self.total_us as f64
+        }
+
+        /// Durée moyenne d'un aller-retour, en ms.
+        pub fn ms_per_round(&self) -> f64 {
+            if self.rounds == 0 {
+                return 0.0;
+            }
+            self.source_us as f64 / self.rounds as f64 / 1000.0
+        }
+
         /// Part des mondes demandés que la source a effectivement rendus.
         /// En dessous de 100 %, le sampler n'arrive plus à produire — c'est ce
         /// qui fait sécher la file et réveille le repli.
@@ -309,7 +338,12 @@ pub mod telemetry {
         }
     }
 
-    pub(super) fn record(counts: &WorldCounts, usage: &SourceUsage, solved: u32) {
+    pub(super) fn record(
+        counts: &WorldCounts,
+        usage: &SourceUsage,
+        solved: u32,
+        total_us: u64,
+    ) {
         let lane = (usage.cards_left as usize).min(LANES - 1);
         L_DECISIONS[lane].fetch_add(1, Ordering::Relaxed);
         if counts.total() > 0 {
@@ -320,6 +354,8 @@ pub mod telemetry {
         L_DELIVERED[lane].fetch_add(usage.delivered as u64, Ordering::Relaxed);
         L_SOLVED[lane].fetch_add(solved as u64, Ordering::Relaxed);
         L_DISCARDED[lane].fetch_add(usage.discarded as u64, Ordering::Relaxed);
+        L_SOURCE_US[lane].fetch_add(usage.source_us, Ordering::Relaxed);
+        L_TOTAL_US[lane].fetch_add(total_us, Ordering::Relaxed);
 
         DECISIONS.fetch_add(1, Ordering::Relaxed);
         W_INJECTED.fetch_add(counts.injected as u64, Ordering::Relaxed);
@@ -352,6 +388,8 @@ pub mod telemetry {
                 delivered: L_DELIVERED[i].load(Ordering::Relaxed),
                 solved: L_SOLVED[i].load(Ordering::Relaxed),
                 discarded: L_DISCARDED[i].load(Ordering::Relaxed),
+                source_us: L_SOURCE_US[i].load(Ordering::Relaxed),
+                total_us: L_TOTAL_US[i].load(Ordering::Relaxed),
             })
             .filter(|l| l.decisions > 0)
             .collect()

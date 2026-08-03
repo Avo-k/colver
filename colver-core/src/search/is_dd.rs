@@ -248,6 +248,12 @@ pub struct SourceUsage {
     pub delivered: u32,
     /// Mondes reçus mais jamais résolus, jetés en fin de recherche.
     pub discarded: u32,
+    /// Temps passé **dans** `WorldSource::worlds`, en microsecondes. C'est la
+    /// part du budget qui n'est pas de la recherche : sous échéance, chaque
+    /// microseconde ici est une microseconde de moins pour résoudre. La
+    /// comparer au temps total de la décision est ce qui distingue « le
+    /// solveur sature » de « on attend le GPU ».
+    pub source_us: u64,
     /// Cartes restantes en main de l'observateur — 8 à l'entame, 1 au dernier
     /// pli. C'est l'axe qui compte : le coût d'un solve et la richesse de
     /// l'espace des mondes varient de plusieurs ordres de grandeur le long de
@@ -922,7 +928,9 @@ impl IsDdSearch {
                     } else {
                         ((config.determinizations - det_count) as usize).max(remaining)
                     };
+                    let t0 = Instant::now();
                     let batch = src.worlds(state, observer, want, rng)?;
+                    usage.source_us += t0.elapsed().as_micros() as u64;
                     usage.rounds += 1;
                     usage.requested += want as u32;
                     usage.delivered += batch.len() as u32;
