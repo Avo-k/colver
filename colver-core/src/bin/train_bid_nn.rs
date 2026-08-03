@@ -681,7 +681,15 @@ fn main() {
     // Phase 2: Initialize envs from pool (instant)
     println!("\n--- Phase 2: Training ---");
     if args.score_aware {
-        println!("Score-aware mode: obs_dim={}, Δ-winprob reward (scale={})", BID_OBS_DIM_SCORE_AWARE, args.sa_scale);
+        // `score_aware_dim`, pas une constante : la ligne affichait 110 quel que soit le
+        // jeu de features, donc les journaux de v5 comme de v6 annoncent une largeur
+        // qu'ils n'ont pas utilisée. Le seul endroit où la largeur est visible à l'œil
+        // doit être celui que le modèle reçoit.
+        println!(
+            "Score-aware mode: obs_dim={}, Δ-winprob reward (scale={})",
+            score_aware_dim(&args),
+            args.sa_scale
+        );
     }
     let mut vec_env = VecBidEnv::new_with_pool_and_mode(args.num_envs, args.seed, &pool, reward_mode);
 

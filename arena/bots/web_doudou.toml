@@ -1,0 +1,12 @@
+# DouDou50 exactement tel que le web l'assoit (mode « rapide »).
+# Miroir de `agents.spec_for("doudou")` : même bidder que web_dede, seul le jeu
+# de la carte change — c'est bien la seule différence que la mesure doit isoler.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "dmc"
+model = "models/dmc_50.bin"
+residual = true

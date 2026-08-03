@@ -970,11 +970,27 @@ phrases se ressemblent et ne parlent pas de la même chose.
 L'échelle de checkpoints du resume de v6 donne le débit : 12 intervalles de 2,5 M en 5 797 s en
 moyenne, soit **431 pas/s**. Donc **30 M ≈ 19,3 h par bras**, et les 75 M de v6 valaient ~48 h.
 
-Trois bras à 30 M = **~58 h en séquentiel**. À vérifier avant de s'engager : le réseau
-d'annonce est minuscule (117→512³→43), donc le GPU n'est probablement pas le goulot et deux ou
-trois bras peuvent tenir de front — **une co-exécution courte le dira**, et c'est la seule
-mesure à faire avant de lancer. Ne pas le supposer : si les bras se ralentissent mutuellement,
-un run de 19 h en devient un de 40.
+Trois bras à 30 M = **~58 h, et il faut les lancer l'un après l'autre.** L'intuition disait
+l'inverse — le réseau est minuscule (117→512³→43), un bras ne prend qu'environ **un cœur** et
+**39 % du GPU**, donc trois devraient tenir de front. Mesuré
+([bid_corun_probe.sh](../../scripts/training/bid_corun_probe.sh), 3 min par palier, débit médian
+en régime établi) :
+
+| bras de front | pas/s par bras | **total** |
+|---|---|---|
+| 1 | 511 | **511** |
+| 2 | 236 · 228 | 464 |
+| 3 | 113 · 116 · 104 | **333** |
+
+**Le débit total *baisse*.** Trois bras de front rendent 333 pas/s là où un seul en rend 511 :
+la campagne entière est **1,5× plus lente** en parallèle qu'en séquentiel. Ni le CPU ni la VRAM
+ne sont saturés — ce sont trois contextes CUDA qui se disputent un GPU en s'envoyant chacun une
+nuée de très petits noyaux. Un débit par processus qui tombe plus vite que 1/n est la signature
+de ce cas, et c'est la raison de mesurer plutôt que de raisonner sur l'occupation.
+
+*Note sur les 511* : c'est **sans** matchs d'éval périodiques. L'échelle de checkpoints de v6,
+qui en faisait, donne 431 pas/s — d'où les ~19 h par bras retenues ici, qui est le chiffre
+« tout compris ».
 
 Et **cette campagne ne dépend pas d'une regénération de pool** : le pool actuel n'est pas à
 refaire pour cause de dérive (§1.6), et l'obs qui change ne touche pas le format `(donne,
@@ -984,6 +1000,13 @@ dd_pts)`.
 
 Dans cet ordre, du moins cher au plus cher :
 
+0. **Contrôle de largeur** *(instantané)* — la taille du `.bin` exporté. Un dueling 512³ pèse
+   `obs_dim×512 + 512 + 1024` plus trois blocs fixes, soit **2 445 488 o à 117** et
+   **2 457 776 o à 123** ; les deux valeurs ont été vérifiées sur disque. C'est le seul contrôle
+   qui attrape une largeur fausse avant 19 h de calcul, et il en a déjà attrapé un : la ligne
+   « Score-aware mode: obs_dim=… » du trainer était **codée en dur sur 110** et l'affichait quel
+   que soit le jeu de features — les journaux de v5 et de v6 annoncent donc une largeur qu'ils
+   n'ont pas utilisée. Corrigé.
 1. **Contrôle de câblage** *(secondes)* — `bid_equivariance` doit rendre **0,0 %** sur C et V
    dans les trois régimes. Non nul = mauvais branchement du masque ou de l'action, pas une
    régression de force. C'est le seul usage licite du taux de bascule ici (§1.10).

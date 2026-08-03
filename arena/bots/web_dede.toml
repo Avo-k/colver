@@ -1,0 +1,22 @@
+# Dédé exactement tel que le web l'assoit (mode « standard »).
+# Miroir de `agents.spec_for("dede")` : mêmes poids que la prod (bid_v6_isdd.bin
+# et belief_v4_fix_v2.bin sont les fichiers téléchargés par `colver._model`),
+# même budget par coup, mêmes mondes. À ne pas confondre avec `v6_isdd_75M_belief`,
+# qui est du `smart_is_dd` à 50 ms sur belief_v3 — un autre agent.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "isdd"
+time_ms = 1000
+determinizations = 20
+
+[worlds]
+source = "sidecar"
+batch = 256
+fallback = "strict"
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"
