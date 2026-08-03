@@ -28,13 +28,35 @@ cargo run --release --features parallel --bin gen_games_isdd -- \
 
 # Relire un corpus et le rejouer intégralement
 cargo run --release --bin gen_games_isdd -- --check data/training/isdd_games.bin
+
+# Rassembler les éclats d'un run interrompu
+cargo run --release --bin gen_games_isdd -- --merge data/training/isdd_games.bin \
+  --out data/training/isdd_games.bin
 ```
+
+Un run de plusieurs heures écrit des **éclats** (`--shard`, 5000 donnes par
+défaut) au fil de l'eau, les fusionne à la fin et les efface alors seulement.
+`GameReplay::write_all` n'écrivant qu'en une fois, sans ça une interruption à
+95 % ne laisserait rien.
 
 `--match-mode` enchaîne les donnes en parties de 2000 points au lieu de les
 tirer indépendantes. Ce n'est pas cosmétique : bid v6 lit une observation
 *score-aware*, donc il annonce autrement à 900-200 qu'à 0-0, et le corpus
 playgen actuel est **entièrement à 0-0**. C'est le manque relevé dans
 [playgen v3](../belief/playgen.md).
+
+⚠️ **Mais ce n'est pas encore le bon défaut, et pour une raison qui tient au
+format.** `COLVGM01` ne porte pas le score de partie. Un playgen entraîné sur
+des donnes de mode partie verrait donc des enchères qu'il **ne peut pas
+expliquer** — la variable qui les décide n'est pas dans son entrée. Ce n'est
+pas de l'information en plus, c'est de l'entropie irréductible en plus. Le
+défaut reste donc la donne indépendante à 0-0, cohérente avec elle-même ;
+`--match-mode` devient le bon choix le jour où le format transporte le score,
+et c'est exactement le changement que réclame la note playgen v3.
+
+Ce qui change *déjà* sans mode partie, et qui est l'objet du binaire :
+l'enchère est **réellement jouée** — tous les tours, contres et surcontres
+compris — au lieu d'un atout imposé.
 
 ## Le corpus se vérifie à l'écriture
 
@@ -154,8 +176,32 @@ différents.
 | + threads réglés (256) + sur-commande | 1,76 | 1,68 |
 | + préfixe groupé + retrait de lanes | **2,62** | **2,50** |
 
-Une 3090, 40 mondes par décision. À 2,62 donnes/s : 100 k donnes en 10,6 h,
-1 M en 4,4 jours — avant le second GPU.
+Une 3090, 40 mondes par décision.
+
+Et par nombre de mondes, la question qui décide du budget :
+
+| mondes/décision | donnes/s | 100 k donnes | attente sidecar |
+|---|---|---|---|
+| 20 | 3,93 | 7,1 h | 71 % |
+| 40 | 2,34 | 11,9 h | 63 % |
+| 60 | 1,70 | 16,3 h | 61 % |
+
+Le débit décroît **moins vite que le nombre de mondes** (×3 de mondes ne coûte
+que ×2,3 de temps) : une part du travail par décision ne dépend pas du compte —
+le préfixe, la partie non échantillonnée des décisions, le rejeu côté sidecar.
+Doubler de 20 à 40 mondes coûte donc 1,7× et non 2×.
+
+La part d'attente du sidecar **descend** quand les mondes montent, parce que
+c'est le solve DD qui grossit : à 20 mondes la génération est encore
+franchement limitée par le GPU, à 60 les deux ressources se rapprochent. C'est
+le signe que l'optimisation a fait son travail — au départ ce rapport était de
+93/7.
+
+⚠️ **La VRAM libre est un paramètre caché de ces mesures.** Une série entière a
+été mesurée 30 % trop lente parce que trois sidecars de test oisifs occupaient
+21 Go des 24 de la carte : le sidecar actif n'a jamais planté, il a juste
+ralenti. Vérifier `nvidia-smi` **avant** de croire un chiffre, et tuer les
+sidecars d'expérience — ils ne rendent jamais leur VRAM tant qu'ils vivent.
 
 ## Ce qui a été mesuré et **écarté**
 
@@ -180,6 +226,35 @@ mathématiquement identiques mais **pas bit-à-bit** (les matmuls changent de
 forme, donc l'ordre de réduction flottant), et le retrait de lanes change en
 plus l'ordre de consommation du RNG. Comparer les mondes un à un ne dirait donc
 rien. Les deux passent à **1,001×** et **1,06×** du témoin.
+
+### TF32 : **3 à 5× plus lent**, à ne pas réessayer
+
+L'attention et les FFN sont en f32 sur une carte Ampere, qui sait faire du TF32
+à ~8× le débit. `NVIDIA_TF32_OVERRIDE=1` sur le sidecar rend **0,44 et 0,83
+donnes/s contre 2,18 et 2,28** en f32 — pas un gain amoindri, une régression
+d'un facteur 3 à 5. Cause non instrumentée (bascule de cuBLAS vers un noyau
+sans tensor cores pour ces formes, très probablement). L'idée est close pour ce
+modèle et ces tailles de lot.
+
+### Rétrécir la fenêtre d'attention : bloqué par candle
+
+L'attention pèse **40 % du forward** pour ~2,5 % des FLOP — ce sont `lanes ×
+têtes` gemms minuscules à M = 1, le pire cas pour cuBLAS. Son coût est
+proportionnel à `cap = lmax + 2 × steps_max`, alors qu'au pas `t` seules les
+colonnes `[0, t]` portent quelque chose : diviser la largeur par deux
+diviserait un poste à 40 %.
+
+Refusé par la bibliothèque : `narrow` sur l'axe `cap` donne un tenseur non
+contigu, et **candle 0.9.2 ne sait pas multiplier des tenseurs non contigus —
+il rend une erreur au lieu de recopier** :
+
+```
+matmul is only supported for contiguous tensors
+rstride: Layout { shape: [256, 8, 48, 19], stride: [31488, 3936, 82, 1] }
+```
+
+Recopier soi-même coûterait plus que l'attention économisée. Rouvrable si
+candle gagne un chemin gemm à `lda`, ou avec un noyau d'attention dédié.
 
 ### Ce qui n'a pas été fait
 

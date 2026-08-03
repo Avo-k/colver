@@ -221,7 +221,20 @@ fn main() {
     println!("  A↔B   (nouveau vs ancien) : moyenne {m_ab:.5}   max {ab_max:.4}");
     println!("  B↔B'  (ancien vs lui-même, TÉMOIN) : moyenne {m_bb:.5}   max {bb_max:.4}");
     println!("  A↔A'  (nouveau vs lui-même)        : moyenne {m_aa:.5}   max {aa_max:.4}");
-    let ratio = m_ab / m_bb.max(1e-12);
+    // Un témoin nul n'est pas un excellent résultat, c'est une mesure qui n'a
+    // pas eu lieu : deux tirages indépendants de centaines de mondes ne
+    // coïncident jamais exactement. Sans ce garde-fou, un sidecar qui ne rend
+    // rien du tout fait afficher « même distribution » — le pire mode de
+    // défaillance possible pour un test de non-régression.
+    if ab.is_empty() || m_bb <= 1e-9 {
+        println!(
+            "\n  ❌ témoin nul ({} positions retenues) — les sidecars n'ont rien échantillonné, \
+             la comparaison n'a pas eu lieu",
+            ab.len()
+        );
+        std::process::exit(2);
+    }
+    let ratio = m_ab / m_bb;
     println!("\n  rapport A↔B / témoin = {ratio:.3}");
     // 1,15 laisse passer le bruit d'estimation sur ~40 positions sans laisser
     // passer un vrai décalage de distribution : un préfixe faux déplace les

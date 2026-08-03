@@ -64,6 +64,11 @@ struct Args {
     /// corpus playgen actuel, entièrement à 0-0, ne contient pas du tout.
     match_mode: bool,
     progress_every: usize,
+    /// Donnes par éclat intermédiaire. `GameReplay::write_all` n'écrit qu'à la
+    /// fin ; une génération de plusieurs heures interrompue à 95 % ne laisserait
+    /// rien du tout. Les éclats sont écrits au fil de l'eau, puis fusionnés et
+    /// effacés à la fin — ils ne survivent que si le run ne s'est pas terminé.
+    shard: usize,
 }
 
 fn parse_args() -> Args {
@@ -78,6 +83,7 @@ fn parse_args() -> Args {
         seed: 42,
         match_mode: false,
         progress_every: 0,
+        shard: 5000,
     };
     let mut i = 1;
     while i < argv.len() {
@@ -96,6 +102,33 @@ fn parse_args() -> Args {
             "--url" => { a.url = Some(next(i)); i += 2 }
             "--seed" => { a.seed = next(i).parse().unwrap(); i += 2 }
             "--match-mode" => { a.match_mode = true; i += 1 }
+            "--shard" => { a.shard = next(i).parse().unwrap(); i += 2 }
+            // Rassemble les éclats d'un run interrompu en un seul COLVGM01.
+            "--merge" => {
+                let prefix = next(i);
+                let out = argv
+                    .iter()
+                    .position(|x| x == "--out")
+                    .and_then(|p| argv.get(p + 1))
+                    .cloned()
+                    .unwrap_or_else(|| format!("{prefix}.bin"));
+                let mut all: Vec<GameReplay> = Vec::new();
+                for n in 0.. {
+                    let p = format!("{prefix}.{n:04}");
+                    match GameReplay::load_all(&p) {
+                        Ok(mut r) => all.append(&mut r),
+                        Err(_) => break,
+                    }
+                }
+                let bad = verify(&all);
+                println!("{} donnes rassemblées, {bad} irrejouables", all.len());
+                if bad > 0 {
+                    std::process::exit(1);
+                }
+                GameReplay::write_all(&out, &all).expect("écriture");
+                println!("→ {out}");
+                std::process::exit(0);
+            }
             "--progress-every" => { a.progress_every = next(i).parse().unwrap(); i += 2 }
             "--bench" => { a.out = None; i += 1 }
             // Relit un corpus déjà écrit et le rejoue. Ferme l'aller-retour
@@ -221,7 +254,6 @@ fn main() {
             };
 
             let mut rng = StdRng::seed_from_u64(seed ^ (tid as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let mut local: Vec<GameReplay> = Vec::new();
             let mut ctx = MatchContext::new(0);
             let mut dealer: u8 = rng.gen_range(0..4);
             let mut actions: Vec<u8> = Vec::with_capacity(64);
@@ -252,7 +284,11 @@ fn main() {
                             ctx.scores[0] += score[0];
                             ctx.scores[1] += score[1];
                         }
-                        local.push(GameReplay { dealer, hands, actions: actions.clone() });
+                        out.lock().unwrap().push(GameReplay {
+                            dealer,
+                            hands,
+                            actions: actions.clone(),
+                        });
                     }
                     Err(e) => {
                         eprintln!("thread {tid} donne {idx} : {e}");
@@ -272,15 +308,67 @@ fn main() {
                     );
                 }
             }
-            out.lock().unwrap().extend(local);
         }));
     }
+
+    // Videur d'éclats : draine le tampon partagé au fil de l'eau pour qu'une
+    // interruption ne coûte que le dernier éclat. N'écrit rien sans `--out`.
+    let shard_prefix = args.out.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let shard_n = Arc::new(AtomicUsize::new(0));
+    let flusher = {
+        let out = out.clone();
+        let stop = stop.clone();
+        let shard_n = shard_n.clone();
+        let want = args.shard;
+        std::thread::spawn(move || {
+            let Some(prefix) = shard_prefix else { return };
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let last = stop.load(Ordering::Relaxed);
+                let batch: Vec<GameReplay> = {
+                    let mut g = out.lock().unwrap();
+                    if g.len() < want && !last {
+                        continue;
+                    }
+                    std::mem::take(&mut *g)
+                };
+                if !batch.is_empty() {
+                    let n = shard_n.fetch_add(1, Ordering::Relaxed);
+                    let path = format!("{prefix}.{n:04}");
+                    if let Err(e) = GameReplay::write_all(&path, &batch) {
+                        eprintln!("éclat {path} : {e}");
+                    }
+                }
+                if last {
+                    return;
+                }
+            }
+        })
+    };
+
     for h in handles {
         let _ = h.join();
     }
+    stop.store(true, Ordering::Relaxed);
+    let _ = flusher.join();
 
     let elapsed = start.elapsed().as_secs_f64();
-    let replays = Arc::try_unwrap(out).ok().unwrap().into_inner().unwrap();
+    // Les éclats sont la source de vérité : le tampon a été vidé dedans.
+    let replays: Vec<GameReplay> = match &args.out {
+        Some(prefix) => {
+            let mut all = Vec::new();
+            for n in 0..shard_n.load(Ordering::Relaxed) {
+                let p = format!("{prefix}.{n:04}");
+                match GameReplay::load_all(&p) {
+                    Ok(mut r) => all.append(&mut r),
+                    Err(e) => eprintln!("relecture {p} : {e}"),
+                }
+            }
+            all
+        }
+        None => Arc::try_unwrap(out).ok().unwrap().into_inner().unwrap(),
+    };
 
     if failed.load(Ordering::Relaxed) {
         eprintln!("\n⚠️  arrêt sur erreur — {} donnes complètes malgré tout", replays.len());
@@ -308,6 +396,11 @@ fn main() {
         }
         GameReplay::write_all(path, &replays).expect("écriture COLVGM01");
         let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        // Le fichier fusionné existe et se rejoue : les éclats n'ont plus de
+        // raison d'être. On ne les efface qu'ici, jamais avant.
+        for n in 0..shard_n.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(format!("{path}.{n:04}"));
+        }
         eprintln!(
             "→ {path} : {} donnes, {:.1} Mo ({:.0} o/donne)",
             replays.len(),
