@@ -1,0 +1,30 @@
+# `web_dede` avec un plafond de 64 mondes au lieu de 256.
+#
+# Seule différence : `max_worlds`. C'est le h2h de **force** qui manque pour
+# trancher le plateau — `isdd_dets_by_stage` mesure l'accord avec une référence
+# IS-DD, pas la force, et il se contredit avec le det-sweep de 2026-07-24
+# (+29 à 60 mondes contre +227 à 240).
+#
+# ⚠️ Ce test exige le **budget de temps complet** (`time_ms = 1000`). À budget
+# réduit l'échéance mordrait avant le plafond des deux côtés — à 200 ms
+# l'entame ne traverse qu'une quarantaine de mondes — et la comparaison ne
+# mesurerait plus rien. C'est l'inverse du conseil « bencher moins cher » qui
+# vaut pour les autres comparaisons.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "isdd"
+time_ms = 1000
+determinizations = 20
+max_worlds = 64
+
+[worlds]
+source = "sidecar"
+batch = 256
+fallback = "strict"
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"

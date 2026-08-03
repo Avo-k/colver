@@ -250,8 +250,34 @@ MMR**. À prendre : ne pas afficher le nombre brut au dixième près.
 notent entre eux **à l'arène**, pas contre les joueurs. L'échelle devient absolue et le
 défaut n° 4 disparaît.
 
-Prérequis : un h2h Dédé ↔ DouDou **au niveau de la donne** (l'arène ne rend aujourd'hui
-qu'un taux de victoire par *match* de 2000 points — ~10 lignes à ajouter).
+**L'objection « ça casse la somme nulle » ne tient pas : le système n'est déjà pas à somme
+nulle.** Avec `K_USER = 32` et `K_BOT = 8`, la somme des deltas d'une donne solo vaut
+`32(s−e) + 8[(s−e) − 2(s−e)] = 24(s−e)`, soit ±24 points créés ou détruits à chaque donne.
+La conservation a été abandonnée le jour où les deux K ont divergé. Et elle n'était de
+toute façon pas l'objectif : elle sert à stabiliser la moyenne d'un pool où tout le monde
+joue contre tout le monde, alors qu'ici une seule entité tient trois sièges sur quatre et
+881 donnes sur 1073. Dédé n'est pas un joueur du pool, il **est** l'échelle — sauf qu'elle
+bouge (1000 → 1044, pic 1119), si bien qu'un afflux de joueurs faibles dévalue en silence
+tous les inscrits.
+
+C'est de la pratique standard : les listes de moteurs d'échecs (CCRL, SSDF) sont ancrées
+sur un moteur de référence à valeur fixe, exactement pour que l'échelle ne dérive pas
+quand des moteurs plus forts entrent dans la liste.
+
+**Le vrai coût, à traiter dès la mise en place** : l'ancrage déplace la dérive de « qui
+joue » vers « quelle version du bot ». Il faut donc figer une référence **nommée et
+versionnée** (`dede@2026-08 = 1000`), distincte du bot que les joueurs rencontrent, et
+appliquer un décalage explicite et daté quand le bot évolue — une migration décidée, pas
+un ajustement silencieux. Mesuré le 2026-08-03 : les réglages *internes* de Dédé ne
+menacent pas l'ancre (64 mondes contre 256 = 50,0 % ± 4,3 sur 531 donnes) ; seuls de vrais
+changements de modèle la déplaceront.
+
+Détail qui compte : `K_BOT = 0`, pas « bot remis à 1000 » — il faut que le delta soit nul,
+sinon il redérive entre deux remises.
+
+Prérequis : un h2h Dédé ↔ DouDou **au niveau de la donne**. Le compteur existe depuis le
+2026-08-03 (`MatchResult.deal_wins`, ligne `Par donne:` de `arena h2h`) ; il manque le
+chiffre.
 
 ### R2 — Corriger l'objectif du jeu de la carte (niveau 1 → 2)
 
@@ -259,6 +285,15 @@ Convertir chaque monde en écart de **score de donne** avant d'agréger, au lieu
 des points cartes. Post-traitement pur, aucun changement du solveur. C'est ce qui fait
 disparaître les coups « au hasard » après une chute acquise et qui rend les lignes de
 sécurité en défense.
+
+**Implémenté le 2026-08-03** (`PlayObjective::DealScore`, `[play] objective`, défaut
+inchangé). **Sans effet mesurable pour l'instant** : 40 donnes en duplicate,
+`web_dede_score` contre `web_dede`, 6-6 sur les 12 donnes qui divergent, marge +8,7. Le
+comportement change pourtant énormément — **95 % des donnes se jouent différemment**. À
+40 donnes rien ne peut être tranché ; à refaire au volume.
+
+⚠️ `DealScore` change **l'échelle de `card_scores`** (±500 au lieu de 0-252), et les pages
+d'analyse du web les affichent. À traiter avant toute bascule prod.
 
 ### R3 — Noter la marge plutôt que le binaire
 
@@ -332,7 +367,67 @@ bruit par simulation, le fait qu'IS-DD agrège des points cartes, la forme exact
   au niveau *match*, avec ±16 pp d'IC, et l'Elo du web les place à 55 points d'écart ;
 - ce que vaut une pondération `√longueur` sur nos volumes ;
 - si le plateau de séparation est bien vers 5 000 donnes (c'est une extrapolation de la
-  courbe d'IC, pas une mesure).
+  courbe d'IC, pas une mesure) ;
+- **le plateau de mondes d'IS-DD.** Le commit `bdc6611` annonce « vers 60, pas 240 » ;
+  avec les barres d'erreur, les intervalles se recouvrent tous à l'entame (0,066 ± 0,072
+  à 60 contre 0,096 ± 0,177 à 240, n = 33), et un det-sweep antérieur mesuré en *force
+  de jeu* pointe dans l'autre sens (+29 à 60 contre +227 à 240). Les deux mesures se
+  contredisent et aucune n'est solide. Détail et réserve :
+  `scripts/analysis/isdd_dets_by_stage.py`.
+
+---
+
+---
+
+## 8. Journal des mesures
+
+### 2026-08-03 — `web_dede_w64` contre `web_dede` (64 mondes contre 256)
+
+```
+  RESULT: 50.0% vs 50.0%   ·   Wins 25 — 25   ·   marge +14 pour w64
+  Dir 1 (w64=NS): 14-11    ·   Dir 2 (web_dede=NS): 14-11
+  Par donne: 265 — 265 (0 nulles) → 50,0 % ± 4,3 (IC95)   ·   531 donnes
+```
+
+Les deux directions donnent 14-11 pour le camp Nord-Sud : l'avantage de siège s'annule
+exactement, le duplicate matching a fait son travail.
+
+**Ça réfute le det-sweep du 2026-07-24**, qui donnait +29 de marge à 60 mondes contre +227
+à 240 : un écart pareil serait trivialement visible sur 531 donnes. Réconciliation
+plausible plutôt que « il s'est trompé » : ce sweep **précède le passage aux mondes
+playgen**. Avec un échantillonneur médiocre il faut beaucoup de tirages pour approcher la
+bonne postérieure ; avec celle de playgen il en faut moins. Les deux peuvent être justes
+dans leur contexte.
+
+**Réserve importante — la mesure est plus faible qu'elle n'en a l'air.** Mondes réellement
+résolus par recherche, moyennés sur les deux bots :
+
+| cartes | 8 | 7 | 6 | 5 | 4 | 3 | 2 |
+|---|---|---|---|---|---|---|---|
+| résolus/recherche | 114 | 125 | 126 | 114 | 73 | 37 | 34 |
+
+À 4 threads la latence d'un aller-retour monte à 613-667 ms (contre 164-227 ms en solo),
+donc dès 4 cartes restantes le budget par coup est **plus court qu'un seul aller-retour** :
+les deux bots tombent sous leurs plafonds respectifs et **deviennent le même bot**. La
+comparaison ne distingue réellement qu'entre 8 et 5 cartes, où `web_dede` tournait à
+~165-190 mondes contre 64. **La conclusion porte sur les quatre premiers plis, pas sur la
+donne entière.**
+
+Contexte : arbre `HEAD b40601c` + diff non commité `79867c3139ae285a` (la contrainte dure
+belote, en cours par ailleurs). Lancé avec `--no-save` pour cette raison.
+
+### 2026-08-03 — le repli belief-net n'est plus à zéro
+
+```
+  100 % playgen 97,4 %  ·  partielles 2,5 %  ·  sans playgen 0,1 %
+  repli 0,42 %  (contre 0,00 % le matin)   ·   remplissage 92-96 % (contre 97-99 %)
+```
+
+Effet prédit de la contrainte belote : `retain_valid` rejette des mondes playgen devenus
+invalides, le remplissage baisse, la file sèche parfois. 0,42 % reste marginal mais **ce
+n'est plus zéro**, donc la décision « supprimer le belief net » n'est plus évidente. À
+re-mesurer une fois la contrainte belote commitée. (Réserve : la contention à 4 threads
+peut expliquer une part de la baisse ; les deux causes sont confondues dans ce run.)
 
 ---
 

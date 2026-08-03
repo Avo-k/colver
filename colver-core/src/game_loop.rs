@@ -89,6 +89,12 @@ pub struct MatchResult {
     pub ns_final: i32,
     pub ew_final: i32,
     pub deals: u32,
+    /// Donnes gagnées par camp, et donnes nulles. C'est l'unité de l'Elo du web
+    /// (`web/elo.py` note **à la donne**), alors qu'un match agrège une dizaine
+    /// de donnes : sans ce compte, un h2h ne peut pas alimenter l'ancrage des
+    /// bots. Une donne passée (4 passes) ne compte nulle part.
+    pub deal_wins: [u32; 2],
+    pub deal_draws: u32,
 }
 
 /// Play deals until one team reaches [`MATCH_TARGET`].
@@ -104,6 +110,8 @@ pub fn play_match(
     let mut ctx = MatchContext::new(dealer);
     let mut dealer = dealer;
     let mut deals = 0u32;
+    let mut deal_wins = [0u32; 2];
+    let mut deal_draws = 0u32;
 
     while ctx.scores[0] < MATCH_TARGET && ctx.scores[1] < MATCH_TARGET {
         let mut state = GameState::deal_random(dealer, rng);
@@ -111,6 +119,15 @@ pub fn play_match(
         // A passed-out deal scores nothing and is simply redealt.
         ctx.scores[0] += score[0];
         ctx.scores[1] += score[1];
+        // Une donne passée ne marque rien des deux côtés : elle n'est ni gagnée
+        // ni nulle, elle n'a pas eu lieu.
+        if score[0] != 0 || score[1] != 0 {
+            match score[0].cmp(&score[1]) {
+                std::cmp::Ordering::Greater => deal_wins[0] += 1,
+                std::cmp::Ordering::Less => deal_wins[1] += 1,
+                std::cmp::Ordering::Equal => deal_draws += 1,
+            }
+        }
         dealer = (dealer + 1) % 4;
         deals += 1;
     }
@@ -128,7 +145,7 @@ pub fn play_match(
     } else {
         1
     };
-    Ok(MatchResult { winner, ns_final: ns, ew_final: ew, deals })
+    Ok(MatchResult { winner, ns_final: ns, ew_final: ew, deals, deal_wins, deal_draws })
 }
 
 /// Bidding-phase check used by callers that need to know whether a deal was

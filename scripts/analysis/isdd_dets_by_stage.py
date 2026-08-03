@@ -21,6 +21,31 @@ bonne carte ». Un taux de désaccord surestimerait massivement le besoin en mon
 Regret nul = le petit budget choisit une carte que la référence juge optimale. Le stade
 où le regret tombe à zéro *est* le plateau de ce stade.
 
+## ⚠️ Ce que le premier run (2026-08-03, 250 positions) permet et ne permet pas de dire
+
+Le message du commit `bdc6611` annonce « le plateau est vers 60, pas 240 ». **C'est plus
+affirmatif que les données.** Avec les barres d'erreur, à l'entame :
+
+    budget      15       30       60      120      240
+    moyenne  0,800    0,091    0,066    0,115    0,096
+    IC95 ±   0,859    0,100    0,072    0,135    0,177
+
+**Tous les intervalles se recouvrent, y compris celui de 15 mondes**, et les moyennes ne
+sont même pas monotones. À n = 33 par cellule, cette mesure ne distingue pas 15 de 240 ;
+elle dit seulement que tous sont petits en valeur absolue.
+
+Ce qui tient mieux, c'est la **queue** — la moyenne est dominée par de rares grosses
+erreurs. Regret maximum à 8 cartes : 13,3 (15) → 1,4 (30) → 1,1 (60) → 1,9 (120) →
+3,0 (240). Là il y a un vrai signal en dessous de 30, et plus aucune tendance au-dessus
+de 60. C'est ça, et seulement ça, qui fonde « autour de 60 ».
+
+Et il y a une **contradiction ouverte** avec le det-sweep de 2026-07-24, qui mesurait la
+force de jeu et non l'accord : marge −101 (20) → +29 (60) → +72 (120) → +227 (240) →
++134 (512), soit 240 très au-dessus de 60. Aucune des deux mesures n'est solide (l'autre
+a des IC de ±10,7 pp et son auteur note qu'aucune différence deux à deux n'est
+significative ; celle-ci mesure l'accord avec une référence IS-DD, pas la force). **Ne
+pas descendre `max_worlds` sur la seule foi de ce script** — il faut un h2h de force.
+
 ## Ce qui n'est pas mesuré
 
 La force de jeu. Le regret est mesuré contre une référence IS-DD, pas contre la vérité :

@@ -105,6 +105,9 @@ struct MatchupResult {
     /// donnes, et c'est ce nombre-là qu'il faut pour estimer une durée avant
     /// de lancer plusieurs heures de recherche IS-DD.
     n_deals: u64,
+    /// Donnes gagnées par le camp N-S / E-O de cette direction, et nulles.
+    n_deal_wins: [u64; 2],
+    n_deal_draws: u64,
 }
 
 impl MatchupResult {
@@ -114,6 +117,9 @@ impl MatchupResult {
         self.ew_wins += other.ew_wins;
         self.total_margin += other.total_margin;
         self.n_deals += other.n_deals;
+        self.n_deal_wins[0] += other.n_deal_wins[0];
+        self.n_deal_wins[1] += other.n_deal_wins[1];
+        self.n_deal_draws += other.n_deal_draws;
     }
 }
 
@@ -168,6 +174,9 @@ fn run_matchup(
                     }
                     result.total_margin += (mr.ns_final - mr.ew_final) as i64;
                     result.n_deals += mr.deals as u64;
+                    result.n_deal_wins[0] += mr.deal_wins[0] as u64;
+                    result.n_deal_wins[1] += mr.deal_wins[1] as u64;
+                    result.n_deal_draws += mr.deal_draws as u64;
                     progress.fetch_add(1, Ordering::Relaxed);
                 }
                 result
@@ -624,10 +633,24 @@ fn cmd_h2h(args: &[String]) {
     println!("  Dir 1 ({}=NS): {}-{}", agent_a.name, r1.ns_wins, r1.ew_wins);
     println!("  Dir 2 ({}=NS): {}-{}", agent_b.name, r2.ns_wins, r2.ew_wins);
     let total_deals = r1.n_deals + r2.n_deals;
+    // A joue N-S en direction 1 et E-O en direction 2 : ses donnes gagnées sont
+    // donc `r1[0] + r2[1]`, exactement comme pour les matchs plus haut.
+    let a_deals = r1.n_deal_wins[0] + r2.n_deal_wins[1];
+    let b_deals = r1.n_deal_wins[1] + r2.n_deal_wins[0];
+    let draws = r1.n_deal_draws + r2.n_deal_draws;
+    let decided = a_deals + b_deals;
     println!("  Wall: {:.1}s ({:.1} matches/min) — {} donnes ({:.1}/match, {:.1} donnes/s)",
         elapsed.as_secs_f64(), total_matches as f64 / elapsed.as_secs_f64() * 60.0,
         total_deals, total_deals as f64 / total_matches as f64,
         total_deals as f64 / elapsed.as_secs_f64());
+    // L'Elo du web note **à la donne**, pas au match : c'est ce taux-ci, et pas
+    // celui des matchs, qui peut ancrer les bots (`web/elo.py`).
+    if decided > 0 {
+        let pct = 100.0 * a_deals as f64 / decided as f64;
+        let se = (0.25 / decided as f64).sqrt() * 100.0;
+        println!("  Par donne: {} {} — {} {} ({} nulles) → {:.1}% ± {:.1} (IC95)",
+            agent_a.name, a_deals, agent_b.name, b_deals, draws, pct, 1.96 * se);
+    }
 
     print_world_telemetry();
 
