@@ -290,8 +290,25 @@ pub struct IsDdSearch {
     /// search ends, so a later search at another position cannot consume
     /// worlds sampled for the previous one.
     world_queue: Vec<World>,
+    /// Latence observée d'un aller-retour vers la source, en microsecondes,
+    /// moyenne mobile sur toutes les recherches de cette instance.
+    ///
+    /// Sert à ne pas démarrer une requête qu'on n'aura pas le temps de
+    /// consommer : sous échéance, une requête lancée trop tard rend des mondes
+    /// que la boucle jettera sans les résoudre — mesuré à 45 % des mondes reçus
+    /// en fin de donne, pour 164 ms d'attente pure.
+    ///
+    /// Une seule moyenne pour toute la donne, alors que la latence décroît avec
+    /// les cartes restantes (224 ms à l'entame, 164 ms à deux cartes) : elle
+    /// sur-estime donc légèrement en fin de donne, ce qui fait renoncer un peu
+    /// trop tôt plutôt qu'un peu trop tard. C'est le bon sens de l'erreur, et
+    /// l'`ALPHA` la fait redescendre au fil de la donne.
+    source_latency_us: f64,
     tt_buf: crate::solver::TtBuf,
 }
+
+/// Poids de la dernière mesure dans la moyenne mobile de latence.
+const LATENCY_ALPHA: f64 = 0.25;
 
 impl IsDdSearch {
     pub fn new() -> Self {
@@ -306,6 +323,7 @@ impl IsDdSearch {
             init_state: None,
             played_by: [0; 4],
             world_queue: Vec::new(),
+            source_latency_us: 0.0,
             tt_buf: new_tt_buffer(),
         }
     }
@@ -893,6 +911,10 @@ impl IsDdSearch {
         // Once the source stops producing worlds we stop asking, so an
         // over-constrained endgame costs one empty round trip, not one per world.
         let mut source_dry = false;
+        // La source a encore des mondes, mais l'échéance ne laisse plus le temps
+        // d'en attendre un lot. Distinct de `source_dry` : là c'est nous qui
+        // renonçons, pas le sampler qui s'épuise.
+        let mut out_of_time_to_refill = false;
 
         // The search runs in chunks: **generate** a batch of worlds sequentially
         // (the world queue and the RNG are stateful), then **solve** the whole
@@ -922,24 +944,76 @@ impl IsDdSearch {
             // round. In count mode ask for the whole remaining budget (one round
             // trip per move); under a deadline ask for `world_batch` at a time. ---
             if let Some(src) = source.as_deref_mut() {
-                if !source_dry && self.world_queue.len() < remaining {
-                    let want = if deadline.is_some() {
-                        config.world_batch.max(remaining)
-                    } else {
-                        ((config.determinizations - det_count) as usize).max(remaining)
+                if !source_dry && !out_of_time_to_refill && self.world_queue.len() < remaining {
+                    // Un aller-retour coûte une latence quasi fixe (~164-224 ms
+                    // sur le sidecar local, le double sous concurrence), et
+                    // l'échéance n'est testée qu'en tête de boucle : rien
+                    // n'empêchait de lancer une requête de 164 ms avec 10 ms au
+                    // compteur, puis de jeter tout ce qu'elle rendait. Le
+                    // **premier** aller-retour part toujours — sans lui la
+                    // recherche n'aurait aucun monde appris, et c'est justement
+                    // en fin de donne que playgen sert le plus, en écartant les
+                    // mondes quasi impossibles qu'un tirage uniforme traite à
+                    // égalité des mondes plausibles.
+                    let no_time_left = match deadline {
+                        Some(d) if usage.rounds > 0 && self.source_latency_us > 0.0 => {
+                            let left = d.saturating_duration_since(Instant::now());
+                            (left.as_micros() as f64) < self.source_latency_us
+                        }
+                        _ => false,
                     };
-                    let t0 = Instant::now();
-                    let batch = src.worlds(state, observer, want, rng)?;
-                    usage.source_us += t0.elapsed().as_micros() as u64;
-                    usage.rounds += 1;
-                    usage.requested += want as u32;
-                    usage.delivered += batch.len() as u32;
-                    if batch.is_empty() {
-                        source_dry = true;
+                    if no_time_left {
+                        out_of_time_to_refill = true;
                     } else {
-                        self.world_queue.extend(batch);
+                        let want = if deadline.is_some() {
+                            config.world_batch.max(remaining)
+                        } else {
+                            ((config.determinizations - det_count) as usize).max(remaining)
+                        };
+                        let t0 = Instant::now();
+                        let batch = src.worlds(state, observer, want, rng)?;
+                        let took_us = t0.elapsed().as_micros() as f64;
+                        self.source_latency_us = if self.source_latency_us == 0.0 {
+                            took_us
+                        } else {
+                            (1.0 - LATENCY_ALPHA) * self.source_latency_us
+                                + LATENCY_ALPHA * took_us
+                        };
+                        usage.source_us += took_us as u64;
+                        usage.rounds += 1;
+                        usage.requested += want as u32;
+                        usage.delivered += batch.len() as u32;
+                        if batch.is_empty() {
+                            source_dry = true;
+                        } else {
+                            self.world_queue.extend(batch);
+                        }
                     }
                 }
+            }
+
+            // Plus le temps de redemander : on finit la réserve et on s'arrête.
+            //
+            // Le plafonnement de `remaining` n'est pas cosmétique. En mode
+            // parallèle un chunk vaut un tour de pool (32 mondes ici), donc sans
+            // lui un chunk qui déborde d'une file presque vide se complète en
+            // mondes **locaux** — mesuré à 62,6 % de décisions partielles et
+            // 806 mondes belief. Or playgen n'apporte pas que des mondes, il
+            // apporte une pondération : il écarte les mondes quasi impossibles
+            // qu'un tirage uniforme sous contraintes traite à égalité des
+            // mondes plausibles. Diluer l'agrégat avec ceux-là, c'est défaire
+            // en fin de donne ce qu'on est allé chercher.
+            //
+            // `source_dry` est un cas différent et garde son repli local : là
+            // le sampler ne *peut* plus produire, et un plancher de couverture
+            // vaut mieux que rien.
+            let remaining = if out_of_time_to_refill {
+                remaining.min(self.world_queue.len())
+            } else {
+                remaining
+            };
+            if remaining == 0 {
+                break;
             }
 
             // --- Generate a chunk of worlds (sequential). ---
@@ -1388,6 +1462,110 @@ mod tests {
             }
         }
         assert!(checked >= 5, "Not enough non-void deals to test");
+    }
+
+    /// Une source lente ne doit pas se faire redemander un lot qu'on n'aura
+    /// pas le temps de consommer.
+    ///
+    /// C'est la fin de donne mesurée : un aller-retour coûte ~164 ms de latence
+    /// quasi fixe, le budget à deux cartes vaut 250 ms, et l'échéance n'était
+    /// testée qu'en tête de boucle — d'où deux requêtes par recherche, 512
+    /// mondes demandés, 283 résolus et 230 jetés. Le premier aller-retour doit
+    /// toujours partir (sinon plus aucun monde appris), le second jamais.
+    #[test]
+    fn a_slow_source_is_asked_exactly_once_under_a_tight_deadline() {
+        use rand::SeedableRng;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        /// Source qui répond lentement et rend toujours de quoi remplir.
+        struct SlowSource {
+            calls: Arc<AtomicU32>,
+            delay: Duration,
+        }
+        impl crate::worlds::WorldSource for SlowSource {
+            fn name(&self) -> &'static str {
+                "slow-test"
+            }
+            fn init_deal(&mut self, _state: &GameState, _observer: u8) {}
+            fn observe(&mut self, _s: &GameState, _p: u8, _a: u8) {}
+            fn worlds(
+                &mut self,
+                state: &GameState,
+                observer: u8,
+                n: usize,
+                rng: &mut dyn rand::RngCore,
+            ) -> Result<Vec<World>, crate::agent::AgentError> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(self.delay);
+                struct Ad<'a>(&'a mut dyn rand::RngCore);
+                impl rand::RngCore for Ad<'_> {
+                    fn next_u32(&mut self) -> u32 { self.0.next_u32() }
+                    fn next_u64(&mut self) -> u64 { self.0.next_u64() }
+                    fn fill_bytes(&mut self, d: &mut [u8]) { self.0.fill_bytes(d) }
+                    fn try_fill_bytes(&mut self, d: &mut [u8]) -> Result<(), rand::Error> {
+                        self.0.try_fill_bytes(d)
+                    }
+                }
+                let mut r = Ad(rng);
+                Ok((0..n)
+                    .filter_map(|_| determinize_greedy(state, observer, &mut r).map(|s| s.hands))
+                    .collect())
+            }
+        }
+
+        // Une position de **fin** de donne : les solves y coûtent des
+        // microsecondes, donc la file se vide bien avant l'échéance et c'est
+        // le second aller-retour — et lui seul — qui décide du sort du budget.
+        // Sur une donne complète le solveur mangerait l'échéance tout seul et
+        // le test ne prouverait rien.
+        let mut src_rng = rand::rngs::StdRng::seed_from_u64(31337);
+        let state = loop {
+            let Some(mut s) = random_playing_state(&mut src_rng) else { continue };
+            while !s.is_terminal()
+                && card_count(s.hands[s.current_player() as usize]) > 3
+            {
+                let legal = s.legal_actions();
+                let idx = src_rng.gen_range(0..legal.count_ones());
+                s.step(select_nth_bit(legal, idx));
+            }
+            if !s.is_terminal() && s.legal_actions().count_ones() >= 2 {
+                break s;
+            }
+        };
+        let cards_left = card_count(state.hands[state.current_player() as usize]);
+
+        let calls = Arc::new(AtomicU32::new(0));
+        // Latence 60 ms. Le budget est mis à l'échelle par les cartes restantes
+        // (`ms * cards_left / 8`), donc on vise ~100 ms réels : le premier
+        // aller-retour tient, le second déborderait de 20 ms.
+        let mut source = SlowSource {
+            calls: Arc::clone(&calls),
+            delay: Duration::from_millis(60),
+        };
+        let cfg = IsDdConfig {
+            time_limit_ms: Some(100 * 8 / cards_left.max(1)),
+            world_batch: 4,
+            early_termination: false,
+            parallel: false,
+            ..Default::default()
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let mut search = IsDdSearch::new();
+        search.init_deal_with_config(&state, state.current_player(), &cfg);
+        let r = search
+            .search_with_source(&state, &cfg, &mut rng, &mut source)
+            .expect("la source ne renvoie pas d'erreur");
+
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "un seul aller-retour attendu, {} observés (position à {} cartes)",
+            calls.load(Ordering::Relaxed),
+            cards_left
+        );
+        assert!(r.worlds.injected > 0, "le premier lot doit avoir servi");
+        assert_eq!(r.source.discarded, 0, "rien ne doit être jeté");
     }
 
     /// Les poids de croyance sont calculés **paresseusement** — seulement quand
