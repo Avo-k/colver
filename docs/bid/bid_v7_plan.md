@@ -1017,12 +1017,51 @@ tout choix de machine, louée ou non : **choisir sur le CPU, jamais sur la gamme
 **Plan retenu** : 3 bras, 2 machines, aucun partage de GPU. moxxi en prend 2 (~29 h), la dev 1
 (~19 h) → **~29 h au mur au lieu de 58**, gratuitement.
 
-*Le seul risque à surveiller* : la 3090 de moxxi sert aussi le sidecar playgen des joueurs
-en direct. Un entraînement y ajoute un troisième contexte CUDA — exactement la situation dont
-le tableau ci-dessus mesure le coût entre bras. Le sidecar est à 0 % la plupart du temps et le
-service est resté sain pendant la mesure (`/health` : `reachable`), mais **l'effet sur la
-latence d'un coup de Dédé en direct n'est pas mesuré**. À vérifier avant de laisser tourner
-29 h, pas après.
+### Ce que ça coûte aux joueurs en direct — mesuré
+
+*[prod_sidecar_under_training.py](../../scripts/analysis/prod_sidecar_under_training.py), blocs
+alternés OFF/ON, et une seconde passe **à l'intérieur du conteneur de prod** pour avoir les
+vraies conditions.*
+
+**Ce qu'il ne fallait pas mesurer : le temps d'un coup.** Dédé tourne à 1200 ms **en mode
+temps** (la prod ne pose pas `COLVER_ISDD_DETS`), donc un coup dure 1200 ms quoi qu'il arrive.
+Le chronomètre est resté plat partout — 1237 à 1263 ms — et c'est le contrôle qui prouve que la
+mesure porte ailleurs. Ce qui se dégrade est **le nombre de mondes qui tiennent dans les
+1200 ms**, donc la force, invisible pour qui chronomètre. Troisième fois que ce motif décide
+d'une mesure dans ce document (§1.5, §1.10 en sont les deux autres).
+
+**Il fallait aussi mesurer au bon endroit.** Une première passe depuis la machine de dev donnait
+320 mondes par coup ; le conteneur de prod en donne **108**. Les solves DD se font côté web —
+32 threads ici, **8 vCPU** sur la VM — donc la sonde « de l'extérieur » était 3× optimiste sur
+le nombre absolu. Et c'est le nombre absolu qui dit où l'on est sur la courbe.
+
+À l'entame (le pire cas : un monde y est une donne complète), dans le conteneur :
+
+| condition | mondes/coup | ratio |
+|---|---|---|
+| repos | **108** (107,9 · 106,9 · 109,1) | — |
+| un bras d'entraînement | 91,4 | **0,85 ± 0,05** |
+| idem `nice -n 19` | 94,5 | **0,89** |
+
+`nice` récupère un tiers de l'écart et pas plus, ce qui est cohérent : la contention est en
+partie CPU (la VM web est un invité **du même** 7745HX) et en partie GPU, et `nice` ne touche
+pas la seconde. `worlds.uniform = 0` partout — le sidecar n'a jamais été substitué en douce,
+ce qui aurait fait mesurer autre chose.
+
+**Où ça tombe sur la courbe force/mondes.** Le det-sweep donne une marge de −101 à 20 mondes,
++29 à 60, +72 à 120, **+227 à 240** (plateau). La prod est à 108, donc **sur la partie raide,
+loin du plateau** : les mondes perdus coûtent vraiment quelque chose. Deux atténuations, toutes
+deux réelles :
+
+- **Seule l'entame est concernée.** Post-entame chaque coup est sous 25 ms même à 512 mondes :
+  ces décisions ne sont pas limitées par le budget. C'est **une décision sur 32**.
+- **La sonde tape le conteneur en continu pendant 75 s**, ce qu'aucun trafic réel ne fait : une
+  donne réelle coûte une entame par siège bot et 42 s de tempo d'affichage. La part CPU de la
+  contention est donc surestimée ici.
+
+**Verdict** : ~11 % des mondes de l'entame, pendant ~29 h, contre une campagne divisée par deux.
+Acceptable, avec `nice -n 19`, et de préférence hors des heures de trafic. Ce n'est pas gratuit
+et il ne faut pas l'écrire comme tel.
 
 Et **cette campagne ne dépend pas d'une regénération de pool** : le pool actuel n'est pas à
 refaire pour cause de dérive (§1.6), et l'obs qui change ne touche pas le format `(donne,

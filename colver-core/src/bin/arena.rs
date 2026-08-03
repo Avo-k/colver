@@ -100,6 +100,11 @@ struct MatchupResult {
     ns_wins: u32,
     ew_wins: u32,
     total_margin: i64,
+    /// Donnes jouées, cumulées. Le coût d'un run se compte en donnes, pas en
+    /// matches : un match dure jusqu'à 2000 points, donc un nombre variable de
+    /// donnes, et c'est ce nombre-là qu'il faut pour estimer une durée avant
+    /// de lancer plusieurs heures de recherche IS-DD.
+    n_deals: u64,
 }
 
 impl MatchupResult {
@@ -108,6 +113,7 @@ impl MatchupResult {
         self.ns_wins += other.ns_wins;
         self.ew_wins += other.ew_wins;
         self.total_margin += other.total_margin;
+        self.n_deals += other.n_deals;
     }
 }
 
@@ -161,6 +167,7 @@ fn run_matchup(
                         result.ew_wins += 1;
                     }
                     result.total_margin += (mr.ns_final - mr.ew_final) as i64;
+                    result.n_deals += mr.deals as u64;
                     progress.fetch_add(1, Ordering::Relaxed);
                 }
                 result
@@ -616,8 +623,13 @@ fn cmd_h2h(args: &[String]) {
     println!("  Avg margin: {:+.0} (from {}'s perspective)", avg_margin, agent_a.name);
     println!("  Dir 1 ({}=NS): {}-{}", agent_a.name, r1.ns_wins, r1.ew_wins);
     println!("  Dir 2 ({}=NS): {}-{}", agent_b.name, r2.ns_wins, r2.ew_wins);
-    println!("  Wall: {:.1}s ({:.1} matches/min)", elapsed.as_secs_f64(),
-        total_matches as f64 / elapsed.as_secs_f64() * 60.0);
+    let total_deals = r1.n_deals + r2.n_deals;
+    println!("  Wall: {:.1}s ({:.1} matches/min) — {} donnes ({:.1}/match, {:.1} donnes/s)",
+        elapsed.as_secs_f64(), total_matches as f64 / elapsed.as_secs_f64() * 60.0,
+        total_deals, total_deals as f64 / total_matches as f64,
+        total_deals as f64 / elapsed.as_secs_f64());
+
+    print_world_telemetry();
 
     // Persist
     if !no_save {
@@ -631,6 +643,33 @@ fn cmd_h2h(args: &[String]) {
         println!();
         println!("  (--no-save: results NOT written to CSV)");
     }
+}
+
+/// D'où venaient les mondes que les recherches IS-DD ont résolus.
+///
+/// Silencieux quand aucun bot du run ne joue en IS-DD — un h2h de deux réseaux
+/// n'a rien à dire ici. Sinon c'est la réponse chiffrée à « la file playgen
+/// s'assèche-t-elle en cours de recherche ? », donc à « le belief net sert-il
+/// encore à quelque chose ? ».
+fn print_world_telemetry() {
+    let s = colver_core::agent::isdd::telemetry::snapshot();
+    if s.decisions == 0 {
+        return;
+    }
+    let pct = |x: u64, n: u64| if n == 0 { 0.0 } else { 100.0 * x as f64 / n as f64 };
+    let sampled = s.sampled();
+    println!();
+    println!("  Mondes IS-DD ({} décisions) :", s.decisions);
+    println!("    sans échantillonnage (coup forcé / position résolue) : {} ({:.1}%)",
+        s.no_sampling, pct(s.no_sampling, s.decisions));
+    println!("    échantillonnées : {} — 100% playgen {} ({:.1}%), partielles {} ({:.1}%), sans playgen {} ({:.1}%)",
+        sampled,
+        s.all_playgen, pct(s.all_playgen, sampled),
+        s.partial, pct(s.partial, sampled),
+        s.no_playgen, pct(s.no_playgen, sampled));
+    println!("    mondes : source {} | belief {} | uniforme {}  → repli {:.2}%",
+        s.worlds_injected + s.worlds_playgen, s.worlds_belief, s.worlds_uniform,
+        s.fallback_world_pct());
 }
 
 fn cmd_round_robin(args: &[String]) {
@@ -1035,5 +1074,6 @@ fn cmd_trace(args: &[String]) {
         agent_b.name, b_total_ns as f64 / played as f64);
     println!("  Bid differences: {} ({:.0}%)", bid_diffs, 100.0 * bid_diffs as f64 / played as f64);
     println!("  Play differences: {} ({:.0}%)", play_diffs, 100.0 * play_diffs as f64 / played as f64);
+    print_world_telemetry();
     println!("═══════════════════════════════════════════════════════════════");
 }

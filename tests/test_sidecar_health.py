@@ -159,8 +159,16 @@ class TestDecisionDegradee:
     def reset_counter(self, monkeypatch):
         monkeypatch.setattr(agents, "_degraded", {"since": 0.0, "count": 0})
 
-    def _stats(self, source):
-        return {"worlds_source": source, "determinizations": 12}
+    def _stats(self, source, worlds=None):
+        """Stats d'une décision ayant réellement échantillonné des mondes.
+
+        Le détail compte : la garde de `_note_degraded` lit `worlds`, pas
+        `worlds_source`. Une décision sans mondes n'est pas dégradée, elle n'a
+        simplement pas cherché.
+        """
+        if worlds is None:
+            worlds = {"injected": 0, "playgen": 0, "belief": 0, "uniform": 12}
+        return {"worlds_source": source, "determinizations": 12, "worlds": worlds}
 
     def test_une_decision_playgen_ne_dit_rien(self, monkeypatch, caplog):
         monkeypatch.setattr(agents, "SIDECAR_URL", "http://sidecar:8003")
@@ -182,6 +190,20 @@ class TestDecisionDegradee:
             agents._note_degraded(0, self._stats("cpu"))
         assert caplog.records == []
 
+    def test_un_coup_force_ne_declenche_pas_lalarme(self, monkeypatch, caplog):
+        """Sur un coup forcé, `run_search` sort avant d'échantillonner et rend
+        des compteurs à zéro. `decision_stats` étiquette alors `"cpu"` — ce qui
+        ne dit rien du sidecar. Les 14 alertes présentes en prod le 2026-08-03
+        étaient toutes de cette forme : l'alarme criait au loup."""
+        monkeypatch.setattr(agents, "SIDECAR_URL", "http://sidecar:8003")
+        forced = {"worlds_source": "cpu", "determinizations": 0,
+                  "worlds": {"injected": 0, "playgen": 0, "belief": 0, "uniform": 0}}
+        with caplog.at_level(logging.WARNING, logger="colver.web.agents"):
+            agents._note_degraded(0, forced)
+        assert caplog.records == []
+        # …et elle n'est pas non plus comptée pour la ligne suivante.
+        assert agents._degraded["count"] == 0
+
     def test_le_journal_est_plafonne(self, monkeypatch, caplog):
         """~24 coups de bot par donne : sans plafond, une panne de sidecar
         noierait le journal au lieu de le renseigner."""
@@ -192,3 +214,49 @@ class TestDecisionDegradee:
         assert len(caplog.records) == 1
         # …mais rien n'est perdu : le compte est reporté dans la ligne suivante.
         assert agents._degraded["count"] == 49
+
+
+class TestCompteursMondes:
+    """« La file playgen s'assèche-t-elle ? » doit avoir une réponse chiffrée.
+
+    Les compteurs par décision existaient déjà côté Rust (`WorldCounts`) mais
+    n'étaient agrégés nulle part : ils partaient au client et disparaissaient.
+    Or c'est ce chiffre, et lui seul, qui dit si le belief net sert encore —
+    puisqu'il n'est consulté que quand la file est vide.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset(self, monkeypatch):
+        # Objet de module : sans remise à zéro il fuit d'un test à l'autre.
+        monkeypatch.setattr(
+            agents, "_WORLD_STATS", {k: 0 for k in agents._WORLD_STATS})
+
+    def _decision(self, injected=0, belief=0, uniform=0, playgen=0):
+        return {"worlds": {"injected": injected, "playgen": playgen,
+                           "belief": belief, "uniform": uniform}}
+
+    def test_une_decision_entierement_playgen(self):
+        agents._note_worlds(self._decision(injected=64))
+        s = agents.world_stats()
+        assert (s["decisions"], s["sampled"], s["all_playgen"]) == (1, 1, 1)
+        assert s["worlds_injected"] == 64
+        assert s["partial"] == s["no_playgen"] == s["no_sampling"] == 0
+
+    def test_une_file_qui_seche_en_cours_de_recherche(self):
+        """Le cas qui décide du sort du belief net : playgen a fourni, puis
+        s'est tu, et la recherche a fini sur des mondes de repli."""
+        agents._note_worlds(self._decision(injected=40, belief=20, uniform=4))
+        s = agents.world_stats()
+        assert (s["partial"], s["all_playgen"], s["no_playgen"]) == (1, 0, 0)
+        assert s["worlds_belief"] == 20
+        assert s["worlds_uniform"] == 4
+
+    def test_un_coup_force_ne_compte_pas_comme_echantillonne(self):
+        agents._note_worlds(self._decision())
+        s = agents.world_stats()
+        assert (s["decisions"], s["no_sampling"], s["sampled"]) == (1, 1, 0)
+
+    def test_world_stats_rend_une_copie(self):
+        """Sinon un appelant de /health pourrait muter les compteurs vivants."""
+        agents.world_stats()["decisions"] = 999
+        assert agents.world_stats()["decisions"] == 0

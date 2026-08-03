@@ -832,7 +832,18 @@ impl IsDdSearch {
             Instant::now() + Duration::from_millis(scaled_ms.max(1))
         });
 
-        let weights = self.compute_weights(state, config, observer);
+        // Belief weights are computed **on first need**, not up front. Since a
+        // world from the source always wins over a belief-weighted draw
+        // (`generate_world`), a search whose queue never runs dry never looks at
+        // them — and that is the normal case in production, where playgen fills
+        // the queue. Computing them eagerly ran a belief-net forward pass per
+        // decision whose result was then thrown away.
+        //
+        // `compute_weights` reads no RNG and depends only on (state, observer,
+        // config), all fixed for the duration of a search, so deferring it
+        // changes neither the weights nor the random stream.
+        let mut weights: Option<[[f32; 32]; 4]> = None;
+        let mut weights_ready = false;
 
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
@@ -891,6 +902,12 @@ impl IsDdSearch {
             let mut attempted = 0u32;
             for _ in 0..remaining {
                 attempted += 1;
+                // The queue is empty, so this world will come from the belief
+                // net or from uniform sampling — now the weights are needed.
+                if self.world_queue.is_empty() && !weights_ready {
+                    weights = self.compute_weights(state, config, observer);
+                    weights_ready = true;
+                }
                 if let Some((s, origin)) = self.generate_world(state, observer, &weights, config, rng)
                 {
                     chunk.push(s);
@@ -1319,6 +1336,49 @@ mod tests {
             assert_eq!(seq.card_scores, par.card_scores, "card_scores diverged");
             checked += 1;
             if checked >= 15 {
+                break;
+            }
+        }
+        assert!(checked >= 5, "Not enough non-void deals to test");
+    }
+
+    /// Les poids de croyance sont calculés **paresseusement** — seulement quand
+    /// la file de mondes est vide. Sans source, elle l'est toujours, donc les
+    /// mondes doivent continuer à sortir pondérés (`Belief`), pas uniformes.
+    ///
+    /// C'est l'invariant que le passage au calcul paresseux pouvait casser en
+    /// silence : un `weights` resté `None` ne fait pas d'erreur, il fait
+    /// seulement échantillonner à plat, et rien ne le dirait.
+    #[test]
+    fn lazy_weights_still_reach_the_sampler_without_a_source() {
+        use rand::SeedableRng;
+        let mut src = rand::rngs::StdRng::seed_from_u64(4242);
+        let mut checked = 0;
+        for _ in 0..200 {
+            let Some(state) = random_playing_state(&mut src) else { continue };
+            if state.legal_actions().count_ones() < 2 {
+                continue; // coup forcé : sortie anticipée, aucun monde demandé
+            }
+            let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+            let cfg = IsDdConfig {
+                determinizations: 8,
+                parallel: false,
+                early_termination: false,
+                ..Default::default()
+            };
+            let mut search = IsDdSearch::new();
+            search.init_deal_with_config(&state, state.current_player(), &cfg);
+            let r = search.search_with_stats(&state, &cfg, &mut rng);
+            assert_eq!(r.worlds.injected, 0, "aucune source n'est branchée");
+            assert!(r.worlds.total() > 0, "aucun monde généré");
+            assert!(
+                r.worlds.belief > 0,
+                "les poids de croyance n'ont pas atteint l'échantillonneur : \
+                 {:?}",
+                r.worlds
+            );
+            checked += 1;
+            if checked >= 10 {
                 break;
             }
         }

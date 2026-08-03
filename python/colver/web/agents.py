@@ -79,6 +79,49 @@ def log_startup_state():
         logger.warning(message)
 
 
+# Origine des mondes, cumulée sur la vie du processus. C'est la seule façon de
+# répondre à « la file playgen s'assèche-t-elle, et à quelle fréquence ? » : les
+# compteurs par décision existaient déjà (`WorldCounts`) mais partaient au
+# client et nulle part ailleurs. Publié par `/health`.
+_WORLD_STATS = {
+    "decisions": 0,      # décisions IS-DD, toutes catégories
+    "no_sampling": 0,    # coup forcé ou position résolue : aucun monde demandé
+    "sampled": 0,        # décisions ayant réellement échantillonné
+    "all_playgen": 0,    # ... dont tous les mondes viennent du sidecar
+    "partial": 0,        # ... dont une partie seulement
+    "no_playgen": 0,     # ... dont aucun
+    "worlds_injected": 0,
+    "worlds_playgen": 0,
+    "worlds_belief": 0,
+    "worlds_uniform": 0,
+}
+
+
+def world_stats():
+    """Instantané des compteurs d'origine de mondes."""
+    return dict(_WORLD_STATS)
+
+
+def _note_worlds(stats):
+    """Comptabiliser l'origine des mondes d'une décision IS-DD."""
+    worlds = stats.get("worlds") or {}
+    total = sum(int(v) for v in worlds.values())
+    _WORLD_STATS["decisions"] += 1
+    for key in ("injected", "playgen", "belief", "uniform"):
+        _WORLD_STATS["worlds_" + key] += int(worlds.get(key, 0))
+    if total == 0:
+        _WORLD_STATS["no_sampling"] += 1
+        return
+    _WORLD_STATS["sampled"] += 1
+    injected = int(worlds.get("injected", 0))
+    if injected == total:
+        _WORLD_STATS["all_playgen"] += 1
+    elif injected:
+        _WORLD_STATS["partial"] += 1
+    else:
+        _WORLD_STATS["no_playgen"] += 1
+
+
 def _note_degraded(seat, stats):
     """Compter, et dire de temps en temps, qu'une décision s'est repliée.
 
@@ -86,9 +129,21 @@ def _note_degraded(seat, stats):
     journal. Personne ne regarde une interface à trois heures du matin ; c'est
     exactement la deuxième dégradation silencieuse que le backlog signale
     (docs/web_todo.md §2.2).
+
+    **Une décision qui n'a demandé aucun monde n'est pas une décision
+    dégradée.** Sur un coup forcé (une seule carte légale) comme sur une
+    position résolue, `run_search` sort avant d'échantillonner et renvoie des
+    compteurs à zéro ; `decision_stats` lit alors `sourced == 0` et étiquette
+    `"cpu"`, ce qui n'a rien à voir avec l'état du sidecar. Les 14 alertes
+    présentes en prod le 2026-08-03 étaient *toutes* de cette forme
+    (`source cpu, 0 mondes`) : l'unique alarme censée détecter une panne
+    silencieuse criait au loup plusieurs fois par jour, ce qui est la façon la
+    plus sûre de la rendre illisible.
     """
     if not SIDECAR_URL or stats.get("worlds_source") == "playgen-gpu":
         return
+    if not sum(int(v) for v in (stats.get("worlds") or {}).values()):
+        return  # rien n'a été échantillonné : rien n'est dégradé
     now = time.monotonic()
     _degraded["count"] += 1
     if now - _degraded["since"] < _DEGRADED_LOG_WINDOW:
@@ -227,7 +282,9 @@ class AgentTable:
             return None
         decision = agent.decide(env)
         if decision is not None and decision.get("source") == "isdd":
-            _note_degraded(seat, decision_stats(self.kind(seat), decision))
+            stats = decision_stats(self.kind(seat), decision)
+            _note_worlds(stats)
+            _note_degraded(seat, stats)
         return decision
 
 

@@ -160,6 +160,8 @@ impl CardPlayer for IsDdPlayer {
             None => self.search.search_with_stats(state, &self.config, &mut self.rng),
         };
 
+        telemetry::record(&result.worlds);
+
         Ok(Decision {
             action: result.best_action,
             stats: Stats {
@@ -170,6 +172,110 @@ impl CardPlayer for IsDdPlayer {
                 elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
             },
         })
+    }
+}
+
+/// D'où viennent les mondes que les recherches IS-DD résolvent, cumulé sur le
+/// processus.
+///
+/// Le comptage par décision existe depuis toujours ([`WorldCounts`]) mais
+/// n'était agrégé nulle part, si bien que « la file playgen s'assèche-t-elle ? »
+/// n'avait pas de réponse — alors que c'est cette question, et elle seule, qui
+/// dit si le belief net sert encore à quelque chose. Des atomiques relâchées :
+/// le coût est nul devant une recherche DD, et le banc d'essai est
+/// multi-thread.
+pub mod telemetry {
+    use super::super::super::is_dd::WorldCounts;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static DECISIONS: AtomicU64 = AtomicU64::new(0);
+    static NO_SAMPLING: AtomicU64 = AtomicU64::new(0);
+    static ALL_PLAYGEN: AtomicU64 = AtomicU64::new(0);
+    static PARTIAL: AtomicU64 = AtomicU64::new(0);
+    static NO_PLAYGEN: AtomicU64 = AtomicU64::new(0);
+    static W_INJECTED: AtomicU64 = AtomicU64::new(0);
+    static W_PLAYGEN: AtomicU64 = AtomicU64::new(0);
+    static W_BELIEF: AtomicU64 = AtomicU64::new(0);
+    static W_UNIFORM: AtomicU64 = AtomicU64::new(0);
+
+    /// Ce qu'une décision a consommé comme mondes.
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct Snapshot {
+        /// Décisions IS-DD, toutes catégories confondues.
+        pub decisions: u64,
+        /// Coup forcé ou position résolue : aucun monde n'a été demandé. Ce
+        /// n'est pas une dégradation, c'est une recherche qui n'a pas eu lieu.
+        pub no_sampling: u64,
+        /// Décisions échantillonnées dont *tous* les mondes viennent de la
+        /// source (playgen).
+        pub all_playgen: u64,
+        /// ... dont une partie seulement : la file s'est vidée en cours de
+        /// recherche.
+        pub partial: u64,
+        /// ... dont aucun : la source n'a rien produit du tout.
+        pub no_playgen: u64,
+        pub worlds_injected: u64,
+        pub worlds_playgen: u64,
+        /// Mondes tirés par déterminisation **pondérée**. À lire avec la
+        /// configuration en main : ce sont les poids du belief net quand
+        /// `use_nn_beliefs` est vrai (le cas de la prod et de `web_dede`), et
+        /// ceux de `CardBeliefs` heuristique sinon. Le compteur dit « la file
+        /// a séché », pas « le réseau a servi ».
+        pub worlds_belief: u64,
+        pub worlds_uniform: u64,
+    }
+
+    impl Snapshot {
+        /// Décisions ayant réellement échantillonné des mondes.
+        pub fn sampled(&self) -> u64 {
+            self.all_playgen + self.partial + self.no_playgen
+        }
+
+        /// Part des mondes résolus qui ne venaient pas de la source, en %.
+        /// C'est le chiffre qui décide du sort du belief net.
+        pub fn fallback_world_pct(&self) -> f64 {
+            let total = self.worlds_injected
+                + self.worlds_playgen
+                + self.worlds_belief
+                + self.worlds_uniform;
+            if total == 0 {
+                return 0.0;
+            }
+            100.0 * (self.worlds_belief + self.worlds_uniform) as f64 / total as f64
+        }
+    }
+
+    pub(super) fn record(counts: &WorldCounts) {
+        DECISIONS.fetch_add(1, Ordering::Relaxed);
+        W_INJECTED.fetch_add(counts.injected as u64, Ordering::Relaxed);
+        W_PLAYGEN.fetch_add(counts.playgen as u64, Ordering::Relaxed);
+        W_BELIEF.fetch_add(counts.belief as u64, Ordering::Relaxed);
+        W_UNIFORM.fetch_add(counts.uniform as u64, Ordering::Relaxed);
+
+        let total = counts.total();
+        if total == 0 {
+            NO_SAMPLING.fetch_add(1, Ordering::Relaxed);
+        } else if counts.injected == total {
+            ALL_PLAYGEN.fetch_add(1, Ordering::Relaxed);
+        } else if counts.injected > 0 {
+            PARTIAL.fetch_add(1, Ordering::Relaxed);
+        } else {
+            NO_PLAYGEN.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn snapshot() -> Snapshot {
+        Snapshot {
+            decisions: DECISIONS.load(Ordering::Relaxed),
+            no_sampling: NO_SAMPLING.load(Ordering::Relaxed),
+            all_playgen: ALL_PLAYGEN.load(Ordering::Relaxed),
+            partial: PARTIAL.load(Ordering::Relaxed),
+            no_playgen: NO_PLAYGEN.load(Ordering::Relaxed),
+            worlds_injected: W_INJECTED.load(Ordering::Relaxed),
+            worlds_playgen: W_PLAYGEN.load(Ordering::Relaxed),
+            worlds_belief: W_BELIEF.load(Ordering::Relaxed),
+            worlds_uniform: W_UNIFORM.load(Ordering::Relaxed),
+        }
     }
 }
 

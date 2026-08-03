@@ -483,6 +483,11 @@ async def health():
             "sidecar_configured": sidecar["configured"],
         },
         "sidecar": {**sidecar, "required": _agents.sidecar_expected()},
+        # D'où viennent réellement les mondes que Dédé résout, depuis le
+        # démarrage. `sidecar.reachable` dit que le serveur répond ; ces
+        # compteurs-là disent si la file playgen suffit, ou si les recherches
+        # retombent sur le belief net / l'uniforme sans que personne le voie.
+        "worlds": _agents.world_stats(),
     }
     # 503 seulement si la base est morte : un sidecar absent dégrade la force de
     # jeu, il n'empêche pas de jouer. Le champ `status` porte l'alerte, le code
