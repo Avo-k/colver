@@ -115,14 +115,19 @@ ANCHOR_VERSION = "2026-08"
 #
 # ⚠️ **Le 2026-08-03, une mesure indépendante rend ces 50 points tendus.** Le plan
 # factoriel 2⁴ (`scripts/analysis/seat_influence.py`, 3 995 donnes × 16 façons de
-# répartir DouDou et l'Oracle DD sur les quatre sièges) chiffre l'écart **DouDou →
-# jeu parfait** à **+78 à +98 Elo dans cette échelle-ci**. Poser Dédé 50 points
-# au-dessus de DouDou lui donne donc plus de la moitié du chemin vers l'omniscience.
+# répartir DouDou50 et l'Oracle DD sur les quatre sièges) chiffre l'écart **DouDou50
+# → jeu parfait** à **+87 à +112 Elo dans cette échelle-ci**. Poser Dédé 50 points
+# au-dessus de DouDou lui donne donc près de la moitié du chemin vers l'omniscience.
 # Ce n'est pas absurde — l'Oracle joue en double-mort et n'est pas la meilleure
-# réponse à un adversaire imparfait (il fait *moins bien* que DouDou dans 15,3 % des
-# échanges appariés), donc le vrai plafond est au-dessus de +98 — mais c'est assez
+# réponse à un adversaire imparfait (il fait *moins bien* que DouDou dans 13,1 % des
+# échanges appariés), donc le vrai plafond est au-dessus de +112 — mais c'est assez
 # serré pour que le h2h direct devienne la mesure à faire avant de retoucher ces
-# valeurs. Détail : `docs/classement_et_scoring.md` §8.
+# valeurs.
+#
+# Ordre de grandeur utile pour lire l'échelle : le même plan mesure l'écart
+# **DouDou35 → DouDou50** à **+26 à +29 Elo**, et il faut **876 donnes** non appariées
+# pour le distinguer de zéro. La base de prod en compte 1 073 en tout.
+# Détail : `docs/classement_et_scoring.md` §8.
 BOT_ELO = {
     "dede": 1000.0,
     "doudou": 950.0,  # écart de 50 : arrondi dans [+28, +52] estimé

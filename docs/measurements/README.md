@@ -115,6 +115,11 @@ des entrées complètes.
   l'un des rares cas où **tirer les donnes au hasard est correct**, une main étant uniforme
   par les règles — c'est le *contrat* qui doit être réaliste, et il sort du bidder v6.
   `--from <json>` re-dépouille un run sans recalculer, ce pour quoi `runlog` existe.
+  Deux couples d'occupants, qui ne répondent pas à la même question : `doudou50 → oracle`
+  donne l'**enveloppe** (le plus grand écart possible, pour dimensionner un classement),
+  `doudou35 → doudou50` donne le **régime réaliste** (deux joueurs imparfaits, comme deux
+  humains). Mesurer l'enveloppe seule, c'est risquer de conclure à une échelle où personne
+  ne joue.
 - `belote_facts.py` — enveloppe de `bench_belote_facts`. Fréquence de la déduction de
   belote sur donnes jouées (~30 s pour 50 000 donnes) et fraction de mondes impossibles
   rendus par playgen (~2 min, sidecar requis, donc le sha256 du modèle est enregistré).

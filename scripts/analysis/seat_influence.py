@@ -2,12 +2,21 @@
 """Combien un seul siège peut-il déplacer une donne ? — plan factoriel 2⁴.
 
 Sur une donne dont **l'enchère est figée**, on rejoue le jeu de la carte dans les
-**16 configurations** possibles : chacun des quatre sièges est tenu soit par DouDou50,
-soit par l'Oracle DD. Les deux joueurs étant déterministes, les 16 résultats sont 16
-nombres exacts — aucun bruit d'échantillonnage à l'intérieur d'une donne. On en tire
-l'**effet principal** de chaque siège (le remplacer change le score de combien ?) et les
-**interactions** (mon partenaire compte-t-il autant que moi ? un adversaire fort
-annule-t-il mon avantage ?).
+**16 configurations** possibles : chacun des quatre sièges est tenu soit par l'occupant
+**A** (`--a`, le plus faible), soit par l'occupant **B** (`--b`). Les deux étant
+déterministes, les 16 résultats sont 16 nombres exacts — aucun bruit d'échantillonnage à
+l'intérieur d'une donne. On en tire l'**effet principal** de chaque siège (le remplacer
+change le score de combien ?) et les **interactions** (mon partenaire compte-t-il autant
+que moi ? un adversaire fort annule-t-il mon avantage ?).
+
+Deux couples utiles, et ils ne répondent pas à la même question :
+
+- `--a doudou50 --b oracle` (défaut) — l'**enveloppe** : le plus grand écart de niveau
+  qui existe dans ce jeu. C'est le bon couple pour dimensionner un classement, parce
+  qu'aucun joueur réel ne peut faire mieux.
+- `--a doudou35 --b doudou50` — le **régime réaliste** : deux joueurs imparfaits, comme
+  deux humains. C'est le bon couple pour savoir si les conclusions tirées de l'enveloppe
+  survivent à l'échelle où vivent les gens.
 
 ## Pourquoi ce chiffre-là
 
@@ -21,12 +30,11 @@ directement au lieu de se déduire d'un modèle.
 
 ## Les trois choix qui décident de ce qui est mesuré
 
-1. **L'enchère est figée**, et rejouée à l'identique dans les 16 configurations.
-   `oracle_dd` est une méthode de *jeu* ; son enchère resterait celle du TOML. Laisser
-   les 16 configurations enchérir librement produirait 16 contrats différents et le
-   plan factoriel ne mesurerait plus rien. Ici les deux specs ne diffèrent que par
-   **une seule ligne** (`[play] method`), ce qui est exactement la définition d'un
-   facteur. Corollaire : ce script mesure l'influence d'un siège **sur le jeu de la
+1. **L'enchère est figée**, et rejouée à l'identique dans les 16 configurations. Laisser
+   les 16 configurations enchérir librement produirait 16 contrats différents et le plan
+   factoriel ne mesurerait plus rien. Les deux specs ne diffèrent donc que par leur bloc
+   `[play]` — le `[bid]` est le même (v6) des deux côtés, et n'est de toute façon jamais
+   consulté. Corollaire : ce script mesure l'influence d'un siège **sur le jeu de la
    carte**, pas sur l'enchère.
 
 2. **On ventile par rôle.** Les sièges ne sont pas interchangeables : le preneur pèse
@@ -35,16 +43,26 @@ directement au lieu de se déduire d'un modèle.
 
 3. **L'Oracle n'est pas une borne supérieure.** Le DD suppose que *la défense joue
    parfaitement aussi* ; contre un adversaire imparfait, un joueur exploitant peut faire
-   mieux. Le script mesure donc, et affiche, la fréquence à laquelle une configuration
-   bat le tout-Oracle. Si elle est non négligeable, tout raisonnement qui traite
-   l'Oracle comme un plafond est faux — y compris la version « bornes » de R4.
+   mieux. Le script mesure donc, et affiche, la fréquence à laquelle l'occupant fort fait
+   **moins bien** que le faible au même siège, à entourage figé. Si elle est non
+   négligeable, tout raisonnement qui traite l'Oracle comme un plafond est faux — y
+   compris la version « bornes » de R4. La question doit être posée **appariée** :
+   « une configuration bat-elle le tout-Oracle ? » serait trivialement vraie, il suffit
+   que la défense d'en face soit faible.
 
 ## Deux détails de reproductibilité
 
-- **Le départage entre cartes DD-équivalentes compte.** 57,8 % des positions ont
-  plusieurs cartes optimales, et dans une configuration mixte le choix de l'Oracle
-  change ce que voient les DouDou d'en face. `--tiebreak` est donc un paramètre
-  enregistré, pas un détail (défaut `order`, celui de la production).
+- **Le départage entre cartes DD-équivalentes compte.** ~50 % des positions ont plusieurs
+  cartes optimales, et dans une configuration mixte le choix de l'Oracle change ce que
+  voient les DouDou d'en face. `--tiebreak` est donc un paramètre enregistré, pas un
+  détail. Le défaut `order` est celui de la production, et **vaut aujourd'hui
+  `cheapest`** : depuis `1edd349` c'est le solveur lui-même qui préfère la carte la moins
+  chère, donc les deux ne diffèrent sur aucune décision. Le vrai contraste est `dearest`
+  (45,9 % de cartes différentes) ou `highest` (45,3 %).
+- **L'extension PyO3 est de la provenance.** Elle porte le code du solveur, elle n'est pas
+  dans git, et `uv sync` ne la recompile pas toujours. Son sha256 part donc au journal, et
+  le script refuse de tourner si un `.rs` du cœur est plus récent qu'elle — voir
+  `_check_extension_is_fresh`, écrit après avoir perdu trois runs de 4 000 donnes.
 - **Les donnes sont tirées au hasard, et c'est ici la bonne façon de faire.** La règle
   du dépôt (« mesurer sur des donnes réellement jouées ») vise les *positions* de jeu,
   qui dépendent de qui a joué avant. Une main, elle, est uniforme par les règles : un
@@ -52,7 +70,9 @@ directement au lieu de se déduire d'un modèle.
   réaliste est le **contrat**, et il l'est puisqu'il sort du bidder de référence (v6)
   aux quatre sièges.
 
-    uv run python scripts/analysis/seat_influence.py --deals 400 --jobs 8
+    uv run python scripts/analysis/seat_influence.py --deals 4000 --jobs 8
+    uv run python scripts/analysis/seat_influence.py --deals 4000 --jobs 8 \
+        --a doudou35 --b doudou50 --tag dd35_vs_dd50
     uv run python scripts/analysis/seat_influence.py --from data/analysis/seat_influence/<f>.json
 """
 
@@ -64,6 +84,7 @@ import math
 import random
 import statistics
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -72,14 +93,13 @@ sys.path.insert(0, str(ROOT / "scripts" / "analysis"))
 import runlog  # noqa: E402
 
 BID_MODEL = "models/bid_v6_isdd.bin"
-PLAY_MODEL = "models/dmc_50.bin"
 
 N_SEATS = 4
-N_CONF = 1 << N_SEATS  # bit s = l'Oracle tient le siège s
-ALL_DD, ALL_OR = 0, N_CONF - 1
+N_CONF = 1 << N_SEATS  # bit s = l'occupant **B** tient le siège s
+ALL_A, ALL_B = 0, N_CONF - 1
 
-# Les deux specs ne diffèrent que par `[play] method`. Le bloc `[bid]` est identique et
-# n'est **jamais consulté** — l'enchère est rejouée depuis les actions enregistrées —
+# Les deux occupants ne diffèrent que par le bloc `[play]`. Le bloc `[bid]` est identique
+# et n'est **jamais consulté** — l'enchère est rejouée depuis les actions enregistrées —
 # mais le garder identique des deux côtés est ce qui fait qu'il n'y a qu'un facteur.
 _BID = f"""
 [bid]
@@ -88,38 +108,45 @@ model = "{BID_MODEL}"
 hidden = 512
 """
 
-SPEC_DD = _BID + f"""
-[play]
-method = "dmc"
-model = "{PLAY_MODEL}"
-residual = true
-"""
+# A doit être le plus faible des deux, pour que l'effet mesuré soit positif.
+OCCUPANTS = {
+    "doudou35": ("DouDou35", 'method = "dmc"\nmodel = "models/dmc_35.bin"'),
+    "doudou50": ("DouDou50", 'method = "dmc"\nmodel = "models/dmc_50.bin"\nresidual = true'),
+    "oracle": ("Oracle", 'method = "oracle_dd"'),
+}
 
 
-def spec_or(tiebreak: str) -> str:
-    return _BID + f"""
-[play]
-method = "oracle_dd"
-tiebreak = "{tiebreak}"
-"""
+def spec_for(name: str, tiebreak: str) -> str:
+    body = OCCUPANTS[name][1]
+    if name == "oracle":
+        body += f'\ntiebreak = "{tiebreak}"'
+    return _BID + "\n[play]\n" + body + "\n"
+
+
+def model_of(name: str) -> str | None:
+    for line in OCCUPANTS[name][1].splitlines():
+        if line.startswith("model = "):
+            return line.split('"')[1]
+    return None
 
 
 # ---------------------------------------------------------------------------
-# Un travailleur = un jeu d'agents (8 : DouDou et Oracle à chacun des 4 sièges),
-# construits une fois. DouDou50 et l'Oracle sont sans état entre deux donnes, donc
-# les réutiliser d'une configuration à l'autre est sûr — `init_deal` est appelé de
-# toute façon, au cas où un jour ils en auraient un.
+# Un travailleur = un jeu de 8 agents (A et B à chacun des 4 sièges), construits une
+# fois. DouDou et l'Oracle sont sans état entre deux donnes, donc les réutiliser d'une
+# configuration à l'autre est sûr — `init_deal` est appelé de toute façon, au cas où un
+# jour ils en auraient un.
 # ---------------------------------------------------------------------------
 
 _W: dict = {}
 
 
-def _init_worker(tiebreak: str, seed: int) -> None:
+def _init_worker(a: str, b: str, tiebreak: str, seed: int) -> None:
     import colver
 
     _W["colver"] = colver
-    _W["dd"] = [colver.Agent(SPEC_DD, s, seed + s) for s in range(N_SEATS)]
-    _W["or"] = [colver.Agent(spec_or(tiebreak), s, seed + 100 + s) for s in range(N_SEATS)]
+    _W["b_is_oracle"] = b == "oracle"
+    _W["a"] = [colver.Agent(spec_for(a, tiebreak), s, seed + s) for s in range(N_SEATS)]
+    _W["b"] = [colver.Agent(spec_for(b, tiebreak), s, seed + 100 + s) for s in range(N_SEATS)]
 
 
 def _auction(colver, dealer, hands, bidders):
@@ -182,14 +209,14 @@ def sweep(seed: int, check: bool = False) -> dict | None:
     hands = [sorted(deck[i * 8:(i + 1) * 8]) for i in range(N_SEATS)]
     dealer = rng.randrange(N_SEATS)
 
-    auc = _auction(colver, dealer, hands, _W["dd"])
+    auc = _auction(colver, dealer, hands, _W["a"])
     if auc is None:
         return None
     bid_actions, contract, taker = auc
 
     margins, card_margins, pts_ns = [], [], []
     for mask in range(N_CONF):
-        occ = [_W["or"][s] if (mask >> s) & 1 else _W["dd"][s] for s in range(N_SEATS)]
+        occ = [_W["b"][s] if (mask >> s) & 1 else _W["a"][s] for s in range(N_SEATS)]
         m, (ns, ew) = _play(colver, dealer, hands, bid_actions, occ)
         margins.append(m)
         card_margins.append(ns - ew)
@@ -205,11 +232,12 @@ def sweep(seed: int, check: bool = False) -> dict | None:
         # la marche du contrat ajoute à elle seule.
         "card_margins": card_margins,
     }
-    if check:
+    if check and _W["b_is_oracle"]:
         # Invariant fort sur toute la machinerie de rejeu : quatre Oracles réalisent
-        # exactement la valeur DD de la position d'entame.
+        # exactement la valeur DD de la position d'entame. N'a de sens que si B est
+        # l'Oracle — un DouDou, si fort soit-il, n'a aucune raison de l'atteindre.
         rec["dd_ns"] = _dd_value_ns(colver, dealer, hands, bid_actions)
-        rec["all_or_ns"] = pts_ns[ALL_OR]
+        rec["all_or_ns"] = pts_ns[ALL_B]
     return rec
 
 
@@ -240,9 +268,11 @@ def _mean_sd(xs):
     return m, sd, sd / len(xs) ** 0.5 if xs else 0.0
 
 
-def report(recs: list[dict], tiebreak: str) -> dict:
+def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracle") -> dict:
     n = len(recs)
-    print(f"\n{n} donnes notables · départage Oracle = {tiebreak!r}\n")
+    la, lb = OCCUPANTS[a][0], OCCUPANTS[b][0]
+    tb = f" · départage Oracle = {tiebreak!r}" if b == "oracle" else ""
+    print(f"\n{n} donnes notables · {la} → {lb}{tb}\n")
 
     # --- contrôle d'exactitude -------------------------------------------------
     checked = [r for r in recs if "dd_ns" in r]
@@ -253,11 +283,11 @@ def report(recs: list[dict], tiebreak: str) -> dict:
               + (f"  ⚠️ {len(bad)} écarts" if bad else " ✓"))
 
     # --- repères ---------------------------------------------------------------
-    dd = [r["margins"][ALL_DD] for r in recs]
-    orc = [r["margins"][ALL_OR] for r in recs]
+    dd = [r["margins"][ALL_A] for r in recs]
+    orc = [r["margins"][ALL_B] for r in recs]
     print("\n── Les deux repères (marge N-S − E-O) " + "─" * 36)
-    print(f"  tout-DouDou : {statistics.fmean(dd):+8.1f}   (le datum de R4)")
-    print(f"  tout-Oracle : {statistics.fmean(orc):+8.1f}   (jeu parfait des deux côtés)")
+    print(f"  tout-{la:<9}: {statistics.fmean(dd):+8.1f}   (le datum de R4)")
+    print(f"  tout-{lb:<9}: {statistics.fmean(orc):+8.1f}")
 
     # Marge de manœuvre : de combien la donne bouge selon qui la joue.
     spreads = [max(r["margins"]) - min(r["margins"]) for r in recs]
@@ -282,7 +312,7 @@ def report(recs: list[dict], tiebreak: str) -> dict:
             by_role[_role(s, r["taker"])].append(d)
             deltas_all.append(d)
 
-    print("\n── Effet principal d'un siège (DouDou → Oracle), pour son équipe " + "─" * 8)
+    print(f"\n── Effet principal d'un siège ({la} → {lb}), pour son équipe " + "─" * 8)
     print(f"  {'rôle':<12} {'n':>6} {'effet':>9} {'± err':>8} {'écart-type':>11} "
           f"{'>0':>7} {'p10':>7} {'p90':>7}")
     for role in ROLES:
@@ -315,12 +345,12 @@ def report(recs: list[dict], tiebreak: str) -> dict:
 
     print("\n── Interactions " + "─" * 57)
     print("  effet du siège selon son entourage :")
-    for k, lbl in ((0, "partenaire DouDou"), (1, "partenaire Oracle")):
+    for k, lbl in ((0, f"partenaire {la}"), (1, f"partenaire {lb}")):
         mean, _, err = _mean_sd(part[k])
         print(f"    {lbl:<22} {mean:>+8.1f} ± {err:.1f}")
     for k in (0, 1, 2):
         mean, _, err = _mean_sd(opp[k])
-        print(f"    {k} adversaire(s) Oracle {'':<1} {mean:>+8.1f} ± {err:.1f}")
+        print(f"    {k} adversaire(s) {lb:<9} {mean:>+8.1f} ± {err:.1f}")
 
     # --- la même chose en points cartes ---------------------------------------
     # Contrôle causal : si la complémentarité disparaît sans le barème, c'est la
@@ -344,8 +374,8 @@ def report(recs: list[dict], tiebreak: str) -> dict:
             print(f"    effet {role:<12} {mean:>+8.1f} ± {err:.1f}")
         c0, _, e0 = _mean_sd(cpart[0])
         c1, _, e1 = _mean_sd(cpart[1])
-        print(f"    partenaire DouDou      {c0:>+8.1f} ± {e0:.1f}")
-        print(f"    partenaire Oracle      {c1:>+8.1f} ± {e1:.1f}")
+        print(f"    partenaire {la:<11}{c0:>+8.1f} ± {e0:.1f}")
+        print(f"    partenaire {lb:<11}{c1:>+8.1f} ± {e1:.1f}")
         p0, _, _ = _mean_sd(part[0])
         p1, _, _ = _mean_sd(part[1])
         if p0 > 0 and c0 > 0:
@@ -370,11 +400,11 @@ def report(recs: list[dict], tiebreak: str) -> dict:
     solo = [_s(_gain(r["margins"][1 << s], s)) for r in recs for s in range(N_SEATS)]
     p_duo, p_solo = statistics.fmean(duo), statistics.fmean(solo)
     print("\n── Traduction en Elo (échelle de `elo.py`, marge / 316) " + "─" * 18)
-    print(f"  2 Oracles contre 2 DouDou : score {p_duo:.4f} → "
+    print(f"  2 {lb} contre 2 {la} : score {p_duo:.4f} → "
           f"{_elo(p_duo):+.0f} Elo (les deux partenaires changent)")
-    print(f"  1 Oracle  contre 0        : score {p_solo:.4f} → "
+    print(f"  1 {lb} seul               : score {p_solo:.4f} → "
           f"{2*_elo(p_solo):+.0f} Elo (un seul change : ×2 pour la dilution)")
-    print("  Les deux estiment le même écart individuel DouDou → jeu parfait.")
+    print(f"  Les deux estiment le même écart individuel {la} → {lb}.")
     print("  Un écart entre elles est la signature de la complémentarité ci-dessus :")
     print("  le modèle additif d'Elo (équipe = moyenne des deux) ne la représente pas.")
 
@@ -384,14 +414,15 @@ def report(recs: list[dict], tiebreak: str) -> dict:
     # serait trivialement vrai (il suffit que la défense d'en face soit DouDou).
     worse = sum(1 for d in deltas_all if d < -1e-9)
     equal = sum(1 for d in deltas_all if abs(d) <= 1e-9)
-    print("\n── L'Oracle est-il un plafond ? (échanges appariés) " + "─" * 22)
-    print(f"  échanges où l'Oracle fait **moins bien** que DouDou au même siège : "
+    print(f"\n── {lb} est-il un plafond ? (échanges appariés) " + "─" * 22)
+    print(f"  échanges où {lb} fait **moins bien** que {la} au même siège : "
           f"{worse}/{len(deltas_all)} ({100*worse/len(deltas_all):.1f} %)")
     print(f"  échanges sans effet : {100*equal/len(deltas_all):.1f} %")
-    print("  Le DD suppose une défense parfaite ; contre DouDou, jouer la ligne")
-    print("  DD-optimale n'est donc pas la meilleure réponse. Un écart au jeu de")
-    print("  l'Oracle n'est pas une erreur — c'est ce qui interdit de s'en servir")
-    print("  comme d'une borne, ou comme dénominateur d'un score normalisé.")
+    if b == "oracle":
+        print("  Le DD suppose une défense parfaite ; contre un adversaire imparfait, la")
+        print("  ligne DD-optimale n'est donc pas la meilleure réponse.")
+    print(f"  Un écart au jeu de {lb} n'est pas une erreur — c'est ce qui interdit de")
+    print("  s'en servir comme borne, ou comme dénominateur d'un score normalisé.")
 
     # --- ce que ça dit du classement ------------------------------------------
     mt, sdt, _ = _mean_sd(by_role["preneur"])
@@ -417,10 +448,11 @@ def report(recs: list[dict], tiebreak: str) -> dict:
         "effect": {role: round(_mean_sd(by_role[role])[0], 1) for role in ROLES},
         "effect_err": {role: round(_mean_sd(by_role[role])[2], 1) for role in ROLES},
         "effect_sd": {role: round(_mean_sd(by_role[role])[1], 1) for role in ROLES},
-        "effect_partner_dd": round(_mean_sd(part[0])[0], 1),
-        "effect_partner_or": round(_mean_sd(part[1])[0], 1),
-        "effect_by_opp_oracles": {k: round(_mean_sd(opp[k])[0], 1) for k in opp},
-        "oracle_worse_pct": round(100 * worse / len(deltas_all), 1),
+        "occupants": [a, b],
+        "effect_partner_weak": round(_mean_sd(part[0])[0], 1),
+        "effect_partner_strong": round(_mean_sd(part[1])[0], 1),
+        "effect_by_strong_opponents": {k: round(_mean_sd(opp[k])[0], 1) for k in opp},
+        "strong_worse_pct": round(100 * worse / len(deltas_all), 1),
         "no_effect_pct": round(100 * equal / len(deltas_all), 1),
         "margin_sd_reference": MARGIN_SD,
         "card_points": card,
@@ -438,6 +470,10 @@ def main() -> int:
     ap.add_argument("--deals", type=int, default=400)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--a", default="doudou50", choices=sorted(OCCUPANTS),
+                    help="occupant de reference (le plus faible des deux)")
+    ap.add_argument("--b", default="oracle", choices=sorted(OCCUPANTS),
+                    help="occupant substitue (le plus fort)")
     ap.add_argument("--tiebreak", default="order",
                     choices=["order", "lowest", "highest", "cheapest", "dearest"])
     ap.add_argument("--check-every", type=int, default=25,
@@ -450,8 +486,11 @@ def main() -> int:
 
     if args.from_file:
         blob = json.loads(Path(args.from_file).read_text())
-        report(blob["payload"]["deals"], blob["params"].get("tiebreak", "?"))
+        occ = blob["params"].get("occupants", ["doudou50", "oracle"])
+        report(blob["payload"]["deals"], blob["params"].get("tiebreak", "?"), *occ)
         return 0
+
+    _check_extension_is_fresh()
 
     seeds = [args.seed * 1_000_003 + i for i in range(args.deals)]
     checks = {s for i, s in enumerate(seeds) if args.check_every and i % args.check_every == 0}
@@ -463,7 +502,7 @@ def main() -> int:
 
             ctx = mp.get_context("spawn")
             with ctx.Pool(args.jobs, initializer=_init_worker,
-                          initargs=(args.tiebreak, args.seed)) as pool:
+                          initargs=(args.a, args.b, args.tiebreak, args.seed)) as pool:
                 for i, rec in enumerate(pool.imap_unordered(
                         _sweep_star, [(s, s in checks) for s in seeds], chunksize=4)):
                     if rec is not None:
@@ -472,7 +511,7 @@ def main() -> int:
                         print(f"  {i+1}/{len(seeds)} donnes  "
                               f"({timer.elapsed/(i+1)*1000:.0f} ms/donne)", file=sys.stderr)
         else:
-            _init_worker(args.tiebreak, args.seed)
+            _init_worker(args.a, args.b, args.tiebreak, args.seed)
             for i, s in enumerate(seeds):
                 rec = sweep(s, check=s in checks)
                 if rec is not None:
@@ -485,7 +524,7 @@ def main() -> int:
         print("aucune donne notable", file=sys.stderr)
         return 1
     recs.sort(key=lambda r: r["seed"])
-    summary = report(recs, args.tiebreak)
+    summary = report(recs, args.tiebreak, args.a, args.b)
 
     if not args.no_log:
         runlog.save(
@@ -493,10 +532,13 @@ def main() -> int:
             tag=args.tag,
             params={"deals": args.deals, "seed": args.seed, "jobs": args.jobs,
                     "tiebreak": args.tiebreak, "bidder": "bid_v6 (figé, rejoué)",
-                    "occupants": "DouDou50 vs oracle_dd", "configs": N_CONF},
+                    "occupants": [args.a, args.b], "configs": N_CONF},
             summary=summary,
             payload={"deals": recs},
-            models=[BID_MODEL, PLAY_MODEL],
+            # Le `.so` est de la provenance au même titre qu'un fichier de poids :
+            # il porte le code du solveur, et il n'est pas dans git.
+            models=[BID_MODEL, model_of(args.a), model_of(args.b),
+                    str(_extension_path())],
             took_s=timer.s,
         )
     return 0
@@ -504,6 +546,42 @@ def main() -> int:
 
 def _sweep_star(arg):
     return sweep(*arg)
+
+
+def _extension_path():
+    import colver._colver as ext
+
+    return Path(ext.__file__)
+
+
+def _check_extension_is_fresh() -> None:
+    """Refuser de mesurer avec un `.so` plus vieux que le cœur Rust.
+
+    Le 2026-08-03, trois runs de 4 000 donnes ont été calculés avec une extension
+    compilée une heure avant le commit qui changeait le départage des ex æquo du
+    solveur : l'Oracle mesuré n'était pas celui de la production, et le `--tiebreak`
+    passé en ligne de commande n'atteignait même pas le parseur. Le piège est
+    documenté dans CLAUDE.md — `uv sync` ne recompile pas toujours — mais rien ne
+    l'attrapait ici, et **un A/B qui rend des chiffres identiques au bit près n'est
+    pas un résultat nul, c'est une panne**. C'est ce signal-là qui l'a révélé.
+    """
+    so = _extension_path()
+    newest, newest_src = 0.0, None
+    for src in (ROOT / "colver-core" / "src").rglob("*.rs"):
+        m = src.stat().st_mtime
+        if m > newest:
+            newest, newest_src = m, src
+    if newest > so.stat().st_mtime:
+        rel = newest_src.relative_to(ROOT) if newest_src else "?"
+        raise SystemExit(
+            f"\n⚠️  L'extension PyO3 est périmée.\n"
+            f"    {so.relative_to(ROOT)} date du "
+            f"{datetime.fromtimestamp(so.stat().st_mtime):%Y-%m-%d %H:%M}\n"
+            f"    mais {rel} a changé le "
+            f"{datetime.fromtimestamp(newest):%Y-%m-%d %H:%M}.\n"
+            f"    Mesurer maintenant produirait des chiffres pour du code qui n'existe plus.\n"
+            f"    Recompiler :  env -u CONDA_PREFIX uv run maturin develop --release\n"
+        )
 
 
 if __name__ == "__main__":
