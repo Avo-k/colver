@@ -1,0 +1,30 @@
+# `web_dede`, mais qui maximise le **score de donne** au lieu des points cartes.
+#
+# Seule différence avec `web_dede` : `objective`. Mêmes poids, même budget, mêmes
+# mondes, même plafond — la mesure isole donc exactement le changement
+# d'objectif.
+#
+# Ce que ça corrige (`engine/scoring.rs`, contrat de valeur V, points cartes du
+# preneur x) : l'écart N-S − E-O vaut -(162 + V) constant sous le seuil, 2x+V-162
+# au-dessus, avec une marche de 4V entre les deux. Maximiser l'espérance de
+# points cartes est une approximation linéaire de cette marche — correcte
+# au-dessus du seuil, et fausse en dessous où un point carte de plus vaut zéro.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "isdd"
+time_ms = 1000
+determinizations = 20
+max_worlds = 256
+objective = "deal_score"
+
+[worlds]
+source = "sidecar"
+batch = 256
+fallback = "strict"
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"

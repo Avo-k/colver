@@ -25,8 +25,75 @@ use crate::determinize::{determinize_greedy, determinize_weighted};
 use crate::dmc_net::DmcNet;
 use crate::dmc_obs::{self, EnvTracking, OBS_DIM_TR};
 use crate::worlds::{World, WorldSource};
+use crate::scoring::{deal_score_from_card_points, CAPOT_PTS, TOTAL_PTS};
 use crate::solver::{new_tt_buffer, solve_with_scores};
 use crate::state::{GameState, Phase};
+
+/// Ce qu'une recherche IS-DD maximise en agrégeant ses mondes.
+///
+/// Le solveur DD rend des **points cartes**, mais ce ne sont pas eux qui
+/// décident une donne. Écart N-S − E-O en fonction des points cartes `x` du
+/// preneur, contrat de valeur `V` (`engine/scoring.rs`) :
+///
+/// ```text
+///   x < V   :  -(162 + V)      CONSTANT, pente 0
+///   x >= V  :  2x + V - 162    pente 2
+///   saut en x = V : 4V
+/// ```
+///
+/// Maximiser `E[x]` est donc une approximation linéaire d'une marche. Elle est
+/// **correcte au-dessus du seuil** (la pente y vaut bien 2), et fausse en
+/// dessous — une fois la chute acquise un point carte de plus vaut exactement
+/// zéro, et le solveur continue pourtant à se battre pour lui : c'est de là que
+/// viennent les coups qui paraissent arbitraires en fin de donne perdue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayObjective {
+    /// Espérance de points cartes N-S. Le comportement historique.
+    CardPoints,
+    /// Espérance d'écart de **score de donne** N-S − E-O, contrat compris.
+    DealScore,
+}
+
+/// Total de points cartes de la donne, déduit du total N-S.
+///
+/// 162 normalement, 252 quand un camp fait capot (le dix de der y vaut 100).
+///
+/// **Une seule situation reste ambiguë** : `ns == 0` peut vouloir dire « E-O a
+/// fait capot » (252) ou « N-S n'a ramassé que des plis à zéro point » (162) —
+/// il y a 11 cartes sans valeur dans un jeu, donc le second cas existe. Les
+/// plis déjà joués tranchent la plupart du temps : si N-S en a gagné un, le
+/// capot est impossible. Sinon on retient le capot, de loin le plus fréquent
+/// quand un camp finit à zéro. L'erreur résiduelle vaut 90 points de score sur
+/// un écart qui en fait plusieurs centaines, et seulement dans ce cas-là.
+#[inline]
+fn total_card_points(state: &GameState, ns_card_pts: i16) -> i16 {
+    if ns_card_pts == CAPOT_PTS {
+        return CAPOT_PTS; // N-S a tout pris : sans ambiguïté
+    }
+    if ns_card_pts == 0 && state.tricks_won[0] == 0 {
+        return CAPOT_PTS;
+    }
+    TOTAL_PTS
+}
+
+/// Belote/rebelote d'un monde, par camp.
+///
+/// `state.belote` ne compte que ce qui a **déjà été joué** (`check_belote` dans
+/// `apply_play`), donc il sous-estime en cours de donne. Ici on veut la belote
+/// *finale* : elle est acquise dès qu'un joueur détient Dame **et** Roi d'atout,
+/// puisqu'il finira forcément par jouer les deux.
+#[inline]
+fn world_belote(hands: &[crate::card::CardSet; 4], played_by: &[u32; 4], trump: u8) -> [i16; 2] {
+    // Bits de rang : Dame = 4, Roi = 5 ; indice de carte = couleur × 8 + rang.
+    let mask = (1u32 << (trump * 8 + 4)) | (1u32 << (trump * 8 + 5));
+    let mut bonus = [0i16; 2];
+    for p in 0..4usize {
+        if (hands[p] | played_by[p]) & mask == mask {
+            bonus[p % 2] = 20;
+        }
+    }
+    bonus
+}
 
 /// Configuration for IS-DD search.
 ///
@@ -65,6 +132,13 @@ pub struct IsDdConfig {
     /// constraint-uniform. Only has an effect when a belief source is active.
     /// Default 1.0.
     pub belief_frac: f32,
+    /// Ce que la recherche maximise. Défaut [`PlayObjective::CardPoints`] — le
+    /// comportement historique, pour qu'aucune mesure existante ne bouge.
+    ///
+    /// ⚠️ `DealScore` change **l'échelle de `card_scores`** : des écarts de score
+    /// de donne (±500, contrat compris) au lieu de points cartes (0-252). Tout
+    /// consommateur qui affiche ces valeurs doit le savoir.
+    pub objective: PlayObjective,
     /// Plafond de mondes **résolus** par décision, sous échéance uniquement.
     ///
     /// Sous budget de temps la boucle ne sortait que sur l'échéance, donc elle
@@ -113,6 +187,7 @@ impl Default for IsDdConfig {
             early_termination: true,
             world_batch: 128,
             belief_frac: 1.0,
+            objective: PlayObjective::CardPoints,
             max_worlds: None,
             cred_alpha: 0.0,
             parallel: false,
@@ -435,6 +510,46 @@ impl IsDdSearch {
     pub fn reset(&mut self) {
         self.beliefs = None;
         self.belief_tracking = None;
+    }
+
+    /// Valeur d'un coup dans un monde donné, selon l'objectif configuré.
+    ///
+    /// `ns_card_pts` est ce que rend le solveur : le total N-S **final** de la
+    /// donne dans ce monde (`state.points[0]` au terminal), dix de der compris.
+    #[inline]
+    fn world_value(
+        &self,
+        world: &GameState,
+        ns_card_pts: i16,
+        belote: [i16; 2],
+        objective: PlayObjective,
+    ) -> f64 {
+        match objective {
+            PlayObjective::CardPoints => ns_card_pts as f64,
+            PlayObjective::DealScore => {
+                let total = total_card_points(world, ns_card_pts);
+                let card = [ns_card_pts, total - ns_card_pts];
+                let taker = world.contract.team as usize;
+                let s = deal_score_from_card_points(
+                    &world.contract,
+                    card,
+                    belote,
+                    card[taker] == CAPOT_PTS,
+                );
+                (s.scores[0] - s.scores[1]) as f64
+            }
+        }
+    }
+
+    /// Belote finale du monde, ou zéro quand l'objectif ne la regarde pas.
+    #[inline]
+    fn world_belote_for(&self, world: &GameState, objective: PlayObjective) -> [i16; 2] {
+        match objective {
+            PlayObjective::CardPoints => [0, 0],
+            PlayObjective::DealScore => {
+                world_belote(&world.hands, &self.played_by, world.contract.trump)
+            }
+        }
     }
 
     /// Compute belief weights for determinization.
@@ -863,6 +978,7 @@ impl IsDdSearch {
             // Single DD solve gives the exact answer — no determinization needed.
             if let Some(resolved) = self.try_resolve_position(state, observer) {
                 let scores = solve_with_scores(&resolved, Some(&mut self.tt_buf));
+                let belote = self.world_belote_for(&resolved, config.objective);
                 let mut card_scores = Vec::new();
                 let mut best_action = legal.trailing_zeros() as u8;
                 let mut best_avg: f32 =
@@ -870,7 +986,8 @@ impl IsDdSearch {
 
                 for i in 0..scores.count {
                     let (card, ns_pts) = scores.scores[i];
-                    let avg = ns_pts as f32;
+                    let avg =
+                        self.world_value(&resolved, ns_pts, belote, config.objective) as f32;
                     card_scores.push((card, avg));
                     let better = if maximizing { avg > best_avg } else { avg < best_avg };
                     if better {
@@ -1091,10 +1208,14 @@ impl IsDdSearch {
             let chunk_scores = solve_worlds(&chunk, config.parallel, &mut self.tt_buf);
 
             // --- Aggregate in a fixed order (parallel result is identical). ---
-            for (scores, &cw) in chunk_scores.iter().zip(cred_weights.iter()) {
+            for ((world, scores), &cw) in
+                chunk.iter().zip(chunk_scores.iter()).zip(cred_weights.iter())
+            {
+                let belote = self.world_belote_for(world, config.objective);
                 for i in 0..scores.count {
                     let (card, ns_pts) = scores.scores[i];
-                    score_sum[card as usize] += ns_pts as f64 * cw;
+                    score_sum[card as usize] +=
+                        self.world_value(world, ns_pts, belote, config.objective) * cw;
                     weight_sum[card as usize] += cw;
                 }
             }
@@ -1122,7 +1243,12 @@ impl IsDdSearch {
             let avg = if wsum > 1e-9 {
                 (score_sum[card as usize] / wsum) as f32
             } else {
-                81.0 // neutral fallback (≈162/2)
+                // Repli neutre. En points cartes c'est la moitié du total ; en
+                // score de donne c'est zéro, l'écart nul entre les deux camps.
+                match config.objective {
+                    PlayObjective::CardPoints => 81.0,
+                    PlayObjective::DealScore => 0.0,
+                }
             };
 
             card_scores.push((card, avg));
@@ -1497,6 +1623,97 @@ mod tests {
             }
         }
         assert!(checked >= 5, "Not enough non-void deals to test");
+    }
+
+    /// Le barème, vu depuis les points cartes : plate sous le seuil, pente 2
+    /// au-dessus, et une marche de `4V` entre les deux.
+    ///
+    /// C'est l'invariant qui justifie tout `PlayObjective::DealScore`. S'il
+    /// tombe, l'objectif « score de donne » ne décrit plus le barème et il vaut
+    /// mieux revenir aux points cartes qu'optimiser une fiction.
+    #[test]
+    fn deal_score_is_flat_below_the_contract_and_jumps_at_it() {
+        use crate::state::Contract;
+        // Contrat à 100 pour N-S, sans coinche, sans belote.
+        let contract = Contract { trump: 0, value: 10, team: 0, coinche: 0 };
+        let delta = |x: i16| -> i16 {
+            let s = deal_score_from_card_points(&contract, [x, TOTAL_PTS - x], [0, 0], false);
+            s.scores[0] - s.scores[1]
+        };
+
+        // Sous le seuil : strictement constant. Un point carte de plus ne vaut
+        // rien — c'est le coup « au hasard » quand la chute est acquise.
+        let below: Vec<i16> = (0..100).step_by(7).map(|x| delta(x as i16)).collect();
+        assert!(below.windows(2).all(|w| w[0] == w[1]),
+                "la zone de chute doit être plate, vu : {below:?}");
+        assert_eq!(below[0], -(TOTAL_PTS + 100), "chute = -(162 + V)");
+
+        // Au-dessus : pente 2 par point carte.
+        for x in [100i16, 110, 130, 162] {
+            assert_eq!(delta(x), 2 * x + 100 - TOTAL_PTS, "pente 2 attendue en x={x}");
+        }
+
+        // La marche vaut 4V.
+        assert_eq!(delta(100) - delta(99), 4 * 100);
+    }
+
+    /// L'objectif « score de donne » doit effectivement changer le classement
+    /// des cartes quelque part — sinon le drapeau ne sert à rien.
+    ///
+    /// On ne teste pas *quelle* carte est choisie (elle dépend de la donne),
+    /// mais que les deux objectifs ne rendent pas systématiquement les mêmes
+    /// valeurs : `card_scores` doit changer d'échelle, et l'ordre doit différer
+    /// au moins une fois sur un échantillon de positions.
+    #[test]
+    fn deal_score_objective_reranks_some_positions() {
+        use rand::SeedableRng;
+        let mut src = rand::rngs::StdRng::seed_from_u64(20260803);
+        let mut differ = 0;
+        let mut checked = 0;
+        for _ in 0..600 {
+            let Some(mut state) = random_playing_state(&mut src) else { continue };
+            // Milieu de donne : un solve y coûte des ordres de grandeur de moins
+            // qu'à l'entame, *et* c'est là que le seuil du contrat devient
+            // décidable — donc là où les deux objectifs ont une chance de
+            // diverger. À l'entame ils sont presque toujours d'accord.
+            while !state.is_terminal()
+                && card_count(state.hands[state.current_player() as usize]) > 5
+            {
+                let legal = state.legal_actions();
+                let idx = src.gen_range(0..legal.count_ones());
+                state.step(select_nth_bit(legal, idx));
+            }
+            if state.is_terminal() || state.legal_actions().count_ones() < 2 {
+                continue;
+            }
+            let run = |obj: PlayObjective| {
+                let cfg = IsDdConfig {
+                    determinizations: 24,
+                    parallel: false,
+                    early_termination: false,
+                    objective: obj,
+                    ..Default::default()
+                };
+                let mut rng = rand::rngs::StdRng::seed_from_u64(1234);
+                let mut s = IsDdSearch::new();
+                s.init_deal_with_config(&state, state.current_player(), &cfg);
+                s.search_with_stats(&state, &cfg, &mut rng)
+            };
+            let pts = run(PlayObjective::CardPoints);
+            let sco = run(PlayObjective::DealScore);
+            // Mêmes mondes (même graine), donc toute différence vient de l'objectif.
+            if pts.best_action != sco.best_action {
+                differ += 1;
+            }
+            checked += 1;
+            if checked >= 60 {
+                break;
+            }
+        }
+        assert!(checked >= 30, "pas assez de positions jouables");
+        assert!(differ > 0,
+                "les deux objectifs choisissent toujours la même carte sur {checked} positions : \
+                 le drapeau ne change rien");
     }
 
     /// Une source lente ne doit pas se faire redemander un lot qu'on n'aura

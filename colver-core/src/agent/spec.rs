@@ -15,6 +15,7 @@
 //! [play]
 //! method = "isdd"                 # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|heuristic|rule
 //! max_worlds = 256                # IS-DD sous échéance : plafond de mondes résolus par coup
+//! objective = "deal_score"        # IS-DD : card_points (défaut) | deal_score (contrat compris)
 //! time_ms = 1000                  # time budget; 0 = use `determinizations` instead
 //! determinizations = 240
 //!
@@ -120,6 +121,9 @@ pub struct PlaySpec {
     pub early_termination: Option<bool>,
     pub dominance_factor: f32,
     pub belief_frac: f32,
+    /// Ce que la recherche IS-DD maximise : `card_points` (défaut, historique)
+    /// ou `deal_score` (contrat compris — voir `PlayObjective`).
+    pub objective: crate::is_dd::PlayObjective,
     /// Plafond de mondes résolus par décision, sous échéance. `None` = pas de
     /// plafond (le défaut historique : consommer tout le budget).
     pub max_worlds: Option<u32>,
@@ -143,6 +147,7 @@ impl Default for PlaySpec {
             early_termination: None,
             dominance_factor: 1.0,
             belief_frac: 1.0,
+            objective: crate::is_dd::PlayObjective::CardPoints,
             max_worlds: None,
             cred_alpha: 0.0,
             cred_bid_model: None,
@@ -276,6 +281,12 @@ impl AgentSpec {
                 ("play", "dominance_factor") => spec.play.dominance_factor = num(1.0),
                 ("play", "belief_frac") => spec.play.belief_frac = num(1.0),
                 ("play", "max_worlds") => spec.play.max_worlds = Some(int(0) as u32),
+                ("play", "objective") => {
+                    spec.play.objective = match val {
+                        "deal_score" | "score" => crate::is_dd::PlayObjective::DealScore,
+                        _ => crate::is_dd::PlayObjective::CardPoints,
+                    }
+                }
                 ("play", "cred_alpha") => spec.play.cred_alpha = num(0.0),
                 ("play", "cred_bid_model") => spec.play.cred_bid_model = Some(val.into()),
                 ("play", "cred_play_model") => spec.play.cred_play_model = Some(val.into()),
@@ -393,6 +404,7 @@ impl AgentSpec {
             use_nn_beliefs: self.belief.model.is_some(),
             dominance_factor: self.play.dominance_factor,
             belief_frac: self.play.belief_frac,
+            objective: self.play.objective,
             max_worlds: self.play.max_worlds,
             cred_alpha: self.play.cred_alpha,
             parallel: self.play.parallel,

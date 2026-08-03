@@ -23,9 +23,9 @@
 use crate::state::*;
 
 /// Every card point of a deal, dix de der (10) included.
-const TOTAL_PTS: i16 = 162;
+pub const TOTAL_PTS: i16 = 162;
 /// Same total when the taker wins all 8 tricks — dix de der is worth 100 on a capot.
-const CAPOT_PTS: i16 = 252;
+pub const CAPOT_PTS: i16 = 252;
 
 /// Result of scoring a deal.
 #[derive(Debug, Clone, Copy)]
@@ -46,26 +46,46 @@ fn belote_bonus(state: &GameState) -> [i16; 2] {
 
 pub fn compute_deal_score(state: &GameState) -> DealScore {
     let taker = state.contract.team as usize;
+    deal_score_from_card_points(
+        &state.contract,
+        [state.points[0] as i16, state.points[1] as i16],
+        belote_bonus(state),
+        state.tricks_won[taker] == 8,
+    )
+}
+
+/// Le barème, à partir des seuls points cartes — sans état terminal.
+///
+/// Même arithmétique que [`compute_deal_score`], qui n'en est plus que le
+/// lecteur d'état. Elle est publique parce qu'IS-DD en a besoin : le solveur DD
+/// rend des **points cartes** par carte et par monde, or ce ne sont pas eux qui
+/// décident une donne. L'écart entre les deux est une marche de `4V` au seuil du
+/// contrat, et une pente nulle en dessous — voir [docs/classement_et_scoring.md].
+///
+/// `card_pts` : [N-S, E-O], de somme 162 (ou 252 sur capot réalisé).
+/// `capot_realise` : le preneur a fait les 8 plis.
+pub fn deal_score_from_card_points(
+    contract: &Contract,
+    card_pts: [i16; 2],
+    belote: [i16; 2],
+    capot_realise: bool,
+) -> DealScore {
+    let taker = contract.team as usize;
     let defense = 1 - taker;
 
-    let belote = belote_bonus(state);
     let total_belote = belote[0] + belote[1];
 
-    let contract_value = state.contract.point_value() as i16;
-    let coinche = state.contract.coinche;
-    let is_capot_contract = state.contract.is_capot();
+    let contract_value = contract.point_value() as i16;
+    let coinche = contract.coinche;
+    let is_capot_contract = contract.is_capot();
 
-    // Trick points + dix de der (already included in state.points via resolve_trick)
-    let taker_pts = state.points[taker] as i16;
-    let defense_pts = state.points[defense] as i16;
+    let taker_pts = card_pts[taker];
+    let defense_pts = card_pts[defense];
 
     // Total points including belote for determining réussi/chute
     let taker_total = taker_pts + belote[taker];
 
     let mut scores = [0i16; 2];
-
-    // Capot réalisé = 8 plis (whether or not capot was announced)
-    let capot_realise = state.tricks_won[taker] == 8;
 
     if is_capot_contract {
         let reussi = capot_realise;
