@@ -338,11 +338,47 @@ sécurité en défense.
 **Implémenté le 2026-08-03**, puis **passé en défaut le même jour** (`PlayObjective::DealScore`,
 `[play] objective`). Le bras de contrôle est `web_dede_cardpts` ; `web_dede` reflète la prod.
 
-**Aucune mesure de force ne l'appuie**, et c'est délibéré : 40 donnes en duplicate ont donné
-6-6 sur les 12 donnes divergentes, marge +8,7 — rien de tranchable, alors que **95 % des
-donnes se jouent différemment**. La bascule repose sur l'argument de barème (§3.1-3.2 bis),
-qui ne dépend d'aucun échantillon : sous le seuil un point carte vaut *exactement* zéro.
-Un h2h au volume reste utile pour chiffrer le gain, pas pour décider du défaut.
+**La bascule repose sur l'argument de barème (§3.1-3.2 bis), pas sur une mesure de force**,
+et deux mesures successives n'ont rien trouvé. L'argument, lui, ne dépend d'aucun
+échantillon : sous le seuil un point carte vaut *exactement* zéro.
+
+**Mesure 1 — 40 donnes en duplicate** : 6-6 sur les 12 donnes divergentes, marge +8,7,
+alors que **95 % des donnes se jouent différemment**. Rien de tranchable.
+
+**Mesure 2 — h2h 300 matchs** (`web_dede` vs `web_dede_cardpts`, 150/direction, 2026-08-03,
+sidecar sur le GPU de moxxi, 3 h 10) :
+
+| niveau | deal_score | card_points | IC95 |
+|---|---|---|---|
+| matchs (n = 300) | 49,7 % (149) | 50,3 % (151) | ± 5,7 pp |
+| **donnes (n = 3 123)** | **50,8 %** (1 585) | 49,2 % (1 538) | **± 1,8 pp** → [49,0 ; 52,6] |
+| marge moyenne | +20 pts/match | — | +3 Elo/donne (échelle 316) |
+
+Les trois indicateurs sont cohérents avec zéro. Le niveau donne est le plus puissant et
+penche de +0,8 pp pour le nouvel objectif ; son intervalle contient 50. **Pas de
+différence mesurable, et pas de régression non plus.**
+
+⚠️ **Le run a tourné dégradé, et le biais n'est pas neutre.** Compteurs de la course :
+**~1,3 s par aller-retour au sidecar** — plus que le budget de 1 000 ms par coup — et IS-DD
+**90 à 100 % du temps en attente**, d'où **~36 mondes résolus par décision** (15,7 M reçus,
+13,4 M jetés sans être résolus, soit 85,7 %). La prod en autorise 256 et le plateau mesuré
+est à ~60. Causes non départagées depuis ce run : latence du tunnel SSH vers moxxi, et file
+d'attente d'un seul sidecar servant 8 chercheurs concurrents — la seconde est probablement
+dominante, un RTT de LAN valant ~1 ms et non 1 300.
+
+L'A/B reste **valide** : les deux bras ont subi la même dégradation, la comparaison est
+symétrique. Mais elle porte sur l'objectif *à 36 mondes par décision*. Et la direction du
+biais est défavorable au nouvel objectif : il existe pour lire un seuil dans la
+distribution des mondes, or moins de mondes = estimation plus bruitée de `P(au-dessus du
+seuil)` = marche plus floue. **Ce run sous-estime donc plausiblement l'effet**, sans que ce
+soit démontré.
+
+**Ligne close pour l'arène.** Deux mesures, deux nuls, et le plancher de bruit d'un h2h
+(±1,8 pp au mieux, au niveau donne) est du même ordre que l'effet plausible. C'est le même
+mur que pour la belote, où la réponse est venue d'une mesure **appariée à la décision**
+(`bench_belote_ab`) et non d'un h2h. Un équivalent pour l'objectif comparerait les deux
+cartes choisies position par position sur les mêmes mondes, avec un juge à fort nombre de
+mondes. **Non fait, et à ne pas retenter par l'arène.**
 
 ⚠️ `DealScore` change **l'échelle de `card_scores`** (±500 signé au lieu de 0-252). Traité :
 le blob de stats porte `score_scale`, et `watch.js` / `prob-jeu.js` affichent l'unité. Un
