@@ -112,6 +112,17 @@ ANCHOR_VERSION = "2026-08"
 # au prochain h2h Dédé-contre-DouDou qui tournera de toute façon. Ne pas le
 # relancer pour lui seul — 30 min de GPU pour resserrer une valeur que presque
 # personne ne rencontre.
+#
+# ⚠️ **Le 2026-08-03, une mesure indépendante rend ces 50 points tendus.** Le plan
+# factoriel 2⁴ (`scripts/analysis/seat_influence.py`, 3 995 donnes × 16 façons de
+# répartir DouDou et l'Oracle DD sur les quatre sièges) chiffre l'écart **DouDou →
+# jeu parfait** à **+78 à +98 Elo dans cette échelle-ci**. Poser Dédé 50 points
+# au-dessus de DouDou lui donne donc plus de la moitié du chemin vers l'omniscience.
+# Ce n'est pas absurde — l'Oracle joue en double-mort et n'est pas la meilleure
+# réponse à un adversaire imparfait (il fait *moins bien* que DouDou dans 15,3 % des
+# échanges appariés), donc le vrai plafond est au-dessus de +98 — mais c'est assez
+# serré pour que le h2h direct devienne la mesure à faire avant de retoucher ces
+# valeurs. Détail : `docs/classement_et_scoring.md` §8.
 BOT_ELO = {
     "dede": 1000.0,
     "doudou": 950.0,  # écart de 50 : arrondi dans [+28, +52] estimé

@@ -105,6 +105,16 @@ des entrées complètes.
   binaire sont donc enregistrés, ainsi que la charge machine (`loadavg`), sans laquelle un
   temps ne veut rien dire ici : un même binaire varie de 20 % selon ce que fait l'autre agent.
 
+- `seat_influence.py` — plan factoriel 2⁴ : la même donne rejouée dans les 16 façons de
+  répartir DouDou50 et l'Oracle DD sur les quatre sièges, **enchère figée**. Les deux
+  joueurs étant déterministes, les 16 résultats sont exacts et l'effet d'un siège se lit
+  en différences appariées, sans bruit d'échantillonnage intra-donne. ~7 min pour 4 000
+  donnes sur 8 cœurs, **sans GPU**. Deux points de méthode qui valent d'être réutilisés :
+  (1) le run porte son propre **contrôle d'exactitude** — quatre Oracles doivent réaliser
+  la valeur DD de la position d'entame, et le taux est affiché à chaque fois ; (2) c'est
+  l'un des rares cas où **tirer les donnes au hasard est correct**, une main étant uniforme
+  par les règles — c'est le *contrat* qui doit être réaliste, et il sort du bidder v6.
+  `--from <json>` re-dépouille un run sans recalculer, ce pour quoi `runlog` existe.
 - `belote_facts.py` — enveloppe de `bench_belote_facts`. Fréquence de la déduction de
   belote sur donnes jouées (~30 s pour 50 000 donnes) et fraction de mondes impossibles
   rendus par playgen (~2 min, sidecar requis, donc le sha256 du modèle est enregistré).

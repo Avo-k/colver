@@ -77,7 +77,10 @@ barres d'erreur combinées.
    signal. Une donne de contrée est ~de la distribution.
 2. **Score binaire.** Gagner de 10 points ou de 400 vaut pareil ; la marge est jetée.
 3. **Un siège sur quatre.** L'écart individuel est dilué de moitié par le partenaire, donc
-   le bruit double quand on le reconvertit en Elo individuel.
+   le bruit double quand on le reconvertit en Elo individuel. **Et la dilution n'est même
+   pas un simple facteur 2** : la contribution d'un siège dépend de la force de son
+   partenaire (+46,6 avec un faible, +74,6 avec un fort — §8), ce qu'un modèle « équipe =
+   moyenne des deux » ne peut pas représenter.
 4. **Pas d'ancre.** Dédé flotte (1000 → 1044, pic 1119). Tout le monde est mesuré contre un
    mètre-étalon qui bouge : si des joueurs plus faibles arrivent, Dédé monte et tous les
    humains existants se dévaluent en silence. En prime `K_USER = 32` contre `K_BOT = 8`
@@ -339,6 +342,42 @@ succès.
 Dépend de R2 : le par doit être calculé dans le bon objectif, sinon on classe les joueurs
 sur leur capacité à maximiser des points cartes qui ne comptent pas.
 
+#### Ce que le par ne peut **pas** être : l'Oracle
+
+Une version de R4 consistait à encadrer le joueur entre deux repères — ce qu'aurait fait
+DouDou, ce qu'aurait fait l'Oracle — et à noter sa position entre les deux, éventuellement
+en divisant par l'écart. **Le plan factoriel de la §8 la réfute par la mesure**, et pas
+au titre d'une réserve théorique :
+
+- à partenaire et adversaires figés, remplacer un siège par l'Oracle **fait moins bien
+  15,3 % du temps** et ne change rien 27,3 % du temps. Le jeu parfait n'améliore
+  réellement que **57 % des échanges** ;
+- une donne sur cinq (19,4 %) donne le **même score dans les 16 configurations** : le
+  dénominateur « écart entre les deux repères » y est nul.
+
+La cause est structurelle : le DD suppose que **la défense joue parfaitement aussi**.
+Contre DouDou, la ligne DD-optimale n'est pas la meilleure réponse. Un écart au jeu de
+l'Oracle n'est donc pas une erreur, et l'Oracle n'est pas un plafond — le vrai plafond
+(meilleure réponse à l'adversaire réel) est *au-dessus* de lui.
+
+Ce qui reste utilisable de l'idée : `|d_oracle − d_bot|` comme **poids** (une donne sans
+marge de manœuvre ne doit pas peser autant qu'une donne à 800 points d'amplitude), jamais
+comme diviseur ni comme borne.
+
+#### Et ce que le par devra affronter : la contribution n'est pas additive
+
+Toujours §8 : l'effet d'un siège vaut **+46,6** quand son partenaire est faible et
+**+74,6** quand il est fort (±0,9). Un bon partenaire *amplifie* de 60 % au lieu de
+masquer, et ce n'est **pas** un artefact de la marche du barème — en points cartes purs
+l'amplification est de ×1,75, encore plus grande. Les adversaires, eux, ne changent rien.
+
+C'est le défaut n° 3 sous sa forme forte : « équipe = moyenne des deux partenaires » est
+additif par construction, alors que la contribution d'un joueur dépend de qui est en face
+de lui à la table. Les deux estimations Elo du même écart divergent en conséquence :
+**+98** en changeant les deux partenaires, **+78** en n'en changeant qu'un (×2 pour la
+dilution). Un par calculé par décision échappe à ce problème — c'est un argument de plus
+pour R4 contre un score de résultat, quel qu'il soit.
+
 ### R5 — Glicko-2 (ou une rampe de K), **après** R3/R4
 
 Un K décroissant seul ne corrige rien : il fige plus proprement un bruit déjà accumulé.
@@ -385,14 +424,19 @@ en détachant les parties longues d'un socle « donne » déjà bien peuplé.
 ## 7. Ce qui est mesuré et ce qui ne l'est pas
 
 **Mesuré :** l'état de la base, les taux de victoire en solo et leurs IC, l'amplitude de
-bruit par simulation, le fait qu'IS-DD agrège des points cartes, la forme exacte du barème.
+bruit par simulation, le fait qu'IS-DD agrège des points cartes, la forme exacte du barème,
+et — depuis le plan factoriel de §8 — **l'influence d'un siège sur une donne** : son effet
+par rôle, sa dépendance au partenaire, la fraction de donnes sans aucune prise, et l'écart
+Elo total entre DouDou et le jeu parfait (78-98).
 
 **Non mesuré :**
 
 - de combien R2 améliore la force de jeu (l'analyse dit que l'objectif est faux, pas de
   combien) ;
 - l'écart réel Dédé ↔ DouDou au niveau de la donne — un smoke de 20 matchs donne 85 % / +922
-  au niveau *match*, avec ±16 pp d'IC, et l'Elo du web les place à 55 points d'écart ;
+  au niveau *match*, avec ±16 pp d'IC, et l'Elo du web les place à 55 points d'écart.
+  **C'est devenu la mesure la plus urgente** : §8 borne à ~90 Elo tout l'espace entre
+  DouDou et l'omniscience, donc l'ancre à 50 points est peut-être deux fois trop large ;
 - ce que vaut une pondération `√longueur` sur nos volumes ;
 - si le plateau de séparation est bien vers 5 000 donnes (c'est une extrapolation de la
   courbe d'IC, pas une mesure) ;
@@ -408,6 +452,60 @@ bruit par simulation, le fait qu'IS-DD agrège des points cartes, la forme exact
 ---
 
 ## 8. Journal des mesures
+
+### 2026-08-03 — Plan factoriel 2⁴ : combien un seul siège peut-il déplacer une donne ?
+
+`scripts/analysis/seat_influence.py`, **3 995 donnes × 16 configurations** (63 920 donnes
+rejouées), 6 min 47 sur 8 cœurs, sans GPU. Sur une donne dont **l'enchère est figée**
+(bidder v6 aux quatre sièges, actions rejouées à l'identique), le jeu de la carte est
+rejoué avec chaque siège tenu soit par **DouDou50**, soit par l'**Oracle DD**. Les deux
+joueurs étant déterministes, les 16 résultats sont exacts : aucun bruit d'échantillonnage
+à l'intérieur d'une donne, et l'effet d'un siège se lit en différences appariées.
+
+**Contrôle** : les quatre Oracles réalisent exactement la valeur DD de la position
+d'entame, **160/160**. La machinerie de rejeu est donc exacte, pas seulement plausible.
+
+| grandeur | valeur |
+|---|---|
+| effet d'un siège (DouDou → Oracle), preneur | **+74,3 ± 2,4** pts de donne |
+| — partenaire du preneur | +71,2 ± 2,3 |
+| — défenseur | +48,5 ± 1,4 |
+| donnes où les 16 configurations donnent le même score | **19,4 %** |
+| marge de manœuvre par donne (max − min) | moyenne 336, **médiane 168**, p90 804 |
+| échanges où l'Oracle fait *moins bien* que DouDou | **15,3 %** (+ 27,3 % sans effet) |
+| effet selon le partenaire | **+46,6** (faible) → **+74,6** (fort), ±0,9 |
+| effet selon les adversaires | +58,7 / +62,6 / +58,7 — plat |
+| écart Elo DouDou → jeu parfait | **+98** (2 sièges) / **+78** (1 siège ×2) |
+| donnes pour séparer ces deux occupants, non apparié | **72** |
+
+**Quatre lectures.**
+
+1. **Une donne sur cinq n'offre aucune prise**, et la médiane de marge de manœuvre (168)
+   est la moitié de la moyenne (336) : quelques donnes décident, la plupart sont écrites
+   d'avance. Tout classement qui pèse les donnes également gaspille 20 % de son volume.
+2. **L'Oracle n'est pas un plafond** — voir R4 ci-dessus, c'est ce résultat qui ferme la
+   piste des bornes.
+3. **La contribution n'est pas additive** : ×1,60 d'amplification par un bon partenaire.
+   L'hypothèse évidente était la marche du barème au seuil du contrat (mon partenaire et
+   moi ne franchissons le seuil qu'ensemble) — **elle est fausse** : relus en points
+   cartes purs, les mêmes échanges donnent ×1,75, donc davantage. La complémentarité est
+   une propriété du jeu de la carte, pas du barème.
+4. **Le plafond de vitesse d'un classement.** Signal/bruit de 0,235 par donne, d'où les
+   72 donnes. C'est un **plancher optimiste** : c'est le plus grand écart de niveau qui
+   existe dans ce jeu (DouDou contre l'omniscience), et il ne vaut que 78-98 Elo. Deux
+   joueurs séparés d'un dixième de ça demanderaient cent fois plus de donnes. Sur les
+   ~1 000 donnes de la base, seul un écart de l'ordre de 25-30 Elo est visible.
+
+**Ce que ça met en cause** : l'ancre `doudou = 950` laisse 50 Elo entre DouDou et Dédé,
+sur un total de ~90 Elo entre DouDou et le **jeu parfait**. Dédé occuperait donc plus de
+la moitié du chemin vers l'omniscience. Ce n'est pas impossible — l'Oracle n'est pas la
+meilleure réponse à DouDou, donc le vrai plafond est plus haut que +98 — mais c'est assez
+tendu pour que le h2h direct `web_dede` / `web_doudou`, relu dans la métrique à la marge,
+soit la prochaine mesure à faire avant de toucher aux ancres.
+
+**Limite du plan** : il mesure l'influence d'un siège *entre ces deux occupants-là*. Un
+humain n'est ni DouDou ni l'Oracle. L'enveloppe est la bonne grandeur pour dimensionner un
+classement ; ce n'est pas une note.
 
 ### 2026-08-03 — `web_dede_w64` contre `web_dede` (64 mondes contre 256)
 
