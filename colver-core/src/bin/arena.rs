@@ -670,6 +670,26 @@ fn print_world_telemetry() {
     println!("    mondes : source {} | belief {} | uniforme {}  → repli {:.2}%",
         s.worlds_injected + s.worlds_playgen, s.worlds_belief, s.worlds_uniform,
         s.fallback_world_pct());
+
+    let lanes = colver_core::agent::isdd::telemetry::lanes();
+    if lanes.is_empty() {
+        return;
+    }
+    println!();
+    println!("  Par stade de donne (cartes restantes en main) :");
+    println!("    {:>6} {:>8} {:>8} {:>7} {:>9} {:>9} {:>8} {:>8} {:>7}",
+        "cartes", "décis.", "cherché", "a/r", "demandés", "reçus", "remplis", "résolus", "utilisés");
+    for l in &lanes {
+        println!("    {:>6} {:>8} {:>8} {:>7} {:>9} {:>9} {:>7.0}% {:>8} {:>6.0}%",
+            l.cards_left, l.decisions, l.searched, l.rounds,
+            l.requested, l.delivered, l.fill_pct(), l.solved, l.used_pct());
+    }
+    let delivered: u64 = lanes.iter().map(|l| l.delivered).sum();
+    let discarded: u64 = lanes.iter().map(|l| l.discarded).sum();
+    if delivered > 0 {
+        println!("    → {} mondes reçus, {} jetés sans être résolus ({:.1}%)",
+            delivered, discarded, 100.0 * discarded as f64 / delivered as f64);
+    }
 }
 
 fn cmd_round_robin(args: &[String]) {

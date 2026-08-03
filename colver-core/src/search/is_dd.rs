@@ -227,6 +227,32 @@ pub struct IsDdResult {
     pub determinizations: u32,
     /// Provenance of those determinizations.
     pub worlds: WorldCounts,
+    /// Ce que la recherche a demandé à la source, ce qu'elle a reçu, et ce
+    /// qu'elle a jeté. Trois chiffres distincts, et l'écart entre eux est le
+    /// seul moyen de savoir si le sampler est sous-employé : sous budget de
+    /// temps on demande `world_batch` mondes d'un coup, on n'en résout que ce
+    /// que la deadline permet, et **le reste part à la poubelle**
+    /// (`world_queue.clear()`, obligatoire — un monde échantillonné pour cette
+    /// position-ci ne vaut rien à la suivante).
+    pub source: SourceUsage,
+}
+
+/// Ce qu'une recherche a tiré de sa source de mondes.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SourceUsage {
+    /// Allers-retours vers la source.
+    pub rounds: u32,
+    /// Mondes demandés, cumulés sur les allers-retours.
+    pub requested: u32,
+    /// Mondes effectivement rendus (après `retain_valid`).
+    pub delivered: u32,
+    /// Mondes reçus mais jamais résolus, jetés en fin de recherche.
+    pub discarded: u32,
+    /// Cartes restantes en main de l'observateur — 8 à l'entame, 1 au dernier
+    /// pli. C'est l'axe qui compte : le coût d'un solve et la richesse de
+    /// l'espace des mondes varient de plusieurs ordres de grandeur le long de
+    /// la donne, donc un agrégat sur toute la donne ne veut rien dire.
+    pub cards_left: u8,
 }
 
 /// IS-DD search using belief-weighted determinization + exact DD solving.
@@ -786,6 +812,10 @@ impl IsDdSearch {
                     card_scores: vec![(card, 81.0)],
                     determinizations: 0,
                     worlds: WorldCounts::default(),
+                    source: SourceUsage {
+                        cards_left: card_count(state.hands[observer as usize]) as u8,
+                        ..Default::default()
+                    },
                 });
             }
 
@@ -816,6 +846,10 @@ impl IsDdSearch {
                     card_scores,
                     determinizations: 1,
                     worlds: WorldCounts::default(),
+                    source: SourceUsage {
+                        cards_left: card_count(state.hands[observer as usize]) as u8,
+                        ..Default::default()
+                    },
                 });
             }
         }
@@ -848,6 +882,7 @@ impl IsDdSearch {
         let mut successful_dets = 0u32;
         let mut det_count = 0u32;
         let mut world_counts = WorldCounts::default();
+        let mut usage = SourceUsage { cards_left: cards_left as u8, ..Default::default() };
 
         // Once the source stops producing worlds we stop asking, so an
         // over-constrained endgame costs one empty round trip, not one per world.
@@ -888,6 +923,9 @@ impl IsDdSearch {
                         ((config.determinizations - det_count) as usize).max(remaining)
                     };
                     let batch = src.worlds(state, observer, want, rng)?;
+                    usage.rounds += 1;
+                    usage.requested += want as u32;
+                    usage.delivered += batch.len() as u32;
                     if batch.is_empty() {
                         source_dry = true;
                     } else {
@@ -951,6 +989,7 @@ impl IsDdSearch {
 
         // Sourced worlds are position-specific: drop any leftover so the next
         // search cannot consume worlds sampled for the previous position.
+        usage.discarded = self.world_queue.len() as u32;
         self.world_queue.clear();
 
         // Build result: pick best card based on aggregated scores
@@ -993,6 +1032,7 @@ impl IsDdSearch {
             card_scores,
             determinizations: successful_dets,
             worlds: world_counts,
+            source: usage,
         })
     }
 

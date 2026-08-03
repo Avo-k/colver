@@ -160,7 +160,7 @@ impl CardPlayer for IsDdPlayer {
             None => self.search.search_with_stats(state, &self.config, &mut self.rng),
         };
 
-        telemetry::record(&result.worlds);
+        telemetry::record(&result.worlds, &result.source, result.determinizations);
 
         Ok(Decision {
             action: result.best_action,
@@ -185,8 +185,33 @@ impl CardPlayer for IsDdPlayer {
 /// le coût est nul devant une recherche DD, et le banc d'essai est
 /// multi-thread.
 pub mod telemetry {
-    use super::super::super::is_dd::WorldCounts;
+    use super::super::super::is_dd::{SourceUsage, WorldCounts};
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Une case par nombre de cartes restantes (index 0 inutilisé, 1..=8).
+    /// L'axe est obligatoire : entre l'entame et la finale, le coût d'un solve
+    /// varie de quatre ordres de grandeur et la taille de l'espace des mondes
+    /// s'effondre. Un agrégat sur toute la donne mélangerait les deux régimes
+    /// et ne dirait rien de ni l'un ni l'autre.
+    const LANES: usize = 9;
+
+    macro_rules! lanes {
+        ($name:ident) => {
+            static $name: [AtomicU64; LANES] = [
+                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+                AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0),
+            ];
+        };
+    }
+
+    lanes!(L_DECISIONS);
+    lanes!(L_SEARCHED);
+    lanes!(L_ROUNDS);
+    lanes!(L_REQUESTED);
+    lanes!(L_DELIVERED);
+    lanes!(L_SOLVED);
+    lanes!(L_DISCARDED);
 
     static DECISIONS: AtomicU64 = AtomicU64::new(0);
     static NO_SAMPLING: AtomicU64 = AtomicU64::new(0);
@@ -245,7 +270,57 @@ pub mod telemetry {
         }
     }
 
-    pub(super) fn record(counts: &WorldCounts) {
+    /// Ce qu'une recherche a demandé, reçu, résolu et jeté, par nombre de
+    /// cartes restantes.
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct Lane {
+        pub cards_left: u8,
+        /// Décisions atteintes à ce stade, coups forcés compris.
+        pub decisions: u64,
+        /// ... dont celles qui ont réellement cherché.
+        pub searched: u64,
+        pub rounds: u64,
+        pub requested: u64,
+        pub delivered: u64,
+        pub solved: u64,
+        pub discarded: u64,
+    }
+
+    impl Lane {
+        /// Part des mondes reçus qui a été résolue. Le complément est jeté à la
+        /// fin de la recherche : un monde est échantillonné pour *une*
+        /// position, il ne survit pas au coup suivant.
+        pub fn used_pct(&self) -> f64 {
+            if self.delivered == 0 {
+                return 0.0;
+            }
+            100.0 * (self.delivered.saturating_sub(self.discarded)) as f64
+                / self.delivered as f64
+        }
+
+        /// Part des mondes demandés que la source a effectivement rendus.
+        /// En dessous de 100 %, le sampler n'arrive plus à produire — c'est ce
+        /// qui fait sécher la file et réveille le repli.
+        pub fn fill_pct(&self) -> f64 {
+            if self.requested == 0 {
+                return 0.0;
+            }
+            100.0 * self.delivered as f64 / self.requested as f64
+        }
+    }
+
+    pub(super) fn record(counts: &WorldCounts, usage: &SourceUsage, solved: u32) {
+        let lane = (usage.cards_left as usize).min(LANES - 1);
+        L_DECISIONS[lane].fetch_add(1, Ordering::Relaxed);
+        if counts.total() > 0 {
+            L_SEARCHED[lane].fetch_add(1, Ordering::Relaxed);
+        }
+        L_ROUNDS[lane].fetch_add(usage.rounds as u64, Ordering::Relaxed);
+        L_REQUESTED[lane].fetch_add(usage.requested as u64, Ordering::Relaxed);
+        L_DELIVERED[lane].fetch_add(usage.delivered as u64, Ordering::Relaxed);
+        L_SOLVED[lane].fetch_add(solved as u64, Ordering::Relaxed);
+        L_DISCARDED[lane].fetch_add(usage.discarded as u64, Ordering::Relaxed);
+
         DECISIONS.fetch_add(1, Ordering::Relaxed);
         W_INJECTED.fetch_add(counts.injected as u64, Ordering::Relaxed);
         W_PLAYGEN.fetch_add(counts.playgen as u64, Ordering::Relaxed);
@@ -262,6 +337,24 @@ pub mod telemetry {
         } else {
             NO_PLAYGEN.fetch_add(1, Ordering::Relaxed);
         }
+    }
+
+    /// Les tranches par cartes restantes, de l'entame (8) à la dernière (1).
+    pub fn lanes() -> Vec<Lane> {
+        (1..LANES)
+            .rev()
+            .map(|i| Lane {
+                cards_left: i as u8,
+                decisions: L_DECISIONS[i].load(Ordering::Relaxed),
+                searched: L_SEARCHED[i].load(Ordering::Relaxed),
+                rounds: L_ROUNDS[i].load(Ordering::Relaxed),
+                requested: L_REQUESTED[i].load(Ordering::Relaxed),
+                delivered: L_DELIVERED[i].load(Ordering::Relaxed),
+                solved: L_SOLVED[i].load(Ordering::Relaxed),
+                discarded: L_DISCARDED[i].load(Ordering::Relaxed),
+            })
+            .filter(|l| l.decisions > 0)
+            .collect()
     }
 
     pub fn snapshot() -> Snapshot {

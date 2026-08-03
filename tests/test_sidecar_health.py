@@ -229,7 +229,7 @@ class TestCompteursMondes:
     def reset(self, monkeypatch):
         # Objet de module : sans remise à zéro il fuit d'un test à l'autre.
         monkeypatch.setattr(
-            agents, "_WORLD_STATS", {k: 0 for k in agents._WORLD_STATS})
+            agents, "_WORLD_STATS", dict.fromkeys(agents._WORLD_STATS, 0))
 
     def _decision(self, injected=0, belief=0, uniform=0, playgen=0):
         return {"worlds": {"injected": injected, "playgen": playgen,
