@@ -561,6 +561,12 @@ impl IsDdSearch {
         config: &IsDdConfig,
         observer: u8,
     ) -> Option<[[f32; 32]; 4]> {
+        // `record_action` ne voit que l'état d'*avant* une action : la belote
+        // annoncée par la carte qui vient d'être posée n'y est pas encore. Ici
+        // l'état est celui de la position courante, donc la déduction est à jour.
+        if let Some(beliefs) = self.beliefs.as_mut() {
+            beliefs.apply_belote_facts(state);
+        }
         let base_weights = if config.use_nn_beliefs && self.belief_net.is_some() {
             let net = self.belief_net.as_mut().unwrap();
             let tracking = self.belief_tracking.as_ref().unwrap();

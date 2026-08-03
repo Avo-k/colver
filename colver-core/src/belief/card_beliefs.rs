@@ -66,7 +66,37 @@ impl CardBeliefs {
             }
         }
 
+        beliefs.apply_belote_facts(state);
         beliefs
+    }
+
+    /// Fold in what the belote announcement says (see [`crate::play::belote_facts`]).
+    ///
+    /// Idempotent, and cheap when nothing has been announced — call it with the
+    /// most recent state available. `record_action` only ever sees the state
+    /// *before* an action, so the announcement carried by that very action lands
+    /// one step late here; the sampling path does not depend on it, since every
+    /// `determinize*` re-derives the facts from the live position.
+    pub fn apply_belote_facts(&mut self, state: &GameState) {
+        let facts = crate::play::belote_facts(state);
+        if facts.is_empty() {
+            return;
+        }
+        for p in 0..4usize {
+            for card in CardIter(facts.banned[p]) {
+                self.weights[p][card as usize] = 0.0;
+            }
+        }
+        // Une carte annoncée est chez son annonceur, quoi qu'en dise le reste :
+        // c'est la déduction la plus sûre du lot, elle rouvre donc un poids qu'une
+        // autre inférence aurait fermé plutôt que de laisser la carte sans siège.
+        for p in 0..4usize {
+            for card in CardIter(facts.held[p]) {
+                if self.weights[p][card as usize] <= 0.0 {
+                    self.weights[p][card as usize] = 1.0;
+                }
+            }
+        }
     }
 
     /// Record an action and update beliefs accordingly.
@@ -74,6 +104,7 @@ impl CardBeliefs {
     /// `state_before` is the state BEFORE the action was applied.
     /// This allows us to inspect trick state, lead suit, etc.
     pub fn record_action(&mut self, state_before: &GameState, player: u8, action: u8) {
+        self.apply_belote_facts(state_before);
         match state_before.phase {
             Phase::Bidding => self.infer_bid(player, action, state_before),
             Phase::Playing => self.infer_play(state_before, player, action),

@@ -129,6 +129,14 @@ If a player holds both the **Queen and King of the trump suit**, they declare *b
 
 Both cards must be played by the **same player** (who necessarily holds both). The bonus only counts when both declarations are made (belote + rebelote = 20 points).
 
+**The declaration is public information, and it is read both ways** (`play::belote_facts`,
+added 2026-08-03). Because the announcement is compulsory, hearing it places the second
+honour at the announcer — and *not* hearing it, when a trump King or Queen falls, proves
+its player does not hold the other one, ever, since a hand only shrinks. The silent case
+is the more frequent of the two (20.5% of play positions against 5.7%). Both are hard
+determinization constraints on the same footing as a revealed void:
+[docs/play/is_dd.md](play/is_dd.md#hard-constraints-vs-soft-beliefs).
+
 ## Dix de Der (Last Trick Bonus)
 
 The team winning the last (8th) trick receives a bonus:

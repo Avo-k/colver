@@ -105,6 +105,20 @@ des entrées complètes.
   binaire sont donc enregistrés, ainsi que la charge machine (`loadavg`), sans laquelle un
   temps ne veut rien dire ici : un même binaire varie de 20 % selon ce que fait l'autre agent.
 
+- `belote_facts.py` — enveloppe de `bench_belote_facts`. Fréquence de la déduction de
+  belote sur donnes jouées (~30 s pour 50 000 donnes) et fraction de mondes impossibles
+  rendus par playgen (~2 min, sidecar requis, donc le sha256 du modèle est enregistré).
+- `belote_regret.py` — dépouille l'A/B `COLVER_NO_BELOTE_FACTS=1` du même binaire. **C'est
+  le patron à réutiliser quand l'arène est trop grossière** : au lieu de comparer deux bots
+  sur des donnes entières, on compare la *carte choisie* à un juge qui résout la même
+  position avec 6,7× plus de mondes. Effet borné à ±0,03 pt DD/décision en 6 minutes, là où
+  un h2h de deux heures aurait rendu « non résolu ». Graines distinctes entre un bras et son
+  juge, sinon le bras hérite des mondes qui le notent.
+- `belote_ab_diff.py` — l'A/B apparié donne par donne (`bench_belote_ab`), gardé comme
+  instrument de contrôle en configuration de production. Peu sensible : à ~4 décisions
+  contraintes par donne, il faudrait des dizaines de milliers de donnes pour voir ce que le
+  précédent borne en 2 000 décisions.
+
 - `dd_ab_revs.sh` / `dd_ab_flags.sh` / `dd_ablation.sh` — les harnais A/B du solveur : le
   premier alterne deux **révisions git**, le deuxième trois **cibles de compilation** bâties de
   la même source, le troisième cinq **configurations d'heuristiques** dans un seul binaire.

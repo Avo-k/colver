@@ -47,6 +47,40 @@ worlds to avoid blind spots), DD-solve them, aggregate. A likelihood-scorer mode
 - Loss on all 32 plays (own plays teach self-simulation; hidden plays teach
   belief formation). Void deals are skipped.
 
+### Ce que le masque ne dit pas encore : la belote (à corriger en v3)
+
+Le masque porte les coupes et les plafonds d'atout, **pas l'annonce de belote**.
+Elle n'est nulle part dans le flux : le modèle voit un Roi d'atout tomber, jamais
+le fait que le siège a annoncé en le posant. Conséquence mesurée le 2026-08-03
+(`bench_belote_facts --sidecar`, deux tirages de ~6 100 mondes) : **15 à 16 % des
+mondes rendus aux positions concernées sont impossibles**, contre 40,1 % pour un
+tirage uniforme aveugle — il en a donc appris une bonne part par corrélation, mais
+un monde sur six reste faux. `worlds::retain_valid` les rejette désormais côté
+client, ce qui coûte un aller-retour de plus au sidecar au lieu d'une erreur
+silencieuse.
+
+**Ce que ça vaut, honnêtement : de la correction, pas de la force.** Côté IS-DD, la
+même déduction change la carte jouée 8,5 % du temps sans jouer mieux (−0,008 ±
+0,031 pt DD/décision) — [is_dd.md](../play/is_dd.md#ça-change-la-décision-et-ça-ne-la-rend-pas-meilleure).
+L'intérêt pour playgen est donc de ne plus fabriquer de mondes impossibles, et de
+ne plus les payer en aller-retours ; pas d'attendre un gain d'arène.
+
+**Ça se répare dans le masque, pas dans une entrée supplémentaire** — et c'est
+exactement le principe déjà posé plus haut (« le masque fait l'arithmétique
+d'ensembles, le modèle n'apprend que la stratégie et l'inférence ») :
+
+- *silence* — un honneur d'atout tombé sans annonce : son poseur ne jouera jamais
+  l'autre → exclusion permanente dans **son** masque ;
+- *annonce* — `belote[t] == 1` : les **trois autres** sièges ne peuvent pas jouer
+  l'autre honneur → exclusion dans leurs masques, ce qui place la carte par
+  élimination sans avoir à exprimer « il l'a » dans un vocabulaire de coups.
+
+Les deux tiennent donc dans `TrumpCeilingTracker` / `compute_hard_constraints`,
+sans changer le format ni le vocabulaire, mais **c'est une rupture de corpus** :
+le masque d'entraînement changerait, donc COLVPG02 ne serait plus lisible avec le
+nouveau masque sans écart train/test. À faire en v3, avec le score de partie.
+Prédicat prêt à l'emploi : `play::belote_facts`.
+
 Validation: `COLVER_GAMES=<abs path> cargo test -p colver-core
 validate_games_file -- --ignored --nocapture` asserts the played card is always
 in the observer-visible mask (0 false exclusions on 63.7M preds of
@@ -351,6 +385,10 @@ Two consequences worth carrying:
   not an optimization.
 
 ## Next steps
+- [ ] **v3 : la belote dans le masque observable** (voir « Ce que le masque ne dit
+      pas encore »). 15,4 % de mondes impossibles aux positions concernées, filtrés
+      côté client depuis le 2026-08-03 — donc payés en aller-retours au lieu d'être
+      évités. Rupture de corpus : le masque d'entraînement change.
 - [ ] Playgen v2: 10M-game corpus (generating on the GPU host), bigger model
       (d=384 L=6?), COLVGM01 merge tool for chunked corpora — better per-world
       quality could flip the time-budget verdict back

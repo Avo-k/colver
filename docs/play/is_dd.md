@@ -65,12 +65,75 @@ Things we **know** to be true from the public game state. They are not configura
 - **Trump ceiling**: a player who undertrumped (or discarded under "ne pisse pas") cannot have a higher trump
 - **Played cards**: any card already played is no longer in any hand
 - **Observer's hand**: the cards in our own hand are known
+- **Belote** (`play::belote_facts`, ajouté le 2026-08-03) : l'annonce est publique et se lit **dans les deux sens** — voir plus bas
 
 These constraints zero out probabilities for impossible (player, card) combinations. There is no `use_hard_constraints` flag — it would be like a flag for "use facts".
 
 Hard constraints are computed inside `CardBeliefs::raw_weights()` and applied automatically:
 - Heuristic path (`use_nn_beliefs=false`): `CardBeliefs::normalized_weights()` already excludes impossible cards
 - NN path (`use_nn_beliefs=true`): NN soft predictions are masked by the same hard constraints (any card with `raw_weight==0.0` in CardBeliefs gets `nn_weight=0.0`)
+
+#### La belote, et pourquoi elle a manqué trois ans
+
+On ne peut pas tenir Dame **et** Roi d'atout et poser le premier des deux en silence :
+la belote s'annonce. `check_belote` le fait pour les quatre sièges, donc
+`state.belote` / `belote_player` sont publics au même titre qu'une coupe. Deux
+déductions en sortent, et **c'est la seconde qui tombe le plus souvent** :
+
+| | condition | ce qu'on apprend | fréquence¹ |
+|---|---|---|---|
+| **annonce** | `belote[t] == 1` | l'annonceur détient l'autre honneur, et personne d'autre | 5,7 % des positions |
+| **silence** | un honneur d'atout tombe sans annonce | son poseur n'a **jamais** l'autre (une main ne fait que rétrécir) | 20,5 % des positions |
+
+La déduction est appliquée à la source, dans les trois `determinize*` — pas corrigée
+après coup — et `worlds::retain_valid` rejette les mondes d'un sampler qui l'ignore.
+`CardBeliefs::apply_belote_facts` la porte aussi dans les poids, pour l'entrée
+« contraintes dures » de l'obs du réseau de croyances.
+
+¹ 1 593 952 positions de jeu sur 50 000 donnes du corpus COLVGM01
+(`bench_belote_facts`, 2026-08-03 — voir `docs/measurements/index.jsonl`). Sur ces
+50 000 donnes, **22,1 % voient une belote annoncée**.
+
+**Ce que ça corrigeait, mesuré.** Aux positions contraintes, un tirage uniforme
+aveugle produit **40,1 %** de mondes impossibles (10,5 % de tous les mondes tirés
+d'une donne). Playgen, la source par défaut, en produit **15 à 16 %** (deux tirages
+de 6 100 mondes) — il a donc appris une partie de la déduction sans jamais la voir
+(l'annonce n'est pas dans son flux de tokens), mais un monde sur six restait
+impossible. En revanche playgen respecte les coupes révélées **parfaitement** :
+0 violation, tout comme le compte de cartes.
+
+### Ça change la décision, et ça ne la rend pas meilleure
+
+Sur 2 000 positions contraintes **non forcées** du corpus, IS-DD à 60 mondes
+uniformes choisit **une carte différente 8,5 % du temps** selon qu'il écoute la
+belote ou non (`bench_belote_facts --isdd`, A/B par `COLVER_NO_BELOTE_FACTS=1`
+sous la feature `belief_ablation`).
+
+Reste à savoir si la nouvelle carte est meilleure. Juge : la même position résolue
+à **400 mondes avec** la déduction, graine distincte pour qu'aucun bras n'hérite
+des mondes de son juge. Le juge n'est pas arbitraire — la belote est une règle,
+donc la distribution qui l'honore est la bonne.
+
+| | regret moyen (pts DD/décision) |
+|---|---|
+| avec la déduction | 3,482 |
+| sans | 3,474 |
+| **gain** | **−0,008 ± 0,031 (95 %), z = −0,48** |
+
+**Rien.** Et sur les 157 décisions qui diffèrent, 48,4 % vont dans le sens de la
+déduction — pile ou face. La raison se lit dans les données : quand la déduction
+fait changer d'avis, les deux cartes sont séparées de **0,51 pt DD (médiane, 1,34
+en moyenne)** chez le juge, contre **7,0 pts d'étendue** entre la meilleure et la
+pire carte d'une position. **Elle ne déplace la décision que là où la décision ne
+pèse presque rien.** Déplacer la Dame ou le Roi d'atout d'une main cachée à une
+autre change la valeur DD du monde, rarement le classement de *nos* cartes.
+
+Ce qui est donc établi : le correctif est **gratuit** (effet borné à ±0,03 pt
+DD/décision, dans les deux sens) et **correct par construction** — on ne résout
+plus de positions impossibles. Ce n'est pas un gain de force, et il ne faut pas en
+attendre un. Un h2h d'arène n'aurait rien pu dire de plus : à ~4 décisions
+contraintes par donne, l'effet borné ici vaut ~0,2 pt de donne, deux ordres de
+grandeur sous le bruit de l'instrument.
 
 ### Soft beliefs (probabilistic guesses — all OFF by default)
 

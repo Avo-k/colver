@@ -306,6 +306,149 @@ fn check_belote(state: &mut GameState, player: u8, card: Card) {
     }
 }
 
+/// Ce que l'annonce de belote apprend sur les mains cachées.
+///
+/// La belote **s'annonce** : on ne peut pas tenir Dame *et* Roi d'atout et poser
+/// le premier des deux en silence. `check_belote` le fait pour les quatre sièges,
+/// donc `state.belote` / `state.belote_player` sont de l'information **publique**,
+/// au même titre qu'une coupe — et elle se lit dans les deux sens :
+///
+/// - **annonce** (`belote[t] == 1`) : l'annonceur détient forcément l'autre carte
+///   de la paire, jusqu'à ce qu'il la joue (`belote[t] == 2`) ;
+/// - **silence** (`belote[t] == 0` alors qu'un Roi ou une Dame d'atout est déjà
+///   tombé) : celui qui l'a posée ne tenait pas l'autre à cet instant, et une main
+///   ne fait que rétrécir — il ne l'aura donc **jamais**.
+///
+/// Le second cas est le plus fréquent des deux : il se déclenche à chaque Roi ou
+/// Dame d'atout joué sans annonce, alors que le premier demande qu'un adversaire
+/// ait la belote.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BeloteFacts {
+    /// `held[p]` : cartes que `p` détient forcément (au plus une : l'autre moitié
+    /// d'une belote annoncée).
+    pub held: [CardSet; 4],
+    /// `banned[p]` : cartes que `p` ne peut pas détenir. Contient l'implication
+    /// de `held` (une carte forcée chez `p` est interdite aux trois autres), pour
+    /// qu'un consommateur qui ne regarde qu'un seul des deux champs reste correct.
+    pub banned: [CardSet; 4],
+}
+
+impl BeloteFacts {
+    /// Aucune déduction disponible — le cas courant tant que ni le Roi ni la Dame
+    /// d'atout ne sont tombés.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.held == [0; 4] && self.banned == [0; 4]
+    }
+
+    /// Les quatre mains sont-elles compatibles avec ce qui a été annoncé ?
+    /// Sert à filtrer un monde produit par un échantillonneur qui ne voit pas
+    /// l'annonce (playgen), pas à valider le moteur.
+    #[inline]
+    pub fn allows(&self, hands: &[CardSet; 4]) -> bool {
+        (0..4).all(|p| hands[p] & self.held[p] == self.held[p] && hands[p] & self.banned[p] == 0)
+    }
+}
+
+/// Siège qui a joué `card` dans cette donne, s'il est déjà tombé.
+///
+/// `current_trick` et `trick_history` sont tous deux indexés par siège, donc la
+/// recherche est directe.
+fn seat_that_played(state: &GameState, card: Card) -> Option<u8> {
+    for seat in 0..4u8 {
+        if state.current_trick[seat as usize] == card {
+            return Some(seat);
+        }
+    }
+    let done = (state.tricks_won[0] + state.tricks_won[1]) as usize;
+    for trick in state.trick_history.iter().take(done) {
+        for seat in 0..4u8 {
+            if trick[seat as usize] == card {
+                return Some(seat);
+            }
+        }
+    }
+    None
+}
+
+/// Déductions publiques tirées de la belote à la position courante.
+///
+/// Rend des ensembles vides hors phase de jeu et tant qu'aucune des deux cartes
+/// n'est tombée — c'est-à-dire dans la grande majorité des appels, d'où la sortie
+/// anticipée avant tout parcours de l'historique.
+/// Interrupteur d'ablation : `COLVER_NO_BELOTE_FACTS=1` fait comme si l'annonce
+/// n'existait pas. Compilé hors du binaire sans la feature `belief_ablation` —
+/// il n'existe que pour qu'un A/B tienne dans un seul binaire, la déduction
+/// étant une règle du jeu et non un réglage.
+#[cfg(feature = "belief_ablation")]
+fn facts_disabled() -> bool {
+    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFF.get_or_init(|| std::env::var("COLVER_NO_BELOTE_FACTS").as_deref() == Ok("1"))
+}
+
+/// Étiquette de configuration, pour qu'un run dise ce qu'il a réellement fait.
+pub fn belote_ablation_label() -> &'static str {
+    #[cfg(feature = "belief_ablation")]
+    if facts_disabled() {
+        return "belote_facts=off";
+    }
+    "belote_facts=on"
+}
+
+pub fn belote_facts(state: &GameState) -> BeloteFacts {
+    let mut facts = BeloteFacts::default();
+    #[cfg(feature = "belief_ablation")]
+    if facts_disabled() {
+        return facts;
+    }
+    if state.phase == Phase::Bidding {
+        return facts;
+    }
+    let trump = state.contract.trump_suit();
+    let queen = make_card(trump, 4);
+    let king = make_card(trump, 5);
+    let (qbit, kbit) = (card_to_bit(queen), card_to_bit(king));
+
+    // Rien n'est annonçable tant qu'aucune des deux n'est jouée.
+    if state.played_cards & (qbit | kbit) == 0 {
+        return facts;
+    }
+
+    // Annonce faite, seconde carte encore en main : celle des deux qui n'est pas
+    // tombée est chez l'annonceur, et nulle part ailleurs.
+    for team in 0..2usize {
+        if state.belote[team] == 1 {
+            let holder = state.belote_player[team] as usize;
+            let other = if state.played_cards & qbit != 0 { kbit } else { qbit };
+            facts.held[holder] |= other;
+            for p in 0..4usize {
+                if p != holder {
+                    facts.banned[p] |= other;
+                }
+            }
+        }
+    }
+
+    // Silence : qui a posé une des deux cartes sans annoncer n'avait pas l'autre.
+    // Le camp à interroger est celui du **poseur**, pas celui qu'on itère : quand
+    // un camp a annoncé, l'autre voit lui aussi `belote == 0` alors que la carte
+    // est justement chez l'annonceur.
+    for (played_card, other_bit) in [(queen, kbit), (king, qbit)] {
+        if state.played_cards & card_to_bit(played_card) == 0
+            || state.played_cards & other_bit != 0
+        {
+            continue; // pas encore posée, ou l'autre est déjà tombée
+        }
+        if let Some(seat) = seat_that_played(state, played_card) {
+            if state.belote[GameState::player_team(seat) as usize] == 0 {
+                facts.banned[seat as usize] |= other_bit;
+            }
+        }
+    }
+
+    facts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +465,106 @@ mod tests {
         state.trick_lead = 1;
         state.current_player = 1;
         state
+    }
+
+    /// Atout = pique : Dame = 4, Roi = 5.
+    const QS: Card = 4;
+    const KS: Card = 5;
+
+    fn cards(list: &[Card]) -> CardSet {
+        list.iter().fold(0, |acc, &c| acc | card_to_bit(c))
+    }
+
+    #[test]
+    fn belote_facts_empty_before_either_trump_honour_falls() {
+        let state = make_playing_state(
+            0,
+            [
+                cards(&[0, 1, 2, 3, 6, 7, 14, 15]),
+                cards(&[QS, KS, 8, 9, 10, 11, 12, 13]),
+                cards(&[16, 17, 18, 19, 20, 21, 22, 23]),
+                cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+            ],
+        );
+        assert!(belote_facts(&state).is_empty());
+    }
+
+    #[test]
+    fn belote_facts_forces_the_second_card_of_an_announced_belote() {
+        let mut state = make_playing_state(
+            0,
+            [
+                cards(&[0, 1, 2, 3, 6, 7, 14, 15]),
+                cards(&[QS, KS, 8, 9, 10, 11, 12, 13]),
+                cards(&[16, 17, 18, 19, 20, 21, 22, 23]),
+                cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+            ],
+        );
+        apply_play(&mut state, KS); // siège 1 annonce « belote »
+        assert_eq!(state.belote[1], 1);
+
+        let facts = belote_facts(&state);
+        assert_eq!(facts.held[1], card_to_bit(QS), "la Dame est chez l'annonceur");
+        for p in [0usize, 2, 3] {
+            assert_eq!(facts.banned[p], card_to_bit(QS), "et nulle part ailleurs");
+        }
+        // Le piège : l'annonceur voit `belote == 0` du côté du camp adverse, et
+        // une lecture par camp au lieu de par siège lui interdirait sa propre Dame.
+        assert_eq!(facts.banned[1], 0);
+
+        let mut world = state.hands;
+        assert!(facts.allows(&world));
+        world[1] &= !card_to_bit(QS);
+        world[0] |= card_to_bit(QS);
+        assert!(!facts.allows(&world), "monde impossible : Dame déplacée");
+    }
+
+    #[test]
+    fn belote_facts_bans_the_other_honour_when_nobody_announced() {
+        let mut state = make_playing_state(
+            0,
+            [
+                cards(&[0, 1, 2, 3, 6, 7, 15, 23]),
+                cards(&[KS, 8, 9, 10, 11, 12, 13, 14]),
+                cards(&[QS, 16, 17, 18, 19, 20, 21, 22]),
+                cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+            ],
+        );
+        apply_play(&mut state, KS); // Roi d'atout, sans annonce
+        assert_eq!(state.belote, [0, 0]);
+
+        let facts = belote_facts(&state);
+        assert_eq!(facts.held, [0; 4], "rien n'est placé, seulement exclu");
+        assert_eq!(facts.banned[1], card_to_bit(QS));
+        for p in [0usize, 2, 3] {
+            assert_eq!(facts.banned[p], 0, "on n'apprend rien sur les autres");
+        }
+    }
+
+    #[test]
+    fn belote_facts_empty_after_rebelote() {
+        let mut state = make_playing_state(
+            0,
+            [
+                cards(&[0, 1, 2, 3, 6, 7, 14, 15]),
+                cards(&[QS, KS, 8, 9, 10, 11, 12, 13]),
+                cards(&[16, 17, 18, 19, 20, 21, 22, 23]),
+                cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+            ],
+        );
+        apply_play(&mut state, KS); // belote
+        apply_play(&mut state, 16); // siège 2, carreau
+        apply_play(&mut state, 24); // siège 3, trèfle
+        apply_play(&mut state, 0); // siège 0, 7 d'atout — le siège 1 remporte le pli
+        assert_eq!(state.current_player, 1);
+        assert!(!belote_facts(&state).is_empty(), "la Dame est encore en main");
+
+        apply_play(&mut state, QS); // rebelote
+        assert_eq!(state.belote[1], 2);
+        assert!(
+            belote_facts(&state).is_empty(),
+            "les deux cartes sont tombées : plus rien à déduire"
+        );
     }
 
     #[test]

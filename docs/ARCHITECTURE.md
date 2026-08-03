@@ -45,7 +45,11 @@ Its strength lives mostly in *where the worlds come from*. `IsDdPlayer` owns a
 [`WorldSource`](agents.md): the playgen transformer over the GPU sidecar by
 default (70% / 88% argmax credibility in auction / play), against 15% / 71% for
 constraint-uniform sampling. Hard constraints (voids, trump ceiling, played
-cards) are facts and always applied; soft beliefs are opt-in.
+cards, **belote**) are facts and always applied; soft beliefs are opt-in.
+The belote clause reads the compulsory announcement both ways — heard, it places
+the second trump honour; *not* heard when one falls, it excludes the other from
+that seat for good — and it is the one playgen cannot deduce, the announcement
+being absent from its token stream.
 
 **API:** `IsDdSearch::search_with_source(state, config, rng, &mut dyn WorldSource)`
 → `Result<IsDdResult>`, or `search_with_stats(...)` without a source (infallible,

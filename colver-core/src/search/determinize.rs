@@ -4,13 +4,71 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 
 use crate::card::*;
+use crate::play::{belote_facts, BeloteFacts};
 use crate::state::GameState;
+
+/// Cartes que la belote place d'office chez un siège caché, et ce qu'il reste à
+/// tirer une fois qu'elles sont posées.
+///
+/// Une carte forcée n'est pas une préférence : elle sort du tirage et le siège
+/// concerné a une place de moins. Les trois déterminisations partagent ce
+/// pré-calcul pour ne pas se contredire.
+#[cfg(feature = "rand")]
+struct ForcedCards {
+    facts: BeloteFacts,
+    /// `hands[p]` de départ : cartes déjà attribuées avant tout tirage.
+    forced: [CardSet; 4],
+    /// Cartes encore à répartir.
+    unknown: CardSet,
+    /// Places restantes par siège (0 pour l'observateur).
+    remaining: [u8; 4],
+}
+
+#[cfg(feature = "rand")]
+impl ForcedCards {
+    fn new(state: &GameState, observer: u8, unknown_set: CardSet) -> Self {
+        let facts = belote_facts(state);
+        let mut fc = ForcedCards {
+            facts,
+            forced: [0; 4],
+            unknown: unknown_set,
+            remaining: [0; 4],
+        };
+        for p in 0..4usize {
+            fc.remaining[p] = card_count(state.hands[p]) as u8;
+        }
+        fc.remaining[observer as usize] = 0;
+        if facts.is_empty() {
+            return fc;
+        }
+        for p in 0..4usize {
+            if p == observer as usize {
+                continue;
+            }
+            let held = facts.held[p] & unknown_set;
+            if held == 0 {
+                continue;
+            }
+            fc.forced[p] = held;
+            fc.unknown &= !held;
+            fc.remaining[p] = fc.remaining[p].saturating_sub(card_count(held) as u8);
+        }
+        fc
+    }
+
+    /// `p` peut-il recevoir `card` ?
+    #[inline]
+    fn allows(&self, p: u8, card: Card) -> bool {
+        self.facts.banned[p as usize] & card_to_bit(card) == 0
+    }
+}
 
 /// Create a determinized state from the perspective of `observer`.
 ///
 /// Redistributes unknown cards among other players, respecting:
 /// - Correct card count per player
 /// - Known void constraints
+/// - The belote announcement (see [`belote_facts`])
 /// - Observer's hand remains unchanged
 ///
 /// Uses rejection sampling with constraint-aware shuffling.
@@ -26,16 +84,12 @@ pub fn determinize(state: &GameState, observer: u8, rng: &mut impl Rng) -> Optio
         return Some(new_state); // Nothing to redistribute
     }
 
+    let fc = ForcedCards::new(state, observer, unknown_set);
+
     // Collect unknown cards
     let mut unknown_cards: Vec<Card> = Vec::with_capacity(24);
-    for card in CardIter(unknown_set) {
+    for card in CardIter(fc.unknown) {
         unknown_cards.push(card);
-    }
-
-    // How many cards each other player should have
-    let mut target_counts = [0u8; 4];
-    for p in 0..4u8 {
-        target_counts[p as usize] = card_count(state.hands[p as usize]) as u8;
     }
 
     // Attempt redistribution with rejection sampling
@@ -52,7 +106,8 @@ pub fn determinize(state: &GameState, observer: u8, rng: &mut impl Rng) -> Optio
             if p == observer {
                 continue;
             }
-            let count = target_counts[p as usize] as usize;
+            hands[p as usize] |= fc.forced[p as usize];
+            let count = fc.remaining[p as usize] as usize;
             let void_mask = state.voids[p as usize];
 
             for _ in 0..count {
@@ -65,7 +120,7 @@ pub fn determinize(state: &GameState, observer: u8, rng: &mut impl Rng) -> Optio
 
                 // Check void constraint
                 let suit = card_suit_u8(card);
-                if void_mask & (1 << suit) != 0 {
+                if void_mask & (1 << suit) != 0 || !fc.allows(p, card) {
                     valid = false;
                     break;
                 }
@@ -87,7 +142,8 @@ pub fn determinize(state: &GameState, observer: u8, rng: &mut impl Rng) -> Optio
 }
 
 /// Constraint-aware determinization that avoids rejection sampling.
-/// Uses a greedy approach: assign cards to players, respecting voids.
+/// Uses a greedy approach: assign cards to players, respecting voids and the
+/// belote announcement (see [`belote_facts`]).
 #[cfg(feature = "rand")]
 pub fn determinize_greedy(
     state: &GameState,
@@ -102,9 +158,11 @@ pub fn determinize_greedy(
         return Some(new_state);
     }
 
+    let fc = ForcedCards::new(state, observer, unknown_set);
+
     // Group unknown cards by suit
     let mut suit_cards: [Vec<Card>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
-    for card in CardIter(unknown_set) {
+    for card in CardIter(fc.unknown) {
         suit_cards[card_suit_u8(card) as usize].push(card);
     }
 
@@ -113,14 +171,10 @@ pub fn determinize_greedy(
         suit.shuffle(rng);
     }
 
-    let mut hands = [0u32; 4];
+    let mut hands = fc.forced;
     hands[observer as usize] = state.hands[observer as usize];
 
-    let mut remaining = [0u8; 4]; // cards still needed per player
-    for p in 0..4u8 {
-        remaining[p as usize] = card_count(state.hands[p as usize]) as u8;
-    }
-    remaining[observer as usize] = 0; // observer's hand is fixed
+    let mut remaining = fc.remaining; // cards still needed per player
 
     // For each suit, distribute cards to players who are not void in that suit
     // This is a simplified approach — for complex void patterns, may need backtracking
@@ -145,9 +199,12 @@ pub fn determinize_greedy(
                 continue;
             }
 
-            // Pick a random eligible player weighted by remaining count
+            // Pick a random eligible player weighted by remaining count.
+            // A card the belote excludes for a seat is skipped here, not
+            // corrected afterwards: the draw must not be able to produce it.
             let total_remaining: u16 = eligible
                 .iter()
+                .filter(|&&p| fc.allows(p, card))
                 .map(|&p| remaining[p as usize] as u16)
                 .sum();
             if total_remaining == 0 {
@@ -156,14 +213,22 @@ pub fn determinize_greedy(
             }
 
             let mut r = rng.gen_range(0..total_remaining);
-            let mut chosen = eligible[0];
+            let mut chosen = u8::MAX;
             for &p in &eligible {
+                if !fc.allows(p, card) {
+                    continue;
+                }
                 let rem = remaining[p as usize] as u16;
                 if r < rem {
                     chosen = p;
                     break;
                 }
                 r -= rem;
+            }
+            debug_assert_ne!(chosen, u8::MAX, "total_remaining > 0 garantit un tirage");
+            if chosen == u8::MAX {
+                unassigned.push(card);
+                continue;
             }
 
             hands[chosen as usize] |= card_to_bit(card);
@@ -199,6 +264,10 @@ pub fn determinize_greedy(
 /// in order of constraint tightness (fewest eligible players first).
 ///
 /// Falls back after `max_retries` failed attempts.
+///
+/// The belote announcement is applied on top of `weights`, whatever they say:
+/// a caller passing NN beliefs must not be able to hand a card to a seat the
+/// rules have excluded.
 #[cfg(feature = "rand")]
 pub fn determinize_weighted(
     state: &GameState,
@@ -212,6 +281,24 @@ pub fn determinize_weighted(
     if unknown_set == 0 {
         return Some(*state);
     }
+
+    let fc = ForcedCards::new(state, observer, unknown_set);
+
+    // Applying the facts to a copy keeps the rest of the loop untouched: a
+    // forced card ends up with a single eligible seat, which the tightness sort
+    // then places first.
+    let mut owned_weights;
+    let weights = if fc.facts.is_empty() {
+        weights
+    } else {
+        owned_weights = *weights;
+        for p in 0..4usize {
+            for card in CardIter(fc.facts.banned[p]) {
+                owned_weights[p][card as usize] = 0.0;
+            }
+        }
+        &owned_weights
+    };
 
     // Collect unknown cards with their constraint tightness
     let mut unknown_cards: Vec<(Card, u8)> = Vec::with_capacity(24);
@@ -317,6 +404,109 @@ pub fn determinize_weighted(
 #[cfg(all(test, feature = "rand"))]
 mod tests {
     use super::*;
+    use crate::state::{Contract, Phase};
+
+    /// Atout = pique : Dame = 4, Roi = 5.
+    const QS: Card = 4;
+    const KS: Card = 5;
+
+    fn cards(list: &[Card]) -> CardSet {
+        list.iter().fold(0, |acc, &c| acc | card_to_bit(c))
+    }
+
+    /// Le siège 1 entame atout ; à lui de tenir (ou non) l'autre honneur.
+    fn state_after_king_of_trump(hands: [CardSet; 4]) -> GameState {
+        let mut state = GameState::new(0, hands);
+        state.phase = Phase::Playing;
+        state.contract = Contract { trump: 0, value: 8, team: 0, coinche: 0 };
+        state.trick_lead = 1;
+        state.current_player = 1;
+        crate::play::apply_play(&mut state, KS);
+        state
+    }
+
+    /// Poids uniformes sur les cartes inconnues, comme un appelant sans croyances.
+    fn flat_weights(state: &GameState, observer: u8) -> [[f32; 32]; 4] {
+        let mut w = [[0.0f32; 32]; 4];
+        for card in 0..32u8 {
+            let bit = card_to_bit(card);
+            if state.played_cards & bit != 0 {
+                continue;
+            }
+            if state.hands[observer as usize] & bit != 0 {
+                w[observer as usize][card as usize] = 1.0;
+                continue;
+            }
+            for p in 0..4u8 {
+                if p != observer && state.voids[p as usize] & (1 << card_suit_u8(card)) == 0 {
+                    w[p as usize][card as usize] = 1.0;
+                }
+            }
+        }
+        w
+    }
+
+    #[test]
+    fn every_determinizer_places_an_announced_belote_at_its_announcer() {
+        let state = state_after_king_of_trump([
+            cards(&[0, 1, 2, 3, 6, 7, 14, 15]),
+            cards(&[QS, KS, 8, 9, 10, 11, 12, 13]),
+            cards(&[16, 17, 18, 19, 20, 21, 22, 23]),
+            cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+        ]);
+        assert_eq!(state.belote[1], 1, "le siège 1 a annoncé");
+
+        let mut rng = rand::thread_rng();
+        let weights = flat_weights(&state, 0);
+        let mut drawn = 0;
+        for _ in 0..200 {
+            for (name, world) in [
+                ("determinize", determinize(&state, 0, &mut rng)),
+                ("greedy", determinize_greedy(&state, 0, &mut rng)),
+                ("weighted", determinize_weighted(&state, 0, &weights, &mut rng)),
+            ] {
+                let Some(world) = world else { continue };
+                drawn += 1;
+                assert_ne!(
+                    world.hands[1] & card_to_bit(QS),
+                    0,
+                    "{name} a déplacé une Dame d'atout annoncée"
+                );
+            }
+        }
+        assert!(drawn > 100, "trop peu de mondes tirés ({drawn})");
+    }
+
+    #[test]
+    fn every_determinizer_keeps_the_unannounced_honour_away() {
+        let state = state_after_king_of_trump([
+            cards(&[0, 1, 2, 3, 6, 7, 15, 23]),
+            cards(&[KS, 8, 9, 10, 11, 12, 13, 14]),
+            cards(&[QS, 16, 17, 18, 19, 20, 21, 22]),
+            cards(&[24, 25, 26, 27, 28, 29, 30, 31]),
+        ]);
+        assert_eq!(state.belote, [0, 0], "Roi d'atout posé sans annonce");
+
+        let mut rng = rand::thread_rng();
+        let weights = flat_weights(&state, 0);
+        let mut drawn = 0;
+        for _ in 0..200 {
+            for (name, world) in [
+                ("determinize", determinize(&state, 0, &mut rng)),
+                ("greedy", determinize_greedy(&state, 0, &mut rng)),
+                ("weighted", determinize_weighted(&state, 0, &weights, &mut rng)),
+            ] {
+                let Some(world) = world else { continue };
+                drawn += 1;
+                assert_eq!(
+                    world.hands[1] & card_to_bit(QS),
+                    0,
+                    "{name} a donné la Dame à un siège qui n'a pas annoncé"
+                );
+            }
+        }
+        assert!(drawn > 100, "trop peu de mondes tirés ({drawn})");
+    }
 
     #[test]
     #[ignore]

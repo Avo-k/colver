@@ -76,15 +76,31 @@ pub trait WorldSource: Send {
 }
 
 /// Keep only worlds that are consistent with what the observer knows: the
-/// right number of cards per seat, and the observer's own hand untouched.
-/// A sampler that returns garbage should lose those worlds, not poison the
-/// aggregation with impossible positions.
+/// right number of cards per seat, the observer's own hand untouched, and the
+/// belote announcement honoured. A sampler that returns garbage should lose
+/// those worlds, not poison the aggregation with impossible positions.
+///
+/// The belote clause is here rather than only in the determinizers because
+/// playgen cannot deduce it: the announcement is not part of the token stream
+/// (see `docs/belief/playgen.md`), so the model only ever sees the King or Queen
+/// of trump being played, never the fact that the seat announced while doing so.
+/// Measured rejection rate: **15.4%** of its worlds at the positions concerned,
+/// against 40.1% for a blind uniform draw.
+///
+/// Known bounded edge: `run_search` reads an empty batch as "the source has run
+/// dry" and stops asking, so a *small* request whose worlds are all rejected
+/// costs the rest of that decision's worlds (they come from the local uniform
+/// fallback instead). Only reachable on the last one or two worlds of a count-mode
+/// budget — under a deadline the batch is `world_batch` (128) and cannot be
+/// emptied by a 15% filter.
 pub fn retain_valid(worlds: Vec<World>, state: &GameState, observer: u8) -> Vec<World> {
+    let facts = crate::play::belote_facts(state);
     worlds
         .into_iter()
         .filter(|hands| {
             hands[observer as usize] == state.hands[observer as usize]
                 && (0..4).all(|p| card_count(hands[p]) == card_count(state.hands[p]))
+                && facts.allows(hands)
         })
         .collect()
 }
@@ -296,19 +312,28 @@ impl WorldSource for SidecarWorldSource {
         n: usize,
         _rng: &mut dyn RngCore,
     ) -> Result<Vec<World>, AgentError> {
+        let worlds = self.worlds_unfiltered(observer, n)?;
+        Ok(retain_valid(worlds, state, observer))
+    }
+}
+
+impl SidecarWorldSource {
+    /// The sidecar's raw answer, before [`retain_valid`]. Exposed so a benchmark
+    /// can count what the filter throws away — a rejection rate that only means
+    /// something if it is measured on the unfiltered stream.
+    pub fn worlds_unfiltered(&mut self, observer: u8, n: usize) -> Result<Vec<World>, AgentError> {
         if n == 0 {
             return Ok(Vec::new());
         }
         let body = self.request_body(observer, n);
         let resp = http_request(&self.url, "POST", "/play_worlds", Some(&body), self.timeout)?;
-        let worlds = parse_hands(&resp).ok_or_else(|| {
+        parse_hands(&resp).ok_or_else(|| {
             AgentError::WorldSource(format!(
                 "{}: malformed /play_worlds response ({} bytes)",
                 self.url,
                 resp.len()
             ))
-        })?;
-        Ok(retain_valid(worlds, state, observer))
+        })
     }
 }
 

@@ -19,6 +19,10 @@ solver_stats = []
 # the ablation configurations can share one binary, one corpus and one codegen. Never enable
 # in production — `solver::ablation_label()` says which heuristics a run actually had.
 solver_ablation = []
+# Runtime switch turning off the belote deduction (`play::belote_facts`), driven by
+# COLVER_NO_BELOTE_FACTS=1. Off by default and compiled out: it exists so an A/B can share one
+# binary and one corpus, since the deduction is a fact of the rules and has no production knob.
+belief_ablation = []
 # Records the best move at every node into an eviction-free map so a second solve can replay
 # the position perfectly ordered — the ceiling on any move-ordering heuristic. Off by default
 # and compiled out; the map is per-thread and can reach hundreds of MB on a hard full deal.
