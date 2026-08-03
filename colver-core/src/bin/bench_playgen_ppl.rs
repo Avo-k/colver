@@ -117,6 +117,50 @@ impl Acc {
         self.samples += o.samples;
         self.skipped += o.skipped;
     }
+
+    /// nll moyenne par prédiction sur une catégorie, `NaN` si vide.
+    fn mean(sum: f64, n: u64) -> f64 {
+        if n == 0 { f64::NAN } else { sum / n as f64 }
+    }
+}
+
+/// Bootstrap **apparié sur les donnes** de l'écart de nll entre deux modèles.
+///
+/// Apparié, parce que la difficulté d'une donne domine largement l'écart entre
+/// deux modèles : comparer deux moyennes indépendantes noierait un effet de
+/// quelques pour-cent dans la variance entre donnes. Et le ré-échantillonnage
+/// porte sur la **donne**, pas sur la prédiction — les 32 coups d'une donne (et
+/// ses 4 observateurs) ne sont pas indépendants, donc bootstrapper les
+/// prédictions rendrait un intervalle faussement étroit.
+fn boot_ci(per_deal: &[(f64, u64, f64, u64)], seed: u64) -> (f64, f64, f64) {
+    boot(per_deal.len(), seed, |idx| {
+        let (mut a, mut na, mut b, mut nb) = (0.0, 0u64, 0.0, 0u64);
+        for &i in idx {
+            let (x, nx, y, ny) = per_deal[i];
+            a += x; na += nx; b += y; nb += ny;
+        }
+        Acc::mean(b, nb) - Acc::mean(a, na)
+    })
+}
+
+/// Bootstrap générique : `stat` reçoit les indices de donnes ré-échantillonnés.
+/// Rend (estimation ponctuelle, borne 2,5 %, borne 97,5 %).
+fn boot(n: usize, seed: u64, stat: impl Fn(&[usize]) -> f64) -> (f64, f64, f64) {
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+    let all: Vec<usize> = (0..n).collect();
+    let point = stat(&all);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut draws = Vec::with_capacity(2000);
+    let mut idx = vec![0usize; n];
+    for _ in 0..2000 {
+        for s in idx.iter_mut() {
+            *s = rng.gen_range(0..n);
+        }
+        draws.push(stat(&idx));
+    }
+    draws.sort_by(|p, q| p.partial_cmp(q).unwrap());
+    (point, draws[50], draws[1949])
 }
 
 /// Une donne vue par un observateur : nll par pli, acteurs cachés seulement.
@@ -248,6 +292,7 @@ fn main() {
     let mut games_path = String::from("data/training/heldout_20k_s90210.bin");
     let mut n_games: usize = 2000;
     let mut json = false;
+    let mut model_b_path: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -256,6 +301,7 @@ fn main() {
             "--games" => { games_path = args[i + 1].clone(); i += 2; }
             "--n" => { n_games = args[i + 1].parse().unwrap(); i += 2; }
             "--json" => { json = true; i += 1; }
+            "--model-b" => { model_b_path = Some(args[i + 1].clone()); i += 2; }
             other => { eprintln!("Unknown argument: {}", other); std::process::exit(1); }
         }
     }
@@ -278,34 +324,48 @@ fn main() {
     println!("Modèle : {}", model_path);
     println!("Corpus : {} ({} donnes × 4 observateurs)", games_path, games.len());
 
+    let model_b = model_b_path.as_ref().map(|p| {
+        let m = PlaygenModel::load(p).unwrap_or_else(|e| {
+            eprintln!("load model-b {}: {}", p, e);
+            std::process::exit(1);
+        });
+        println!("Modèle B : {}", p);
+        m
+    });
+
     let t0 = std::time::Instant::now();
 
+    // Un `Acc` **par donne** (et par modèle) : l'agrégat global s'en déduit, mais
+    // l'inverse est faux, et le bootstrap apparié a besoin du grain de la donne.
+    let per_deal_fn = |replay: &&GameReplay| -> Vec<Acc> {
+        let mut out = Vec::with_capacity(2);
+        let mut a = Acc::default();
+        for observer in 0..4u8 {
+            score_sample(&model, replay, observer, &mut a);
+        }
+        out.push(a);
+        if let Some(mb) = &model_b {
+            let mut b = Acc::default();
+            for observer in 0..4u8 {
+                score_sample(mb, replay, observer, &mut b);
+            }
+            out.push(b);
+        }
+        out
+    };
+
     #[cfg(feature = "parallel")]
-    let acc = {
+    let per_deal: Vec<Vec<Acc>> = {
         use rayon::prelude::*;
-        games
-            .par_iter()
-            .fold(Acc::default, |mut a, replay| {
-                for observer in 0..4u8 {
-                    score_sample(&model, replay, observer, &mut a);
-                }
-                a
-            })
-            .reduce(Acc::default, |mut a, b| {
-                a.merge(&b);
-                a
-            })
+        games.par_iter().map(per_deal_fn).collect()
     };
     #[cfg(not(feature = "parallel"))]
-    let acc = {
-        let mut a = Acc::default();
-        for replay in &games {
-            for observer in 0..4u8 {
-                score_sample(&model, replay, observer, &mut a);
-            }
-        }
-        a
-    };
+    let per_deal: Vec<Vec<Acc>> = games.iter().map(per_deal_fn).collect();
+
+    let mut acc = Acc::default();
+    for d in &per_deal {
+        acc.merge(&d[0]);
+    }
 
     let elapsed = t0.elapsed().as_secs_f64();
     let total_preds: u64 = acc.n.iter().sum();
@@ -336,6 +396,52 @@ fn main() {
             );
         }
         println!();
+    }
+
+    if model_b.is_some() {
+        println!(
+            "Écart apparié B − A, nll par prédiction, IC95 par bootstrap sur {} donnes :",
+            per_deal.len()
+        );
+        println!("  catégorie          |  écart  | IC95");
+        let cats: [(&str, fn(&Acc) -> (f64, u64)); 3] = [
+            ("global", |a| (a.nll.iter().sum::<f64>(), a.n.iter().sum::<u64>())),
+            ("belote disponible", |a| (a.bel_nll, a.bel_n)),
+            ("aucune belote", |a| (a.nobel_nll, a.nobel_n)),
+        ];
+        for (label, f) in cats {
+            let rows: Vec<(f64, u64, f64, u64)> = per_deal
+                .iter()
+                .map(|d| {
+                    let (xa, na) = f(&d[0]);
+                    let (xb, nb) = f(&d[1]);
+                    (xa, na, xb, nb)
+                })
+                .collect();
+            let (pt, lo, hi) = boot_ci(&rows, 12345);
+            println!("  {:<18} | {:+.4} | [{:+.4}, {:+.4}]", label, pt, lo, hi);
+        }
+        // Différence des différences : l'écart B−A est-il **plus petit** là où la
+        // belote s'applique ? C'est ça, « l'entraînement avec la belote sert ».
+        // Comparer les deux IC ci-dessus ne répond pas : deux intervalles qui se
+        // chevauchent peuvent porter une différence significative, et
+        // réciproquement. Il faut bootstrapper l'écart des écarts lui-même.
+        let did = boot(per_deal.len(), 6789, |idx| {
+            let (mut ab, mut nab, mut bb, mut nbb) = (0.0, 0u64, 0.0, 0u64);
+            let (mut an, mut nan, mut bn, mut nbn) = (0.0, 0u64, 0.0, 0u64);
+            for &i in idx {
+                let (a, b) = (&per_deal[i][0], &per_deal[i][1]);
+                ab += a.bel_nll; nab += a.bel_n; bb += b.bel_nll; nbb += b.bel_n;
+                an += a.nobel_nll; nan += a.nobel_n; bn += b.nobel_nll; nbn += b.nobel_n;
+            }
+            (Acc::mean(bb, nbb) - Acc::mean(ab, nab))
+                - (Acc::mean(bn, nbn) - Acc::mean(an, nan))
+        });
+        println!(
+            "  écart des écarts (belote − aucune) : {:+.4}  IC95 [{:+.4}, {:+.4}]",
+            did.0, did.1, did.2
+        );
+        println!("  (négatif = B tire un bénéfice propre aux positions belote)\n");
     }
 
     if acc.bel_n > 0 {
