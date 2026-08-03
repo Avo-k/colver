@@ -1055,3 +1055,64 @@ quasiment intacts (la garde `IID_MIN_CARDS` les exclut), et que les donnes compl
 0,877× vient entièrement de la queue, qui porte 71 % des nœuds. C'est cohérent avec tout le
 reste de ce document, et c'est la raison pour laquelle l'agrégat et la médiane racontent ici
 deux histoires différentes.
+
+---
+
+## 10. Le départage des ex æquo — **mesuré : ça compte, et l'actuel n'est pas le bon**
+
+§8 avait laissé la question ouverte comme « arbitrage produit, non mesuré ». Elle est mesurée.
+
+**Le rappel du problème.** **57,8 % des positions ont plusieurs cartes à la meilleure valeur DD**
+(2 optimales dans 27 % des cas, jusqu'à toutes les 8 ; et **74,6 % en finale**, où 2,0 des 2,4
+cartes légales se valent). Laquelle le solveur renvoie dépend de l'ordre de sa boucle racine,
+c'est-à-dire d'un détail interne.
+
+**Pourquoi ça ne se mesure pas n'importe comment.** Deux joueurs DD-optimaux face à face
+réalisent tous deux la valeur DD : un h2h oracle-contre-oracle rend **exactement zéro par
+construction**. Une carte DD-équivalente ne peut se distinguer que par la façon dont elle
+exploite les erreurs — donc l'effet ne peut apparaître que contre un adversaire imparfait, et
+devrait grandir avec son imperfection. D'où le balayage d'adversaires.
+
+Enchère `improved_v2` des deux côtés, donc **seule la carte jouée diffère**. 800 matchs par
+cellule, 3 graines, métrique = **marge moyenne en points** (le taux de victoire sature au-dessus
+de 95 % contre les bots faibles et n'y porte aucun signal).
+
+| adversaire | order | lowest | highest | **cheapest** | dearest | bruit |
+|---|---:|---:|---:|---:|---:|---:|
+| heuristic | 1162 | +99 | +24 | **+135** | −62 | ±22 |
+| rule | 1212 | +107 | −7 | **+134** | −60 | ±15 |
+| ismcts | 1271 | +87 | +34 | **+103** | −14 | ±19 |
+| **dmc50 (DouDou50)** | 905 | +50 | +16 | **+74** | −31 | ±15 |
+
+**Le classement est monotone dans les points de carte** et il l'est aux quatre niveaux
+d'adversaire : `cheapest` > `lowest` > `order` ≈ `highest` > `dearest`. Autrement dit, parmi des
+cartes DD-équivalentes, **ne pas dépenser de cartes à points**. C'est un principe de belote, et
+c'est la mesure qui le retrouve, pas l'inverse. (`lowest` marche parce que l'indice bas vaut rang
+bas vaut peu de points — c'est un `cheapest` approximatif.)
+
+**L'effet décroît avec la qualité de l'adversaire** — +135 / +134 / +103 / +74 — exactement comme
+la théorie le prédit, jusqu'à zéro contre un joueur parfait. Et contre le plus fort des quatre,
+le **taux de victoire** bouge aussi : 88,2 % → **90,4 %**.
+
+### Ce que ça change, et où
+
+**Deux chemins distincts, et un correctif devrait toucher les deux :**
+
+- `agent::dmc::OraclePlayer` — les bots d'arène `oracle_dd`. C'est lui qui porte l'option
+  `tiebreak` du TOML, ajoutée pour cette mesure.
+- `solver::solve_best_card` — le web (Regarder, Rejouer, `/analyse/jeu`, `agent_review`), qui
+  passe par le binding PyO3 `action_oracle_dd` et **n'utilise pas `OraclePlayer` du tout**.
+
+**Le défaut reste `order`.** Le gain est réel et mesuré, mais changer ce que l'Oracle joue et ce
+que l'analyse affiche est une décision produit — d'autant que l'Oracle du web est un outil
+pédagogique : lui faire jouer la carte la moins chère parmi des équivalentes le rend aussi plus
+*instructif*, ce qui est un argument de plus, mais pas un argument de vitesse.
+
+**Réplication** :
+```bash
+cargo build --release --features parallel --bin arena
+scripts/analysis/dd_tiebreak_arena.sh 400 /tmp/tiebreak_arena.csv   # ~25 min
+python3 scripts/analysis/dd_tiebreak_report.py /tmp/tiebreak_arena.csv
+```
+Les bots `tb_*` et `opp_*` sont des sondes : enchère identique partout, `--no-save` dans le
+script, donc rien n'entre dans `matches.csv`.

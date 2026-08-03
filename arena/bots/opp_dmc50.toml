@@ -1,0 +1,8 @@
+# Adversaire fort mais imparfait. Même enchère que les bots "tb_*".
+[bid]
+strategy = "improved_v2"
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true

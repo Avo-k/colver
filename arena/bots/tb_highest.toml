@@ -1,0 +1,8 @@
+# Oracle DD, départage des ex aequo = "highest". Enchère volontairement simple et identique
+# aux quatre autres variantes : seule la carte choisie parmi les DD-équivalentes diffère.
+[bid]
+strategy = "improved_v2"
+
+[play]
+method = "oracle_dd"
+tiebreak = "highest"
