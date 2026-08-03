@@ -1013,3 +1013,45 @@ chiffres étaient dans le même document depuis le début, l'un sous l'autre, av
 explicite de ne pas les confondre — et la conclusion a quand même été généralisée d'un cran de
 trop. **Avant de classer une piste comme fermée, vérifier de quelle quantité parle la mesure qui
 l'a fermée.**
+
+---
+
+## 9. La forme du gain : concentré sur les positions dures, et **pas universel**
+
+Un total ne dit pas si un changement a aidé partout ou seulement là où c'était dur. `bench_dd
+run --dump <fichier>` écrit les nœuds position par position ; voici la même mesure lue comme une
+distribution (1 thread, minimum sur 3, pile complète contre tout éteint).
+
+| donne complète | n | nœuds/pos avant | après | ratio | part des nœuds |
+|---|---:|---:|---:|---:|---:|
+| 10 % les plus durs | 80 | 6 182 538 | 4 739 425 | **0,767** | 42,7 % |
+| 15 % suivants | 120 | 2 193 100 | 1 788 214 | 0,815 | 22,7 % |
+| 50 % du milieu | 400 | 885 500 | 736 782 | 0,832 | 30,6 % |
+| 25 % les plus faciles | 200 | 232 306 | 212 647 | 0,915 | 4,0 % |
+
+| mondes IS-DD | n | nœuds/pos avant | après | ratio | part des nœuds |
+|---|---:|---:|---:|---:|---:|
+| 10 % les plus durs | 72 | 395 827 | 343 678 | **0,868** | 70,9 % |
+| 15 % suivants | 108 | 84 042 | 74 340 | 0,885 | 22,6 % |
+| 50 % du milieu | 360 | 7 315 | 6 918 | 0,946 | 6,5 % |
+| 25 % les plus faciles | 180 | 64 | 65 | 1,008 | 0,0 % |
+
+Le gradient va dans le bon sens — plus la position est dure, plus le gain est grand — ce qui est
+exactement ce qu'on veut puisque **la queue porte le temps**. Mais deux nuances comptent.
+
+**C'est un gain net, pas un gain universel.** Sur donne complète, **19 % des positions sont plus
+lentes après** (surcoût médian 1,11×, pire cas **4,94×**) ; sur les mondes, 24 %. L'IID et la
+fenêtre sont des heuristiques : elles paient un regard qui se trompe parfois, et une fenêtre qui
+rate. Le change reste très favorable — **10,1 nœuds gagnés pour 1 perdu** sur donne complète,
+5,6 pour 1 sur les mondes — mais la bonne façon de lire ce gain est *par lot*, pas *par coup*.
+
+**Conséquence pratique** : pour un chemin à échéance par coup (le web, `agent_review`), une
+position donnée a environ une chance sur cinq d'être plus lente qu'avant. Le risque reste faible
+en pratique parce que `mid` et `end` — là où vivent `/analyse/jeu` et `agent_review` — sont
+quasiment intacts (la garde `IID_MIN_CARDS` les exclut), et que les donnes complètes du web
+(l'Oracle des Annonces) sont diluées sur 200 simulations.
+
+**Et sur les mondes, la médiane est à 1,00** : une position sur deux ne bouge pas du tout. Le
+0,877× vient entièrement de la queue, qui porte 71 % des nœuds. C'est cohérent avec tout le
+reste de ce document, et c'est la raison pour laquelle l'agrégat et la médiane racontent ici
+deux histoires différentes.
