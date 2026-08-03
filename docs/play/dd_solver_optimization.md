@@ -8,6 +8,26 @@ qu'on rouvrira dans six mois.
 Référence courante du solveur : [dd_solver.md](dd_solver.md). Ici, c'est l'historique du
 raisonnement.
 
+## Bilan
+
+| | avant | livré | |
+|---|---:|---:|---:|
+| `solve_with_scores`, donne complète | 1 448 045 nœuds | 1 163 727 | **0,804×** |
+| `solve_with_scores`, mondes IS-DD | 55 862 | 48 994 | **0,877×** |
+| `solve_with_scores`, mi-donne / finale | 9 061 / 89 | 8 707 / 88 | 0,961× / 0,989× |
+| **au chronomètre** (10 tours entrelacés, 10/10) | 4,89 s | 3,94 s | **0,806×** |
+| **`gen_pool`, vrai binaire** | 33,2 s | 22,8 s | **0,686×** |
+
+Deux changements le portent : une **recherche courte au sommet** pour choisir le premier coup
+(§6) et une **fenêtre entre cartes racine** dans `solve_with_scores` (§8). Aucune valeur DD ne
+bouge — 11 527 valeurs par carte, 0 écart, et 392 tests.
+
+**Et le reste de ce document est surtout une liste de choses qui ne marchent pas**, chacune avec
+son chiffre : agrandir la TT (§2.1, §2.1bis), MTD(f) (§2.2), l'amorçage entre mondes (§2.3,
+§2.3bis), un `apply_play` allégé (§2.4), `-C target-cpu=native` (§2.5), quatre raffinements
+écrits à la main de l'ordre statique (§6), un calendrier de profondeur (§6), l'ordre racine par
+regard (§8), et toute fonction d'évaluation (§7). C'est le contenu principal, pas l'annexe.
+
 ---
 
 ## 0. Le point de départ, et pourquoi il fallait d'abord mesurer
@@ -123,6 +143,21 @@ dérivation est maintenant assertée.
   `card_analysis.py` l'éclate sur un pool de threads et que le commentaire voisin affirme « le
   solveur relâche le GIL ». C'est vrai de `solve_all_suits`, pas de celui-là : le fan-out de
   `/analyse/jeu` était **sérialisé**, 200 à 500 solves à la file.
+
+### 1.5 IID d'ordonnancement au sommet → **§6**
+
+Une recherche courte choisit le premier coup à essayer près de la racine. Vient en droite ligne
+des mesures du §5. Détail, garde, constantes et réplication au **§6**.
+
+### 1.6 Fenêtre entre cartes racine → **§8**
+
+`solve_with_scores` donnait à chaque carte une fenêtre pleine alors que la précédente venait de
+dire, à quatre points près, où était la réponse. **C'est la seule optimisation qui morde
+franchement sur les mondes IS-DD**, donc sur les ~2 800 core-h d'une couche de scores. Détail au
+**§8**.
+
+**Les deux ensemble : 0,805× au chronomètre**, 0,804× en nœuds sur donne complète et 0,877× sur
+les mondes.
 
 ### 1.4 Le harnais — `bench_dd`, et la discipline de mesure
 
@@ -558,16 +593,21 @@ les micro-optimisations, elles, sont épuisées.
 
 **Et l'oracle a été exécuté : la queue est bien un échec d'ordonnancement.** §5.
 
-Pistes, par rapport gain/risque décroissant :
+**Les trois familles sont désormais bornées, et une seule a rendu quelque chose.** Le tableau
+qui résume la campagne :
 
-1. **Une règle d'ordonnancement qui sache jouer.** C'est désormais la seule piste avec un
-   plafond mesuré, et il est haut : **6× sur une donne complète, ~8× sur le décile le plus
-   dur** (§5). C'est aussi la seule qui demande de la connaissance du jeu plutôt que du
-   micro-réglage.
-2. **Bornes plus fines.** La borne haute actuelle (`points + tout le reste + dix de der`) est
-   très lâche. Toute borne plus serrée doit être **saine** — c'est exactement là que
-   `quick_tricks` s'est planté, et la porte `diff` est là pour ça. À border par un oracle
-   avant d'écrire quoi que ce soit, comme les deux autres.
+| famille | plafond mesuré | issue |
+|---|---:|---|
+| amorçage **entre mondes** (§2.3bis) | 2,0× avec un seed **exact** | fermée — il faudrait 98,4 % de justesse à ±40 |
+| amorçage **entre cartes racine** (§8) | — | **pris : 0,904× de plus, et 0,914× sur les mondes** |
+| ordonnancement des coups (§5) | **6,0×**, ~8× sur la queue | **partiellement pris : l'IID (§6)** |
+| bornes / évaluation (§7) | 1,09× avec une évaluation **parfaite** | fermée |
+
+**Total livré : 0,805× au chronomètre sur `solve_with_scores`, 0,728× sur le vrai `gen_pool`.**
+
+Ce qui reste vient donc entièrement de la deuxième ligne, et la suite est au §6 « ce qui reste
+sur la table » : un horizon moins naïf, une fenêtre plus large payée moins cher. Pas de règle de
+contrée à écrire — §5 a montré que les échecs d'ordre sont entre cartes de même nature.
 
 Et **trois pistes qui figuraient ici et n'y sont plus** :
 
@@ -676,3 +716,300 @@ qu'à l'intérieur d'un couple (donne, atout) — `position_hash` dérive les ma
 et ne clé pas sur l'atout. `cmd_ordering` la vide entre deux positions ; ne pas le faire
 fabriquerait un oracle qui connaît une autre partie. Porte d'exactitude intégrée : les trois
 passes doivent rendre la même valeur, l'ordre ne change jamais la réponse.
+
+---
+
+## 6. L'IID d'ordonnancement — **implémenté**
+
+Le premier gain livré de la campagne, et il tombe directement du §5.
+
+**Le raisonnement, en trois mesures.** L'oracle dit qu'un ordre parfait vaut 6× (§5). La table
+de confusion dit qu'aucune règle statique ne l'atteindra : ~70 % des échecs ont le bon coup et
+le coup essayé **dans la même catégorie** — la plus grosse cellule est defausse→defausse, 27 %
+tôt et 50 % tard. Et les quatre raffinements écrits à la main du score statique le confirment :
+0,991× à 1,030×, autrement dit rien. La raison est structurelle — le score statique n'est
+consulté **qu'après** le coup de TT et les coups tueurs, qui portent déjà 38,3 % et 15,1 % : il
+ne lui reste presque pas de levier.
+
+La troisième mesure dit où aller. En restreignant l'indice parfait à une fenêtre de profondeur :
+
+| donne complète | racine seule | + ses enfants | 1ᵉʳ pli | 2 plis | 4 plis |
+|---|---:|---:|---:|---:|---:|
+| fraction restante | **0,705** | 0,635 | 0,541 | 0,388 | 0,269 |
+
+**Ordonner la racine seule vaut 1,42×.** Un nœud, une décision. Ce qui sépare deux cartes de
+même nature, ce n'est pas une règle, c'est **regarder** — donc au sommet, quand la table n'a
+rien à proposer, on lance une recherche courte et on prend sa réponse comme premier coup.
+
+### Pourquoi ce n'est pas un second `quick_tricks`
+
+**La valeur de la recherche courte ne sort jamais de l'ordonnancement.** À l'horizon elle rend
+les points déjà ramassés et s'arrête — aucune estimation du reste, aucune affirmation sur
+l'avenir. `quick_tricks` était un défaut pour la raison inverse : son approximation atteignait
+une **valeur rendue**. Un ordre peut être arbitrairement mauvais et ne coûter que du temps.
+C'est la porte `diff` qui prouve que la distinction a tenu, et elle a tenu à chaque variante.
+
+### Ce que ça donne
+
+| forme | avant | après | |
+|---|---:|---:|---:|
+| full | 1 448 045 | 1 287 334 | **0,889×** |
+| worlds | 55 862 | 53 609 | **0,960×** |
+| mid | 9 061 | 9 061 | 1,000× |
+| end | 89 | 89 | 1,000× |
+| **ALL** | **566 953** | **505 542** | **0,892×** |
+
+Au chronomètre, A/B **entrelacé** a 8 threads, minimum sur 8 tours : **0,913×** (reference
+6,77-7,07 s, IID 6,18-6,53 s).
+
+Deux details valent la moitie du gain. Le regard rend une valeur pour **chaque** coup de la
+position, pas seulement pour le meilleur ; la premiere version n'en gardait qu'un et jetait le
+reste, alors que classer les huit ne coute qu'un tri (0,895 -> 0,892). Et l'horizon **credite le
+pli en cours** a qui le prend : sans ca un regard de 6 plis s'arrete au milieu d'un pli et note
+pareil la ligne qui vient d'emporter 20 points et celle qui les a donnes (0,919 -> 0,904 a 4
+plis de regard).
+
+### La garde n'est pas un réglage, c'est la différence entre un gain et un désastre
+
+Sans la garde sur les cartes restantes, mesuré : les **finales deviennent 3,8× plus lentes** et
+la mi-donne 1,56×. Sur une position qui explore 89 nœuds, un regard à 6 plis est plus gros que
+la recherche entière qu'il prétend aider. Seules les donnes complètes ont un arbre assez
+profond pour rembourser — et ce sont elles qui portent les nœuds, donc la garde ne coûte rien
+et supprime toute régression. **C'est le corpus à quatre formes qui a attrapé ça** : une
+mesure agrégée aurait montré 0,902× et caché un facteur 3,8 sur les positions exactes où
+`/analyse/jeu` et `agent_review` passent leur temps.
+
+### Deux leçons de méthode, tirées du réglage lui-même
+
+**1. Le compte de nœuds cesse d'être un bon substitut du temps dès qu'on change la *nature* des
+nœuds.** Une variante plus profonde et plus large (8/8 avec calendrier décroissant) fait **1,3
+point de moins en nœuds totaux** — surcharge comprise, facturée au prix fort — et pourtant elle
+**égalise au chronomètre** (0,917× contre 0,913×). Un nœud de regard n'est pas interchangeable
+avec un nœud de recherche. La règle du dépôt « les nœuds d'abord » vaut pour comparer deux
+recherches de même nature ; ici il a fallu trancher au chrono.
+
+**2. L'agrégat du corpus aurait choisi les mauvaises constantes.** Il est dominé par les donnes
+complètes (1 158 M nœuds sur 1 202 M), alors que les heures DD réelles du projet sont surtout
+dans les **mondes** (~2 800 core-h pour une couche de scores contre ~180 pour `gen_pool`).
+Optimiser le total désigne 8/8/calendrier et une garde à 28 — deux choix qui **abandonnent tout
+le gain sur les mondes** :
+
+| config | full | worlds | mid | end |
+|---|---:|---:|---:|---:|
+| 8/8/calendrier, garde 28 | 0,869 | **1,000** | 1,00 | 1,00 |
+| 8/8/calendrier, garde 24 | 0,880 | 0,969 | 1,00 | 1,00 |
+| **6/4/plat, garde 24** | 0,889 | **0,960** | 1,00 | 1,00 |
+| 8/8/calendrier, garde 22 | 0,880 | 0,968 | **1,07** | 1,00 |
+
+**Toujours choisir par forme, jamais sur le total** — et la garde à 22, qui semble gagner sur
+les mondes, fait régresser la mi-donne de 7 %, c'est-à-dire le chemin d'analyse du web.
+
+### Les constantes, et leur plateau
+
+`IID_DEPTH = 6`, `IID_TOP = 4`, `IID_MIN_CARDS = 24`, `IID_EVAL = 1`, `IID_SCHED = 0`. Chacune
+est au milieu d'un plateau, pas sur une pointe — c'est ce qui les rend sûres :
+
+| profondeur | 4 | 5 | **6** | 7 | 8 | 9 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,919 | 0,911 | **0,898** | 0,897 | 0,910 | 0,938 |
+
+| fenêtre | 3 | **4** | 5 | 6 | 8 | 12 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,928 | **0,902** | 0,909 | 0,935 | 1,085 | 2,312 |
+
+| cartes min | 30 | 28 | 26 | **24** | 20 | 0 |
+|---|---:|---:|---:|---:|---:|---:|
+| nœuds | 0,927 | 0,899 | 0,899 | **0,898** | 0,899 | 0,902 |
+
+La fenêtre est le paramètre dangereux : à 12 plis l'IID coûte **2,3× plus qu'il ne rapporte**.
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats solver_ablation" --bin bench_dd
+COLVER_DD_IID_DEPTH=0 ./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 32 --values off.vals              # l'éteindre
+./target/release/bench_dd run --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 32 --values on.vals               # le défaut
+./target/release/bench_dd diff --a off.vals --b on.vals    # doit dire EXACT MATCH
+```
+
+### Validé sur le vrai binaire — et le gain dépend du point d'entrée
+
+Le corpus est un substitut. `gen_pool`, lui, est la charge réelle : 10 000 donnes, 5 tours
+**entrelacés**, minimum — **46,7 s → 34,0 s, soit 0,728×**, et les cinq tours vont tous dans le
+même sens. C'est nettement plus que ce que le corpus annonçait, et la raison est structurelle :
+
+| unité | full | worlds | mid | end |
+|---|---:|---:|---:|---:|
+| `solve_for_trump` — un solve racine (`gen_pool`) | **0,743** | 0,811 | 0,930 | 1,000 |
+| `solve_with_scores` — le tableau par carte (IS-DD) | 0,889 | 0,960 | 1,000 | 1,000 |
+
+**`solve_with_scores` donne à chaque coup racine une fenêtre pleine `[0, 252]`.** Les frères ne
+partagent donc rien, et le levier d'un bon coup racine se dilue sur huit sous-recherches
+indépendantes. Un solve unique, lui, profite entièrement de la fenêtre serrée qu'établit le
+premier coup s'il est le bon. C'est la même asymétrie que mesure la fenêtre de profondeur du
+§5 — et elle veut dire qu'**annoncer un seul chiffre pour « le gain de l'IID » serait faux** :
+`gen_pool` gagne 1,35×, une couche de scores IS-DD 1,12×.
+
+### Ce qui reste sur la table
+
+Le plafond de l'ordonnancement peut se recompter maintenant que l'IID est en place, et le calcul
+porte son propre contrôle : **l'arbre parfaitement ordonné ne dépend pas du chemin par lequel on
+y arrive**. Avant l'IID, 722 051 × 0,214 = **154 519** nœuds ; après, 536 250 × 0,285 =
+**152 831**. Les deux plancher s'accordent, ce qui valide la construction de l'oracle.
+
+| | avant IID | avec IID | plancher | pris | reste |
+|---|---:|---:|---:|---:|---:|
+| full | 722 051 | 536 250 | ~153 000 | **33 %** | **3,5×** |
+| worlds | 30 676 | 24 883 | ~7 300 | **25 %** | **3,4×** |
+
+**L'IID a pris le tiers facile ; il reste un facteur 3,5.** Et §5 dit exactement pourquoi c'est
+dur : le reste est de la discrimination *à l'intérieur d'une catégorie*, profond dans l'arbre,
+là où un regard ne peut plus être payé. Le plafond du §5 était 6× ; l'IID en prend **1,35×**. Il ne touche que la racine et ses trois
+plis, avec un regard qui ne voit qu'un pli et demi. Les pistes suivantes, dans l'ordre :
+
+1. **Un regard qui voit plus loin sans coûter plus cher.** L'horizon actuel rend les points
+   ramassés, ce qui est le signal le plus pauvre possible. Une évaluation d'horizon un peu
+   moins naïve permettrait d'aller moins profond pour la même qualité d'ordre — et la courbe
+   dit que la profondeur est chère (0,938× à 9 plis).
+2. **Étendre la fenêtre en la payant moins.** À 8 plis de fenêtre le coût explose (1,085×)
+   parce que l'IID tourne à chaque nœud. Ne le lancer qu'aux nœuds dont le sous-arbre s'annonce
+   gros — qu'il faudrait savoir prédire, ce qui est la même question un cran plus loin.
+3. **Un réseau de politique au sommet reste hors de portée**, et le calcul est simple : un
+   solve de donne complète coûte ~15,9 ms, la racine parfaite en rend 4,7 ms, et DouDou50 coûte
+   ~1 ms par évaluation — mais il faudrait qu'il corrige une bonne part des **15,3 %** de
+   racines que l'ordre actuel rate déjà, alors qu'il prédit du bon jeu à information
+   incomplète, pas le coup DD. L'IID fait le même travail pour ~0,3 % du budget de nœuds.
+
+---
+
+## 7. Le troisième oracle — les bornes, **et la famille est fermée aussi**
+
+La borne haute du solveur suppose que N-S ramasse **tout ce qui reste dans la donne**, la basse
+qu'il ne ramasse plus rien. C'est aussi lâche qu'une borne peut l'être, et §4 en faisait la
+dernière grande piste ouverte. C'est aussi exactement ce que `quick_tricks` tentait de resserrer
+avant de rendre des valeurs fausses — raison de plus pour borner la question avant que
+quelqu'un ne recommence.
+
+Même construction qu'au §2.3bis et au §5. Une passe enregistre la vraie valeur de chaque nœud
+que la recherche a résolu **exactement**, une seconde s'en sert comme borne à ± slack près.
+Slack 0 = l'évaluation parfaite.
+
+| forme | nœuds/pos | ±0 | ±2 | ±5 | ±10 | ±20 | ±40 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| full | 554 108 | **0,917** | 0,915 | 0,937 | 0,966 | 0,996 | 0,995 |
+| mid | 5 204 | 0,941 | 0,941 | 0,950 | 0,993 | 0,985 | 0,988 |
+| end | 62 | 0,962 | 0,971 | 0,971 | 0,982 | 0,981 | 1,000 |
+| worlds | 26 576 | 0,915 | 0,907 | 0,923 | 0,952 | 0,977 | 0,995 |
+
+**Une évaluation parfaite ne rend que 8,3 %.** À ±10 il reste 3,4 %, à ±20 plus rien. Aucune
+fonction d'évaluation, si bonne et si gratuite soit-elle, ne vaut la peine d'être écrite ici.
+
+**Pourquoi.** L'alpha-bêta a déjà resserré la fenêtre quand on arrive au nœud. La borne grossière
+ne se déclenche que dans les cas extrêmes — là où le camp mène déjà tellement que même « il
+prend tout le reste » ne suffit pas — et resserrer une borne qui ne coupait presque jamais ne
+coupe presque jamais plus.
+
+### La porte a d'abord attrapé une vraie erreur, et elle est instructive
+
+Le premier montage stockait la valeur **absolue** du nœud, et a échoué `EXACT MATCH` dès la
+première position. Cause : `position_hash` porte `played_cards`, qui est un **ensemble** — deux
+positions ayant les mêmes cartes jouées mais un partage de plis différent se retrouvent sur le
+même hachage, et **seul l'avenir leur est commun**. C'est précisément pour ça que la TT stocke
+un `future_score` relatif à `ns_base` et non un score absolu.
+
+Ce détail passait pour du style. C'est un invariant, et une carte auxiliaire indexée sur le même
+hachage doit le respecter. La leçon générale : **toute structure clée sur `position_hash` ne
+peut porter que des quantités relatives aux points déjà faits.**
+
+**Réplication** :
+```bash
+cargo build --release --features "parallel solver_stats solver_oracle" --bin bench_dd
+./target/release/bench_dd bounds --corpus data/analysis/dd_corpus_v1.bin \
+    --threads 8 --deltas 0,2,5,10,20,40
+```
+
+---
+
+## 8. La fenêtre entre cartes racine — **le seul amorçage qui paie**, et il paie où sont les heures
+
+§2.3bis avait fermé la famille des amorçages de fenêtre. Elle reste fermée, et pourtant celui-ci
+marche : parce que ce n'est pas la même quantité qu'on amorce.
+
+**§2.3 le disait déjà, en note d'avertissement.** L'écart qui avait tué l'amorçage était celui
+**entre mondes échantillonnés** d'une même main — 36 % s'écartent de plus de 40 points. L'écart
+**entre cartes racine d'une même position** est une autre quantité, et il est petit : **médiane
+4 points, 63,5 % des décisions dans une bande de 10**. Cette note était là depuis le début ; ce
+qui manquait, c'était de remarquer qu'un endroit du code jetait exactement cette information.
+
+Car `solve_with_scores` donnait à **chaque** carte racine une fenêtre pleine `[0, 252]` — c'est
+ce que le §6 a fini par identifier comme la raison pour laquelle l'IID y rend moins que sur un
+solve unique. Chaque carte repart de zéro alors que la précédente vient de dire, à quatre points
+près, où se situe la réponse.
+
+La carte *i* est donc cherchée dans `[v(i-1) − 8, v(i-1) + 8]`, et **re-cherchée en fenêtre
+pleine si le résultat sort de la fenêtre** — fail-soft : dedans c'est une valeur, dehors c'est
+une borne. Prendre la borne pour la valeur est précisément le défaut de `quick_tricks` ; la
+re-recherche est le prix de ne pas le commettre, et la porte `diff` prouve qu'il a été payé.
+
+### Ce que ça donne
+
+| forme | avant campagne | + IID (§6) | + fenêtre | total |
+|---|---:|---:|---:|---:|
+| full | 1 448 045 | 1 287 334 | **1 163 727** | **0,804×** |
+| worlds | 55 862 | 53 609 | **48 994** | **0,877×** |
+| mid | 9 061 | 9 061 | 8 707 | 0,961× |
+| end | 89 | 89 | 88 | 0,989× |
+
+Au chronomètre, trois configurations **entrelacées** à 8 threads, minimum sur 8 tours :
+**rien 4,97 s → IID 4,65 s (0,936×) → IID + fenêtre 4,00 s (0,805×)**. La dispersion par tour
+est de 3 %, la plus propre de la campagne.
+
+**C'est la seule optimisation qui aide `worlds` franchement** (0,877×), donc la seule qui morde
+vraiment sur les ~2 800 core-h d'une couche de scores IS-DD. La largeur 8 est au fond d'un bassin
+plat (0,905× contre 0,910-0,912 de 5 à 10, 0,954× à ±20) — élargir et la fenêtre cesse d'élaguer,
+resserrer et chaque carte paie une re-recherche.
+
+### Deux essais adjacents, tous deux rejetés — et par des portes différentes
+
+**Ordonner aussi les cartes racine par le regard.** La fenêtre s'amorce sur la carte
+précédente, donc l'ordre décide de son taux de réussite : un bon ordre groupe les cartes de
+valeur voisine. Mesuré : **1,1 % de nœuds en moins et 3,1 % de temps en plus**, les 8 tours
+entrelacés d'accord. `ROOT_IID = false`, gardé derrière l'interrupteur parce que la mesure vaut
+mieux que le code effacé. **Troisième fois de la campagne que le compte de nœuds pointe à
+l'envers** — il est exact, mais il cesse d'être un substitut fidèle du temps dès qu'un
+changement modifie la *nature* des nœuds.
+
+**Et sa première version était fausse, pas seulement lente.** Elle rangeait l'ensemble
+**réduit** — un représentant par classe d'équivalence — alors que `solve_with_scores` doit une
+valeur à **chaque carte légale**. Elle en laissait donc tomber, et paraissait 3 % plus rapide
+pour cette raison exacte. C'est le même piège que `legal_actions_reduced` dans `/analyse/jeu`,
+et seule la porte `diff` l'a vu. `shallow_rank_moves` prend désormais l'ensemble à ranger en
+argument, avec le contrat écrit à côté.
+
+### Une fragilité mise au jour, et laissée telle quelle — c'est une décision produit
+
+En réordonnant la racine, `solve_with_scores` et `solve_best_card` ont cessé de désigner la même
+carte. Aucune des deux n'avait tort : **57,8 % des positions du corpus ont plusieurs cartes
+DD-optimales** (2 optimales : 27 %, 3 : 12 %, jusqu'à toutes les 8). Laquelle est rendue dépend
+donc de l'ordre dans lequel la boucle racine les visite — c'est-à-dire d'un détail interne de la
+recherche.
+
+Départager par **indice de carte le plus bas** règle le problème définitivement et rend la
+« meilleure carte » fonction de la position. Ça a été écrit, mesuré, puis **retiré** : ça
+changerait la carte annoncée sur ces 57,8 %, donc dans `OraclePlayer`, dans `/analyse/jeu` et
+dans Rejouer. Toutes ces cartes sont DD-équivalentes, mais contre un adversaire imparfait elles
+ne se valent pas forcément — **c'est un arbitrage produit, pas une optimisation**, et il n'a
+rien à faire dans un changement de vitesse.
+
+Ce qui tient l'invariant en attendant : `test_solve_with_scores_consistent_with_best_card`,
+qui n'est pas décoratif — c'est lui qui a attrapé la divergence.
+
+### La leçon, qui vaut au-delà d'ici
+
+Une famille fermée l'est **pour la quantité mesurée**, pas pour son nom. « L'amorçage de fenêtre
+ne marche pas » était vrai de l'écart entre mondes et faux de l'écart entre cartes. Les deux
+chiffres étaient dans le même document depuis le début, l'un sous l'autre, avec un avertissement
+explicite de ne pas les confondre — et la conclusion a quand même été généralisée d'un cran de
+trop. **Avant de classer une piste comme fermée, vérifier de quelle quantité parle la mesure qui
+l'a fermée.**

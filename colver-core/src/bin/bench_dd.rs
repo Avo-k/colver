@@ -386,10 +386,13 @@ fn build_worlds(
 fn solve_one(p: &Position, tt: &mut solver::TtBuf) -> (Vals, u64, f64) {
     let st = p.rebuild().expect("corpus position must rebuild");
     let _ = solver::take_nodes();
+    let _ = solver::take_shallow_nodes();
     let t = Instant::now();
     let sc = solver::solve_with_scores(&st, Some(tt));
     let us = t.elapsed().as_secs_f64() * 1e6;
-    let nodes = solver::take_nodes();
+    // Charged at full price: the ordering lookahead is real work, and a metric that omits it
+    // would show IID winning by not counting what it costs.
+    let nodes = solver::take_nodes() + solver::take_shallow_nodes();
     let mut v: Vals = sc.scores[..sc.count].to_vec();
     v.sort_unstable();
     (v, nodes, us)
@@ -675,7 +678,11 @@ fn cmd_oracle(args: &Args, deltas: &[i16]) -> io::Result<()> {
 /// The tail split is the actual deliverable. If the hardest decile improves by the same ratio
 /// as the median, its trees are big because the positions are hard, and the whole line dies.
 /// If it improves far more, the hypothesis holds and the ceiling says by how much.
-fn cmd_ordering(args: &Args) -> io::Result<()> {
+/// Ply windows for the depth sweep: the first trick, the first two, the first four, then the
+/// complement of each so the two halves can be checked for additivity.
+const PLY_CUTS: &[(u8, u8)] = &[(0, 1), (0, 2), (0, 4), (0, 8), (0, 16), (1, 32), (4, 32)];
+
+fn cmd_ordering(args: &Args, rates: &[f64]) -> io::Result<()> {
     let positions = read_corpus(&args.corpus)?;
     if !solver::stats_enabled() || !solver::oracle_enabled() {
         eprintln!(
@@ -687,19 +694,40 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
     eprintln!("corpus: {} positions from {}", positions.len(), args.corpus);
     eprintln!("note: the map is per-thread and unbounded; a hard full deal can hold ~3 M entries\n");
 
-    // (n0, n1, n2, recorded) per position.
-    let solve_one_pos = |p: &Position| -> (u64, u64, u64, usize) {
+    // (n0, n1, n2, recorded, ranks, nodes-at-each-coverage) per position.
+    struct Row {
+        n0: u64,
+        n1: u64,
+        n2: u64,
+        recorded: usize,
+        ranks: [u64; 9],
+        cov: Vec<u64>,
+        depth: Vec<u64>,
+        conf: [[[u64; 8]; 8]; 2],
+    }
+    let solve_one_pos = |p: &Position| -> Row {
         let st = p.rebuild().expect("corpus position must rebuild");
         let mut tt = solver::new_tt_buffer();
+        solver::oracle_set_root_ply(&st);
 
         // The map is keyed per (deal, trump) — carrying it over would feed one position's
         // moves to another and silently invent an oracle that knows the wrong game.
         solver::oracle_clear();
+        solver::oracle_set_hint_rate(1.0);
 
         solver::oracle_set_mode(solver::ORACLE_RECORD);
         let _ = solver::take_nodes();
+        let _ = solver::oracle_take_ranks();
+        // Both accumulators are thread-local and the positions run on rayon workers, so they
+        // have to be drained here — draining them after the join would read an empty main
+        // thread and report a confident zero.
+        let _ = solver::oracle_take_confusion();
         let v0 = solver::solve_reuse_tt(&st, &mut tt);
         let n0 = solver::take_nodes();
+        // The ranks are taken from THIS pass: it is the production search, unhinted, so the
+        // histogram describes today's ordering rather than the oracle's.
+        let ranks = solver::oracle_take_ranks();
+        let conf = solver::oracle_take_confusion();
         let recorded = solver::oracle_len();
 
         solver::oracle_set_mode(solver::ORACLE_USE_RECORD);
@@ -710,17 +738,43 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
         let _ = solver::take_nodes();
         let v2 = solver::solve_reuse_tt(&st, &mut tt);
         let n2 = solver::take_nodes();
+
+        // Coverage sweep, off the map recorded above. USE only — recording here would let a
+        // low-coverage pass enrich the map and flatter the next one.
+        solver::oracle_set_mode(solver::ORACLE_USE);
+        let mut cov = Vec::with_capacity(rates.len());
+        for &r in rates {
+            solver::oracle_set_hint_rate(r);
+            let _ = solver::take_nodes();
+            let vr = solver::solve_reuse_tt(&st, &mut tt);
+            cov.push(solver::take_nodes());
+            assert_eq!(v0, vr, "partial-coverage ordering changed the answer");
+        }
+        solver::oracle_set_hint_rate(1.0);
+
+        // Depth sweep: the hint only in the first k plies, then only *after* them. If almost
+        // all of the gain sits in the first tricks, a predictor far too slow for a 22 ns node
+        // could still be run there and pay for itself.
+        let mut depth = Vec::with_capacity(PLY_CUTS.len() * 2);
+        for &(lo, hi) in PLY_CUTS {
+            solver::oracle_set_ply_window(lo, hi);
+            let _ = solver::take_nodes();
+            let vd = solver::solve_reuse_tt(&st, &mut tt);
+            depth.push(solver::take_nodes());
+            assert_eq!(v0, vd, "depth-windowed ordering changed the answer");
+        }
+        solver::oracle_set_ply_window(0, 32);
         solver::oracle_set_mode(solver::ORACLE_OFF);
 
         // Ordering changes the shape of the search, never its result. If this fires, the
         // hint is being applied to a position it does not describe.
         assert_eq!(v0, v1, "oracle ordering changed the answer");
         assert_eq!(v0, v2, "iterated oracle ordering changed the answer");
-        (n0, n1, n2, recorded)
+        Row { n0, n1, n2, recorded, ranks, cov, depth, conf }
     };
 
     let t0 = Instant::now();
-    let res: Vec<(u64, u64, u64, usize)> = if args.threads == 1 {
+    let res: Vec<Row> = if args.threads == 1 {
         positions.iter().map(solve_one_pos).collect()
     } else {
         #[cfg(feature = "parallel")]
@@ -750,10 +804,10 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
         if idx.is_empty() {
             continue;
         }
-        let s0: u64 = idx.iter().map(|&i| res[i].0).sum();
-        let s1: u64 = idx.iter().map(|&i| res[i].1).sum();
-        let s2: u64 = idx.iter().map(|&i| res[i].2).sum();
-        let rec: usize = idx.iter().map(|&i| res[i].3).sum();
+        let s0: u64 = idx.iter().map(|&i| res[i].n0).sum();
+        let s1: u64 = idx.iter().map(|&i| res[i].n1).sum();
+        let s2: u64 = idx.iter().map(|&i| res[i].n2).sum();
+        let rec: usize = idx.iter().map(|&i| res[i].recorded).sum();
         println!(
             "{:>8} {:>7} {:>13.0} {:>11.0} {:>10.3} {:>10.3}",
             shape.name(),
@@ -774,8 +828,8 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
         if idx.len() < 20 {
             continue;
         }
-        idx.sort_by_key(|&i| std::cmp::Reverse(res[i].0));
-        let total: u64 = idx.iter().map(|&i| res[i].0).sum();
+        idx.sort_by_key(|&i| std::cmp::Reverse(res[i].n0));
+        let total: u64 = idx.iter().map(|&i| res[i].n0).sum();
         let n = idx.len();
 
         println!("\n{} — by difficulty (baseline nodes), {} positions:", shape.name(), n);
@@ -794,9 +848,9 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
                 continue;
             }
             let part = &idx[lo..hi];
-            let s0: u64 = part.iter().map(|&i| res[i].0).sum();
-            let s1: u64 = part.iter().map(|&i| res[i].1).sum();
-            let s2: u64 = part.iter().map(|&i| res[i].2).sum();
+            let s0: u64 = part.iter().map(|&i| res[i].n0).sum();
+            let s1: u64 = part.iter().map(|&i| res[i].n1).sum();
+            let s2: u64 = part.iter().map(|&i| res[i].n2).sum();
             println!(
                 "{:>14} {:>7} {:>13.0} {:>13.1}% {:>10.3} {:>10.3}",
                 label,
@@ -809,10 +863,229 @@ fn cmd_ordering(args: &Args) -> io::Result<()> {
         }
     }
 
+    // Where today's ordering already stands. Rank 0 = the first move tried caused the cutoff.
+    // Caveat worth keeping in mind while reading it: at a cut node several moves may each be
+    // good enough, and only the one that fired is credited — so this understates the current
+    // ordering rather than flattering it.
+    // When today's ordering misses, what does it try instead of what? This is the only table
+    // here written in the vocabulary a Contrée-aware rule would use, so it is the one that
+    // says whether such a rule is writable at all.
+    let mut conf = [[[0u64; 8]; 8]; 2];
+    for r in &res {
+        for b in 0..2 {
+            for g in 0..8 {
+                for w in 0..8 {
+                    conf[b][g][w] += r.conf[b][g][w];
+                }
+            }
+        }
+    }
+    for (bi, label) in ["tricks 1-3", "tricks 4-8"].iter().enumerate() {
+        let total: u64 = conf[bi].iter().flatten().sum();
+        if total == 0 {
+            continue;
+        }
+        println!("\nordering failures, {label} — rows: tried first, cols: should have been");
+        print!("{:>12}", "");
+        for c in solver::MOVE_CATEGORIES {
+            print!("{:>11}", c);
+        }
+        println!("{:>9}", "row %");
+        for (gi, g) in solver::MOVE_CATEGORIES.iter().enumerate() {
+            let row: u64 = conf[bi][gi].iter().sum();
+            if row == 0 {
+                continue;
+            }
+            print!("{:>12}", g);
+            for wi in 0..8 {
+                let v = conf[bi][gi][wi];
+                if v == 0 {
+                    print!("{:>11}", "·");
+                } else {
+                    print!("{:>10.1}%", 100.0 * v as f64 / total as f64);
+                }
+            }
+            println!("{:>8.1}%", 100.0 * row as f64 / total as f64);
+        }
+        println!("  ({total} failures counted)");
+    }
+
+    println!("\nrank the eventual best move held in today's ordering:");
+    println!("{:>8} {:>10} {:>10} {:>10} {:>12}", "shape", "rank 0", "rank 1", "rank 2", "rank >=3");
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let mut h = [0u64; 9];
+        for &i in &idx {
+            for k in 0..9 {
+                h[k] += res[i].ranks[k];
+            }
+        }
+        let tot: u64 = h.iter().sum();
+        if tot == 0 {
+            continue;
+        }
+        let pc = |v: u64| 100.0 * v as f64 / tot as f64;
+        println!(
+            "{:>8} {:>9.1}% {:>9.1}% {:>9.1}% {:>11.1}%",
+            shape.name(),
+            pc(h[0]),
+            pc(h[1]),
+            pc(h[2]),
+            pc(h[3..].iter().sum::<u64>()),
+        );
+    }
+
+    // What partial coverage buys. This models a rule that fires on a fraction of nodes and is
+    // exactly right when it does, falling back to today's ordering elsewhere — so it is an
+    // upper bound for any partial rule, and the curve says what coverage is worth chasing.
+    if !rates.is_empty() {
+        println!("\nfraction of the baseline search surviving a rule that is right on p of nodes:");
+        print!("{:>8}", "shape");
+        for r in rates {
+            print!("{:>9.0}%", r * 100.0);
+        }
+        println!();
+        for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+            let idx: Vec<usize> = (0..positions.len())
+                .filter(|&i| positions[i].shape == shape)
+                .collect();
+            if idx.is_empty() {
+                continue;
+            }
+            let s0: u64 = idx.iter().map(|&i| res[i].n0).sum();
+            print!("{:>8}", shape.name());
+            for k in 0..rates.len() {
+                let s: u64 = idx.iter().map(|&i| res[i].cov[k]).sum();
+                print!("{:>10.3}", s as f64 / s0 as f64);
+            }
+            println!();
+        }
+    }
+
+    println!("\nfraction surviving when the perfect hint is restricted to a ply window:");
+    print!("{:>8}", "shape");
+    for (lo, hi) in PLY_CUTS {
+        print!("{:>12}", format!("[{lo},{hi})"));
+    }
+    println!();
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let s0: u64 = idx.iter().map(|&i| res[i].n0).sum();
+        print!("{:>8}", shape.name());
+        for k in 0..PLY_CUTS.len() {
+            let s: u64 = idx.iter().map(|&i| res[i].depth[k]).sum();
+            print!("{:>12.3}", s as f64 / s0 as f64);
+        }
+        println!();
+    }
+
     println!(
         "\n`oracle` / `iterated` are the fraction of the baseline search that survives perfect\n\
          ordering. A tail ratio no better than the median's means those trees are big because\n\
          the positions are hard, and a Contrée-aware ordering rule has nothing to recover."
+    );
+    Ok(())
+}
+
+// ------------------------------------------------------------------- bounds oracle
+//
+/// **Ceiling** on a heuristic evaluation, the third and last family the campaign left open.
+///
+/// The pruning bounds are as crude as they can be: the upper one assumes NS takes every point
+/// left in the deal, the lower one that it takes none. A cheap evaluation could tighten them —
+/// but `quick_tricks` was exactly such an attempt and it returned wrong values, so the question
+/// is worth bounding before anyone tries again.
+///
+/// Same construction as § 2.3bis and § 5: solve once recording the true value at every node the
+/// search resolved **exactly** (a cut node's score is a bound, not a value — seeding from one
+/// would be the unsoundness this harness exists to catch), then re-solve using `value ± slack`
+/// as the bound. Slack 0 is the perfect evaluation; larger slacks say how accurate a real one
+/// would have to be, and the answer is read against what an evaluation could plausibly reach.
+fn cmd_bounds(args: &Args, slacks: &[i16]) -> io::Result<()> {
+    let positions = read_corpus(&args.corpus)?;
+    if !solver::stats_enabled() || !solver::oracle_enabled() {
+        eprintln!("REFUSING: needs --features \"solver_stats solver_oracle\"");
+        std::process::exit(2);
+    }
+    eprintln!("corpus: {} positions | slacks {slacks:?}\n", positions.len());
+
+    let one = |p: &Position| -> (u64, Vec<u64>, Vals) {
+        let st = p.rebuild().expect("corpus position must rebuild");
+        let mut tt = solver::new_tt_buffer();
+        solver::oracle_clear();
+        solver::oracle_set_bound_slack(-1);
+
+        solver::oracle_set_mode(solver::ORACLE_RECORD);
+        let _ = solver::take_nodes();
+        let v0 = solver::solve_reuse_tt(&st, &mut tt);
+        let n0 = solver::take_nodes();
+        solver::oracle_set_mode(solver::ORACLE_OFF);
+
+        let mut out = Vec::with_capacity(slacks.len());
+        for &sl in slacks {
+            solver::oracle_set_bound_slack(sl);
+            let _ = solver::take_nodes();
+            let v = solver::solve_reuse_tt(&st, &mut tt);
+            out.push(solver::take_nodes());
+            // A bound that changes a value is not a faster solver, it is quick_tricks again.
+            assert_eq!(v0, v, "bound with slack {sl} changed the answer");
+        }
+        solver::oracle_set_bound_slack(-1);
+        (n0, out, vec![(0u8, v0[0] as i16)])
+    };
+
+    let res: Vec<(u64, Vec<u64>, Vals)> = if args.threads == 1 {
+        positions.iter().map(one).collect()
+    } else {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(args.threads)
+                .build()
+                .unwrap()
+                .install(|| positions.par_iter().map(one).collect())
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            positions.iter().map(one).collect()
+        }
+    };
+
+    println!("fraction of the search surviving a sound bound accurate to +/- N points:");
+    print!("{:>8} {:>13}", "shape", "nodes/pos");
+    for sl in slacks {
+        print!("{:>10}", format!("+/-{sl}"));
+    }
+    println!();
+    for shape in [Shape::Full, Shape::Mid, Shape::End, Shape::Worlds] {
+        let idx: Vec<usize> = (0..positions.len())
+            .filter(|&i| positions[i].shape == shape)
+            .collect();
+        if idx.is_empty() {
+            continue;
+        }
+        let s0: u64 = idx.iter().map(|&i| res[i].0).sum();
+        print!("{:>8} {:>13.0}", shape.name(), s0 as f64 / idx.len() as f64);
+        for k in 0..slacks.len() {
+            let s: u64 = idx.iter().map(|&i| res[i].1[k]).sum();
+            print!("{:>10.3}", s as f64 / s0 as f64);
+        }
+        println!();
+    }
+    println!(
+        "\nslack 0 is a perfect evaluation. Read the wider columns against what a cheap\n\
+         evaluation could actually reach on a 0-252 scale."
     );
     Ok(())
 }
@@ -999,6 +1272,7 @@ fn main() {
     let mut a = String::new();
     let mut b = String::new();
     let mut deltas: Vec<i16> = vec![1, 5, 20, 40];
+    let mut hint_rates: Vec<f64> = vec![0.25, 0.5, 0.75, 0.9];
 
     let mut i = 2;
     while i < argv.len() {
@@ -1024,6 +1298,9 @@ fn main() {
             "--a" => a = next(),
             "--b" => b = next(),
             "--deltas" => deltas = next().split(',').map(|s| s.parse().unwrap()).collect(),
+            "--hint-rates" => {
+                hint_rates = next().split(',').map(|s| s.parse().unwrap()).collect()
+            }
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -1074,9 +1351,13 @@ fn main() {
             let args = Args { corpus, values, json, threads, repeats, ab };
             cmd_oracle(&args, &deltas).expect("oracle");
         }
+        "bounds" => {
+            let args = Args { corpus, values, json, threads, repeats, ab };
+            cmd_bounds(&args, &deltas).expect("bounds");
+        }
         "ordering" => {
             let args = Args { corpus, values, json, threads, repeats, ab };
-            cmd_ordering(&args).expect("ordering");
+            cmd_ordering(&args, &hint_rates).expect("ordering");
         }
         "diff" => {
             if a.is_empty() || b.is_empty() {
@@ -1086,7 +1367,7 @@ fn main() {
             cmd_diff(&a, &b).expect("diff");
         }
         _ => {
-            eprintln!("usage: bench_dd build|run|oracle|ordering|diff  (see the module doc comment)");
+            eprintln!("usage: bench_dd build|run|oracle|ordering|bounds|diff  (see the module doc)");
             std::process::exit(2);
         }
     }

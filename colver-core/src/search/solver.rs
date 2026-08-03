@@ -1,6 +1,7 @@
 /// Alpha-beta double-dummy solver for Belote Contrée.
 ///
 /// Techniques (inspired by bridge DD solvers like DDS/GIB):
+/// - Internal iterative deepening near the root: a short lookahead picks the first move to try
 /// - Alpha-beta with fail-soft
 /// - Transposition table with relative (future) scores and hash move
 /// - Card equivalence pruning — only one representative per equivalence class
@@ -102,7 +103,7 @@ pub fn solve(state: &GameState) -> [u8; 2] {
     let (entries, stamp) = tt.begin_solve();
     let mut history = [[0u32; 32]; 2]; // [team][card] — cutoff history
     let mut killers = [[EMPTY; 2]; 32]; // [ply][0..2] — killer moves per ply
-    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state));
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -122,7 +123,7 @@ pub fn solve_reuse_tt(state: &GameState, tt_buf: &mut TtBuf) -> [u8; 2] {
 
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers);
+    let ns_pts = alphabeta(state, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state));
 
     let ew_pts = if ns_pts == 252 || ns_pts == 0 {
         252 - ns_pts
@@ -156,7 +157,7 @@ pub fn solve_windowed_reuse_tt(
     let (entries, stamp) = tt_buf.begin_solve();
     let mut history = [[0u32; 32]; 2];
     let mut killers = [[EMPTY; 2]; 32];
-    alphabeta(state, alpha, beta, entries, stamp, &mut history, &mut killers)
+    alphabeta(state, alpha, beta, entries, stamp, &mut history, &mut killers, root_ply_of(state))
 }
 
 /// Windowed solve from a full deal + trump. See [`solve_windowed_reuse_tt`].
@@ -228,7 +229,23 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
     let team = GameState::player_team(state.current_player);
     let maximizing = team == 0;
 
-    let ordered = order_moves(state, legal, EMPTY, &history, [EMPTY; 2]);
+    // The root cards are ordered by the same lookahead the search uses inside, when it is on
+    // and the tree is deep enough to repay it. That matters twice here: the first card's value
+    // anchors every sibling window below, and a better order groups cards of similar value
+    // together, which is exactly when a window seeded from the previous one hits.
+    let (iid_depth, _, iid_min_cards) = iid_config();
+    let cards_left = 32usize.saturating_sub(root_ply_of(state) as usize);
+    let ordered = if root_iid() && iid_depth > 0 && cards_left >= iid_min_cards as usize {
+        // Full legal set, never the reduced one: this table owes a value per legal card.
+        let (list, n) = shallow_rank_moves(state, legal, iid_depth);
+        if n > 0 {
+            (list, n)
+        } else {
+            order_moves(state, legal, EMPTY, &history, [EMPTY; 2])
+        }
+    } else {
+        order_moves(state, legal, EMPTY, &history, [EMPTY; 2])
+    };
 
     let mut result = SolveScores {
         scores: [(0, 0); 8],
@@ -237,6 +254,9 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
     };
 
     let mut best_score = if maximizing { i16::MIN } else { i16::MAX };
+    let rp = root_ply_of(state);
+    let sib_window = sibling_window();
+    let mut prev_exact: Option<i16> = None;
 
     for i in 0..ordered.1 {
         let card = ordered.0[i];
@@ -245,12 +265,34 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
 
         let score = if child.is_terminal() {
             child.points[0] as i16
+        } else if let (Some(anchor), true) = (prev_exact, sib_window > 0) {
+            // Sibling window. The one place in this solver where seeding a window is not
+            // hopeless: § 2.3 measured the spread **between root cards** at a median of 4
+            // points, 63,5 % inside a 10-point band — the opposite of the spread between
+            // sampled worlds, which is what killed every other seeding idea (§ 2.3bis).
+            //
+            // Fail-soft, so the result is a value only strictly inside the window; outside it
+            // is a bound and the search has to be redone wide. Taking the bound for the value
+            // is exactly the `quick_tricks` defect, and the extra `alphabeta` below is the
+            // price of not committing it.
+            let (a, b) = (anchor - sib_window, anchor + sib_window);
+            let r = alphabeta(&child, a, b, entries, stamp, &mut history, &mut killers, rp);
+            if r > a && r < b {
+                r
+            } else {
+                alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, rp)
+            }
         } else {
-            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, rp)
         };
+        prev_exact = Some(score);
 
         result.scores[i] = (card, score);
 
+        // Ties resolve to whichever card this loop reaches first — see the note in
+        // `solve_best_card`. The two functions agree only because both order the root with
+        // `order_moves`; `test_solve_with_scores_consistent_with_best_card` is what holds them
+        // together, and it is the test that caught the divergence when one of them was changed.
         if maximizing {
             if score > best_score {
                 best_score = score;
@@ -291,9 +333,18 @@ pub fn solve_best_card(state: &GameState) -> u8 {
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers)
+            alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
+        // NOTE — a latent fragility, deliberately left as it was. Which card is reported among
+        // several DD-equal ones depends on the order this loop happens to visit them, and
+        // **57,8 % of corpus positions have more than one optimal card** (2 optimal: 27 %, 3:
+        // 12 %, up to all 8). So any change to root ordering silently moves the answer: that is
+        // exactly how the rejected root-lookahead ordering (§8) made this function disagree
+        // with `solve_with_scores`. Breaking ties on the lowest card index fixes it for good,
+        // but it would change the reported card on those 57,8 % — visible in `OraclePlayer`,
+        // in `/analyse/jeu` and in Rejouer — so it is a product decision, not a perf one, and
+        // it is not bundled into a speed change.
         if maximizing {
             if score > best_score {
                 best_score = score;
@@ -337,8 +388,158 @@ mod ordering_oracle {
     thread_local! {
         pub static MODE: Cell<u8> = const { Cell::new(0) };
         pub static MAP: RefCell<HashMap<u64, u8>> = RefCell::new(HashMap::new());
+        /// Fraction of nodes at which the recorded move is actually used, as a u32 threshold
+        /// over a hash of the position. See [`super::oracle_set_hint_rate`].
+        pub static RATE: Cell<u32> = const { Cell::new(u32::MAX) };
+        /// Half-open ply window the hint applies in, **relative to the root of the search**.
+        /// See [`super::oracle_set_ply_window`].
+        pub static PLY: Cell<(u8, u8)> = const { Cell::new((0, 32)) };
+        /// Absolute ply the current search started at, so the window can be relative.
+        pub static ROOT_PLY: Cell<u8> = const { Cell::new(0) };
+        /// Histogram of the rank the eventual best move held in the produced ordering.
+        /// Index 8 collects everything past 7; index 0 is a first-move cutoff.
+        pub static RANKS: Cell<[u64; 9]> = const { Cell::new([0; 9]) };
+        /// `[early/late][what was tried first][what should have been]`, counted only where
+        /// today's ordering got it wrong. Split early (tricks 0-2) / late because a failure
+        /// near the root costs orders of magnitude more than one near a leaf, and a raw count
+        /// would be dominated by the cheap ones.
+        pub static CONFUSION: RefCell<[[[u64; 8]; 8]; 2]> = const { RefCell::new([[[0; 8]; 8]; 2]) };
+        /// Values recorded **only at nodes the search resolved exactly**, and stored **relative
+        /// to the points already made** — the same `future_score` the TT stores, for the same
+        /// reason. `position_hash` keys on `played_cards`, which is a *set*: two positions with
+        /// the same cards played but a different split of the tricks collide, and only the
+        /// future is common to them. Storing the absolute value here failed the exactness gate
+        /// on the first run, which is how the TT's design turned out to be load-bearing rather
+        /// than stylistic.
+        ///
+        /// Only exact nodes: a cut node's score is a bound, not a value, and seeding a bound
+        /// from one is precisely the `quick_tricks` unsoundness this harness exists to catch.
+        pub static VALUES: RefCell<HashMap<u64, i16>> = RefCell::new(HashMap::new());
+        /// Slack around the true value when it stands in for the crude bounds; -1 = off.
+        pub static SLACK: Cell<i16> = const { Cell::new(-1) };
     }
 }
+
+/// A sound bound derived from the true value with `slack` points to spare, when this position
+/// was resolved exactly during the recording pass. `None` means fall back to the crude bounds.
+#[inline(always)]
+fn oracle_bounds(_hash: u64, _ns_base: i16) -> Option<(i16, i16)> {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let slack = ordering_oracle::SLACK.with(|s| s.get());
+        if slack < 0 {
+            return None;
+        }
+        return ordering_oracle::VALUES
+            .with(|m| m.borrow().get(&_hash).copied())
+            .map(|future| (future + _ns_base - slack, future + _ns_base + slack));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    None
+}
+
+#[inline(always)]
+fn oracle_note_value(_hash: u64, _flag: u8, _future_score: i16) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_RECORD != 0 && _flag == TT_EXACT {
+            ordering_oracle::VALUES.with(|m| {
+                m.borrow_mut().insert(_hash, _future_score);
+            });
+        }
+    }
+}
+
+#[inline(always)]
+fn oracle_bounds_enabled() -> bool {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::SLACK.with(|s| s.get()) >= 0;
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    false
+}
+
+/// How tight a *sound* bound would have to be, in points, to stand in for the crude one.
+/// Negative disables it. See `bench_dd bounds`.
+pub fn oracle_set_bound_slack(_slack: i16) {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::SLACK.with(|s| s.set(_slack));
+}
+
+/// Coarse description of what a card *does* at this node — the vocabulary a Contrée-aware
+/// ordering rule would be written in. Diagnostic only: it never influences the search, so an
+/// imprecision here misleads a table, it cannot corrupt a value.
+#[cfg(feature = "solver_oracle")]
+fn move_category(state: &GameState, card: u8, trump: u8) -> usize {
+    let ct = state.contract.contract_type();
+    let suit = card_suit_u8(card);
+    let is_trump = suit == trump;
+
+    if state.trick_count == 0 {
+        return if is_trump {
+            0 // lead trump
+        } else if card_points(card, ct) >= 10 {
+            1 // lead a point card
+        } else {
+            2 // lead a small plain card
+        };
+    }
+
+    // Best card in the trick so far. `trick::trick_winner` needs a complete trick, so this
+    // walks only the seats that have actually played — same rules, partial trick.
+    let lead_seat = state.trick_lead as usize;
+    let lead_card = state.current_trick[lead_seat];
+    let lead_suit = card_suit_u8(lead_card);
+    let mut best_trump: Option<u8> = None;
+    let mut best_plain = card_rank(lead_card);
+    if lead_suit == trump {
+        best_trump = Some(TRUMP_STRENGTH[card_rank(lead_card) as usize]);
+    }
+    for i in 1..state.trick_count as usize {
+        let c = state.current_trick[(lead_seat + i) % 4];
+        let s = card_suit_u8(c);
+        if s == trump {
+            let st = TRUMP_STRENGTH[card_rank(c) as usize];
+            if best_trump.is_none_or(|b| st > b) {
+                best_trump = Some(st);
+            }
+        } else if s == lead_suit && card_rank(c) > best_plain {
+            best_plain = card_rank(c);
+        }
+    }
+
+    if is_trump {
+        let st = TRUMP_STRENGTH[card_rank(card) as usize];
+        let wins = best_trump.is_none_or(|b| st > b);
+        if wins {
+            5 // a ruff (or trump raise) that takes the trick
+        } else {
+            6 // trump that does not take it — undertrump, or discarding trump
+        }
+    } else if suit == lead_suit {
+        let wins = best_trump.is_none() && card_rank(card) > best_plain;
+        if wins {
+            3 // follows and takes the trick
+        } else {
+            4 // follows without taking it
+        }
+    } else {
+        7 // discard
+    }
+}
+
+/// Names for [`move_category`], in index order.
+pub const MOVE_CATEGORIES: [&str; 8] = [
+    "lead trump",
+    "lead points",
+    "lead small",
+    "follow+win",
+    "follow",
+    "ruff+win",
+    "trump-lose",
+    "discard",
+];
 
 /// No oracle: ordinary move ordering.
 pub const ORACLE_OFF: u8 = 0;
@@ -350,16 +551,89 @@ pub const ORACLE_USE: u8 = 2;
 pub const ORACLE_USE_RECORD: u8 = 3;
 
 #[inline(always)]
-fn oracle_hint(_hash: u64) -> u8 {
+fn oracle_hint(_hash: u64, _ply: usize) -> u8 {
     #[cfg(feature = "solver_oracle")]
     {
         if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_USE != 0 {
+            // Depth window. A predictor too expensive to run at every node — a policy net at
+            // ~1 ms against a 22 ns node — could still pay for itself at the top few plies,
+            // where one decision governs an enormous subtree. This says whether it would.
+            let (lo, hi) = ordering_oracle::PLY.with(|p| p.get());
+            if lo != 0 || hi != 32 {
+                let d = _ply.saturating_sub(ordering_oracle::ROOT_PLY.with(|r| r.get()) as usize);
+                if d < lo as usize || d >= hi as usize {
+                    return EMPTY;
+                }
+            }
+            // Partial coverage: the hint applies only at a deterministic subset of nodes,
+            // selected by the position hash so the same nodes are chosen on every pass and
+            // across runs. Elsewhere the search falls back to today's ordering — which models
+            // a rule that fires sometimes and is right when it does, not one that guesses
+            // wrong. That makes the curve an upper bound for any partial rule.
+            let rate = ordering_oracle::RATE.with(|r| r.get());
+            if rate != u32::MAX {
+                let mix = _hash.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                if ((mix >> 32) as u32) >= rate {
+                    return EMPTY;
+                }
+            }
             return ordering_oracle::MAP
                 .with(|m| m.borrow().get(&_hash).copied())
                 .unwrap_or(EMPTY);
         }
     }
     EMPTY
+}
+
+/// Rank the eventual best move held in the ordering actually produced at this node.
+/// Rank 0 means the first move tried caused the cutoff — the classic first-move-cutoff rate,
+/// and the direct measure of how good today's ordering already is.
+#[inline(always)]
+fn oracle_note_rank(
+    _state: &GameState,
+    _ordered: &[u8; 8],
+    _count: usize,
+    _best: u8,
+    _trump: u8,
+) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        if ordering_oracle::MODE.with(|m| m.get()) & ORACLE_RECORD == 0 {
+            return;
+        }
+        let mut rank = 8usize;
+        for i in 0.._count.min(8) {
+            if _ordered[i] == _best {
+                rank = i.min(8);
+                break;
+            }
+        }
+        ordering_oracle::RANKS.with(|h| {
+            let mut v = h.get();
+            v[rank] += 1;
+            h.set(v);
+        });
+        if rank == 0 || _count == 0 {
+            return;
+        }
+        // Only the failures. What was tried first, and what should have been.
+        let tricks = (_state.tricks_won[0] + _state.tricks_won[1]) as usize;
+        let bucket = usize::from(tricks >= 3);
+        let got = move_category(_state, _ordered[0], _trump);
+        let want = move_category(_state, _best, _trump);
+        ordering_oracle::CONFUSION.with(|c| c.borrow_mut()[bucket][got][want] += 1);
+    }
+}
+
+/// The failure table since the last call, and reset: `[early/late][tried first][should have
+/// been]` over [`MOVE_CATEGORIES`], counting only nodes where today's ordering missed.
+pub fn oracle_take_confusion() -> [[[u64; 8]; 8]; 2] {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::CONFUSION.with(|c| std::mem::take(&mut *c.borrow_mut()));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    [[[0; 8]; 8]; 2]
 }
 
 #[inline(always)]
@@ -384,7 +658,56 @@ pub fn oracle_set_mode(_mode: u8) {
 /// unique across them, so skipping this silently feeds one position's moves to another.
 pub fn oracle_clear() {
     #[cfg(feature = "solver_oracle")]
-    ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+    {
+        ordering_oracle::MAP.with(|m| m.borrow_mut().clear());
+        ordering_oracle::VALUES.with(|m| m.borrow_mut().clear());
+    }
+}
+
+/// Fraction of nodes at which a recorded move is applied, in `[0.0, 1.0]`. `1.0` (the default)
+/// is the full oracle; anything less models a rule with partial coverage, falling back to
+/// today's ordering at the nodes it skips.
+pub fn oracle_set_hint_rate(_p: f64) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let t = if _p >= 1.0 {
+            u32::MAX
+        } else if _p <= 0.0 {
+            0
+        } else {
+            (_p * u32::MAX as f64) as u32
+        };
+        ordering_oracle::RATE.with(|r| r.set(t));
+    }
+}
+
+/// Restrict the hint to plies in `[lo, hi)` **counted from the root of the search**, so the
+/// windows mean the same thing for a full deal and for a mid-game position. Depth 0 is the
+/// root itself — one node, one decision. Default `(0, 32)`: everywhere.
+pub fn oracle_set_ply_window(_lo: u8, _hi: u8) {
+    #[cfg(feature = "solver_oracle")]
+    ordering_oracle::PLY.with(|p| p.set((_lo, _hi)));
+}
+
+/// Absolute ply the position about to be solved sits at, so [`oracle_set_ply_window`] can be
+/// relative to it. Getting this wrong shifts every window silently.
+pub fn oracle_set_root_ply(_state: &GameState) {
+    #[cfg(feature = "solver_oracle")]
+    {
+        let p = (_state.tricks_won[0] + _state.tricks_won[1]) * 4 + _state.trick_count;
+        ordering_oracle::ROOT_PLY.with(|r| r.set(p));
+    }
+}
+
+/// Rank histogram since the last call, and reset. Index 0 = the first move tried caused the
+/// cutoff; index 8 collects rank 8 and beyond. All zeros without the feature.
+pub fn oracle_take_ranks() -> [u64; 9] {
+    #[cfg(feature = "solver_oracle")]
+    {
+        return ordering_oracle::RANKS.with(|h| h.replace([0; 9]));
+    }
+    #[cfg(not(feature = "solver_oracle"))]
+    [0; 9]
 }
 
 /// Distinct positions currently recorded on this thread.
@@ -423,6 +746,14 @@ mod ablation {
         pub no_pvs: bool,
         pub no_killers: bool,
         pub no_history: bool,
+        pub order_variant: u8,
+        pub iid_depth: u8,
+        pub iid_top: u8,
+        pub iid_min_cards: u8,
+        pub iid_eval: u8,
+        pub iid_sched: u8,
+        pub sib_window: i16,
+        pub root_iid: bool,
     }
 
     fn env_flag(name: &str) -> bool {
@@ -436,6 +767,38 @@ mod ablation {
             no_pvs: env_flag("COLVER_DD_NO_PVS"),
             no_killers: env_flag("COLVER_DD_NO_KILLERS"),
             no_history: env_flag("COLVER_DD_NO_HISTORY"),
+            order_variant: std::env::var("COLVER_DD_ORDER")
+                .ok()
+                .and_then(|v| v.trim_start_matches('v').parse().ok())
+                .unwrap_or(0),
+            iid_depth: std::env::var("COLVER_DD_IID_DEPTH")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_DEPTH),
+            iid_top: std::env::var("COLVER_DD_IID_TOP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_TOP),
+            iid_min_cards: std::env::var("COLVER_DD_IID_MIN_CARDS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_MIN_CARDS),
+            iid_eval: std::env::var("COLVER_DD_IID_EVAL")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_EVAL),
+            iid_sched: std::env::var("COLVER_DD_IID_SCHED")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::IID_SCHED),
+            sib_window: std::env::var("COLVER_DD_SIBWIN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(super::SIBLING_WINDOW),
+            root_iid: std::env::var("COLVER_DD_ROOT_IID")
+                .ok()
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(super::ROOT_IID),
         })
     }
 }
@@ -510,6 +873,12 @@ pub const fn ablation_enabled() -> bool {
 #[cfg(feature = "solver_stats")]
 thread_local! {
     static NODES: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+    /// Nodes spent in the ordering lookahead, counted **apart** from the search proper.
+    /// Folding them into `NODES` would hide the very cost being weighed; leaving them out
+    /// entirely — which is what the first IID sweep did — makes the metric lie in IID's
+    /// favour. They are also cheaper per node (no TT probe, no hashing, no bookkeeping), so
+    /// the true cost sits between the two columns and the win has to survive at the far end.
+    static SHALLOW: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
 }
 
 #[inline(always)]
@@ -530,6 +899,22 @@ pub fn take_nodes() -> u64 {
     {
         0
     }
+}
+
+#[inline(always)]
+fn count_shallow_node() {
+    #[cfg(feature = "solver_stats")]
+    SHALLOW.with(|c| c.set(c.get() + 1));
+}
+
+/// Ordering-lookahead nodes visited by this thread since the last call, and reset.
+pub fn take_shallow_nodes() -> u64 {
+    #[cfg(feature = "solver_stats")]
+    {
+        return SHALLOW.with(|c| c.replace(0));
+    }
+    #[cfg(not(feature = "solver_stats"))]
+    0
 }
 
 /// Whether node counting is compiled in.
@@ -566,6 +951,10 @@ fn alphabeta(
     stamp: u64,
     history: &mut [[u32; 32]; 2],
     killers: &mut [[u8; 2]; 32],
+    // Absolute ply the search started from, so "near the top" means the same thing for a full
+    // deal and for a mid-game position. Passed rather than stashed in a thread-local: it rides
+    // in a register and cannot be left stale by an early return.
+    root_ply: u8,
 ) -> i16 {
     count_node();
     if state.is_terminal() {
@@ -584,6 +973,26 @@ fn alphabeta(
         return ns_lower;
     }
 
+    // Measurement only (feature `solver_oracle`, off): what a *sound* bound accurate to a few
+    // points would prune, standing in for the crude "NS takes everything left". Returns the
+    // bound exactly as the crude prune above does, so it is no less sound than what it
+    // replaces — and `bench_dd bounds` still gates every sweep on EXACT MATCH.
+    //
+    // It needs the position hash, which the search otherwise computes further down, so
+    // enabling it moves work earlier. That is irrelevant to a node count, which is what the
+    // sweep reads, and it is why this can never become production code as written.
+    if oracle_bounds_enabled() {
+        let h = position_hash(state);
+        if let Some((lo, hi)) = oracle_bounds(h, state.points[0] as i16) {
+            if hi <= alpha {
+                return hi;
+            }
+            if lo >= beta {
+                return lo;
+            }
+        }
+    }
+
     let legal = play::legal_plays(state);
 
     // Forced move: single legal card
@@ -594,7 +1003,7 @@ fn alphabeta(
         return if child.is_terminal() {
             child.points[0] as i16
         } else {
-            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
         };
     }
 
@@ -637,7 +1046,10 @@ fn alphabeta(
 
     // A recorded move outranks the TT's: it comes from a completed search of this exact
     // position, where the TT's is whatever survived eviction. Compiled out by default.
-    let hinted = oracle_hint(hash);
+    let hinted = oracle_hint(
+        hash,
+        (state.tricks_won[0] + state.tricks_won[1]) as usize * 4 + state.trick_count as usize,
+    );
     if hinted != EMPTY && (legal & card_to_bit(hinted)) != 0 {
         hash_move = hinted;
     }
@@ -647,10 +1059,41 @@ fn alphabeta(
     let ply = (state.tricks_won[0] + state.tricks_won[1]) as usize * 4
         + state.trick_count as usize;
 
+    let mut iid_list: Option<([u8; 8], usize)> = None;
+    // Internal iterative deepening. Only near the top, and only when nothing better is on
+    // offer: below that the subtree is too small to repay even a very short look. The window
+    // counts from the root, so an IS-DD world resolved from mid-deal gets it on the same terms
+    // as a full deal — which matters, since that shape is where most of the project's DD hours
+    // actually go.
+    if hash_move == EMPTY {
+        let (iid_depth, iid_top, iid_min_cards) = iid_config();
+        if iid_depth > 0
+            && ply.saturating_sub(root_ply as usize) < iid_top as usize
+            && 32usize.saturating_sub(ply) >= iid_min_cards as usize
+        {
+            // With a schedule, one ply deeper costs one ply of lookahead: the top node gets
+            // the full look and the fringe of the window gets a token one, which is where the
+            // cost would otherwise pile up.
+            let d = ply.saturating_sub(root_ply as usize) as u8;
+            let look = if iid_sched() == 0 {
+                iid_depth
+            } else {
+                iid_depth.saturating_sub(d * iid_sched()).max(2)
+            };
+            let (list, n) = shallow_rank_moves(state, reduce_equivalent(legal, state), look);
+            if n > 0 {
+                if legal & card_to_bit(list[0]) != 0 {
+                    hash_move = list[0];
+                }
+                iid_list = Some((list, n));
+            }
+        }
+    }
+
     // Apply card equivalence + order with hash move first, then killers, then by history
     let reduced = reduce_equivalent(legal, state);
     let killer_pair = if ply < 32 && !no_killers() { killers[ply] } else { [EMPTY; 2] };
-    let ordered = order_moves(state, reduced, hash_move, history, killer_pair);
+    let ordered = order_moves_iid(state, reduced, hash_move, history, killer_pair, iid_list);
 
     let orig_alpha = alpha;
     let orig_beta = beta;
@@ -665,13 +1108,13 @@ fn alphabeta(
         let score = if child.is_terminal() {
             child.points[0] as i16
         } else if i == 0 || no_pvs() {
-            alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+            alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
         } else {
             // PVS: null window search after first move
             let scout = if maximizing {
-                alphabeta(&child, alpha, alpha + 1, tt, stamp, history, killers)
+                alphabeta(&child, alpha, alpha + 1, tt, stamp, history, killers, root_ply)
             } else {
-                alphabeta(&child, beta - 1, beta, tt, stamp, history, killers)
+                alphabeta(&child, beta - 1, beta, tt, stamp, history, killers, root_ply)
             };
             let needs_research = if maximizing {
                 scout > alpha && scout < orig_beta
@@ -679,7 +1122,7 @@ fn alphabeta(
                 scout < beta && scout > orig_alpha
             };
             if needs_research {
-                alphabeta(&child, alpha, beta, tt, stamp, history, killers)
+                alphabeta(&child, alpha, beta, tt, stamp, history, killers, root_ply)
             } else {
                 scout
             }
@@ -729,6 +1172,8 @@ fn alphabeta(
 
     tt[tt_idx] = tt_pack(tt_key, future_score, flag, best_move, stamp);
     oracle_note(hash, best_move);
+    oracle_note_value(hash, flag, future_score);
+    oracle_note_rank(state, &ordered.0, ordered.1, best_move, state.contract.trump);
     best_score
 }
 
@@ -961,6 +1406,20 @@ fn order_moves(
     history: &[[u32; 32]; 2],
     killer_pair: [u8; 2],
 ) -> ([u8; 8], usize) {
+    order_moves_iid(state, legal, hash_move, history, killer_pair, None)
+}
+
+/// As [`order_moves`], but the last tier is ranked by the ordering lookahead when one ran.
+/// The lookahead scores every move, so using only its best card — which is what the first
+/// version did — discards most of what it computed.
+fn order_moves_iid(
+    state: &GameState,
+    legal: CardSet,
+    hash_move: u8,
+    history: &[[u32; 32]; 2],
+    killer_pair: [u8; 2],
+    iid_list: Option<([u8; 8], usize)>,
+) -> ([u8; 8], usize) {
     let trump = state.contract.trump;
     let ct = state.contract.contract_type();
     let team = GameState::player_team(state.current_player) as usize;
@@ -991,11 +1450,28 @@ fn order_moves(
     let mut scored: [(i32, u8); 8] = [(0, 0); 8];
     let mut scount = 0usize;
 
+    // Computed once per node rather than per card — the whole point of hoisting it here.
+    let variant = order_variant();
+    let master = if variant != 0 && state.trick_count > 0 {
+        Some(TrickMaster::of(state, trump))
+    } else {
+        None
+    };
+
     let mut mask = remaining;
     while mask != 0 {
         let card = mask.trailing_zeros() as u8;
         mask &= mask - 1;
-        let static_score = move_order_score(state, card, trump, ct) as i32;
+        let static_score = match iid_list {
+            // A lookahead rank dominates: it comes from actually playing the card out, where
+            // the static score only looks at it. History still breaks ties inside a rank.
+            Some((list, n)) => match list[..n].iter().position(|&c| c == card) {
+                Some(r) => (8 - r as i32) * 10_000,
+                None => 0,
+            },
+            None if variant == 0 => move_order_score(state, card, trump, ct) as i32,
+            None => move_order_score_v(state, card, trump, ct, master.as_ref(), variant) as i32,
+        };
         let hist_bonus = if no_history() { 0 } else { history[team][card as usize] as i32 };
         scored[scount] = (static_score + hist_bonus, card);
         scount += 1;
@@ -1009,6 +1485,396 @@ fn order_moves(
     }
 
     (result, count)
+}
+
+// ---- Internal iterative deepening for move ordering ----
+//
+// The depth sweep says the leverage is at the top: ordering the **root alone** perfectly leaves
+// 0.705 of a full-deal search, its first trick 0.541. And the confusion table says no static
+// rule reaches it, because the failures are between cards of the same kind. What separates
+// same-kind cards is *looking*, so: at the first plies, when the table offers no move, run a
+// short search and take its answer as the first move to try.
+//
+// **The value this returns is deliberately crude, and that is safe precisely because it never
+// leaves the ordering.** At the horizon it reports the points captured so far and stops — no
+// estimate of the rest, no claim about the future. `quick_tricks` was a defect for the opposite
+// reason: its approximation reached a *returned value*. An ordering can be arbitrarily wrong and
+// only cost time, and the exactness gate is what proves the distinction held.
+/// Points sitting in the unfinished trick, credited to whoever is currently taking it.
+///
+/// Without this the horizon is systematically unfair between siblings: a 6-ply look from an
+/// even ply stops **mid-trick**, so a line that has just played the winning card to a fat trick
+/// scores identically to one that has thrown it away. The points are on the table either way;
+/// only the crediting differs.
+fn horizon_trick_credit(state: &GameState, trump: u8, ct: ContractType) -> i16 {
+    if state.trick_count == 0 {
+        return 0;
+    }
+    let lead_seat = state.trick_lead as usize;
+    let lead_card = state.current_trick[lead_seat];
+    let lead_suit = card_suit_u8(lead_card);
+    let mut pts = card_points(lead_card, ct) as i16;
+    let mut win_seat = lead_seat;
+    let mut best_trump: Option<u8> = if lead_suit == trump {
+        Some(TRUMP_STRENGTH[card_rank(lead_card) as usize])
+    } else {
+        None
+    };
+    let mut best_plain = card_rank(lead_card);
+
+    for i in 1..state.trick_count as usize {
+        let seat = (lead_seat + i) % 4;
+        let c = state.current_trick[seat];
+        pts += card_points(c, ct) as i16;
+        let sc = card_suit_u8(c);
+        if sc == trump {
+            let st = TRUMP_STRENGTH[card_rank(c) as usize];
+            if best_trump.is_none_or(|b| st > b) {
+                best_trump = Some(st);
+                win_seat = seat;
+            }
+        } else if sc == lead_suit && best_trump.is_none() && card_rank(c) > best_plain {
+            best_plain = card_rank(c);
+            win_seat = seat;
+        }
+    }
+    if GameState::player_team(win_seat as u8) == 0 {
+        pts
+    } else {
+        0
+    }
+}
+
+fn shallow_order_search(state: &GameState, alpha0: i16, beta0: i16, plies_left: u8) -> i16 {
+    count_shallow_node();
+    if state.is_terminal() || plies_left == 0 {
+        // Horizon: what has actually been won. Two siblings compared here differ by the points
+        // captured on the way, which is the whole signal being extracted.
+        let base = state.points[0] as i16;
+        return if iid_eval() == 0 {
+            base
+        } else {
+            base + horizon_trick_credit(state, state.contract.trump, state.contract.contract_type())
+        };
+    }
+    let legal = play::legal_plays(state);
+    let reduced = reduce_equivalent(legal, state);
+    let maximizing = GameState::player_team(state.current_player) == 0;
+    let (mut alpha, mut beta) = (alpha0, beta0);
+    let mut best = if maximizing { i16::MIN } else { i16::MAX };
+
+    let mut mask = reduced;
+    while mask != 0 {
+        let card = mask.trailing_zeros() as u8;
+        mask &= mask - 1;
+        let mut child = *state;
+        play::apply_play(&mut child, card);
+        let v = shallow_order_search(&child, alpha, beta, plies_left - 1);
+        if maximizing {
+            if v > best {
+                best = v;
+            }
+            if best > alpha {
+                alpha = best;
+            }
+        } else {
+            if v < best {
+                best = v;
+            }
+            if best < beta {
+                beta = best;
+            }
+        }
+        if alpha >= beta {
+            break;
+        }
+    }
+    best
+}
+
+/// **All** moves ranked by a `plies`-deep look, best first; the count is 0 when there is
+/// nothing to order.
+///
+/// The first version returned only the best card, which threw away most of what had just been
+/// computed: the lookahead scores every root move, so ranking them all costs nothing beyond a
+/// sort of at most eight elements. That matters at nodes where the first move fails to cut —
+/// there the second and third choice are what the search actually pays for.
+/// `moves` is the set to rank, and **which set it is matters for correctness, not just speed**.
+/// Inside the search, pass the reduced set: dropping a card equivalent to one already there
+/// cannot change the value. At the root of [`solve_with_scores`] pass the **full legal set** —
+/// that function owes a value for every legal card, and ranking the reduced set silently drops
+/// cards from the table it returns. The exactness gate caught exactly that, on a version that
+/// was 3 % faster and wrong. Same trap as `legal_actions_reduced` in `/analyse/jeu`.
+fn shallow_rank_moves(state: &GameState, moves: CardSet, plies: u8) -> ([u8; 8], usize) {
+    let reduced = moves;
+    if reduced == 0 || reduced & (reduced - 1) == 0 {
+        return ([EMPTY; 8], 0);
+    }
+    let maximizing = GameState::player_team(state.current_player) == 0;
+    let mut scored: [(i16, u8); 8] = [(0, EMPTY); 8];
+    let mut n = 0usize;
+    let mut mask = reduced;
+    while mask != 0 && n < 8 {
+        let card = mask.trailing_zeros() as u8;
+        mask &= mask - 1;
+        let mut child = *state;
+        play::apply_play(&mut child, card);
+        let v = shallow_order_search(&child, 0, 252, plies.saturating_sub(1));
+        // Sort descending for NS, ascending for EW — one comparison key for both sides.
+        scored[n] = (if maximizing { -v } else { v }, card);
+        n += 1;
+    }
+    scored[..n].sort_unstable();
+    let mut out = [EMPTY; 8];
+    for i in 0..n {
+        out[i] = scored[i].1;
+    }
+    (out, n)
+}
+
+/// Absolute ply of a position — the origin the IID window is measured from.
+#[inline(always)]
+fn root_ply_of(state: &GameState) -> u8 {
+    (state.tricks_won[0] + state.tricks_won[1]) * 4 + state.trick_count
+}
+
+/// `(plies of lookahead, plies of the root it applies within, cards that must remain)`.
+/// A depth-0 first element disables it.
+///
+/// The third guard is not a tuning knob, it is the difference between a win and a disaster.
+/// Measured without it, a 6-ply look made endgames **3.8x slower** — on a position that
+/// searches 89 nodes, the lookahead is larger than the entire search it is meant to help.
+/// Mid-game went 1.56x. Only full deals have a tree deep enough to repay a look, and they are
+/// also where the nodes are, so the guard costs nothing and removes every regression.
+/// Production defaults, measured on the frozen corpus. Sweeps, the guard that keeps the
+/// lookahead out of shallow trees, and why this is not a second `quick_tricks`:
+/// `docs/play/dd_solver_optimization.md` § 6.
+///
+/// Every one of these is chosen **per shape, never on the aggregate**, and twice that mattered.
+/// A deeper, wider variant (8/8 with the schedule on) wins on the corpus total and on full
+/// deals, ties it on the clock, and is **worse on sampled worlds** — the shape carrying most of
+/// this project's DD hours (~2800 core-h for a score layer against ~180 for `gen_pool`). The
+/// aggregate is dominated by full deals and does not describe the real cost mix.
+///
+/// Same for the guard: optimising the total picks 28, which gives up the entire worlds gain.
+/// 24 is the smallest value with **no regression on any shape** — 22 buys 0.001 on worlds and
+/// costs 7 % on mid-game, the web's analysis path.
+///
+/// Historical `IID_MIN_CARDS` note. The corpus total is
+/// dominated by full deals, and optimising it picks 28 — which gives up the entire gain on
+/// sampled worlds, the shape carrying most of this project's DD hours (~2800 core-h for a
+/// score layer against ~180 for `gen_pool`). 24 is the smallest guard with **no regression on
+/// any shape**: 22 buys 0.001 on worlds and costs 7 % on mid-game, the web's analysis path.
+pub const IID_DEPTH: u8 = 6;
+pub const IID_TOP: u8 = 4;
+pub const IID_MIN_CARDS: u8 = 24;
+/// Horizon evaluation of the ordering lookahead: 0 = points captured, 1 = plus the unfinished
+/// trick credited to whoever is taking it.
+pub const IID_EVAL: u8 = 1;
+
+/// Shrink the lookahead as the node gets deeper, so the window can reach further without the
+/// cost exploding — the cost is what kills a wide window (a flat depth 6 over 8 plies measures
+/// 1,085x, i.e. it spends more than it saves). 0 = flat depth everywhere.
+pub const IID_SCHED: u8 = 0;
+
+/// Half-width of the window a root card is given, seeded from the previous card's value.
+/// 0 disables it and every child gets the full `[0, 252]`.
+///
+/// 8 sits in a flat basin (0.905x against 0.910-0.912 at 5-7 and 9-10, 0.954x by ±20), and the
+/// basin is where § 2.3 said it would be: the spread **between root cards** has a median of 4
+/// points. Widen it and the window stops pruning; narrow it and every card needs a re-search.
+/// Details and why this is the one seeding idea that pays: `dd_solver_optimization.md` § 8.
+pub const SIBLING_WINDOW: i16 = 8;
+
+/// Whether the root cards of [`solve_with_scores`] are ordered by the lookahead too.
+///
+/// **Off: measured a node win and a clock loss.** 1,1 % fewer nodes, 3,1 % *more* wall time,
+/// with all 8 interleaved rounds agreeing. Third time in this campaign that the node count
+/// pointed the wrong way — it is exact, but it stops being a faithful proxy for time as soon
+/// as a change alters the *mix* of node kinds, and a lookahead node is not a search node.
+/// Kept behind the switch because the measurement is worth more than the deleted code.
+pub const ROOT_IID: bool = false;
+
+#[inline(always)]
+fn root_iid() -> bool {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().root_iid;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    ROOT_IID
+}
+
+#[inline(always)]
+fn sibling_window() -> i16 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().sib_window;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    SIBLING_WINDOW
+}
+
+#[inline(always)]
+fn iid_sched() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().iid_sched;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    IID_SCHED
+}
+
+#[inline(always)]
+fn iid_eval() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().iid_eval;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    IID_EVAL
+}
+
+#[inline(always)]
+fn iid_config() -> (u8, u8, u8) {
+    #[cfg(feature = "solver_ablation")]
+    {
+        let f = ablation::flags();
+        return (f.iid_depth, f.iid_top, f.iid_min_cards);
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    (IID_DEPTH, IID_TOP, IID_MIN_CARDS)
+}
+
+/// The best card in the trick so far. `trick::trick_winner` needs a complete trick; this walks
+/// only the seats that have played. Computed **once per node** by `order_moves`, not per card.
+#[derive(Clone, Copy)]
+struct TrickMaster {
+    lead_suit: u8,
+    /// Trump strength of the best trump played so far, if any.
+    best_trump: Option<u8>,
+    /// Plain rank of the best lead-suit card so far.
+    best_plain: u8,
+}
+
+impl TrickMaster {
+    fn of(state: &GameState, trump: u8) -> TrickMaster {
+        let lead_seat = state.trick_lead as usize;
+        let lead_card = state.current_trick[lead_seat];
+        let lead_suit = card_suit_u8(lead_card);
+        let mut m = TrickMaster {
+            lead_suit,
+            best_trump: None,
+            best_plain: card_rank(lead_card),
+        };
+        if lead_suit == trump {
+            m.best_trump = Some(TRUMP_STRENGTH[card_rank(lead_card) as usize]);
+        }
+        for i in 1..state.trick_count as usize {
+            let c = state.current_trick[(lead_seat + i) % 4];
+            let s = card_suit_u8(c);
+            if s == trump {
+                let st = TRUMP_STRENGTH[card_rank(c) as usize];
+                if m.best_trump.is_none_or(|b| st > b) {
+                    m.best_trump = Some(st);
+                }
+            } else if s == lead_suit && card_rank(c) > m.best_plain {
+                m.best_plain = card_rank(c);
+            }
+        }
+        m
+    }
+
+    /// Would playing `card` take the trick as it stands?
+    fn taken_by(&self, card: u8, trump: u8) -> bool {
+        let suit = card_suit_u8(card);
+        if suit == trump {
+            let st = TRUMP_STRENGTH[card_rank(card) as usize];
+            self.best_trump.is_none_or(|b| st > b)
+        } else if suit == self.lead_suit {
+            self.best_trump.is_none() && card_rank(card) > self.best_plain
+        } else {
+            false
+        }
+    }
+}
+
+/// Which move-ordering variant is live. Always 0 (today's) unless the ablation switches are
+/// compiled in and `COLVER_DD_ORDER` names another — so with the feature off, every branch
+/// below folds away and the generated code is unchanged.
+#[inline(always)]
+fn order_variant() -> u8 {
+    #[cfg(feature = "solver_ablation")]
+    {
+        return ablation::flags().order_variant;
+    }
+    #[cfg(not(feature = "solver_ablation"))]
+    0
+}
+
+/// Ordering variants under test. The confusion table says ~70 % of ordering failures are
+/// *within* a move category — the right card and the tried card do the same kind of thing —
+/// so these discriminate inside a category rather than between categories.
+///
+/// - `v1`: the current `can_win` is a coarse "is trump or follows suit" that never looks at
+///   what is already on the table, so a 7 of the lead suit under an ace, and an undertrump,
+///   both rank as winners. This tests the real predicate.
+/// - `v2`: within the lead suit, order by rank (the true beating order) rather than by card
+///   points, which collapse 9/8/7 into a tie.
+/// - `v3`: discards — the single biggest failure cell, 27 % early and 50 % late — shed from
+///   the **shortest** side suit first, which is the one a void is cheapest to create in.
+/// - `v4`: all three.
+fn move_order_score_v(
+    state: &GameState,
+    card: u8,
+    trump: u8,
+    ct: ContractType,
+    master: Option<&TrickMaster>,
+    variant: u8,
+) -> i16 {
+    let suit = card_suit_u8(card);
+    let is_trump = suit == trump;
+    let rank = card_rank(card);
+    let pts = card_points(card, ct) as i16;
+
+    if state.trick_count == 0 {
+        return if is_trump {
+            100 + TRUMP_STRENGTH[rank as usize] as i16
+        } else {
+            pts
+        };
+    }
+
+    let m = master.expect("mid-trick scoring needs the master");
+    let takes = m.taken_by(card, trump);
+    let follows = suit == m.lead_suit;
+    let want_beats = matches!(variant, 1 | 4);
+    let want_rank = matches!(variant, 2 | 4);
+    let want_shed = matches!(variant, 3 | 4);
+
+    if want_beats {
+        if takes {
+            return 100 + pts;
+        }
+        if follows {
+            return 50 + if want_rank { rank as i16 } else { pts };
+        }
+        if is_trump {
+            return 10 - pts; // cannot win: an undertrump is a discard that costs trump
+        }
+    } else if is_trump || follows {
+        let within = if want_rank && follows { rank as i16 } else { pts };
+        return 50 + within;
+    }
+
+    // A discard.
+    if want_shed {
+        // Shortest side suit first, cheapest card within it. `hands` is indexed by seat.
+        let hand = state.hands[state.current_player as usize];
+        let len = (hand & SUIT_MASK[suit as usize]).count_ones() as i16;
+        return -8 * len - pts;
+    }
+    -pts
 }
 
 fn move_order_score(state: &GameState, card: u8, trump: u8, ct: ContractType) -> i16 {

@@ -31,18 +31,25 @@ anywhere in `docs/`, one of them is stale. Consumers that reason from these numb
 [is_dd.md](is_dd.md#performance) (world budgets), [../ARCHITECTURE.md](../ARCHITECTURE.md),
 [../web_analyse_jeu.md](../web_analyse_jeu.md) (per-position sim budgets).
 
-Measured 2026-08-02 with `bench_dd` on a fixed 2 120-position corpus, one thread, i9-13900K,
+Measured 2026-08-03 with `bench_dd` on a fixed 2 120-position corpus, one thread, i9-13900K,
 stock `x86-64` target (the flag buys nothing — see the negative-results table).
 Journalised in [docs/measurements/index.jsonl](../measurements/index.jsonl). Every earlier
 figure in the docs is superseded: four documents quoted 13.5 / 14.9 / 28 / 77 ms for things all
 called "a solve", none with a stated corpus or shape.
 
-| Shape (all via `solve_with_scores`) | n | nodes/pos | time/pos |
-|---|---|---|---|
-| Full deal, 4 suits | 800 | 1 448 045 | 32.3 ms |
-| Mid-game, real games, 13-24 cards left | 360 | 9 061 | 169 µs |
-| Endgame, real games, 2-12 cards left | 240 | 89 | 1.4 µs |
-| Determinized worlds (the IS-DD unit) | 720 | 55 862 | 1.13 ms |
+| Shape (all via `solve_with_scores`) | n | nodes/pos | time/pos | before 2026-08-03 |
+|---|---|---|---|---|
+| Full deal, 4 suits | 800 | 1 163 727 | **24.2 ms** | 1 448 045 / 32.3 ms |
+| Mid-game, real games, 13-24 cards left | 360 | 8 707 | **153 µs** | 9 061 / 169 µs |
+| Endgame, real games, 2-12 cards left | 240 | 88 | **1.4 µs** | 89 / 1.4 µs |
+| Determinized worlds (the IS-DD unit) | 720 | 48 994 | **911 µs** | 55 862 / 1.13 ms |
+
+**The last column is not history for its own sake.** Every consumer below reasons from *ratios*
+between these shapes, and the ratios barely moved (full/worlds went 25.9× to 26.6×), so no
+downstream budget needs revisiting. What did move is the absolute level, by ~1.24× — from the
+ordering IID and the root-card window,
+[dd_solver_optimization.md](dd_solver_optimization.md) §§ 6 and 8. **DD values are unchanged**
+(11 527 card values, 0 differ), so nothing cached on `ANALYSIS_VERSION` is stale.
 
 **Node counts are exact; the times are a floor, not a value.** They are the minimum of 5
 alternating rounds, and the per-round spread on this box is **~9 %** even with the machine
@@ -51,7 +58,7 @@ time measured on another day — only within one alternating run. (An earlier re
 table said 34.6 ms for the full deal, from fewer rounds on a busier machine. That is the same
 measurement, not a regression.)
 
-Throughput is ~45 M nodes/s, i.e. **~22 ns per node**. That is already tight, and it is the
+Throughput is ~48 M nodes/s, i.e. **~21 ns per node**. That is already tight, and it is the
 reason most per-node micro-optimisation attempts below came back negative: the search is
 dominated by the transposition-table probe, which is a random access into 2 MB.
 
@@ -60,7 +67,9 @@ nodes** (p50 317 k nodes, p99 3.8 M, max 6.0 M). Anything that helps only the me
 worth little; the tail is where the batch time is.
 
 **Value-only `solve_for_trump`, for comparison**: ~18 ms mean, 10.4 ms median, 69 ms P95 on a
-full deal (via the older `dd_bench`). Do not line these up against the table above — one trump
+full deal (via the older `dd_bench`) — **pre-2026-08-03, so ~1.35× stale**; that entry point
+gains more than the table above, since it keeps the whole benefit of the tight window its first
+move establishes instead of giving every root card a full one. Do not line these up against the table above — one trump
 instead of four, and a mean/median/P95 over deals instead of a min over repeats. The gap between
 the mean and the P95 is the same tail as above, seen from the other harness.
 
