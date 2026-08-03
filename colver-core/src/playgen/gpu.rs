@@ -355,6 +355,89 @@ impl GpuPlaygen {
         Ok(x)
     }
 
+    /// Prefill `t` tokens per lane in **one** pass, instead of `t` decode steps.
+    ///
+    /// # Pourquoi ça valait le détour
+    ///
+    /// Le préfixe se déroulait un jeton à la fois, par le même `forward_step`
+    /// que le décodage. Or un pas est **borné par le lancement de noyaux**, pas
+    /// par l'arithmétique : mesuré à ~2,1 ms qu'il y ait 1 lane ou 40. Un
+    /// préfixe de 40 jetons coûtait donc ~90-110 ms, contre 25-50 ms pour tout
+    /// le décodage — **le préfixe pesait 65 à 81 % d'une requête**, et d'autant
+    /// plus que la donne avançait (préfixe long, peu de cartes à tirer). C'est
+    /// pourtant la seule phase du modèle qui n'a *aucune* dépendance
+    /// séquentielle : les jetons sont tous connus d'avance.
+    ///
+    /// Le masque porte la causalité *et* le remplissage. Les préfixes sont
+    /// alignés à droite (`pad[j]` jetons factices en tête), donc la case
+    /// `(j, t, s)` est visible ssi `s <= t` **et** (`s >= pad[j]` ou `s == t`).
+    /// La deuxième branche n'est pas une subtilité gratuite : une requête de
+    /// remplissage n'a aucune clé légale à regarder, et une ligne entièrement à
+    /// -1e9 fait rendre NaN au softmax. Se laisser voir soi-même est ce que
+    /// faisait déjà la boucle séquentielle, colonne par colonne.
+    ///
+    /// Les sorties des positions de remplissage sont du bruit, et c'est sans
+    /// conséquence : le décodage ne lit que l'état après le *dernier* jeton, qui
+    /// est réel pour toutes les lanes — c'est précisément ce que l'alignement à
+    /// droite achète.
+    ///
+    /// Mathématiquement identique à la boucle qu'elle remplace, mais **pas
+    /// bit-à-bit** : les matmuls changent de forme, donc l'ordre de réduction
+    /// flottant aussi. Épinglé par `prefill_batched_matches_sequential`, à
+    /// 2e-3 près sur l'état caché.
+    fn forward_prefill(
+        &self,
+        x: &Tensor,
+        caches: &mut [KvSlot],
+        t0: usize,
+        mask: &Tensor,
+    ) -> Result<Tensor> {
+        let (b, t, _) = x.dims3()?;
+        let mut x = x.clone();
+        let scale = 1.0 / (self.hd as f64).sqrt();
+        let bt = b * t;
+        for (l, blk) in self.blocks.iter().enumerate() {
+            let normed = self.rmsnorm(&x, &blk.attn_norm)?.reshape((bt, self.d))?;
+            let qkv = normed.matmul(&blk.qkv_w_t)?.broadcast_add(&blk.qkv_b)?;
+            // [b*t, d] → [b, t, nh, hd] → [b, nh, t, hd]
+            let head = |o: usize| -> Result<Tensor> {
+                qkv.narrow(1, o, self.d)?
+                    .reshape((b, t, self.n_heads, self.hd))?
+                    .transpose(1, 2)?
+                    .contiguous()
+            };
+            let q = head(0)?;
+            let k = head(self.d)?;
+            let v = head(2 * self.d)?;
+
+            {
+                let slot = &caches[l];
+                slot.kt.slice_set(&k.transpose(2, 3)?.contiguous()?, 3, t0)?;
+                slot.v.slice_set(&v, 2, t0)?;
+            }
+
+            let ctx = {
+                let slot = &caches[l];
+                let scores = (q.matmul(&slot.kt)? * scale)?.broadcast_add(mask)?;
+                let probs = candle_nn::ops::softmax(&scores, D::Minus1)?;
+                probs
+                    .matmul(&slot.v)?
+                    .transpose(1, 2)?
+                    .contiguous()?
+                    .reshape((bt, self.d))?
+            };
+            let attn = ctx.matmul(&blk.out_w_t)?.broadcast_add(&blk.out_b)?;
+            x = (x + attn.reshape((b, t, self.d))?)?;
+
+            let normed = self.rmsnorm(&x, &blk.ffn_norm)?.reshape((bt, self.d))?;
+            let gate = normed.matmul(&blk.gate_w_t)?.broadcast_add(&blk.gate_b)?.gelu()?;
+            let up = normed.matmul(&blk.up_w_t)?.broadcast_add(&blk.up_b)?;
+            let ffn = (gate * up)?.matmul(&blk.down_w_t)?.broadcast_add(&blk.down_b)?;
+            x = (x + ffn.reshape((b, t, self.d))?)?;
+        }
+        Ok(x)
+    }
+
     /// Allocate an empty fixed-capacity cache for `b` lanes.
     fn new_kv(&self, b: usize, cap: usize) -> Result<Vec<KvSlot>> {
         let dt = candle_core::DType::F32;
@@ -532,28 +615,55 @@ impl GpuPlaygen {
         // Masque hôte, réuploadé à chaque pas : quelques centaines de Ko, sans
         // commune mesure avec les Go que la réallocation du cache déplaçait.
         let mut mh = vec![neg; k_lanes * cap];
-        let mut toks = vec![dummy; k_lanes];
-        let mut pos_ids = vec![0u32; k_lanes];
 
-        for t in 0..lmax {
+        // Le préfixe part en **un** appel plutôt qu'en `lmax` pas — c'est ce que
+        // `forward_prefill` documente, et c'est 65 à 81 % d'une requête.
+        //
+        // Le découpage se fait sur l'axe **temps**, pas sur les lanes : le cache
+        // KV est un tenseur par couche de forme `[lanes, …]`, donc découper par
+        // lane demanderait d'y écrire à travers une vue, alors qu'un bloc de
+        // jetons s'écrit simplement à la colonne `t0`. Toutes les lanes
+        // participent à chaque bloc, et le pic mémoire — les scores
+        // d'attention, `lanes × têtes × bloc × cap` — se règle par la taille du
+        // bloc seule.
+        let tblk = {
+            const BUDGET: usize = 192 << 20; // octets de scores d'attention
+            let per_step = k_lanes * self.n_heads * cap * 4;
+            lmax.min((BUDGET / per_step.max(1)).max(1))
+        };
+        let mut toks_seq: Vec<Tok> = vec![dummy; k_lanes * tblk];
+        let mut pos_seq: Vec<u32> = vec![0; k_lanes * tblk];
+        let mut mp: Vec<f32> = vec![neg; k_lanes * tblk * cap];
+
+        let mut t0 = 0usize;
+        while t0 < lmax {
+            let tb = tblk.min(lmax - t0);
             for j in 0..k_lanes {
-                let real = t >= pad[j];
-                if real {
-                    let idx = t - pad[j];
-                    toks[j] = act[j].prefix[idx];
-                    pos_ids[j] = idx as u32;
-                } else {
-                    toks[j] = dummy;
-                    pos_ids[j] = 0;
+                for ti in 0..tb {
+                    let t = t0 + ti;
+                    let real = t >= pad[j];
+                    let slot = j * tb + ti;
+                    toks_seq[slot] = if real { act[j].prefix[t - pad[j]] } else { dummy };
+                    pos_seq[slot] = if real { (t - pad[j]) as u32 } else { 0 };
+                    let row = slot * cap;
+                    for s in 0..cap {
+                        mp[row + s] = if s <= t && (s >= pad[j] || s == t) { 0.0 } else { neg };
+                    }
                 }
-                // La colonne courante est valide pour *toutes* les lanes le
-                // temps du pas : une ligne entièrement à -1e9 rendrait NaN.
-                mh[j * cap + t] = 0.0;
             }
-            let mask = Tensor::from_slice(&mh, (k_lanes, 1, 1, cap), &self.device)?;
-            let x = self.embed(&toks, &pos_ids)?;
-            self.forward_step(&x, &mut caches, t, &mask)?;
-            for j in 0..k_lanes {
+            let n_slots = k_lanes * tb;
+            let mask =
+                Tensor::from_slice(&mp[..n_slots * cap], (k_lanes, 1, tb, cap), &self.device)?;
+            let x = self
+                .embed(&toks_seq[..n_slots], &pos_seq[..n_slots])?
+                .reshape((k_lanes, tb, self.d))?;
+            self.forward_prefill(&x, &mut caches, t0, &mask)?;
+            t0 += tb;
+        }
+        // État final du masque persistant, tel que le décodage l'attend :
+        // un jeton de remplissage reste invisible pour toujours.
+        for j in 0..k_lanes {
+            for t in 0..lmax {
                 mh[j * cap + t] = if t >= pad[j] { 0.0 } else { neg };
             }
         }
@@ -564,10 +674,33 @@ impl GpuPlaygen {
         let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1e3;
 
         // ══ Phase 2 — fan K prefix lanes out to sum(n) decode lanes ══
+        //
+        // Les positions sont rangées par **nombre de pas décroissant**. Le
+        // décodage tourne `steps_max` fois, or `steps_max` est un *maximum sur
+        // le lot* : une requête à deux cartes restantes (6 cartes cachées, 12
+        // pas) partageant un lot avec une entame (24 cartes, 48 pas) faisait 36
+        // pas pour rien — masquée, mais calculée. En rangeant par pas
+        // décroissant, les lanes encore actives à l'étape `i` forment toujours
+        // un **préfixe** de la table, donc « retirer » les lanes finies est un
+        // `narrow` sur l'axe des lanes : une vue, pas une copie.
+        //
+        // Effet de bord assumé : l'ordre de consommation du RNG change avec
+        // l'ordre des lanes, donc les mondes tirés ne sont pas les mêmes qu'avant
+        // — de la même distribution, pas de la même graine. `bench_prefill_eq`
+        // est là pour ça.
+        let mut order: Vec<usize> = (0..act.len()).collect();
+        order.sort_by(|&x, &y| act[y].spec.steps.cmp(&act[x].spec.steps));
         let mut lane_of: Vec<u32> = Vec::new();
-        for (j, a) in act.iter().enumerate() {
-            lane_of.extend(std::iter::repeat(j as u32).take(a.n));
+        for &j in &order {
+            lane_of.extend(std::iter::repeat(j as u32).take(act[j].n));
         }
+        // Pas de décodage dus à chaque lane, non croissant par construction.
+        let lane_steps: Vec<usize> =
+            lane_of.iter().map(|&j| act[j as usize].spec.steps).collect();
+        debug_assert!(
+            lane_steps.windows(2).all(|w| w[0] >= w[1]),
+            "le retrait de lanes suppose un ordre décroissant"
+        );
         let m_lanes = lane_of.len();
         let sel = Tensor::from_slice(&lane_of, m_lanes, &self.device)?;
         let mut caches = self.select_kv(&caches, &sel)?;
@@ -602,9 +735,36 @@ impl GpuPlaygen {
             alive[m] && step_i < act[lane_of[m] as usize].spec.steps
         };
 
+        // Interrupteur d'ablation : `COLVER_PLAYGEN_NO_RETIRE=1` garde toutes les
+        // lanes jusqu'au bout, comme avant le retrait. Sert à attribuer un gain
+        // au retrait plutôt qu'au préfixe groupé — dans le *même* binaire, donc
+        // sans le confondant d'une compilation différente.
+        let no_retire = std::env::var("COLVER_PLAYGEN_NO_RETIRE")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+
         for step_i in 0..steps_max {
+            // Les lanes encore dues à cette étape sont le préfixe `[0, n_act)`
+            // (cf. Phase 2). Tout ce qui suit ne travaille que sur lui.
+            let n_act = if no_retire {
+                m_lanes
+            } else {
+                lane_steps.partition_point(|&s| s > step_i)
+            };
+            if n_act == 0 {
+                break;
+            }
+            // Vue sur les lanes vivantes. `narrow` sur l'axe 0 d'un tenseur
+            // contigu garde la contiguïté et un décalage nul, donc les
+            // `slice_set` de `forward_step` écrivent bien dans le cache partagé.
+            let mut view: Vec<KvSlot> = caches
+                .iter()
+                .map(|s| {
+                    Ok(KvSlot { kt: s.kt.narrow(0, 0, n_act)?, v: s.v.narrow(0, 0, n_act)? })
+                })
+                .collect::<Result<Vec<_>>>()?;
             // --- ACT query token ---
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 let on = active_at(step_i, m, &alive, &lane_of, &act);
                 if on {
                     let a = &act[lane_of[m] as usize];
@@ -620,24 +780,24 @@ impl GpuPlaygen {
             }
             prof.steps += 1;
             let t_slot = lmax + 2 * step_i;
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 mh_dec[m * cap + t_slot] = 0.0;
             }
             let mask = prof.lap(&self.device, 4, || {
-                Tensor::from_slice(&mh_dec, (m_lanes, 1, 1, cap), &self.device)
+                Tensor::from_slice(&mh_dec[..n_act * cap], (n_act, 1, 1, cap), &self.device)
             })?;
-            let x = prof.lap(&self.device, 0, || self.embed(&act_toks, &mpos))?;
+            let x = prof.lap(&self.device, 0, || self.embed(&act_toks[..n_act], &mpos[..n_act]))?;
             let hidden = prof.lap(&self.device, 1, || {
-                self.forward_step(&x, &mut caches, t_slot, &mask)
+                self.forward_step(&x, &mut view, t_slot, &mask)
             })?;
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 mh_dec[m * cap + t_slot] = mcol[m];
             }
             let card_lg = prof.lap(&self.device, 2, || self.card_logits(&hidden))?;
             let t_sample = std::time::Instant::now();
 
             // --- sample one card per active lane ---
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 if !active_at(step_i, m, &alive, &lane_of, &act) {
                     card_toks[m] = act_toks[m];
                     continue;
@@ -703,7 +863,7 @@ impl GpuPlaygen {
             }
 
             // --- card token ---
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 let on = active_at(step_i, m, &alive, &lane_of, &act);
                 if on {
                     mpos[m] = pos[m] + 1;
@@ -715,15 +875,15 @@ impl GpuPlaygen {
             }
             prof.steps += 1;
             let t_slot = lmax + 2 * step_i + 1;
-            for m in 0..m_lanes {
+            for m in 0..n_act {
                 mh_dec[m * cap + t_slot] = 0.0;
             }
             let mask = prof.lap(&self.device, 4, || {
-                Tensor::from_slice(&mh_dec, (m_lanes, 1, 1, cap), &self.device)
+                Tensor::from_slice(&mh_dec[..n_act * cap], (n_act, 1, 1, cap), &self.device)
             })?;
-            let x = prof.lap(&self.device, 0, || self.embed(&card_toks, &mpos))?;
-            prof.lap(&self.device, 1, || self.forward_step(&x, &mut caches, t_slot, &mask))?;
-            for m in 0..m_lanes {
+            let x = prof.lap(&self.device, 0, || self.embed(&card_toks[..n_act], &mpos[..n_act]))?;
+            prof.lap(&self.device, 1, || self.forward_step(&x, &mut view, t_slot, &mask))?;
+            for m in 0..n_act {
                 mh_dec[m * cap + t_slot] = mcol[m];
             }
         }

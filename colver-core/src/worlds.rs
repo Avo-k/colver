@@ -237,9 +237,23 @@ impl rand::RngCore for RngAdapter<'_> {
 /// Sampling ~256 worlds costs one round trip (~200 ms on a 4090), against
 /// several seconds on CPU, which is what makes 100%-playgen worlds affordable
 /// inside a per-move budget.
+///
+/// # Plusieurs sidecars
+///
+/// L'URL peut être une **liste séparée par des virgules**. Les requêtes sont
+/// alors réparties en tourniquet sur un compteur *global* au processus, et non
+/// par instance : une génération de masse construit un `IsDdPlayer` par siège
+/// et par thread, donc des compteurs indépendants partant tous de zéro
+/// enverraient la première requête de chacun au même GPU.
+///
+/// Le tourniquet est volontairement aveugle à la charge. Un vrai équilibrage
+/// (au moins chargé) suppose de savoir ce que chaque sidecar a en file, ce que
+/// ce client ne voit pas ; et pour des GPU de débits différents c'est la
+/// *proportion* qu'il faudrait régler, pas l'ordre. Répéter une URL dans la
+/// liste fait exactement ça : `a,a,b` envoie deux tiers du trafic à `a`.
 pub struct SidecarWorldSource {
-    /// Base URL, e.g. `http://gpu-host:8003`, without a trailing slash.
-    url: String,
+    /// Base URLs, e.g. `http://gpu-host:8003`, without a trailing slash.
+    urls: Vec<String>,
     timeout: Duration,
     temperature: f32,
     dealer: u8,
@@ -247,11 +261,19 @@ pub struct SidecarWorldSource {
     history: Vec<(u8, u8)>,
 }
 
+/// Tourniquet partagé par tous les `SidecarWorldSource` du processus.
+static RR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl SidecarWorldSource {
     pub fn new(url: impl Into<String>, temperature: f32, timeout: Duration) -> Self {
-        let url = url.into().trim_end_matches('/').to_string();
+        let raw = url.into();
+        let urls: Vec<String> = raw
+            .split(',')
+            .map(|u| u.trim().trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+            .collect();
         SidecarWorldSource {
-            url,
+            urls: if urls.is_empty() { vec![raw] } else { urls },
             timeout,
             temperature,
             dealer: 0,
@@ -260,10 +282,25 @@ impl SidecarWorldSource {
         }
     }
 
-    /// Check that the sidecar is up. Worth calling once at agent construction
-    /// so a misconfigured URL fails at startup rather than mid-deal.
+    /// The sidecar this request goes to.
+    fn pick(&self) -> &str {
+        if self.urls.len() == 1 {
+            return &self.urls[0];
+        }
+        let i = RR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        &self.urls[i % self.urls.len()]
+    }
+
+    /// Check that **every** configured sidecar is up. Worth calling once at
+    /// agent construction so a misconfigured URL fails at startup rather than
+    /// mid-deal — and with a list, so that a run does not silently send a third
+    /// of its worlds into a hole.
     pub fn health_check(&self) -> Result<String, AgentError> {
-        http_request(&self.url, "GET", "/health", None, self.timeout)
+        let mut last = String::new();
+        for u in &self.urls {
+            last = http_request(u, "GET", "/health", None, self.timeout)?;
+        }
+        Ok(last)
     }
 
     fn request_body(&self, observer: u8, n: usize) -> String {
@@ -326,11 +363,12 @@ impl SidecarWorldSource {
             return Ok(Vec::new());
         }
         let body = self.request_body(observer, n);
-        let resp = http_request(&self.url, "POST", "/play_worlds", Some(&body), self.timeout)?;
+        let url = self.pick();
+        let resp = http_request(url, "POST", "/play_worlds", Some(&body), self.timeout)?;
         parse_hands(&resp).ok_or_else(|| {
             AgentError::WorldSource(format!(
                 "{}: malformed /play_worlds response ({} bytes)",
-                self.url,
+                url,
                 resp.len()
             ))
         })
@@ -554,6 +592,27 @@ mod tests {
     fn ignores_fields_after_hands() {
         let json = r#"{"hands":[[1,2,3,4]],"worlds":9}"#;
         assert_eq!(parse_hands(json).unwrap(), vec![[1, 2, 3, 4]]);
+    }
+
+    /// Une URL unique reste une URL unique ; une liste se répartit en
+    /// tourniquet, et répéter une entrée pondère la répartition — c'est le seul
+    /// réglage de proportion offert entre GPU de débits différents.
+    #[test]
+    fn url_list_round_robins() {
+        let one = SidecarWorldSource::new("http://a:1/", 0.8, Duration::from_secs(1));
+        assert_eq!(one.urls, vec!["http://a:1"]);
+        assert_eq!(one.pick(), "http://a:1");
+
+        let many =
+            SidecarWorldSource::new(" http://a:1 , http://b:2/ ,", 0.8, Duration::from_secs(1));
+        assert_eq!(many.urls, vec!["http://a:1", "http://b:2"]);
+        let picks: Vec<&str> = (0..4).map(|_| many.pick()).collect();
+        assert_eq!(picks[0], picks[2], "le tourniquet a une période de 2");
+        assert_ne!(picks[0], picks[1]);
+
+        let weighted =
+            SidecarWorldSource::new("http://a:1,http://a:1,http://b:2", 0.8, Duration::from_secs(1));
+        assert_eq!(weighted.urls.len(), 3);
     }
 
     #[test]

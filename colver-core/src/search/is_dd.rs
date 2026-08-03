@@ -428,11 +428,31 @@ pub struct IsDdSearch {
     /// trop tôt plutôt qu'un peu trop tard. C'est le bon sens de l'erreur, et
     /// l'`ALPHA` la fait redescendre au fil de la donne.
     source_latency_us: f64,
+    /// Part des mondes demandés que la source rend effectivement, en moyenne
+    /// mobile sur la donne. Sert à **sur-commander** : `retain_valid` écarte
+    /// les mondes que la belote rend impossibles — le sampler ne voit pas
+    /// l'annonce — donc demander `n` en rend typiquement 0,85 n, et il faut un
+    /// second aller-retour pour finir le compte. Or un aller-retour coûte une
+    /// séquence de jetons entière sur le GPU, alors que les lanes
+    /// supplémentaires d'une seule requête sont quasi gratuites : le coût d'un
+    /// lot est dominé par le nombre de pas, pas par la largeur.
+    ///
+    /// Mesuré sur le corpus de donnes complètes : 1,15 aller-retour par
+    /// décision, et un taux de rendu de 71 à 98 % selon le stade. La
+    /// sur-commande ne change **pas** le nombre de mondes résolus — le mode
+    /// compte s'arrête à `determinizations` — seulement lesquels, et elle
+    /// réduit le repli local en fin de recherche.
+    source_fill: f64,
     tt_buf: crate::solver::TtBuf,
 }
 
 /// Poids de la dernière mesure dans la moyenne mobile de latence.
 const LATENCY_ALPHA: f64 = 0.25;
+
+/// Plafond de sur-commande. Sans borne, une position dont la source ne peut
+/// presque rien produire (finale sur-contrainte) ferait demander des milliers
+/// de mondes pour n'en obtenir aucun — le sampler est à court, pas timide.
+const MAX_OVERASK: f64 = 1.8;
 
 impl IsDdSearch {
     pub fn new() -> Self {
@@ -448,6 +468,7 @@ impl IsDdSearch {
             played_by: [0; 4],
             world_queue: Vec::new(),
             source_latency_us: 0.0,
+            source_fill: 1.0,
             tt_buf: new_tt_buffer(),
         }
     }
@@ -1175,9 +1196,19 @@ impl IsDdSearch {
                         if want == 0 {
                             out_of_time_to_refill = true;
                         } else {
+                        // Sur-commande : cf. `source_fill`. Ce qui revient en
+                        // trop reste dans la file et sert au tour suivant, ou
+                        // est jeté en fin de recherche comme n'importe quel
+                        // monde de la position précédente.
+                        let ask = ((want as f64 / self.source_fill.max(1.0 / MAX_OVERASK)).ceil()
+                            as usize)
+                            .max(want);
                         let t0 = Instant::now();
-                        let batch = src.worlds(state, observer, want, rng)?;
+                        let batch = src.worlds(state, observer, ask, rng)?;
                         let took_us = t0.elapsed().as_micros() as f64;
+                        let fill = batch.len() as f64 / ask as f64;
+                        self.source_fill =
+                            (1.0 - LATENCY_ALPHA) * self.source_fill + LATENCY_ALPHA * fill;
                         self.source_latency_us = if self.source_latency_us == 0.0 {
                             took_us
                         } else {
@@ -1186,7 +1217,7 @@ impl IsDdSearch {
                         };
                         usage.source_us += took_us as u64;
                         usage.rounds += 1;
-                        usage.requested += want as u32;
+                        usage.requested += ask as u32;
                         usage.delivered += batch.len() as u32;
                         if batch.is_empty() {
                             source_dry = true;
