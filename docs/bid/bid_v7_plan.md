@@ -992,6 +992,38 @@ de ce cas, et c'est la raison de mesurer plutôt que de raisonner sur l'occupati
 qui en faisait, donne 431 pas/s — d'où les ~19 h par bras retenues ici, qui est le chiffre
 « tout compris ».
 
+### Deux machines, et la lente n'est pas celle qu'on croit
+
+Le corollaire de la contention intra-GPU est qu'on gagne en **changeant de GPU**, pas en
+partageant celui-ci. Or l'hôte de prod (`moxxi`, RTX 3090 + Ryzen 7 7745HX) est à 0 % de GPU et
+0,17 de charge, et il porte déjà « les trainings » par conception. Mesuré avec le même script :
+
+| machine | GPU | pas/s à un bras |
+|---|---|---|
+| dev | RTX 4090 + i9-13900K | 511 |
+| **moxxi** | RTX 3090 + Ryzen 7 7745HX | **688** |
+
+⚠️ *Les deux nombres ne viennent pas d'une exécution entrelacée* — la machine de dev était à
+2,3 de charge (agents, rust-analyzer), moxxi à 0,17. Le rapport exact ne vaut rien ; ce qui vaut,
+et qui tient largement, c'est que **moxxi est un nœud d'entraînement à part entière, pas un
+repli**.
+
+**Et ça dit ce que ce workload est.** Une 3090 qui bat une 4090 sur la même tâche établit
+qu'elle n'est **pas limitée par le GPU** : un bras prend un cœur et 39 % d'un GPU, et il passe
+son temps à envoyer de tout petits noyaux en attendant la réponse. Ce qui décide est la
+**latence d'un aller-retour CPU↔GPU**, donc la fréquence d'un cœur. Conséquence directe pour
+tout choix de machine, louée ou non : **choisir sur le CPU, jamais sur la gamme du GPU.**
+
+**Plan retenu** : 3 bras, 2 machines, aucun partage de GPU. moxxi en prend 2 (~29 h), la dev 1
+(~19 h) → **~29 h au mur au lieu de 58**, gratuitement.
+
+*Le seul risque à surveiller* : la 3090 de moxxi sert aussi le sidecar playgen des joueurs
+en direct. Un entraînement y ajoute un troisième contexte CUDA — exactement la situation dont
+le tableau ci-dessus mesure le coût entre bras. Le sidecar est à 0 % la plupart du temps et le
+service est resté sain pendant la mesure (`/health` : `reachable`), mais **l'effet sur la
+latence d'un coup de Dédé en direct n'est pas mesuré**. À vérifier avant de laisser tourner
+29 h, pas après.
+
 Et **cette campagne ne dépend pas d'une regénération de pool** : le pool actuel n'est pas à
 refaire pour cause de dérive (§1.6), et l'obs qui change ne touche pas le format `(donne,
 dd_pts)`.
