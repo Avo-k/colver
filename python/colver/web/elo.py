@@ -86,27 +86,35 @@ ANCHOR_VERSION = "2026-08"
 # match agrège ~10 donnes et amplifie le même avantage par coup. C'est 37 qu'il
 # faut ici : ce module note **à la donne**.
 #
-# La précision est modeste (±30). Elle reste sans commune mesure avec ce qu'on
-# avait : DouDou était à 988,6 sur **11 donnes**.
+# Les 37 points sont dans l'**ancienne métrique binaire**, périmée depuis R3 :
+# `E[σ(m)] ≠ σ(E[m])`, donc le taux de victoires ne se convertit pas en note à la
+# marge. Les marges par donne de ce run n'ayant pas été conservées (le CSV ne
+# garde que les agrégats), l'écart a été **ré-estimé par modèle** à partir des
+# deux statistiques exactes qui ont survécu — `p = 0,5536` et une marge moyenne
+# de `+59,82` par donne — recombinées avec la forme de la distribution mesurée
+# sur 2 999 donnes :
 #
-# ⚠️ **À RE-DÉRIVER — ces 37 points sont dans l'ancienne métrique binaire.**
-# Depuis R3 une donne se note à la marge, et les deux métriques ne donnent pas le
-# même écart : le signe ne voit qu'une partie de l'avantage de Dédé (55,4 % de
-# donnes gagnées, mais +60 de marge moyenne là où un pur déplacement de
-# proportion n'en prédirait que +32). L'ancre est donc cohérente avec une échelle
-# qui n'existe plus.
+#     mélange seul (gagner plus souvent)   → +28 Elo, mais prédit +30,8 de marge
+#     inclinaison  (gagner plus gros)      → +50 Elo, mais prédit p = 0,590
+#     les deux                             → +52 Elo, mais prédit p = 0,596
 #
-# Portée réelle de l'incohérence : DouDou n'est assis qu'en mode « rapide », soit
-# 11 donnes sur 1 073 en prod — l'erreur ne touche presque personne. Mais elle
-# doit partir. `arena h2h` rend désormais la ligne « Note à la marge » avec le
-# même `MARGIN_SCALE` : il suffit de rejouer `web_dede` contre `web_doudou` **sur
-# un GPU au repos** et de reporter le chiffre ici. La tentative du 2026-08-03 a
-# été abandonnée, un entraînement playgen occupant la carte à 99 % — et la
-# contention pénalise Dédé seul (DouDou n'utilise pas le GPU), donc elle aurait
-# biaisé l'ancre à la baisse.
+# **Aucun des trois ne reproduit les deux statistiques à la fois** : la vraie
+# distribution Dédé-contre-DouDou n'est pas une déformation simple de celle,
+# symétrique, d'un bot contre lui-même. La fourchette est donc [+28, +52], et
+# elle tient entièrement dans l'IC de la mesure d'origine, [+7, +68].
+#
+# **50 est un choix, pas une mesure** : un chiffre rond dans le haut de la
+# fourchette, qui laisse Dédé à 1000 pile. La portée est faible — DouDou n'est
+# assis qu'en mode « rapide », 11 donnes sur 1 073 en prod.
+#
+# La re-dérivation directe se fera gratuitement : `arena h2h` rend désormais la
+# ligne « Note à la marge » avec le même `MARGIN_SCALE`, donc le chiffre tombera
+# au prochain h2h Dédé-contre-DouDou qui tournera de toute façon. Ne pas le
+# relancer pour lui seul — 30 min de GPU pour resserrer une valeur que presque
+# personne ne rencontre.
 BOT_ELO = {
     "dede": 1000.0,
-    "doudou": 963.0,  # 1000 − 37, métrique binaire — provisoire, cf. ci-dessus
+    "doudou": 950.0,  # écart de 50 : arrondi dans [+28, +52] estimé
 }
 
 _lock = asyncio.Lock()  # serialize read-modify-write across concurrent games

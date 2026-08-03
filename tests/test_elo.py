@@ -33,17 +33,19 @@ class TestAncrage:
     def test_un_bot_ne_bouge_pas(self):
         assert elo.K_BOT == 0.0, "un K non nul laisse le bot redériver"
 
-    def test_les_ancres_sont_celles_qui_ont_ete_mesurees(self):
-        """Dédé vaut 1000 par définition ; l'écart avec DouDou est mesuré.
+    def test_les_ancres_sont_celles_qui_ont_ete_posees(self):
+        """Dédé vaut 1000 par définition ; DouDou est à 50 en dessous.
 
-        ⚠️ Les 37 points datent de la métrique **binaire** (55,4 % ± 4,3 par
-        donne sur 514 donnes). Depuis R3 la note est à la marge, et les deux
-        métriques ne donnent pas le même écart. Ce test épingle la valeur
-        courante, pas une valeur juste — quand l'ancre sera re-dérivée sur un GPU
-        au repos, il faudra la changer *ici et dans `elo.py`*, ensemble.
+        ⚠️ **Ces 50 points sont un arrondi, pas une mesure.** L'écart direct a
+        été mesuré à +37 dans la métrique *binaire*, périmée depuis R3 ; ré-estimé
+        par modèle dans la métrique à la marge il tombe dans [+28, +52], et 50 est
+        un chiffre rond dans le haut de cette fourchette. Ce test épingle donc la
+        valeur *courante*, pas une valeur juste — le jour où un h2h
+        Dédé-contre-DouDou rendra la ligne « Note à la marge », il faudra la
+        changer *ici et dans `elo.py`*, ensemble.
         """
         assert elo.bot_elo("dede") == 1000.0
-        assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 37.0
+        assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 50.0
 
     def test_un_bot_inconnu_vaut_l_origine(self):
         """Repli délibéré : mieux vaut une hypothèse visible qu'une dérive."""
