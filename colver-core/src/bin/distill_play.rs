@@ -29,7 +29,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use colver_core::bid_train_env::DealPool;
-use colver_core::is_dd::{IsDdConfig, IsDdSearch};
+use colver_core::is_dd::{IsDdConfig, IsDdSearch, PlayObjective};
 use colver_core::state::{GameState, Phase};
 
 /// One per-decision record (variable-length).
@@ -147,6 +147,10 @@ fn main() {
     let config = IsDdConfig {
         determinizations: dets,
         time_limit_ms: Some(time_ms),
+        // Explicite, et non hérité du défaut : c'est l'échelle des `q_values`
+        // écrits dans le fichier. Sous `DealScore` ce sont des écarts de score
+        // de donne (±500), pas des points cartes — d'où la version 2 du format.
+        objective: PlayObjective::DealScore,
         ..Default::default()
     };
 
@@ -155,6 +159,7 @@ fn main() {
         "\nDistilling {} deals × 4 suits = {} games (IS-DD {}ms × {} dets, skip_forced={})",
         num_deals, total_games, time_ms, dets, skip_forced
     );
+    eprintln!("  q_values scale: deal-score margin NS-EW (COLVPD01 v2)");
 
     let start = Instant::now();
     let progress = AtomicUsize::new(0);
@@ -255,7 +260,10 @@ fn main() {
 
     let mut f = BufWriter::new(File::create(&output_path).expect("Cannot create output"));
     f.write_all(b"COLVPD01").unwrap();
-    f.write_all(&1u8.to_le_bytes()).unwrap(); // version
+    // v2 (2026-08-03) : `q_values` passe des points cartes N-S (0-252) à
+    // l'écart de score de donne N-S − E-O, en même temps que l'objectif
+    // par défaut d'IS-DD. Même schéma binaire, autre échelle.
+    f.write_all(&2u8.to_le_bytes()).unwrap(); // version
     f.write_all(&[0u8; 7]).unwrap(); // pad to 16 bytes
     f.write_all(&(total_records as u64).to_le_bytes()).unwrap();
     f.write_all(&payload).unwrap();
@@ -272,12 +280,12 @@ fn main() {
 }
 
 // ============================================================================
-// COLVPD01 binary format (Play Distill v1)
+// COLVPD01 binary format (Play Distill v2)
 // ============================================================================
 //
 // Header (24 bytes):
 //   magic        : [u8; 8]  = "COLVPD01"
-//   version      : u8       = 1
+//   version      : u8       = 2   (1 = q_values en points cartes N-S 0-252)
 //   _pad         : [u8; 7]  = 0
 //   n_records    : u64      (little-endian)
 //
@@ -302,7 +310,10 @@ fn main() {
 //   voids_packed : u32 (le)   4 packed u8: engine's known voids per seat
 //                              (bit i = void in suit i)
 //   q_values     : [(u8, f32); n_legal]
-//                              For each legal card: (card_idx, ns_points)
+//                              For each legal card: (card_idx, value).
+//                              v2: value = deal-score margin NS-EW (contract,
+//                                  chute, belote, capot included; roughly ±500).
+//                              v1: value = NS card points (0-252).
 //                              ns_points is from NS team's perspective (0..252).
 //                              Defenders pick min, declarer picks max.
 //

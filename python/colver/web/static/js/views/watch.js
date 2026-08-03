@@ -252,7 +252,8 @@ function watchRenderMoveStats(move, state) {
 
     // IS-DD (Dede): card score bars
     if (stats.card_scores && stats.card_scores.length > 0) {
-        renderDdScoreBars(body, stats.card_scores, move.action, stats.determinizations);
+        renderDdScoreBars(body, stats.card_scores, move.action, stats.determinizations,
+                          stats.score_scale);
         return;
     }
 
@@ -401,7 +402,24 @@ function renderQValueBars(container, qValues, bestAction) {
     container.appendChild(div);
 }
 
-function renderDdScoreBars(container, cardScores, bestAction, determinizations) {
+// IS-DD et l'Oracle publient tous deux `card_scores`, sur deux \u00e9chelles qui ne
+// se soustraient pas : IS-DD maximise l'**\u00e9cart de score de donne** N-S \u2212 E-O
+// (contrat, chute, belote comprises, \u00b1500 et sign\u00e9), l'Oracle rend des **points
+// cartes** N-S (0-252). Le serveur envoie `score_scale` pour les distinguer ;
+// sans lui on retombe sur les points cartes, l'\u00e9chelle historique.
+const SCORE_SCALES = {
+    deal_score: { signed: true, caption: '\u00e9cart de score de donne N-S \u2212 E-O' },
+    card_points: { signed: false, caption: 'points cartes N-S' },
+};
+
+function formatScaledScore(score, scale) {
+    const v = score.toFixed(1);
+    // Un \u00e9cart sign\u00e9 sans son signe se lit comme un total : le \u00ab + \u00bb est porteur.
+    return scale.signed && score > 0 ? `+${v}` : v;
+}
+
+function renderDdScoreBars(container, cardScores, bestAction, determinizations, scaleName) {
+    const scale = SCORE_SCALES[scaleName] || SCORE_SCALES.card_points;
     const sorted = [...cardScores].sort((a, b) => b[1] - a[1]);
     const vals = sorted.map(x => x[1]);
     const maxS = Math.max(...vals);
@@ -418,16 +436,16 @@ function renderDdScoreBars(container, cardScores, bestAction, determinizations) 
         const pct = ((score - minS) / range * 100).toFixed(0);
         row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
             `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
-            `<span class="visit-count">${score.toFixed(1)}</span>`;
+            `<span class="visit-count">${formatScaledScore(score, scale)}</span>`;
         div.appendChild(row);
     }
 
-    if (determinizations) {
-        const total = document.createElement('div');
-        total.className = 'visit-total';
-        total.textContent = `${determinizations} d\u00e9terminisations`;
-        div.appendChild(total);
-    }
+    const total = document.createElement('div');
+    total.className = 'visit-total';
+    total.textContent = determinizations
+        ? `${scale.caption} \u2014 ${determinizations} d\u00e9terminisations`
+        : scale.caption;
+    div.appendChild(total);
 
     container.appendChild(div);
 }

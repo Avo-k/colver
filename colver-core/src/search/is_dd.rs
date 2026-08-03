@@ -46,11 +46,38 @@ use crate::state::{GameState, Phase};
 /// dessous — une fois la chute acquise un point carte de plus vaut exactement
 /// zéro, et le solveur continue pourtant à se battre pour lui : c'est de là que
 /// viennent les coups qui paraissent arbitraires en fin de donne perdue.
+///
+/// # Pourquoi c'est l'agrégation qui décide, et pas le solveur
+///
+/// L'écart de score est une fonction **monotone non décroissante** des points
+/// cartes du preneur. Dans un monde déterminisé, où tout est décidé, les deux
+/// objectifs classent donc les coups à l'identique et le camp qui minimise l'un
+/// minimise l'autre : le solveur DD n'a rien à savoir du contrat, et
+/// `solve_with_scores` reste inchangé.
+///
+/// L'écart n'apparaît qu'à la moyenne, parce que `E[f(x)] ≠ f(E[x])` dès qu'il
+/// y a une marche entre les deux. Trois mondes à 90/70/70 sous un contrat à 80
+/// donnent une espérance de 76,7 — « chute » — alors que la bonne lecture est
+/// un tiers de contrat réussi contre deux tiers de chute. C'est exactement le
+/// coup à tenter quand la seule ligne gagnante est improbable, et la raison
+/// pour laquelle on ne rattrape pas ça après coup sur une moyenne de points
+/// cartes. D'où [`IsDdSearch::world_value`], appliqué **monde par monde** avant
+/// la somme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayObjective {
-    /// Espérance de points cartes N-S. Le comportement historique.
+    /// Espérance de points cartes N-S. Le comportement historique, conservé
+    /// pour l'A/B (`arena/bots/web_dede_cardpts.toml`) et pour les mesures qui
+    /// veulent une échelle 0-252.
     CardPoints,
-    /// Espérance d'écart de **score de donne** N-S − E-O, contrat compris.
+    /// Espérance d'écart de **score de donne** N-S − E-O, contrat compris :
+    /// réussite ou chute, valeur du contrat, contré/surcontré, capot, dix de
+    /// der et belote. **Le défaut.**
+    ///
+    /// La belote n'est pas un simple bonus de 20 points : `scoring.rs` la
+    /// compte dans `taker_total` pour décider de la réussite, donc elle
+    /// **déplace le seuil du contrat**. C'est la raison pour laquelle
+    /// [`IsDdSearch::world_belote_for`] la recalcule dans chaque monde au lieu
+    /// de lire `state.belote`, qui ne compte que ce qui a déjà été joué.
     DealScore,
 }
 
@@ -132,12 +159,15 @@ pub struct IsDdConfig {
     /// constraint-uniform. Only has an effect when a belief source is active.
     /// Default 1.0.
     pub belief_frac: f32,
-    /// Ce que la recherche maximise. Défaut [`PlayObjective::CardPoints`] — le
-    /// comportement historique, pour qu'aucune mesure existante ne bouge.
+    /// Ce que la recherche maximise. Défaut [`PlayObjective::DealScore`] depuis
+    /// le 2026-08-03 : c'est le score de donne qui décide une partie, pas les
+    /// points cartes, et l'écart entre les deux est une marche (voir
+    /// [`PlayObjective`]).
     ///
-    /// ⚠️ `DealScore` change **l'échelle de `card_scores`** : des écarts de score
-    /// de donne (±500, contrat compris) au lieu de points cartes (0-252). Tout
-    /// consommateur qui affiche ces valeurs doit le savoir.
+    /// ⚠️ L'échelle de `card_scores` en dépend : écarts de score de donne
+    /// (±500, contrat compris) sous `DealScore`, points cartes (0-252) sous
+    /// `CardPoints`. Tout consommateur qui affiche ces valeurs doit lire
+    /// l'objectif — côté web c'est le champ `score_scale` du blob de stats.
     pub objective: PlayObjective,
     /// Plafond de mondes **résolus** par décision, sous échéance uniquement.
     ///
@@ -187,7 +217,7 @@ impl Default for IsDdConfig {
             early_termination: true,
             world_batch: 128,
             belief_frac: 1.0,
-            objective: PlayObjective::CardPoints,
+            objective: PlayObjective::DealScore,
             max_worlds: None,
             cred_alpha: 0.0,
             parallel: false,
@@ -312,7 +342,10 @@ impl WorldCounts {
 pub struct IsDdResult {
     /// Best card for the current player's team.
     pub best_action: u8,
-    /// (card, avg_score) for each legal move. Score is NS points (0-252).
+    /// (card, avg_score) pour chaque coup légal. **L'échelle dépend de
+    /// [`IsDdConfig::objective`]** : écart de score de donne N-S − E-O (±500,
+    /// contrat compris) sous `DealScore` — le défaut — ou points cartes N-S
+    /// (0-252) sous `CardPoints`.
     pub card_scores: Vec<(u8, f32)>,
     /// Number of successful determinizations.
     pub determinizations: u32,
@@ -538,6 +571,21 @@ impl IsDdSearch {
                 );
                 (s.scores[0] - s.scores[1]) as f64
             }
+        }
+    }
+
+    /// Valeur neutre d'un coup dont aucun monde n'a été résolu, dans l'échelle
+    /// de l'objectif : la moitié du total en points cartes, l'écart nul entre
+    /// les deux camps en score de donne.
+    ///
+    /// N'intervient jamais dans une décision — soit le coup est forcé, soit
+    /// aucun monde n'a abouti pour cette carte — mais elle sort dans
+    /// `card_scores`, que les pages d'analyse affichent.
+    #[inline]
+    fn neutral_value(objective: PlayObjective) -> f32 {
+        match objective {
+            PlayObjective::CardPoints => (TOTAL_PTS / 2) as f32,
+            PlayObjective::DealScore => 0.0,
         }
     }
 
@@ -970,7 +1018,7 @@ impl IsDdSearch {
                 let card = legal.trailing_zeros() as u8;
                 return Ok(IsDdResult {
                     best_action: card,
-                    card_scores: vec![(card, 81.0)],
+                    card_scores: vec![(card, Self::neutral_value(config.objective))],
                     determinizations: 0,
                     worlds: WorldCounts::default(),
                     source: SourceUsage {
@@ -1249,12 +1297,7 @@ impl IsDdSearch {
             let avg = if wsum > 1e-9 {
                 (score_sum[card as usize] / wsum) as f32
             } else {
-                // Repli neutre. En points cartes c'est la moitié du total ; en
-                // score de donne c'est zéro, l'écart nul entre les deux camps.
-                match config.objective {
-                    PlayObjective::CardPoints => 81.0,
-                    PlayObjective::DealScore => 0.0,
-                }
+                Self::neutral_value(config.objective)
             };
 
             card_scores.push((card, avg));
@@ -1554,10 +1597,18 @@ mod tests {
                 let legal = state.legal_actions();
                 assert!(legal & (1u64 << result.best_action) != 0);
 
-                // All scores should be in valid range
+                // All scores should be in valid range. The range is the
+                // objective's, not a constant: `DealScore` (the default) yields
+                // a signed deal-score margin, `CardPoints` an NS card total.
+                let (lo, hi) = match config.objective {
+                    PlayObjective::CardPoints => (0.0, 252.0),
+                    // Borne large : surcontré capot réussi vaut 252 + 250×3 +
+                    // belote = 1022 pour le preneur, zéro en face.
+                    PlayObjective::DealScore => (-1100.0, 1100.0),
+                };
                 for &(card, avg) in &result.card_scores {
                     assert!(legal & (1u64 << card) != 0);
-                    assert!(avg >= 0.0 && avg <= 252.0, "avg={}", avg);
+                    assert!(avg >= lo && avg <= hi, "avg={} hors [{lo}, {hi}]", avg);
                 }
 
                 found += 1;
@@ -1661,6 +1712,35 @@ mod tests {
 
         // La marche vaut 4V.
         assert_eq!(delta(100) - delta(99), 4 * 100);
+    }
+
+    /// La belote **déplace le seuil**, elle n'ajoute pas 20 points au bout.
+    ///
+    /// `scoring.rs` la compte dans `taker_total` pour décider de la réussite,
+    /// donc un preneur à 100 avec belote réussit à 80 points cartes là où il
+    /// lui en faudrait 100 sans. C'est ce qui interdit de la rattraper après
+    /// coup sur une moyenne : la corriger en aval déplacerait la valeur sans
+    /// déplacer la marche.
+    #[test]
+    fn belote_moves_the_contract_threshold_not_just_the_total() {
+        use crate::state::Contract;
+        let contract = Contract { trump: 0, value: 10, team: 0, coinche: 0 }; // 100 pour N-S
+        let made = |x: i16, belote: [i16; 2]| -> bool {
+            let s = deal_score_from_card_points(&contract, [x, TOTAL_PTS - x], belote, false);
+            // Chute ⇒ le preneur marque zéro (la défense prend tout).
+            s.scores[0] > 0
+        };
+
+        assert!(!made(80, [0, 0]), "80 points cartes sans belote : chute à 100");
+        assert!(made(80, [20, 0]), "80 + belote doit passer le contrat à 100");
+        // Et la belote de l'adversaire ne sauve pas le preneur.
+        assert!(!made(80, [0, 20]), "la belote adverse ne compte pas pour le preneur");
+    }
+
+    /// Un appelant qui ne dit rien joue pour le score de donne.
+    #[test]
+    fn default_objective_is_the_deal_score() {
+        assert_eq!(IsDdConfig::default().objective, PlayObjective::DealScore);
     }
 
     /// L'objectif « score de donne » doit effectivement changer le classement

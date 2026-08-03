@@ -142,6 +142,10 @@ function handleCorrection(data) {
     isddBarsEl.innerHTML = '';
 
     if (data.isdd_card_scores && data.isdd_card_scores.length) {
+        // Écart de score de donne N-S − E-O par défaut (contrat, chute, belote
+        // comprises) : signé, et sur une autre échelle que les points cartes de
+        // l'Oracle affiché juste au-dessus. Les deux ne se soustraient pas.
+        const signed = (data.isdd_score_scale || 'deal_score') === 'deal_score';
         const sorted = [...data.isdd_card_scores].sort((a, b) => b[1] - a[1]);
         const vals = sorted.map(x => x[1]);
         const maxS = Math.max(...vals);
@@ -155,15 +159,20 @@ function handleCorrection(data) {
             const row = document.createElement('div');
             row.className = 'visit-row' + (isBest ? ' best' : '') + (isPlayer ? ' prob-player-pick' : '');
             const pct = ((score - minS) / rng * 100).toFixed(0);
+            const label = (signed && score > 0 ? '+' : '') + score.toFixed(1);
             row.innerHTML = `<span class="visit-name">${cardChipHtml(action)}</span>` +
                 `<div class="visit-bar-bg"><div class="visit-bar-fill q-fill" style="width:${pct}%"></div></div>` +
-                `<span class="visit-count">${score.toFixed(1)}</span>`;
+                `<span class="visit-count">${label}</span>`;
             div.appendChild(row);
         }
         isddBarsEl.appendChild(div);
     }
+    const isddScaleLabel =
+        (data.isdd_score_scale || 'deal_score') === 'deal_score'
+            ? 'écart de score de donne N-S − E-O'
+            : 'points cartes N-S';
     document.getElementById('pj-isdd-meta').textContent =
-        `${data.isdd_determinizations} det. / ${data.isdd_elapsed_ms}ms`;
+        `${isddScaleLabel} — ${data.isdd_determinizations} det. / ${data.isdd_elapsed_ms}ms`;
 
     const dmcSec = document.getElementById('pj-dmc-section');
     if (data.dmc_q_values && data.dmc_q_values.length) {

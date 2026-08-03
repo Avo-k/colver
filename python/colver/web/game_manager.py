@@ -849,6 +849,9 @@ class PlayProblemSession:
             "isdd_action": int(isdd_result["action"]),
             "isdd_action_name": colver.Env.action_name(int(isdd_result["action"]), 1),
             "isdd_card_scores": [[int(c), round(float(s), 1)] for c, s in isdd_result["candidates"]],
+            # Échelle des valeurs ci-dessus : écart de score de donne N-S − E-O
+            # (contrat, chute, belote), et non les points cartes de l'Oracle.
+            "isdd_score_scale": "deal_score",
             "isdd_determinizations": int(isdd_result["determinizations"]),
             "isdd_elapsed_ms": round(isdd_result["elapsed_ms"], 1),
             "all_hands": self.hands,

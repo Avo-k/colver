@@ -98,7 +98,12 @@ def load_records(path: Path):
         raise ValueError(f"Bad magic: {raw[:8]!r}")
     version = raw[8]
     n_records = struct.unpack_from("<Q", raw, 16)[0]
+    # L'échelle des q_values dépend de la version : v1 = points cartes N-S
+    # (0-252), v2 = écart de score de donne N-S − E-O (contrat compris, ±500).
+    # Deux échelles, pas deux unités du même axe — ne pas mélanger deux fichiers.
+    scale = "deal-score margin NS-EW" if version >= 2 else "NS card points"
     print(f"  magic OK, version={version}, n_records={n_records:,}, size={len(raw):,} bytes")
+    print(f"  q_values scale: {scale}")
 
     # Pre-allocate fixed-size arrays
     deal_id = np.empty(n_records, dtype=np.uint32)

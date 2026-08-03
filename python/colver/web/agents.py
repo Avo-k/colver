@@ -318,6 +318,11 @@ def decision_stats(kind, decision, error=None):
     candidates = [[int(a), float(s)] for a, s in decision.get("candidates", [])]
     if source == "isdd":
         stats["card_scores"] = [[a, round(s, 1)] for a, s in candidates]
+        # IS-DD et l'Oracle publient tous deux `card_scores`, sur deux échelles
+        # différentes depuis que l'objectif par défaut est le score de donne :
+        # écart marqué N-S − E-O ici, points cartes 0-252 là. Sans ce champ le
+        # client afficherait les deux avec la même légende.
+        stats["score_scale"] = "deal_score"
         stats["determinizations"] = int(decision.get("determinizations", 0))
         worlds = decision.get("worlds") or {}
         stats["worlds"] = {k: int(v) for k, v in worlds.items()}
@@ -334,6 +339,8 @@ def decision_stats(kind, decision, error=None):
         stats["q_values"] = [[a, round(s, 4)] for a, s in candidates]
     elif source == "oracle":
         stats["card_scores"] = [[a, round(s, 1)] for a, s in candidates]
+        # Un solve DD nu : points cartes, sans contrat ni belote.
+        stats["score_scale"] = "card_points"
     elif source == "bid_nn":
         stats["bid_nn"] = {
             "q_values": [[a, round(s, 3)] for a, s in candidates],

@@ -15,7 +15,7 @@
 //! [play]
 //! method = "isdd"                 # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|heuristic|rule
 //! max_worlds = 256                # IS-DD sous échéance : plafond de mondes résolus par coup
-//! objective = "deal_score"        # IS-DD : card_points (défaut) | deal_score (contrat compris)
+//! objective = "deal_score"        # IS-DD : deal_score (défaut, contrat compris) | card_points
 //! time_ms = 1000                  # time budget; 0 = use `determinizations` instead
 //! determinizations = 240
 //!
@@ -121,8 +121,9 @@ pub struct PlaySpec {
     pub early_termination: Option<bool>,
     pub dominance_factor: f32,
     pub belief_frac: f32,
-    /// Ce que la recherche IS-DD maximise : `card_points` (défaut, historique)
-    /// ou `deal_score` (contrat compris — voir `PlayObjective`).
+    /// Ce que la recherche IS-DD maximise : `deal_score` (défaut — contrat,
+    /// chute, belote, capot) ou `card_points` (l'ancien défaut, points cartes
+    /// nus). Voir `PlayObjective`.
     pub objective: crate::is_dd::PlayObjective,
     /// Plafond de mondes résolus par décision, sous échéance. `None` = pas de
     /// plafond (le défaut historique : consommer tout le budget).
@@ -147,7 +148,7 @@ impl Default for PlaySpec {
             early_termination: None,
             dominance_factor: 1.0,
             belief_frac: 1.0,
-            objective: crate::is_dd::PlayObjective::CardPoints,
+            objective: crate::is_dd::PlayObjective::DealScore,
             max_worlds: None,
             cred_alpha: 0.0,
             cred_bid_model: None,
@@ -282,9 +283,19 @@ impl AgentSpec {
                 ("play", "belief_frac") => spec.play.belief_frac = num(1.0),
                 ("play", "max_worlds") => spec.play.max_worlds = Some(int(0) as u32),
                 ("play", "objective") => {
+                    // Pas de repli silencieux : une faute de frappe rendrait
+                    // l'objectif le plus faible sans rien dire, et un bot qui
+                    // maximise les points cartes joue *différemment* — pas un
+                    // peu moins bien, autre chose.
                     spec.play.objective = match val {
                         "deal_score" | "score" => crate::is_dd::PlayObjective::DealScore,
-                        _ => crate::is_dd::PlayObjective::CardPoints,
+                        "card_points" | "cards" => crate::is_dd::PlayObjective::CardPoints,
+                        other => {
+                            return Err(AgentError::Config(format!(
+                                "unknown play objective '{other}' \
+                                 (expected 'deal_score' or 'card_points')"
+                            )))
+                        }
                     }
                 }
                 ("play", "cred_alpha") => spec.play.cred_alpha = num(0.0),
@@ -584,6 +595,14 @@ impl AgentSpec {
         if self.belief.model.is_some() {
             label.push_str("+bel");
         }
+        // L'objectif change ce que le bot *joue*, donc il doit se voir dans
+        // `matches.csv` : sans ça `web_dede` et `web_dede_cardpts` rendent le
+        // même `play_a`/`play_b` et un A/B est illisible une fois écrit. Seul
+        // l'ancien objectif est marqué — le défaut reste muet, comme partout
+        // ailleurs dans ce label.
+        if self.uses_worlds() && self.play.objective == crate::is_dd::PlayObjective::CardPoints {
+            label.push_str("+cardpts");
+        }
         if self.play.cred_alpha > 0.0 {
             label.push_str(&format!("+cred{:.1}", self.play.cred_alpha));
         }
@@ -618,6 +637,44 @@ mod tests {
         assert_eq!(spec.play.determinizations, 240);
         assert_eq!(spec.play.time_ms, 0);
         assert_eq!(spec.worlds.kind, WorldSourceKind::Uniform);
+    }
+
+    /// Un bot qui ne dit rien doit jouer pour le **score de donne**.
+    ///
+    /// Le défaut a de la valeur ici : `card_points` ignore la réussite du
+    /// contrat, la belote (qui déplace le seuil de 20 points) et la différence
+    /// entre faire chuter l'adversaire et lui grappiller quelques points. Un
+    /// refactor qui reperdrait ce défaut ferait jouer *autre chose* à tous les
+    /// bots sans en changer un seul fichier.
+    #[test]
+    fn default_play_objective_is_the_deal_score() {
+        let spec = AgentSpec::from_toml_str("[play]\nmethod = \"isdd\"\n").unwrap();
+        assert_eq!(spec.play.objective, crate::is_dd::PlayObjective::DealScore);
+        assert_eq!(
+            spec.is_dd_config().objective,
+            crate::is_dd::PlayObjective::DealScore,
+            "le défaut du spec doit atteindre la config de recherche"
+        );
+    }
+
+    #[test]
+    fn card_points_objective_is_still_reachable() {
+        let spec = AgentSpec::from_toml_str(
+            "[play]\nmethod = \"isdd\"\nobjective = \"card_points\"\n",
+        )
+        .unwrap();
+        assert_eq!(spec.play.objective, crate::is_dd::PlayObjective::CardPoints);
+    }
+
+    /// Une faute de frappe doit être bruyante. Un repli silencieux sur
+    /// `card_points` ferait jouer un autre agent que celui décrit par le
+    /// fichier, sans rien afficher.
+    #[test]
+    fn an_unknown_objective_is_a_config_error() {
+        let err = AgentSpec::from_toml_str(
+            "[play]\nmethod = \"isdd\"\nobjective = \"deal-score\"\n",
+        );
+        assert!(matches!(err, Err(AgentError::Config(_))), "got {err:?}");
     }
 
     #[test]

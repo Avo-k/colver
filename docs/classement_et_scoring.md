@@ -118,8 +118,14 @@ vaut jusqu'à quatre fois la valeur du contrat.
 
 ### 3.2 Ce qu'IS-DD optimise
 
-`search/is_dd.rs` agrège `ns_pts` — les **points cartes** rendus par `solve_with_scores`
-— et prend l'argmax :
+**Corrigé le 2026-08-03 : le défaut est `PlayObjective::DealScore`.** Chaque monde est
+converti en écart de score de donne N-S − E-O — contrat réussi ou chuté, valeur du
+contrat, contré/surcontré, capot, dix de der, belote — **avant** d'entrer dans la moyenne
+(`IsDdSearch::world_value`). Ce qui suit décrit l'ancien défaut, `card_points`, encore
+atteignable par `[play] objective = "card_points"` (bot `web_dede_cardpts`).
+
+Jusque-là `search/is_dd.rs` agrégeait `ns_pts` — les **points cartes** rendus par
+`solve_with_scores` — et prenait l'argmax :
 
 ```rust
 score_sum[card] += ns_pts as f64 * cw;   // points cartes, 0-252
@@ -127,21 +133,37 @@ score_sum[card] += ns_pts as f64 * cw;   // points cartes, 0-252
 avg = score_sum[card] / weight_sum[card];
 ```
 
-Donc **Dédé maximise l'espérance de points cartes**, jamais le score de donne. Il ne sait
-ni si le contrat est déjà tombé, ni s'il est déjà assuré, ni où est le seuil. C'est
-l'équivalent exact du *money game* au backgammon : jouer chaque donne comme si les points
+Dédé maximisait donc l'espérance de points cartes, jamais le score de donne : il ne savait
+ni si le contrat était déjà tombé, ni s'il était déjà assuré, ni où était le seuil. C'est
+l'équivalent exact du *money game* au backgammon — jouer chaque donne comme si les points
 comptaient linéairement et indéfiniment.
 
-Les trois cas signalés à l'usage tombent pile là-dessus :
+Les trois cas signalés à l'usage tombaient pile là-dessus :
 
-| situation | ce que fait Dédé | ce qu'il faudrait |
+| situation | ancien objectif (`card_points`) | objectif actuel (`deal_score`) |
 |---|---|---|
-| **l'adversaire a déjà chuté** | continue à se battre pour des points | n'importe quel coup légal — la pente est nulle, d'où l'air « au hasard » |
-| **en défense, près du seuil** | maximise E[x] | maximiser **P(x < V)** : une ligne qui sécurise 82 points bat une ligne à 90 de moyenne qui descend parfois à 75 |
-| **en attaque, contrat déjà assuré** | maximise E[x] | **c'est correct** — la pente est bien 2 au-dessus du seuil |
+| **l'adversaire a déjà chuté** | continue à se battre pour des points | la pente est nulle, tous les coups se valent — plus d'air « au hasard » à défendre |
+| **en défense, près du seuil** | maximise E[x] | maximise **P(x < V)** : une ligne qui sécurise 82 points bat une ligne à 90 de moyenne qui descend parfois à 75 |
+| **en attaque, contrat déjà assuré** | maximise E[x] | identique — la pente est bien 2 au-dessus du seuil, l'ancien objectif était déjà correct ici |
 
-Donc l'intuition « il joue des coups sous-optimaux » est fondée sur deux des trois cas, et
-le troisième est déjà bon.
+### 3.2 bis Pourquoi c'est l'agrégation, et pas le solveur
+
+L'écart de score est une fonction **monotone non décroissante** des points cartes du
+preneur. Dans un monde déterminisé, où tout est décidé, les deux objectifs classent donc
+les coups à l'identique, et le camp qui minimise l'un minimise l'autre : `solve_with_scores`
+n'a rien à savoir du contrat et n'a pas bougé.
+
+L'écart n'existe qu'à la moyenne, parce que `E[f(x)] ≠ f(E[x])` dès qu'il y a une marche.
+Trois mondes à 90/70/70 sous un contrat à 80 donnent une espérance de 76,7 — « chute » —
+alors que la bonne lecture est un tiers de contrat réussi contre deux tiers de chute, et
+que la marche de `4V` paie largement la tentative. **C'est la raison pour laquelle on ne
+rattrape pas ça après coup sur une moyenne de points cartes.**
+
+Corollaire sur la belote : `scoring.rs` la compte dans `taker_total` pour décider de la
+réussite, donc elle ne vaut pas « 20 points de plus au bout » — elle **déplace le seuil de
+20 points**. `world_belote_for` la recalcule dans chaque monde depuis `hands | played_by`,
+et non depuis `state.belote` qui ne compte que ce qui a déjà été joué. Épinglé par
+`belote_moves_the_contract_threshold_not_just_the_total`.
 
 ### 3.3 Trois objectifs, du plus faux au plus juste
 
@@ -152,8 +174,8 @@ le troisième est déjà bon.
    dérivée est quasi nulle : marquer 300 de plus ne change rien. C'est l'objectif correct
    **dans une partie**.
 
-Chaque niveau est strictement meilleur que le précédent. **Aujourd'hui le jeu de la carte
-est au niveau 1**, alors que l'enchère est partiellement au niveau 3 (bid v6 lit une obs
+Chaque niveau est strictement meilleur que le précédent. **Depuis le 2026-08-03 le jeu de
+la carte est au niveau 2** ; l'enchère est partiellement au niveau 3 (bid v6 lit une obs
 score-aware à 117 dimensions, et `AgentTable.set_scores` lui passe le score cumulé).
 
 ### 3.4 Ce que ça coûte de corriger
@@ -161,14 +183,16 @@ score-aware à 117 dimensions, et `AgentTable.set_scores` lui passe le score cum
 Passer du niveau 1 au niveau 2 est **du post-traitement pur, sans toucher au solveur** :
 `solve_with_scores` rend déjà les points cartes par carte et par monde ; il suffit de
 convertir chaque monde en écart de score de donne via le contrat, puis de moyenner.
-Le monde connaît les quatre mains, donc la belote et le capot sont calculables.
+Le monde connaît les quatre mains, donc la belote et le capot sont calculables. **Fait.**
 
 Passer au niveau 3 demande en plus une **table d'équité de match** — exactement l'objet
-que le backgammon appelle *match equity table*. Là c'est un chantier.
+que le backgammon appelle *match equity table*. Là c'est un chantier, et c'est ce qui
+manque encore : à 1900-200, +260 et +180 valent pareil, et `DealScore` ne le voit pas.
 
-⚠️ Non mesuré : **combien ça vaut en force de jeu**. L'analyse dit que l'objectif est faux,
-pas de combien. Le premier pas est un h2h « Dédé points cartes » contre « Dédé score de
-donne ».
+⚠️ Toujours non mesuré : **combien le niveau 2 vaut en force de jeu**. L'analyse dit que
+l'objectif du niveau 1 est faux, pas de combien il coûte. Le seul chiffre disponible reste
+les 40 donnes de R2 ci-dessous, qui ne tranchent rien. La bascule a été faite sur
+l'argument de barème, pas sur une mesure de force — c'est un choix assumé.
 
 ---
 
@@ -286,14 +310,18 @@ des points cartes. Post-traitement pur, aucun changement du solveur. C'est ce qu
 disparaître les coups « au hasard » après une chute acquise et qui rend les lignes de
 sécurité en défense.
 
-**Implémenté le 2026-08-03** (`PlayObjective::DealScore`, `[play] objective`, défaut
-inchangé). **Sans effet mesurable pour l'instant** : 40 donnes en duplicate,
-`web_dede_score` contre `web_dede`, 6-6 sur les 12 donnes qui divergent, marge +8,7. Le
-comportement change pourtant énormément — **95 % des donnes se jouent différemment**. À
-40 donnes rien ne peut être tranché ; à refaire au volume.
+**Implémenté le 2026-08-03**, puis **passé en défaut le même jour** (`PlayObjective::DealScore`,
+`[play] objective`). Le bras de contrôle est `web_dede_cardpts` ; `web_dede` reflète la prod.
 
-⚠️ `DealScore` change **l'échelle de `card_scores`** (±500 au lieu de 0-252), et les pages
-d'analyse du web les affichent. À traiter avant toute bascule prod.
+**Aucune mesure de force ne l'appuie**, et c'est délibéré : 40 donnes en duplicate ont donné
+6-6 sur les 12 donnes divergentes, marge +8,7 — rien de tranchable, alors que **95 % des
+donnes se jouent différemment**. La bascule repose sur l'argument de barème (§3.1-3.2 bis),
+qui ne dépend d'aucun échantillon : sous le seuil un point carte vaut *exactement* zéro.
+Un h2h au volume reste utile pour chiffrer le gain, pas pour décider du défaut.
+
+⚠️ `DealScore` change **l'échelle de `card_scores`** (±500 signé au lieu de 0-252). Traité :
+le blob de stats porte `score_scale`, et `watch.js` / `prob-jeu.js` affichent l'unité. Un
+`card_scores` d'IS-DD et un d'Oracle **ne se soustraient pas**.
 
 ### R3 — Noter la marge plutôt que le binaire
 

@@ -122,6 +122,7 @@ residual = true                  # DouDou50 / triforge architecture
 time_ms = 1000         # per-move budget; 0 = count mode
 determinizations = 240 # used when time_ms = 0
 switch_at = 5          # dmc_then_isdd: trick at which IS-DD takes over
+objective = "deal_score"  # IS-DD: deal_score (default) | card_points
 cred_alpha = 0.0       # credibility world-weighting (see is_dd.md)
 parallel = true        # fan DD solves across the rayon pool
 

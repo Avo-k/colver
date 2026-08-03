@@ -93,7 +93,16 @@ PLAY_MODEL = "models/dmc_50.bin"
 
 
 def isdd_spec(dets: int, url: str) -> str:
-    """Agent IS-DD en mode compte, mondes playgen — la source de la prod."""
+    """Agent IS-DD en mode compte, mondes playgen — la source de la prod.
+
+    `objective` est épinglé sur les points cartes, *pas* laissé au défaut
+    (`deal_score` depuis le 2026-08-03). Ce script chiffre un regret « en points
+    DD » — c'est lui qui a fixé le plafond `max_worlds` de la prod (sous 0,10 pt
+    dès 60 mondes) — et sur l'échelle du score de donne les mêmes écarts sont
+    d'un autre ordre de grandeur : un re-run se comparerait silencieusement aux
+    chiffres publiés. Pour mesurer le plateau du bot *actuel*, changer la valeur
+    ici et rejouer les deux bras.
+    """
     return f"""
 [bid]
 strategy = "nn"
@@ -104,6 +113,7 @@ hidden = 512
 method = "isdd"
 time_ms = 0
 determinizations = {dets}
+objective = "card_points"
 parallel = true
 
 [worlds]

@@ -333,7 +333,7 @@ fn main() {
     // compte** : sous échéance, deux exécutions ne traverseraient pas le même
     // nombre de mondes et la comparaison ne dirait plus rien.
     if isdd_positions > 0 && !hot_raw.is_empty() {
-        use colver_core::is_dd::{IsDdConfig, IsDdSearch};
+        use colver_core::is_dd::{IsDdConfig, IsDdSearch, PlayObjective};
         let mut rng = StdRng::seed_from_u64(seed);
         let mut chosen: Vec<(usize, usize)> = Vec::new();
         for _ in 0..isdd_positions.min(hot_raw.len()) {
@@ -342,6 +342,12 @@ fn main() {
         let config = IsDdConfig {
             determinizations: isdd_worlds,
             time_limit_ms: None,
+            // Épinglé sur les points cartes, *pas* le défaut. Ce bench chiffre
+            // un regret « en points DD » (−0,008 ± 0,031 par décision, docs/play/
+            // is_dd.md) : sur l'échelle du score de donne les mêmes écarts
+            // seraient d'un autre ordre de grandeur et se compareraient
+            // silencieusement aux chiffres déjà publiés.
+            objective: PlayObjective::CardPoints,
             ..Default::default()
         };
         // Référence optionnelle : la même position résolue avec **beaucoup** plus
@@ -354,6 +360,8 @@ fn main() {
             determinizations: ref_worlds,
             time_limit_ms: None,
             parallel: true,
+            // Même échelle que le bras jugé, sinon le regret n'a pas de sens.
+            objective: PlayObjective::CardPoints,
             ..Default::default()
         };
         let t = Instant::now();

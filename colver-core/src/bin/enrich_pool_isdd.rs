@@ -21,7 +21,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use colver_core::bid_train_env::DealPool;
-use colver_core::is_dd::{IsDdConfig, IsDdSearch};
+use colver_core::is_dd::{IsDdConfig, IsDdSearch, PlayObjective};
 use colver_core::state::{GameState, Phase};
 
 fn main() {
@@ -71,6 +71,12 @@ fn main() {
     let config = IsDdConfig {
         determinizations: dets,
         time_limit_ms: Some(time_ms),
+        // Explicite, et non hérité du défaut : ce binaire produit des couches de
+        // scores (`scores_isdd_*.sc`) pour l'entraînement du bidder. Ce qu'il
+        // écrit est l'issue de la donne, donc l'échelle ne bouge pas — mais
+        // l'objectif change *la façon de jouer*, donc toute couche produite
+        // avant le 2026-08-03 vient d'un autre joueur que celui-ci.
+        objective: PlayObjective::DealScore,
         ..Default::default()
     };
 
