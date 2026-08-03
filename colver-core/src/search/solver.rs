@@ -253,6 +253,8 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
         best_card: ordered.0[0],
     };
 
+    // Card points decide ties below; the contract type picks the trump or plain table.
+    let ct = state.contract.contract_type();
     let mut best_score = if maximizing { i16::MIN } else { i16::MAX };
     let rp = root_ply_of(state);
     let sib_window = sibling_window();
@@ -289,16 +291,11 @@ pub fn solve_with_scores(state: &GameState, tt_buf: Option<&mut TtBuf>) -> Solve
 
         result.scores[i] = (card, score);
 
-        // Ties resolve to whichever card this loop reaches first — see the note in
-        // `solve_best_card`. The two functions agree only because both order the root with
-        // `order_moves`; `test_solve_with_scores_consistent_with_best_card` is what holds them
-        // together, and it is the test that caught the divergence when one of them was changed.
-        if maximizing {
-            if score > best_score {
-                best_score = score;
-                result.best_card = card;
-            }
-        } else if score < best_score {
+        // Same rule as `solve_best_card`: fewest card points, then lowest index. See there.
+        let better = if maximizing { score > best_score } else { score < best_score };
+        let cheaper = score == best_score
+            && (card_points(card, ct), card) < (card_points(result.best_card, ct), result.best_card);
+        if better || cheaper {
             best_score = score;
             result.best_card = card;
         }
@@ -322,6 +319,8 @@ pub fn solve_best_card(state: &GameState) -> u8 {
 
     let mut best_card = legal.trailing_zeros() as u8;
     let mut best_score = if maximizing { i16::MIN } else { i16::MAX };
+    // Card points decide ties below; the contract type picks the trump or plain table.
+    let ct = state.contract.contract_type();
 
     let mut killers = [[EMPTY; 2]; 32];
     let ordered = order_moves(state, legal, EMPTY, &history, [EMPTY; 2]);
@@ -336,21 +335,25 @@ pub fn solve_best_card(state: &GameState) -> u8 {
             alphabeta(&child, 0, 252, entries, stamp, &mut history, &mut killers, root_ply_of(state))
         };
 
-        // NOTE — a latent fragility, deliberately left as it was. Which card is reported among
-        // several DD-equal ones depends on the order this loop happens to visit them, and
-        // **57,8 % of corpus positions have more than one optimal card** (2 optimal: 27 %, 3:
-        // 12 %, up to all 8). So any change to root ordering silently moves the answer: that is
-        // exactly how the rejected root-lookahead ordering (§8) made this function disagree
-        // with `solve_with_scores`. Breaking ties on the lowest card index fixes it for good,
-        // but it would change the reported card on those 57,8 % — visible in `OraclePlayer`,
-        // in `/analyse/jeu` and in Rejouer — so it is a product decision, not a perf one, and
-        // it is not bundled into a speed change.
-        if maximizing {
-            if score > best_score {
-                best_score = score;
-                best_card = card;
-            }
-        } else if score < best_score {
+        // Ties are decided by **fewest card points, then lowest index** — not by whichever the
+        // loop happened to reach first. **57,8 % of positions have more than one optimal card**
+        // (74,6 % in the endgame), so this is the majority case, not an edge case, and the old
+        // implicit answer moved with any change to move ordering.
+        //
+        // The rule is measured, not chosen for tidiness: over 800 matches per cell against four
+        // opponents of increasing strength, "cheapest" beats the old order-dependent answer by
+        // +135 / +134 / +103 / +74 points of margin, and "dearest" *loses* by 60. The ranking is
+        // monotone in card points at every opponent level — among DD-equal cards, do not spend
+        // point-cards. Against a perfect opponent the effect is zero by construction, which is
+        // why it had to be measured against imperfect ones. See
+        // `docs/play/dd_solver_optimization.md` § 10.
+        //
+        // `solve_with_scores` must apply the identical rule;
+        // `test_solve_with_scores_consistent_with_best_card` is what holds the two together.
+        let better = if maximizing { score > best_score } else { score < best_score };
+        let cheaper = score == best_score
+            && (card_points(card, ct), card) < (card_points(best_card, ct), best_card);
+        if better || cheaper {
             best_score = score;
             best_card = card;
         }

@@ -1055,3 +1055,108 @@ quasiment intacts (la garde `IID_MIN_CARDS` les exclut), et que les donnes compl
 0,877× vient entièrement de la queue, qui porte 71 % des nœuds. C'est cohérent avec tout le
 reste de ce document, et c'est la raison pour laquelle l'agrégat et la médiane racontent ici
 deux histoires différentes.
+
+---
+
+## 10. Le départage des ex æquo — **mesuré : ça compte, et l'actuel n'est pas le bon**
+
+§8 avait laissé la question ouverte comme « arbitrage produit, non mesuré ». Elle est mesurée.
+
+**Le rappel du problème.** **57,8 % des positions ont plusieurs cartes à la meilleure valeur DD**
+(2 optimales dans 27 % des cas, jusqu'à toutes les 8 ; et **74,6 % en finale**, où 2,0 des 2,4
+cartes légales se valent). Laquelle le solveur renvoie dépend de l'ordre de sa boucle racine,
+c'est-à-dire d'un détail interne.
+
+**Pourquoi ça ne se mesure pas n'importe comment.** Deux joueurs DD-optimaux face à face
+réalisent tous deux la valeur DD : un h2h oracle-contre-oracle rend **exactement zéro par
+construction**. Une carte DD-équivalente ne peut se distinguer que par la façon dont elle
+exploite les erreurs — donc l'effet ne peut apparaître que contre un adversaire imparfait, et
+devrait grandir avec son imperfection. D'où le balayage d'adversaires.
+
+Enchère `improved_v2` des deux côtés, donc **seule la carte jouée diffère**. 800 matchs par
+cellule, 3 graines, métrique = **marge moyenne en points** (le taux de victoire sature au-dessus
+de 95 % contre les bots faibles et n'y porte aucun signal).
+
+| adversaire | order | lowest | highest | **cheapest** | dearest | bruit |
+|---|---:|---:|---:|---:|---:|---:|
+| heuristic | 1162 | +99 | +24 | **+135** | −62 | ±22 |
+| rule | 1212 | +107 | −7 | **+134** | −60 | ±15 |
+| ismcts | 1271 | +87 | +34 | **+103** | −14 | ±19 |
+| **dmc50 (DouDou50)** | 905 | +50 | +16 | **+74** | −31 | ±15 |
+
+**Le classement est monotone dans les points de carte** et il l'est aux quatre niveaux
+d'adversaire : `cheapest` > `lowest` > `order` ≈ `highest` > `dearest`. Autrement dit, parmi des
+cartes DD-équivalentes, **ne pas dépenser de cartes à points**. C'est un principe de belote, et
+c'est la mesure qui le retrouve, pas l'inverse. (`lowest` marche parce que l'indice bas vaut rang
+bas vaut peu de points — c'est un `cheapest` approximatif.)
+
+**L'effet décroît avec la qualité de l'adversaire** — +135 / +134 / +103 / +74 — exactement comme
+la théorie le prédit, jusqu'à zéro contre un joueur parfait. Et contre le plus fort des quatre,
+le **taux de victoire** bouge aussi : 88,2 % → **90,4 %**.
+
+### Ce que ça change, et où
+
+**Deux chemins distincts, et un correctif devrait toucher les deux :**
+
+- `agent::dmc::OraclePlayer` — les bots d'arène `oracle_dd`. C'est lui qui porte l'option
+  `tiebreak` du TOML, ajoutée pour cette mesure.
+- `solver::solve_best_card` — le web (Regarder, Rejouer, `/analyse/jeu`, `agent_review`), qui
+  passe par le binding PyO3 `action_oracle_dd` et **n'utilise pas `OraclePlayer` du tout**.
+
+**Adopté le 2026-08-03 : `cheapest`, dans le solveur, donc sur les deux chemins d'un coup.**
+`solve_best_card` et `solve_with_scores` départagent maintenant par **moins de points de carte,
+puis indice le plus bas** — un résultat qui est enfin une fonction de la position et non du
+parcours de la recherche. Les valeurs DD ne bougent pas (c'est la carte *désignée* qui change),
+et le compte de nœuds est identique au nœud près.
+
+L'option `tiebreak` du TOML reste, pour pouvoir refaire la mesure ; `order` y signifie désormais
+« ce que rend le solveur », donc `cheapest`. Vérifié de bout en bout : `tb_order` et
+`tb_cheapest` rendent exactement le même résultat d'arène (90,4 %, +968 contre DouDou50, là où
+l'ancien `order` faisait 88,2 % / +905).
+
+`lowest` n'était qu'un `cheapest` **accidentel** : `PLAIN_POINTS` se trouve être croissante dans
+l'ordre des indices de rang, donc à la couleur les deux règles coïncident sur **0 divergence sur
+247 ensembles possibles**. `TRUMP_POINTS` ne l'est pas — le 9 vaut 14 et le Valet 20, coincés
+entre le 8 (0) et la Dame (3) — donc à l'atout elles divergent sur **18 %** des ensembles, et
+`lowest` y jette le 9 ou le Valet là où `cheapest` jette la Dame. S'y ajoute un biais pique :
+l'indice ordonne les couleurs ♠♥♦♣ sans rapport avec l'atout. **Ne pas retenir `lowest` : il
+marche par un artefact d'encodage qui casserait au premier changement de barème.**
+
+**Réplication** :
+```bash
+cargo build --release --features parallel --bin arena
+scripts/analysis/dd_tiebreak_arena.sh 400 /tmp/tiebreak_arena.csv   # ~25 min
+python3 scripts/analysis/dd_tiebreak_report.py /tmp/tiebreak_arena.csv
+```
+Les bots `tb_*` et `opp_*` sont des sondes : enchère identique partout, `--no-save` dans le
+script, donc rien n'entre dans `matches.csv`.
+
+### Contrôle de robustesse : et si l'enchère était réaliste ?
+
+Le balayage ci-dessus fait annoncer `improved_v2` des deux côtés. C'est un vrai enchérisseur —
+pas un contrat forcé — mais **`bench_auction_profile` montre qu'il enchérit mal**, et une mesure
+faite dans un environnement pauvre mérite d'être refaite dans un environnement riche :
+
+| sur 4 000 donnes | `improved_v2` | **bid v6 (réaliste)** |
+|---|---:|---:|
+| contrat maximum atteint | **120** | **250** (capot) |
+| enchère à une seule annonce | **41,0 %** | 8,6 % |
+| annonces par enchère (mode) | 2 | **4** |
+| enchère contestée (les deux camps annoncent) | 41,9 % | **80,9 %** |
+| contrats contrés | 4,3 % | **25,9 %** |
+| contrats réussis | 62,2 % | 48,7 % |
+| donnes passées | 0,0 % | 0,1 % |
+
+Refait avec l'enchère v6 aux quatre sièges, contre DouDou50, 800 matchs par cellule, 3 graines :
+
+| départage | % victoires | marge | plage sur les 3 graines |
+|---|---:|---:|---|
+| **cheapest** | **94,1 %** | **+1203** | 1197 – 1212 |
+| lowest | 93,1 % | +1164 | 1145 – 1183 |
+| dearest | 90,6 % | +1056 | 997 – 1095 |
+
+**Les trois plages ne se recouvrent pas**, et l'écart `cheapest` − `dearest` passe de **105 points
+à 147** : l'effet est *plus grand* sous enchère réaliste, pas plus petit. C'est cohérent — des
+contrats plus hauts et plus disputés laissent plus de place à une carte à points gaspillée.
+
+Autrement dit, la première mesure **sous-estimait** la conclusion. Elle ne la biaisait pas.

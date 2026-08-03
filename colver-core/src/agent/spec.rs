@@ -95,6 +95,17 @@ impl Default for BidSpec {
 pub struct PlaySpec {
     pub method: String,
     pub model: Option<String>,
+    /// `oracle_dd` only: which card to play when several are DD-equal. **57,8 % of positions
+    /// have more than one optimal card**, so this is not an edge case — it is the majority.
+    /// `"order"` (the default and the historical behaviour) takes the first in the solver's own
+    /// move-ordering preference; `"lowest"` / `"highest"` take the extreme card index, which is
+    /// deterministic but meaningless at the table; `"cheapest"` / `"dearest"` take the fewest /
+    /// most card points, which is the closest thing here to a Belote principle.
+    ///
+    /// Exists to answer a question nobody had measured: does the choice among DD-equal cards
+    /// change actual playing strength? Against a perfect opponent it cannot — both realise the
+    /// same DD value — so it can only be measured against an imperfect one.
+    pub tiebreak: String,
     /// Skip connections (DouDou50 / triforge architecture). Same weights,
     /// different forward pass, so it cannot be detected from the file.
     pub residual: bool,
@@ -119,6 +130,7 @@ impl Default for PlaySpec {
         PlaySpec {
             method: "isdd".into(),
             model: None,
+            tiebreak: "order".into(),
             residual: false,
             time_ms: 0,
             determinizations: 20,
@@ -249,6 +261,7 @@ impl AgentSpec {
 
                 ("play", "method") => spec.play.method = val.into(),
                 ("play", "model") => spec.play.model = Some(val.into()),
+                ("play", "tiebreak") => spec.play.tiebreak = val.into(),
                 ("play", "residual") => spec.play.residual = flag(),
                 ("play", "time_ms") => spec.play.time_ms = int(0),
                 ("play", "determinizations") => spec.play.determinizations = int(20),
@@ -465,7 +478,7 @@ impl AgentSpec {
             }
             "heuristic" => Ok(Box::new(HeuristicPlayer)),
             "rule" => Ok(Box::new(RulePlayer)),
-            "oracle_dd" => Ok(Box::new(OraclePlayer::default())),
+            "oracle_dd" => Ok(Box::new(OraclePlayer::with_tiebreak(&self.play.tiebreak)?)),
             "oracle" => Ok(Box::new(OracleMctsPlayer::new(
                 MctsConfig {
                     iterations: self.play.oracle_iters,
