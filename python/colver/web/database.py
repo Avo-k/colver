@@ -231,6 +231,22 @@ MIGRATIONS = [
     DELETE FROM elo_history;
     DELETE FROM elo_ratings;
     """,
+
+    # v13 — R3 : une donne se note à la marge, plus au signe.
+    #
+    # Le barème interdit les marges proches de zéro (un contrat réussi rapporte
+    # au moins 3V−162, une chute exactement −(162+V)) : zéro donne sur 2 999 sous
+    # 78 points d'écart. Le signe ne bouge donc presque jamais alors que la marge
+    # suit — d'où un classement qui voyait une fraction de ce qui se passait, et
+    # l'écart entre « Dédé gagne 55,4 % des donnes » et « Dédé gagne 72 % des
+    # matchs ».
+    #
+    # Comme en v12 : les classements sont dérivés, on vide et le backfill du
+    # démarrage reconstruit sur la nouvelle échelle.
+    """
+    DELETE FROM elo_history;
+    DELETE FROM elo_ratings;
+    """,
 ]
 
 

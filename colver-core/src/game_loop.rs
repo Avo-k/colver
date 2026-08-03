@@ -82,7 +82,10 @@ pub fn play_deal_traced(
 }
 
 /// Outcome of a match to [`MATCH_TARGET`].
-#[derive(Clone, Copy, Debug)]
+// Plus `Copy` depuis que les marges par donne y sont : un Vec ne l'est pas, et
+// les moments (somme, somme des carres) ne suffiraient pas — la note de R3 est
+// une fonction non lineaire de la marge, donc il faut la distribution.
+#[derive(Clone, Debug)]
 pub struct MatchResult {
     /// Winning team, 0 = NS, 1 = EW.
     pub winner: u8,
@@ -95,6 +98,14 @@ pub struct MatchResult {
     /// bots. Une donne passée (4 passes) ne compte nulle part.
     pub deal_wins: [u32; 2],
     pub deal_draws: u32,
+    /// Marges N-S − E-O de chaque donne, en points **marqués**.
+    ///
+    /// C'est exactement la quantité que `web/elo.py` note depuis R3
+    /// (`score_from_margin`), et elle ne se déduit pas du compte de victoires :
+    /// le barème interdit les marges proches de zéro, donc le signe et la marge
+    /// ne portent pas la même information. Une ancre calculée sur l'un ne vaut
+    /// rien pour l'autre.
+    pub deal_margins: Vec<i32>,
 }
 
 /// Play deals until one team reaches [`MATCH_TARGET`].
@@ -112,6 +123,7 @@ pub fn play_match(
     let mut deals = 0u32;
     let mut deal_wins = [0u32; 2];
     let mut deal_draws = 0u32;
+    let mut deal_margins: Vec<i32> = Vec::new();
 
     while ctx.scores[0] < MATCH_TARGET && ctx.scores[1] < MATCH_TARGET {
         let mut state = GameState::deal_random(dealer, rng);
@@ -122,6 +134,7 @@ pub fn play_match(
         // Une donne passée ne marque rien des deux côtés : elle n'est ni gagnée
         // ni nulle, elle n'a pas eu lieu.
         if score[0] != 0 || score[1] != 0 {
+            deal_margins.push((score[0] - score[1]) as i32);
             match score[0].cmp(&score[1]) {
                 std::cmp::Ordering::Greater => deal_wins[0] += 1,
                 std::cmp::Ordering::Less => deal_wins[1] += 1,
@@ -145,7 +158,8 @@ pub fn play_match(
     } else {
         1
     };
-    Ok(MatchResult { winner, ns_final: ns, ew_final: ew, deals, deal_wins, deal_draws })
+    Ok(MatchResult { winner, ns_final: ns, ew_final: ew, deals, deal_wins, deal_draws,
+                     deal_margins })
 }
 
 /// Bidding-phase check used by callers that need to know whether a deal was

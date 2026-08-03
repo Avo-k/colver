@@ -43,6 +43,28 @@ logger = logging.getLogger(__name__)
 
 START_ELO = 1000.0
 K_USER = 32.0
+
+# Échelle de la note à la marge (R3). Une donne ne vaut plus 1 ou 0 mais
+# `σ(marge / MARGIN_SCALE)`, où la marge est l'écart de points **marqués**.
+#
+# Ce n'est pas un réglage libre : c'est lui qui définit ce que vaut « 1 Elo ».
+# Trop petit, tout sature à 0/1 et on revient au binaire ; trop grand, tout vaut
+# 0,5 et plus rien ne bouge. La valeur est l'**écart-type mesuré** des marges de
+# donne — `scripts/analysis/deal_margin_scale.py`, 2 999 donnes bot contre bot :
+#
+#     écart-type 315,6   ·   |marge| médiane 272   ·   extrêmes ±932
+#
+# **Le barème interdit les marges proches de zéro**, et c'est ce qui rend la note
+# binaire si pauvre : un contrat réussi rapporte au moins `3V − 162` (= +78 à
+# V=80), une chute exactement `−(162 + V)` (= −242). Zéro donne sur 2 999 sous
+# 78 points d'écart. Le signe ne bouge donc presque jamais alors que la marge,
+# elle, suit — c'est la même marche de `4V` que celle du jeu de la carte, vue
+# depuis le classement.
+#
+# ⚠️ Mesuré **bot contre bot**. Les donnes de la prod sont humain-contre-bots :
+# si les humains chutent plus souvent, la dispersion diffère et l'échelle est à
+# recaler. À recouper dès qu'on peut relire la base.
+MARGIN_SCALE = 316.0
 # Les bots ne bougent pas. Zéro, et non « petit » : un K non nul les fait
 # redériver entre deux recalages, ce qui est exactement le défaut qu'on ferme.
 K_BOT = 0.0
@@ -66,9 +88,25 @@ ANCHOR_VERSION = "2026-08"
 #
 # La précision est modeste (±30). Elle reste sans commune mesure avec ce qu'on
 # avait : DouDou était à 988,6 sur **11 donnes**.
+#
+# ⚠️ **À RE-DÉRIVER — ces 37 points sont dans l'ancienne métrique binaire.**
+# Depuis R3 une donne se note à la marge, et les deux métriques ne donnent pas le
+# même écart : le signe ne voit qu'une partie de l'avantage de Dédé (55,4 % de
+# donnes gagnées, mais +60 de marge moyenne là où un pur déplacement de
+# proportion n'en prédirait que +32). L'ancre est donc cohérente avec une échelle
+# qui n'existe plus.
+#
+# Portée réelle de l'incohérence : DouDou n'est assis qu'en mode « rapide », soit
+# 11 donnes sur 1 073 en prod — l'erreur ne touche presque personne. Mais elle
+# doit partir. `arena h2h` rend désormais la ligne « Note à la marge » avec le
+# même `MARGIN_SCALE` : il suffit de rejouer `web_dede` contre `web_doudou` **sur
+# un GPU au repos** et de reporter le chiffre ici. La tentative du 2026-08-03 a
+# été abandonnée, un entraînement playgen occupant la carte à 99 % — et la
+# contention pénalise Dédé seul (DouDou n'utilise pas le GPU), donc elle aurait
+# biaisé l'ancre à la baisse.
 BOT_ELO = {
     "dede": 1000.0,
-    "doudou": 963.0,  # 1000 − 37
+    "doudou": 963.0,  # 1000 − 37, métrique binaire — provisoire, cf. ci-dessus
 }
 
 _lock = asyncio.Lock()  # serialize read-modify-write across concurrent games
@@ -141,7 +179,7 @@ async def _rate_game_locked(game_id):
     if rewards is None:
         return False
 
-    score_ns = 1.0 if rewards[0] > rewards[1] else 0.0 if rewards[0] < rewards[1] else 0.5
+    score_ns = score_from_margin(rewards[0] - rewards[1])
 
     # Current ratings. Celui d'un bot ne se lit pas en base : c'est une
     # constante d'étalonnage, et la base n'en garde une copie que pour que le
@@ -207,6 +245,34 @@ async def backfill():
             rated += 1
     if rated:
         logger.info("backfill: rated %d game(s)", rated)
+
+
+def score_from_margin(margin):
+    """Note d'une donne, dans [0, 1], à partir de l'écart de points marqués.
+
+    Même forme que l'espérance Elo, ce qui rend `s` et `e` directement
+    comparables : une donne gagnée d'une marge « typique » (~272) vaut ~0,87, une
+    donne serrée ~0,55, un capot contré ~0,997.
+
+    Gain mesuré par simulation sur la distribution réelle des marges, joueur de
+    niveau constant, 650 donnes, 3 000 tirages :
+
+        K=32   binaire : sd = 76,3 Elo, amplitude 346
+               marge   : sd = 58,3 Elo, amplitude 264      (0,76×)
+
+    Soit **−24 % de bruit à K constant**, et le même rapport à K=24 et K=16 —
+    c'est une propriété de la distribution, pas du réglage.
+
+    ⚠️ Ce que ça ne dit pas : de combien la marge *discrimine* mieux deux niveaux.
+    Ça dépend du modèle de ce qu'est « mieux jouer ». Si c'est décaler la marge
+    de δ points, le signe est presque aveugle (E[signe] passe de 0,4955 à 0,4965
+    pour δ = 80, contre 0,511 → 0,557 pour E[s]) et la marge gagne massivement.
+    Si c'est réussir plus de contrats, les deux bougent ensemble et le gain est
+    nul. La réalité tient des deux : Dédé bat DouDou 55,4 % des donnes **et** de
+    +60 de marge moyenne, là où un pur déplacement de proportion n'en prédirait
+    que +32. Environ la moitié de son avantage est donc invisible au signe.
+    """
+    return 1.0 / (1.0 + 10 ** (-margin / MARGIN_SCALE))
 
 
 def bot_elo(name):

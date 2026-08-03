@@ -10,6 +10,9 @@ arrive, l'Elo d'un bot ne bouge pas. Une non-variation ne se voit pas à l'usage
 — elle se voit six mois plus tard, quand l'échelle a glissé.
 """
 
+import re
+from pathlib import Path
+
 import colver.web.database as db
 from colver.web import elo
 
@@ -31,14 +34,66 @@ class TestAncrage:
         assert elo.K_BOT == 0.0, "un K non nul laisse le bot redériver"
 
     def test_les_ancres_sont_celles_qui_ont_ete_mesurees(self):
-        # Dédé vaut 1000 par définition ; l'écart avec DouDou est mesuré
-        # (55,4 % ± 4,3 par donne sur 514 donnes → +37 Elo).
+        """Dédé vaut 1000 par définition ; l'écart avec DouDou est mesuré.
+
+        ⚠️ Les 37 points datent de la métrique **binaire** (55,4 % ± 4,3 par
+        donne sur 514 donnes). Depuis R3 la note est à la marge, et les deux
+        métriques ne donnent pas le même écart. Ce test épingle la valeur
+        courante, pas une valeur juste — quand l'ancre sera re-dérivée sur un GPU
+        au repos, il faudra la changer *ici et dans `elo.py`*, ensemble.
+        """
         assert elo.bot_elo("dede") == 1000.0
         assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 37.0
 
     def test_un_bot_inconnu_vaut_l_origine(self):
         """Repli délibéré : mieux vaut une hypothèse visible qu'une dérive."""
         assert elo.bot_elo("un_bot_qui_n_existe_pas") == elo.START_ELO
+
+
+class TestNoteALaMarge:
+    """R3 — une donne se note à la marge, plus au signe.
+
+    Le barème interdit les marges proches de zéro : un contrat réussi rapporte au
+    moins `3V − 162` (+78 à V=80), une chute exactement `−(162 + V)` (−242).
+    Zéro donne sur 2 999 mesurées sous 78 points d'écart. Le signe ne bouge donc
+    presque jamais alors que la marge suit — c'est ce qui rendait « Dédé gagne
+    55,4 % des donnes » incompatible avec « Dédé gagne 72 % des matchs ».
+    """
+
+    def test_symetrique_autour_de_zero(self):
+        for m in (0, 100, 300, 900):
+            assert elo.score_from_margin(m) + elo.score_from_margin(-m) == 1.0
+
+    def test_une_donne_nulle_vaut_un_demi(self):
+        assert elo.score_from_margin(0) == 0.5
+
+    def test_la_marge_change_la_note(self):
+        """La régression à empêcher : revenir à un score binaire déguisé."""
+        petite = elo.score_from_margin(100)
+        grosse = elo.score_from_margin(600)
+        assert 0.5 < petite < grosse < 1.0
+        assert grosse - petite > 0.1, "l'échelle écrase trop, on est retombé au binaire"
+
+    def test_l_echelle_est_celle_mesuree(self):
+        # Écart-type des marges de donne, 2 999 donnes bot contre bot.
+        assert elo.MARGIN_SCALE == 316.0
+        # Une marge « typique » (médiane |marge| = 272) doit être informative
+        # sans saturer : ni ~0,5 (échelle trop grande) ni ~1 (trop petite).
+        typique = elo.score_from_margin(272)
+        assert 0.75 < typique < 0.95, f"marge médiane -> {typique:.3f}"
+
+    def test_meme_echelle_que_l_arene(self):
+        """L'ancre des bots est calculée par `arena h2h` dans cette métrique.
+
+        Deux valeurs différentes donneraient une ancre incohérente avec
+        l'échelle qu'elle est censée ancrer — et le décalage serait invisible,
+        les deux nombres vivant dans deux langages.
+        """
+        rust = (Path(__file__).resolve().parents[1]
+                / "colver-core" / "src" / "bin" / "arena.rs").read_text()
+        m = re.search(r"const MARGIN_SCALE: f64 = ([0-9.]+);", rust)
+        assert m, "MARGIN_SCALE introuvable dans arena.rs"
+        assert float(m.group(1)) == elo.MARGIN_SCALE
 
 
 class TestNotationDUneDonne:

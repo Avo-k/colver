@@ -28,6 +28,17 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 const RESULTS_PATH: &str = "arena/results/matches.csv";
+
+/// Échelle de la note à la marge. **Doit rester égale à `elo.MARGIN_SCALE`** du
+/// côté web : c'est l'écart-type mesuré des marges de donne (315,6 sur 2 999
+/// donnes, `scripts/analysis/deal_margin_scale.py`). Deux valeurs différentes
+/// donneraient une ancre incohérente avec l'échelle qu'elle est censée ancrer.
+const MARGIN_SCALE: f64 = 316.0;
+
+/// Note d'une donne dans [0, 1], même forme que l'espérance Elo.
+fn margin_score(margin: f64) -> f64 {
+    1.0 / (1.0 + 10f64.powf(-margin / MARGIN_SCALE))
+}
 const BOTS_DIR: &str = "arena/bots";
 
 // ══════════════════════════════════════════════════════════════════════
@@ -108,6 +119,11 @@ struct MatchupResult {
     /// Donnes gagnées par le camp N-S / E-O de cette direction, et nulles.
     n_deal_wins: [u64; 2],
     n_deal_draws: u64,
+    /// Somme des notes `sigma(marge / MARGIN_SCALE)` du point de vue N-S, et
+    /// compte. C'est la métrique que `web/elo.py` utilise depuis R3 : une ancre
+    /// calculée sur le taux de victoires ne vaut rien pour elle, le barème
+    /// interdisant les marges proches de zéro.
+    n_score_sum: f64,
 }
 
 impl MatchupResult {
@@ -120,6 +136,7 @@ impl MatchupResult {
         self.n_deal_wins[0] += other.n_deal_wins[0];
         self.n_deal_wins[1] += other.n_deal_wins[1];
         self.n_deal_draws += other.n_deal_draws;
+        self.n_score_sum += other.n_score_sum;
     }
 }
 
@@ -177,6 +194,9 @@ fn run_matchup(
                     result.n_deal_wins[0] += mr.deal_wins[0] as u64;
                     result.n_deal_wins[1] += mr.deal_wins[1] as u64;
                     result.n_deal_draws += mr.deal_draws as u64;
+                    for m in &mr.deal_margins {
+                        result.n_score_sum += margin_score(*m as f64);
+                    }
                     progress.fetch_add(1, Ordering::Relaxed);
                 }
                 result
@@ -650,6 +670,15 @@ fn cmd_h2h(args: &[String]) {
         let se = (0.25 / decided as f64).sqrt() * 100.0;
         println!("  Par donne: {} {} — {} {} ({} nulles) → {:.1}% ± {:.1} (IC95)",
             agent_a.name, a_deals, agent_b.name, b_deals, draws, pct, 1.96 * se);
+    }
+    // A joue N-S en direction 1 et E-O en direction 2 : sa note est donc
+    // `s` dans un sens et `1 − s` dans l'autre.
+    let total_deals_f = total_deals as f64;
+    if total_deals_f > 0.0 {
+        let a_score = (r1.n_score_sum + (r2.n_deals as f64 - r2.n_score_sum)) / total_deals_f;
+        let elo_gap = 400.0 * (a_score / (1.0 - a_score)).log10();
+        println!("  Note à la marge (échelle {:.0}): {} = {:.4} → {:+.0} Elo par donne",
+            MARGIN_SCALE, agent_a.name, a_score, elo_gap);
     }
 
     print_world_telemetry();
