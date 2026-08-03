@@ -425,6 +425,50 @@ temps de calcul et ne peut pas produire ce genre d'illusion.
 
 ---
 
+### 1.10 L'équivariance de v6 **oscille** d'un checkpoint à l'autre — et ça condamne l'ablation à budget réduit
+
+*Mesuré le 2026-08-03, [bid_checkpoint_ladder.py](../../scripts/analysis/bid_checkpoint_ladder.py),
+les 13 checkpoints du resume de v6 × 3 régimes × 300 donnes × 23 permutations (6 900
+comparaisons par case, donnes **appariées** d'un checkpoint à l'autre).*
+
+C'était une calibration de puissance, pas une mesure de v6 : avant de dépenser des runs
+d'ablation à budget réduit, savoir si un checkpoint à 10 M range les bras comme un
+checkpoint à 30 M. Réponse : **non, et pas non plus à 30 M**.
+
+| pas | 2,5M | 5M | 7,5M | 10M | 12,5M | 15M | 17,5M | 20M | 22,5M | 25M | 27,5M | 30M |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| ouverture | 40,6 | 26,0 | 35,5 | 24,5 | 38,3 | 35,7 | **22,4** | **34,9** | 25,5 | 28,2 | 27,0 | 25,3 |
+| contestation | 10,3 | 11,4 | 8,1 | 12,3 | 8,3 | 6,6 | 6,2 | 5,1 | 6,0 | 8,8 | 5,6 | 4,7 |
+| soutien | 15,4 | 15,0 | 18,0 | 16,1 | 17,9 | 22,7 | 15,3 | **29,1** | 12,5 | 12,4 | 16,2 | 20,4 |
+
+L'erreur type binomiale d'une case est de **0,5 pt**, et les donnes sont les mêmes partout.
+Les écarts de 12,5 pts entre 17,5 M et 20 M — **en fin d'entraînement** — ne sont donc pas du
+bruit de mesure : c'est le réseau qui bouge.
+
+**Le mécanisme est déjà en §1.2, il suffit de le lire dans l'autre sens.** Le taux de bascule
+compte de quel côté d'une arête tombent des ex æquo dont la marge médiane est 0,0044, quand
+l'erreur d'équivariance vaut 9,5× cette marge. Il mesure donc la position d'un couteau, pas
+une propriété stable du modèle. §1.1 et §1.2 ne sont pas deux constats, c'est le même.
+
+**Trois conséquences, dans l'ordre de leur coût.**
+
+1. **Aucune comparaison entre bras ne se lit sur un checkpoint.** Un bras s'évalue sur la
+   **moyenne de ses derniers checkpoints** — ils sont déjà écrits tous les 2,5 M, donc c'est
+   gratuit. C'est la version mesurée de la leçon « un pic d'éval isolé n'est pas un signal ».
+2. **Une ablation à budget réduit biaise *dans le sens de l'hypothèse*.** En moyennant par
+   fenêtres pour sortir de l'oscillation, la fenêtre 7,5-15 M donne 33,5 % à l'ouverture contre
+   26,5 % pour 22,5-30 M : le bras physique **achète encore de la symétrie avec ses pas** à
+   10 M et a fini à 30 M. Comparer canonique et physique à 10 M crédite donc la
+   canonicalisation d'un écart qui se serait refermé tout seul. C'est le pire cas possible —
+   un biais qui a le signe de ce qu'on veut montrer.
+3. **Le taux de bascule n'est pas un juge pour v7**, il est nul par construction sur le bras
+   canonique. Il reste un **contrôle de câblage** (un bras canonique qui ne rend pas 0 est mal
+   branché), pas une mesure de force.
+
+*Et ça renforce §3.1 par un chemin qu'on n'avait pas* : la symétrie n'est pas seulement mal
+apprise, elle n'est **jamais fixée** — 75 M de pas plus tard elle vagabonde encore de ±8 pts.
+Ce n'est pas un entraînement trop court.
+
 ## 2. Ce qui reste à prouver
 
 Chaque question est formulée pour pouvoir tomber.
@@ -870,6 +914,103 @@ ne fait rien, et le repli uniforme est silencieux pour qui ne lit pas `probe()`.
 
 ---
 
+## 4bis. Plan d'entraînement v7 — les bras, le budget, et ce qui juge
+
+*Écrit le 2026-08-03, après §1.10 qui en fixe la forme.*
+
+### Ce qu'on entraîne
+
+Trois bras, **même budget, même graine, même pool**, tous depuis zéro :
+
+| bras | obs | drapeaux | ce qu'il isole |
+|---|---|---|---|
+| **P** | 117 physique | `--sa-features-v3` | reproduction de v6 au budget des autres — sans lui, « v7 > v6 » confond l'obs et les 75 M de pas |
+| **C** | 117 canonique | `--sa-features-v3 --canonical` | §3.1 seule |
+| **V** | 123 canonique | `--sa-features-v7 --canonical` | §3.1 + §3.4 |
+
+**P est le bras qu'on est tenté de couper, et c'est celui qui porte l'attribution.** v6 existe
+à 75 M ; comparer un bras à 30 M contre lui mesurerait le budget autant que l'obs.
+
+**Ce qu'on n'a *pas* : un bras qui sépare les 6 flottants de v7 en deux.** V mélange les 4
+scores par couleur (un biais inductif) et les 2 réductions (une information). Un quatrième bras
+à 119 les séparerait, et il n'est pas prévu — parce que §1.10 dit qu'un bras coûte ~19 h et que
+la question qu'il trancherait est mineure devant les deux autres. **À dire, pas à cacher** : si
+V bat C, on ne saura pas lequel des deux blocs l'a fait.
+
+### Ce que les deux blocs de v7 valent avant d'entraîner
+
+`[121]`/`[122]` sont, par construction, le meilleur et le deuxième meilleur `trump_score`
+**après exclusion**. Donc à l'ouverture — rien à exclure — `[122]` **est** `second_trump_score`,
+et en défense `[121]` **est** `opp_best_other_ts`. Ce n'était pas le dessein ; c'est tombé
+comme ça, et ça se trouve être exactement les deux quantités que deux méthodes indépendantes
+ont désignées :
+
+- la sonde de couche cachée trouve `opp_best_other_ts` en défense
+  ([interpretability/probe_morning_report.md](interpretability/probe_morning_report.md)) ;
+- l'extraction de règles trouve la **deuxième couleur** comme le seul ajout de features qui
+  paie, et note que `opp_best_other_ts` en est reconstructible et dominé — « le concept trouvé
+  par le probe est le bon, la forme particulière ne l'est pas »
+  ([interpretability/rule_ceiling.md](interpretability/rule_ceiling.md) §3).
+
+⚠️ **Ces deux chiffres restent des mesures sur des *substituts*** — un XGBoost et un arbre qui
+distillent le réseau depuis des features agrégées. C'est exactement l'erreur corrigée en §3.4 :
+ils disent que le concept porte de l'information *que le distillat n'avait pas*, pas qu'il en
+porte pour le réseau, qui lit la main en bits bruts. Ils justifient de **garder** le bloc, pas
+d'en attendre un gain chiffré.
+
+*Un faux ami à écarter tout de suite.* `rule_ceiling` §2 mesure que **viser le réseau symétrisé
+n'apporte rien** à l'arbre, et on pourrait y lire un argument contre §3.1. Ce n'en est pas un :
+là-bas c'est la **cible** qui est symétrisée pour un apprenant dont l'entrée l'était déjà, et
+moyenner un bruit non biaisé est gratuit avec 84 000 mains. Ici c'est l'**entrée** qui est
+canonicalisée, ce qui divise l'espace à couvrir par ~22 et lie 24 copies de paramètres. Les deux
+phrases se ressemblent et ne parlent pas de la même chose.
+
+### Le budget, dérivé et non estimé
+
+L'échelle de checkpoints du resume de v6 donne le débit : 12 intervalles de 2,5 M en 5 797 s en
+moyenne, soit **431 pas/s**. Donc **30 M ≈ 19,3 h par bras**, et les 75 M de v6 valaient ~48 h.
+
+Trois bras à 30 M = **~58 h en séquentiel**. À vérifier avant de s'engager : le réseau
+d'annonce est minuscule (117→512³→43), donc le GPU n'est probablement pas le goulot et deux ou
+trois bras peuvent tenir de front — **une co-exécution courte le dira**, et c'est la seule
+mesure à faire avant de lancer. Ne pas le supposer : si les bras se ralentissent mutuellement,
+un run de 19 h en devient un de 40.
+
+Et **cette campagne ne dépend pas d'une regénération de pool** : le pool actuel n'est pas à
+refaire pour cause de dérive (§1.6), et l'obs qui change ne touche pas le format `(donne,
+dd_pts)`.
+
+### Ce qui juge, et à quelle puissance
+
+Dans cet ordre, du moins cher au plus cher :
+
+1. **Contrôle de câblage** *(secondes)* — `bid_equivariance` doit rendre **0,0 %** sur C et V
+   dans les trois régimes. Non nul = mauvais branchement du masque ou de l'action, pas une
+   régression de force. C'est le seul usage licite du taux de bascule ici (§1.10).
+2. **Sonde stratifiée** *(secondes)* — `bid_probes --baseline docs/measurements/bid_probes_v6.json`
+   sur chaque bras. Ne classe pas, mais attrape les régressions grossières et l'assertion dure
+   du capot. C'est ce qui dira si §3.3 s'est réveillée toute seule.
+3. **Sonde appariée en points par décision** *(minutes par main, sidecar requis)* —
+   `bid_candidates.py`, §4. C'est **la** mesure principale, celle que §2.9 a désignée : elle
+   lit un écart en points sur une continuation d'enchère réellement jouée, par régime, sur des
+   mondes partagés.
+4. **Arène** *(heures)* — h2h contre v6 à **2 000 matchs par direction**, réservé au bras
+   gagnant. §1.8 donne le seuil : en dessous de ~4-10 pts/donne, 1 000 matchs ne voient rien.
+
+**Et pour tous les trois derniers : chaque bras est évalué sur la moyenne de ses 4 derniers
+checkpoints, jamais sur `bid_nn_final`.** C'est la conséquence directe de §1.10 — un checkpoint
+isolé bouge de 12 pts d'un intervalle de 2,5 M au suivant, en fin d'entraînement.
+
+### Ce qui ferait abandonner
+
+- **C ≈ P sur la sonde appariée** : la canonicalisation ne coûte rien et reste (l'équivariance
+  exacte a une valeur propre, cf. §3.6 qui en dépend), mais v7 n'est alors qu'une hygiène et il
+  faut aller chercher la force ailleurs — §3.8.
+- **V < C** : les 6 flottants nuisent. Retomber sur 117 canonique, et n'y revenir qu'avec le
+  bras à 119 qui aurait dit lequel des deux blocs.
+- **P ≪ v6 à 75 M** : 30 M ne suffit pas à reproduire la référence, et toute la campagne se
+  relit à budget plus grand avant de conclure quoi que ce soit.
+
 ## 5. Ordre de travail proposé
 
 1. ~~§4 — l'évaluateur de candidates~~ **fait** (2026-08-02).
@@ -893,10 +1034,24 @@ ne fait rien, et le repli uniforme est silencieux pour qui ne lit pas `probe()`.
 8. Regénération du pool (due de toute façon) avec §3.5 dedans.
 9. §3.3 — actions mortes, une fois qu'on a une sonde qui mesure le progrès.
 
-*Cadrage restant avant d'implémenter* : **le périmètre de v7** — v6 + hygiène, mesurable
-brique par brique, contre refonte obs + pool + feature, non attribuable. C'est désormais
-la **seule** question de cadrage ouverte : §2.9 a donné à l'arène son seuil, et §2.6 —
-qui était le seul bloqueur sur la reward — est tombée avec le paradoxe qu'elle supposait.
+**Périmètre acté le 2026-08-02**, en trois phases séparées par les *données* qu'elles
+demandent — c'est le seul découpage qui rende chaque brique attribuable :
+
+- **Phase 0** — §3.2, la suite de sondes. Aucune donnée neuve. C'est l'instrument. ✅
+- **Phase 1** — §3.1 canonicalisation + §3.4 les features. **Aucune donnée neuve** non plus :
+  le pool est `(donne, dd_pts)` et l'obs qui change ne le touche pas. Le plan d'entraînement
+  et les bras sont en §4bis. ✅ pour le code, la campagne reste à lancer.
+- **Phase 2** — §3.8, la croyance playgen **en entrée**. Demande un groupage de l'enchère et
+  ~36 GPU-h de précalcul, donc une décision à part.
+
+La regénération du pool (§3.5) et le « 5M contre 1M à k identique » sont **découplés** :
+§1.6 dit que le pool n'est pas à refaire pour cause de dérive, et §4bis ne l'attend pas.
+
+*Ce qui a débloqué §3.8 sans qu'on le remarque* : son chiffrage à 36 GPU-h supposait « un
+groupage inter-positions (changement de code) ». `generate_worlds_multi` / `WorldBatchItem`
+existent désormais — mais **pour les mondes de jeu seulement** ; le chemin d'enchère
+(`JobKind::Auction`) part encore en `run_alone`, commenté « Not batchable ». C'est donc une
+extension bornée d'une machinerie déjà écrite, plus un coût à cadrer.
 
 ---
 
