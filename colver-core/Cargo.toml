@@ -147,6 +147,15 @@ name = "enrich_pool_mixed"
 path = "src/bin/enrich_pool_mixed.rs"
 required-features = ["parallel"]
 
+# `required-features` et pas un `#[cfg(feature = "parallel")]` interne comme
+# bench_dd / gen_bid_belief_data : ceux-là dégradent en mono-thread, alors que
+# cet outil n'a aucun sens ainsi — sa doc mesure 32 → 384 threads, et sur le
+# sidecar c'est la concurrence qui remplit les lots GPU.
+[[bin]]
+name = "relabel_isdd"
+path = "src/bin/relabel_isdd.rs"
+required-features = ["parallel"]
+
 [[bin]]
 name = "replay_dmc_vs_isdd"
 path = "src/bin/replay_dmc_vs_isdd.rs"
