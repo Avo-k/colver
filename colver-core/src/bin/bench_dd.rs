@@ -530,6 +530,24 @@ fn cmd_run(args: &Args) -> io::Result<()> {
         .sum();
     println!("value checksum: {checksum}");
 
+    // Per-position node counts, so a change can be read as a *distribution* and not just as a
+    // total. "Did this help everything, or only the hard positions?" is not answerable from an
+    // aggregate, and the two have very different consequences.
+    if let Some(path) = &args.dump {
+        let mut out = String::from("shape,cards_left,nodes,us\n");
+        for (i, p) in positions.iter().enumerate() {
+            out.push_str(&format!(
+                "{},{},{},{:.1}\n",
+                p.shape.name(),
+                p.cards_left(),
+                results[i].1,
+                results[i].2
+            ));
+        }
+        fs::write(path, out)?;
+        println!("per-position -> {path}");
+    }
+
     let vals: Vec<Vals> = results.iter().map(|(v, _, _)| v.clone()).collect();
     if let Some(path) = &args.values {
         write_values(path, &vals)?;
@@ -1245,6 +1263,7 @@ fn cmd_diff(a: &str, b: &str) -> io::Result<()> {
 
 struct Args {
     corpus: String,
+    dump: Option<String>,
     values: Option<String>,
     json: Option<String>,
     threads: usize,
@@ -1259,6 +1278,7 @@ fn main() {
     let mut corpus = "data/analysis/dd_corpus_v1.bin".to_string();
     let mut out = corpus.clone();
     let mut values: Option<String> = None;
+    let mut dump: Option<String> = None;
     let mut json: Option<String> = None;
     let mut threads = 1usize;
     let mut repeats = 1usize;
@@ -1285,6 +1305,7 @@ fn main() {
             "--corpus" => corpus = next(),
             "--out" => out = next(),
             "--values" => values = Some(next()),
+            "--dump" => dump = Some(next()),
             "--json" => json = Some(next()),
             "--threads" => threads = next().parse().unwrap(),
             "--repeats" => repeats = next().parse().unwrap(),
@@ -1340,7 +1361,7 @@ fn main() {
             eprintln!("\n{} positions -> {out}", positions.len());
         }
         "run" => {
-            let args = Args { corpus, values, json, threads, repeats, ab };
+            let args = Args { corpus, dump, values, json, threads, repeats, ab };
             if args.ab {
                 cmd_ab(&args).expect("ab");
             } else {
@@ -1348,15 +1369,15 @@ fn main() {
             }
         }
         "oracle" => {
-            let args = Args { corpus, values, json, threads, repeats, ab };
+            let args = Args { corpus, dump, values, json, threads, repeats, ab };
             cmd_oracle(&args, &deltas).expect("oracle");
         }
         "bounds" => {
-            let args = Args { corpus, values, json, threads, repeats, ab };
+            let args = Args { corpus, dump, values, json, threads, repeats, ab };
             cmd_bounds(&args, &deltas).expect("bounds");
         }
         "ordering" => {
-            let args = Args { corpus, values, json, threads, repeats, ab };
+            let args = Args { corpus, dump, values, json, threads, repeats, ab };
             cmd_ordering(&args, &hint_rates).expect("ordering");
         }
         "diff" => {
