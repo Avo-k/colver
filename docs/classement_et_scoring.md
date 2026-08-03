@@ -69,6 +69,26 @@ Précision atteignable à formule inchangée :
 L'écart affiché entre Darju (1176) et Leuy (871) — 305 points — tient entièrement dans les
 barres d'erreur combinées.
 
+**Et il y a plus direct que les barres d'erreur.** L'échelle mesurée en §8 dit que *toute*
+l'étendue du jeu de la carte — du joueur à règles écrit à la main jusqu'à l'omniscience
+double-mort — vaut **171 Elo** :
+
+| barreau | Elo vs DouDou50 |
+|---|---|
+| Règles (`method = "rule"`) | −59 |
+| Heuristique | −41 |
+| DouDou35 | −29 |
+| **DouDou50** | **0** |
+| Oracle DD (jeu parfait) | +112 |
+
+Les 305 points affichés entre deux humains valent donc **1,8 fois l'étendue entière du
+jeu**. Il n'y a pas besoin de simuler quoi que ce soit pour conclure : l'écart est plus
+large que ce que le jeu permet.
+
+⚠️ **Mesuré à enchère figée** (v6 aux quatre sièges), donc ces 171 Elo décrivent la carte
+seule. Un humain qui annonce mal perd davantage, et l'étendue humaine réelle est plus
+grande — mais elle l'est *par l'enchère*, pas par la carte.
+
 ---
 
 ## 2. Les six défauts du système actuel
@@ -538,6 +558,34 @@ ces valeurs.
 lieu de 13,1 %, Elo +94/+74 au lieu de +112/+87. Choisir la carte la moins chère parmi les
 DD-équivalentes vaut donc ~18 Elo à l'Oracle contre un adversaire imparfait — invisible en
 double-mort par construction, puisque les deux réalisent la même valeur DD.
+
+#### L'échelle complète : cinq barreaux, un ordre connu
+
+Comparer deux joueurs *proches* est le pire banc d'essai pour valider une métrique de
+classement : on ne dispose d'aucun ordre de référence, puisque l'ordre est précisément ce
+qu'on cherche à établir. D'où une échelle à cinq barreaux, tous mesurés contre la **même
+référence** (DouDou50) pour éviter les erreurs de chaînage, tous en CPU pur.
+
+| barreau | Elo vs DouDou50 | effet d'un siège / donne | donnes pour le séparer de DD50 |
+|---|---|---|---|
+| Règles | **−59** | +31,0 ± 1,2 | 146 |
+| Heuristique | **−41** | +21,9 ± 1,2 | 217 |
+| DouDou35 | **−29** | +17,2 ± 1,1 | **876** |
+| DouDou50 | 0 | — | — |
+| Oracle DD | **+112** | +68,5 ± 1,3 | 59 |
+
+L'ordre est monotone et sans ambiguïté, ce qui en fait le banc d'essai qu'il faut pour
+valider R4 : quatre écarts de tailles très différentes (17, 12, 29, 112 Elo), dont on
+connaît le classement d'avance.
+
+**Deux surprises.** L'heuristique écrite à la main n'est pas « nulle » — 41 Elo sous
+DouDou50, moins que ce que beaucoup supposeraient. Et **l'étendue totale ne fait que
+171 Elo**, ce qui est le chiffre le plus utile de tout ce document : il borne par le haut
+ce qu'un classement de jeu de la carte peut légitimement afficher (cf. §1).
+
+L'explication est cohérente avec le reste des mesures : 40 % des décisions sont **forcées**,
+15 à 19 % des donnes sont **figées** quel que soit l'occupant, et l'enchère est la même
+pour tout le monde. Il reste peu de place pour se distinguer.
 
 #### « DouDou50 est meilleur que DouDou35 » — d'où on le sait
 

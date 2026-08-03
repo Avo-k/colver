@@ -110,6 +110,12 @@ hidden = 512
 
 # A doit être le plus faible des deux, pour que l'effet mesuré soit positif.
 OCCUPANTS = {
+    # Les deux barreaux bas de l'échelle : des fonctions pures, instantanées, dont
+    # personne ne doute qu'elles jouent moins bien qu'un réseau. Elles sont là pour
+    # **donner un ordre connu d'avance** — c'est ce qui manque à un couple serré comme
+    # DouDou35/DouDou50, dont l'ordre a lui-même dû être mesuré.
+    "heuristic": ("Heuristiq", 'method = "heuristic"'),
+    "rule": ("Regles", 'method = "rule"'),
     "doudou35": ("DouDou35", 'method = "dmc"\nmodel = "models/dmc_35.bin"'),
     "doudou50": ("DouDou50", 'method = "dmc"\nmodel = "models/dmc_50.bin"\nresidual = true'),
     # Variante de contrôle : le même fichier avec le passage résiduel forcé. `residual`
@@ -572,10 +578,17 @@ def _check_extension_is_fresh() -> None:
     """
     so = _extension_path()
     newest, newest_src = 0.0, None
-    for src in (ROOT / "colver-core" / "src").rglob("*.rs"):
-        m = src.stat().st_mtime
-        if m > newest:
-            newest, newest_src = m, src
+    for root in (ROOT / "colver-core" / "src", ROOT / "colver-py" / "src"):
+        for src in root.rglob("*.rs"):
+            # `colver-core/src/bin/` sont des binaires autonomes : ils ne sont pas liés
+            # dans l'extension, donc en toucher un ne périme rien ici. Sans cette
+            # exclusion la garde se déclenche sur le travail d'un autre agent et devient
+            # du bruit — une garde qu'on apprend à ignorer ne garde plus rien.
+            if "bin" in src.parts:
+                continue
+            m = src.stat().st_mtime
+            if m > newest:
+                newest, newest_src = m, src
     if newest > so.stat().st_mtime:
         rel = newest_src.relative_to(ROOT) if newest_src else "?"
         raise SystemExit(
