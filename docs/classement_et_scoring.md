@@ -416,6 +416,26 @@ donne entière.**
 Contexte : arbre `HEAD b40601c` + diff non commité `79867c3139ae285a` (la contrainte dure
 belote, en cours par ailleurs). Lancé avec `--no-save` pour cette raison.
 
+### 2026-08-03 — `web_dede` contre `web_doudou` : l'ancre
+
+```
+  RESULT: web_dede 72.0% vs web_doudou 28.0%   ·   Wins 36 — 14   ·   marge +615
+  Dir 1 (dede=NS): 18-7    ·    Dir 2 (doudou=NS): 7-18
+  Par donne: 284 — 229 (0 nulles) → 55,4 % ± 4,3 (IC95)   ·   514 donnes
+```
+
+→ **+37 Elo, IC95 [+7, +68]**, d'où `BOT_ELO = {dede: 1000, doudou: 963}`.
+
+**Le même écart vaut +164 Elo au niveau match** (72 %), parce qu'un match agrège ~10
+donnes et amplifie le même avantage par coup. C'est 37 qu'il faut : `elo.py` note à la
+donne. Le chiffre qu'on retient dépend entièrement de ce qu'on appelle « une partie ».
+
+Précision modeste (±30), mais sans commune mesure avec ce qu'on avait : DouDou était à
+988,6 sur **11 donnes**. À resserrer si besoin — ±15 Elo demanderait ~2 000 donnes.
+
+Arbre propre, `HEAD 158e4b4`, contrainte belote active. Ligne sauvegardée dans
+`matches.csv`.
+
 ### 2026-08-03 — le repli belief-net n'est plus à zéro
 
 ```

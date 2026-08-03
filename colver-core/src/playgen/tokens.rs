@@ -146,6 +146,12 @@ fn bid_action_token(action: u8) -> (u8, u8) {
 
 /// Observer-visible mask for a hidden actor (physical suit space):
 /// unseen cards minus hard-constraint exclusions.
+///
+/// Les coupes et plafonds d'atout viennent de `TrumpCeilingTracker` ; la belote
+/// vient de `play::belote_facts` et s'ajoute **ici seulement**, pas dans
+/// `compute_hard_constraints` — la même fonction alimente l'obs du réseau de
+/// croyances à l'exécution d'IS-DD (`is_dd.rs`), et changer ses 96 flottants
+/// périmerait `belief_v4_fix_v2` sans rapport avec playgen.
 fn hidden_actor_mask(
     tracker: &TrumpCeilingTracker,
     state: &GameState,
@@ -161,7 +167,10 @@ fn hidden_actor_mask(
             mask |= 1 << c;
         }
     }
-    mask
+    // Belote : l'annonce est publique, donc ses deux déductions le sont aussi.
+    // `banned` porte déjà l'implication de `held` (une carte forcée chez un
+    // siège est interdite aux trois autres), donc un seul champ suffit.
+    mask & !crate::play::belote_facts(state).banned[actor as usize]
 }
 
 /// Tokenize a full game replay from `observer`'s perspective.

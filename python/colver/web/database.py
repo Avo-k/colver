@@ -214,6 +214,23 @@ MIGRATIONS = [
     );
     CREATE INDEX idx_password_resets_user ON password_resets(user_id);
     """,
+
+    # v12 — les bots deviennent l'étalon : Elo figé, plus de dérive.
+    #
+    # Jusqu'ici les bots étaient notés comme des joueurs (K = 8) et dérivaient
+    # avec la population : Dédé est passé de 1000 à 1044 (pic 1119) simplement
+    # parce que les humains perdent contre lui. Or il n'est pas un joueur du
+    # pool — il tient trois sièges sur quatre et 881 donnes sur 1073, donc il
+    # *est* l'échelle. Une échelle qui bouge dévalue en silence tous les
+    # inscrits dès qu'un joueur plus faible arrive.
+    #
+    # Les classements sont des données **dérivées** : on vide les deux tables et
+    # le backfill du démarrage les reconstruit sur la nouvelle échelle. Rien
+    # n'est perdu, `games` porte tout ce qu'il faut pour recalculer.
+    """
+    DELETE FROM elo_history;
+    DELETE FROM elo_ratings;
+    """,
 ]
 
 

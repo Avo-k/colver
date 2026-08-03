@@ -652,24 +652,7 @@ impl GpuPlaygen {
                 } else {
                     let unseen =
                         card::ALL_CARDS & !a.spec.observer_initial_hand & !gens[m].played;
-                    let mut mm = 0u32;
-                    for c in 0..32u8 {
-                        let bit = 1u32 << c;
-                        if unseen & bit == 0 {
-                            continue;
-                        }
-                        let suit = c / 8;
-                        if gens[m].voids[actor as usize] & (1 << suit) != 0 {
-                            continue;
-                        }
-                        if suit == gens[m].contract.trump
-                            && gens[m].ceiling[actor as usize] & (1 << (c % 8)) != 0
-                        {
-                            continue;
-                        }
-                        mm |= bit;
-                    }
-                    mm
+                    gens[m].hidden_mask(actor, unseen)
                 };
                 if mask_phys == 0 || gens[m].remaining[actor as usize] == 0 {
                     alive[m] = false;
@@ -850,24 +833,7 @@ impl GpuPlaygen {
                 } else {
                     let unseen =
                         card::ALL_CARDS & !spec.observer_initial_hand & !gens[k].played;
-                    let mut m = 0u32;
-                    for c in 0..32u8 {
-                        let bit = 1u32 << c;
-                        if unseen & bit == 0 {
-                            continue;
-                        }
-                        let suit = c / 8;
-                        if gens[k].voids[actor as usize] & (1 << suit) != 0 {
-                            continue;
-                        }
-                        if suit == gens[k].contract.trump
-                            && gens[k].ceiling[actor as usize] & (1 << (c % 8)) != 0
-                        {
-                            continue;
-                        }
-                        m |= bit;
-                    }
-                    m
+                    gens[k].hidden_mask(actor, unseen)
                 };
                 if mask_phys == 0 || gens[k].remaining[actor as usize] == 0 {
                     alive[k] = false;
@@ -1003,6 +969,8 @@ impl GpuPlaygen {
             remaining: [8; 4],
             voids: [0; 4],
             ceiling: [0; 4],
+            // Aucune carte posée à l'entame : la belote ne peut rien avoir dit.
+            banned: [0; 4],
         };
         let mut gens = vec![placeholder; n_lanes];
         let mut assigned = vec![[0u32; 4]; n_lanes];
@@ -1112,6 +1080,7 @@ impl GpuPlaygen {
                                     remaining: [8; 4],
                                     voids: [0; 4],
                                     ceiling: [0; 4],
+                                    banned: [0; 4], // enchère finie, rien de posé
                                 };
                                 phases[k] = PLAYING;
                                 action_active[k] = true;
@@ -1127,24 +1096,7 @@ impl GpuPlaygen {
                             gens[k].legal_for_hand(obs_remaining[k], actor)
                         } else {
                             let unseen = card::ALL_CARDS & !observer_hand & !gens[k].played;
-                            let mut m = 0u32;
-                            for c in 0..32u8 {
-                                let bit = 1u32 << c;
-                                if unseen & bit == 0 {
-                                    continue;
-                                }
-                                let suit = c / 8;
-                                if gens[k].voids[actor as usize] & (1 << suit) != 0 {
-                                    continue;
-                                }
-                                if suit == gens[k].contract.trump
-                                    && gens[k].ceiling[actor as usize] & (1 << (c % 8)) != 0
-                                {
-                                    continue;
-                                }
-                                m |= bit;
-                            }
-                            m
+                            gens[k].hidden_mask(actor, unseen)
                         };
                         if m == 0 || gens[k].remaining[actor as usize] == 0 {
                             phases[k] = DEAD;

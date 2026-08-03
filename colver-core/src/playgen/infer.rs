@@ -599,6 +599,36 @@ pub(crate) struct GenState {
     pub(crate) voids: [u8; 4],
     /// Impossible trump ranks per seat.
     pub(crate) ceiling: [u8; 4],
+    /// Cartes interdites par siège (bitmask de cartes, pas de rangs) — la belote.
+    /// Figé au préfixe observé : une annonce est un fait public, alors qu'un
+    /// honneur d'atout *généré* ne dit pas si son poseur annonçait, donc la
+    /// continuation ne produit aucun fait nouveau.
+    pub(crate) banned: [u32; 4],
+}
+
+impl GenState {
+    /// Masque observable d'un acteur caché : cartes non vues, moins les
+    /// exclusions dures. Point unique — les chemins CPU et GPU le partagent,
+    /// pour qu'ils ne puissent pas diverger sur les contraintes.
+    pub(crate) fn hidden_mask(&self, actor: u8, unseen: u32) -> u32 {
+        let seat = actor as usize;
+        let mut m = 0u32;
+        for c in 0..32u8 {
+            let bit = 1u32 << c;
+            if unseen & bit == 0 || self.banned[seat] & bit != 0 {
+                continue;
+            }
+            let suit = c / 8;
+            if self.voids[seat] & (1 << suit) != 0 {
+                continue;
+            }
+            if suit == self.contract.trump && self.ceiling[seat] & (1 << (c % 8)) != 0 {
+                continue;
+            }
+            m |= bit;
+        }
+        m
+    }
 }
 
 /// Best trump rank on a (partial) trick.
@@ -1138,6 +1168,7 @@ impl PlaygenSampler {
                 state.voids[3] | self.prefix_voids[3],
             ],
             ceiling: self.prefix_ceiling,
+            banned: crate::play::belote_facts(state).banned,
         };
 
         let observer_hand_now = state.hands[observer as usize];
@@ -1169,24 +1200,7 @@ impl PlaygenSampler {
                     gen.legal_for_hand(obs_remaining, actor)
                 } else {
                     let unseen = card::ALL_CARDS & !self.observer_initial_hand & !gen.played;
-                    let mut m = 0u32;
-                    for c in 0..32u8 {
-                        let bit = 1u32 << c;
-                        if unseen & bit == 0 {
-                            continue;
-                        }
-                        let suit = c / 8;
-                        if gen.voids[actor as usize] & (1 << suit) != 0 {
-                            continue;
-                        }
-                        if suit == gen.contract.trump
-                            && gen.ceiling[actor as usize] & (1 << (c % 8)) != 0
-                        {
-                            continue;
-                        }
-                        m |= bit;
-                    }
-                    m
+                    gen.hidden_mask(actor, unseen)
                 };
                 if mask_phys == 0 || gen.remaining[actor as usize] == 0 {
                     continue 'attempt; // dead end → restart
@@ -1300,6 +1314,7 @@ impl PlaygenSampler {
                 state.voids[3] | self.prefix_voids[3],
             ],
             ceiling: self.prefix_ceiling,
+            banned: crate::play::belote_facts(state).banned,
         };
         let steps = 32 - base.plays_done as usize;
         let prefix_len = self.toks_history.len() + self.pending.len();
@@ -1362,24 +1377,7 @@ impl PlaygenSampler {
                     gens[k].legal_for_hand(obs_remaining[k], actor)
                 } else {
                     let unseen = card::ALL_CARDS & !self.observer_initial_hand & !gens[k].played;
-                    let mut m = 0u32;
-                    for c in 0..32u8 {
-                        let bit = 1u32 << c;
-                        if unseen & bit == 0 {
-                            continue;
-                        }
-                        let suit = c / 8;
-                        if gens[k].voids[actor as usize] & (1 << suit) != 0 {
-                            continue;
-                        }
-                        if suit == gens[k].contract.trump
-                            && gens[k].ceiling[actor as usize] & (1 << (c % 8)) != 0
-                        {
-                            continue;
-                        }
-                        m |= bit;
-                    }
-                    m
+                    gens[k].hidden_mask(actor, unseen)
                 };
                 if mask_phys == 0 || gens[k].remaining[actor as usize] == 0 {
                     alive[k] = false;
@@ -1605,6 +1603,8 @@ impl PlaygenSampler {
             remaining: [8; 4],
             voids: [0; 4],
             ceiling: [0; 4],
+            // Aucune carte posée à l'entame : la belote ne peut rien avoir dit.
+            banned: [0; 4],
         };
         let mut gens = vec![placeholder_gen; n_lanes]; // valid once PLAYING
         let mut assigned = vec![[0u32; 4]; n_lanes];
@@ -1700,6 +1700,7 @@ impl PlaygenSampler {
                                     remaining: [8; 4],
                                     voids: [0; 4],
                                     ceiling: [0; 4],
+                                    banned: [0; 4], // enchère finie, rien de posé
                                 };
                                 phases[k] = PLAYING;
                                 action_active[k] = true;
@@ -1715,24 +1716,7 @@ impl PlaygenSampler {
                             gens[k].legal_for_hand(obs_remaining[k], actor)
                         } else {
                             let unseen = card::ALL_CARDS & !observer_hand & !gens[k].played;
-                            let mut m = 0u32;
-                            for c in 0..32u8 {
-                                let bit = 1u32 << c;
-                                if unseen & bit == 0 {
-                                    continue;
-                                }
-                                let suit = c / 8;
-                                if gens[k].voids[actor as usize] & (1 << suit) != 0 {
-                                    continue;
-                                }
-                                if suit == gens[k].contract.trump
-                                    && gens[k].ceiling[actor as usize] & (1 << (c % 8)) != 0
-                                {
-                                    continue;
-                                }
-                                m |= bit;
-                            }
-                            m
+                            gens[k].hidden_mask(actor, unseen)
                         };
                         if mask == 0 || gens[k].remaining[actor as usize] == 0 {
                             phases[k] = DEAD;
