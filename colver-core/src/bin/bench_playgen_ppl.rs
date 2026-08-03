@@ -45,8 +45,10 @@
 //!     --games data/training/heldout_20k_s90210.bin --n 2000
 
 use colver_core::game_replay::GameReplay;
+use colver_core::play::belote_facts;
 use colver_core::playgen::infer::{KvCache, PlaygenModel, Tok};
 use colver_core::playgen::tokens::{identity_perm, tokenize_replay_v2};
+use colver_core::state::{GameState, Phase};
 
 const TRICKS: usize = 8;
 /// Tours d'enchère suivis. Un tour = les quatre sièges parlent une fois
@@ -76,6 +78,17 @@ struct Acc {
     bnll: [f64; BID_ROUNDS],
     bunif: [f64; BID_ROUNDS],
     bn: [u64; BID_ROUNDS],
+    /// Prédictions de jeu séparées selon qu'une déduction belote est disponible
+    /// à la position. Sert à démêler la capacité de la belote : v2 a été
+    /// entraîné avec un masque qui l'ignorait, donc toute comparaison globale
+    /// v3-vs-v2 confond les deux. Ici la contrainte est dans le masque des deux
+    /// côtés — ce qui diffère, c'est d'avoir appris ou non ses conséquences.
+    bel_nll: f64,
+    bel_unif: f64,
+    bel_n: u64,
+    nobel_nll: f64,
+    nobel_unif: f64,
+    nobel_n: u64,
     samples: u64,
     skipped: u64,
 }
@@ -95,6 +108,12 @@ impl Acc {
             self.bunif[r] += o.bunif[r];
             self.bn[r] += o.bn[r];
         }
+        self.bel_nll += o.bel_nll;
+        self.bel_unif += o.bel_unif;
+        self.bel_n += o.bel_n;
+        self.nobel_nll += o.nobel_nll;
+        self.nobel_unif += o.nobel_unif;
+        self.nobel_n += o.nobel_n;
         self.samples += o.samples;
         self.skipped += o.skipped;
     }
@@ -106,6 +125,22 @@ fn score_sample(model: &PlaygenModel, replay: &GameReplay, observer: u8, acc: &m
         acc.skipped += 1;
         return;
     };
+    // Une déduction belote est-elle disponible à chaque coup joué ? Re-parcours
+    // de la donne plutôt qu'un champ de plus dans `PlaygenSampleV2` : le
+    // tokenizer est partagé avec l'entraînement, et le coût d'un replay est
+    // négligeable devant un forward de transformeur.
+    let bel: Vec<bool> = {
+        let mut st = GameState::new(replay.dealer, replay.hands);
+        let mut v = Vec::with_capacity(32);
+        for &a in &replay.actions {
+            if st.phase == Phase::Playing {
+                v.push(!belote_facts(&st).is_empty());
+            }
+            st.step(a);
+        }
+        v
+    };
+
     let mut nll = [0.0f64; TRICKS];
     let mut unif = [0.0f64; TRICKS];
     let mut n = [0u64; TRICKS];
@@ -173,6 +208,15 @@ fn score_sample(model: &PlaygenModel, replay: &GameReplay, observer: u8, acc: &m
                 nll[t] += -logp;
                 unif[t] += (mask.count_ones() as f64).ln();
                 n[t] += 1;
+                if bel.get(pred_i).copied().unwrap_or(false) {
+                    acc.bel_nll += -logp;
+                    acc.bel_unif += (mask.count_ones() as f64).ln();
+                    acc.bel_n += 1;
+                } else {
+                    acc.nobel_nll += -logp;
+                    acc.nobel_unif += (mask.count_ones() as f64).ln();
+                    acc.nobel_n += 1;
+                }
             }
             pred_i += 1;
         }
@@ -292,6 +336,27 @@ fn main() {
             );
         }
         println!();
+    }
+
+    if acc.bel_n > 0 {
+        let bm = acc.bel_nll / acc.bel_n as f64;
+        let bu = acc.bel_unif / acc.bel_n as f64;
+        let nm = acc.nobel_nll / acc.nobel_n as f64;
+        let nu = acc.nobel_unif / acc.nobel_n as f64;
+        println!("Selon qu'une déduction belote est disponible à la position :");
+        println!("  position          |     n  | nll modèle | branch. | uniforme | gain");
+        println!(
+            "  belote disponible | {:>6} |     {:.4} | {:>7.2} | {:>8.2} | {:.2}×",
+            acc.bel_n, bm, bm.exp(), bu.exp(), (bu - bm).exp()
+        );
+        println!(
+            "  aucune            | {:>6} |     {:.4} | {:>7.2} | {:>8.2} | {:.2}×",
+            acc.nobel_n, nm, nm.exp(), nu.exp(), (nu - nm).exp()
+        );
+        println!(
+            "  ({:.1} % des prédictions cachées portent une déduction)\n",
+            acc.bel_n as f64 / (acc.bel_n + acc.nobel_n) as f64 * 100.0
+        );
     }
 
     println!("Par pli — nll moyenne et facteur de branchement effectif exp(nll) :");
