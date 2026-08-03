@@ -10,6 +10,7 @@ Belote Contrée engine + RL training stack.
 - [rules-survey/](rules-survey/) — **what the rest of the world actually does**: ~594 rulebooks (federations, tournaments, clubs, apps, open source) compared axis by axis. Start at [rules-survey/SYNTHESE.md](rules-survey/SYNTHESE.md)
 - [BENCH.md](BENCH.md) — performance benchmarks
 - [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
+- [classement_et_scoring.md](classement_et_scoring.md) — **l'Elo du web et la fonction d'utilité des bots** : pourquoi c'est le même sujet, et pourquoi Dédé optimise des points cartes là où le barème a une marche
 - [engine_todo.md](engine_todo.md) — backlog moteur & modèles (règles, données, entraînement, zoo)
 - [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
 - `règles officielles belote contrée.pdf` — official FFB rules
