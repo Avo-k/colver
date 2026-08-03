@@ -17,7 +17,7 @@ Les stratégies d'enchères décrites ici sont des fonctions **déterministes** 
 
 Toutes les stratégies partagent la même fonction d'évaluation. Pour une main donnée et un atout supposé, on calcule un score composite :
 
-**Honneurs d'atout** (points fixes par carte) :
+**Grosses cartes d'atout** (points fixes par carte) :
 
 | Carte  | Valet | 9   | As  | 10  | Roi | Dame | 8   | 7   |
 |--------|-------|-----|-----|-----|-----|------|-----|-----|
@@ -105,7 +105,7 @@ Même une couleur avec D-R et rien d'autre (score = 2 en atout) peut être chois
 
 ### 3.1 Philosophie
 
-Inspirée des conventions de jeu humain en Belote Contrée. Repose sur la communication par les enchères entre partenaires : ouvrir à 80 signale un Valet OU un 9 (pas les deux), et le partenaire complète avec l'honneur manquant. C'est l'approche la plus « humaine ».
+Inspirée des conventions de jeu humain en Belote Contrée. Repose sur la communication par les enchères entre partenaires : ouvrir à 80 signale un Valet OU un 9 (pas les deux), et le partenaire complète avec la carte manquante. C'est l'approche la plus « humaine ».
 
 ### 3.2 Ouverture
 
@@ -117,14 +117,14 @@ Inspirée des conventions de jeu humain en Belote Contrée. Repose sur la commun
   - Sinon → **80**
 
 - **Valet OU 9** (pas les deux) :
-  - 3+ cartes dans la couleur → **80** (signale à mon partenaire que j'ai un honneur mais pas l'autre)
+  - 3+ cartes dans la couleur → **80** (signale à mon partenaire que j'ai l'une des deux mais pas l'autre)
   - Sinon → Passe
 
 - **Fallback « aux As »** : si 2+ As au total mais aucune couleur avec V ou 9 → **80** dans la meilleure couleur par score
 
 ### 3.3 Réponse au partenaire
 
-- Si le partenaire a ouvert à **80** : c'est un signal V-ou-9. Si j'ai l'honneur manquant (V ou 9 dans sa couleur) → **90** (confirmation du 34)
+- Si le partenaire a ouvert à **80** : c'est un signal V-ou-9. Si j'ai la carte manquante (V ou 9 dans sa couleur) → **90** (confirmation du 34)
 - Si le partenaire a ouvert à **90+** : il a déjà le V+9, je ne surenchéris pas → Passe
 
 ### 3.4 Surenchère sur adversaire (overcall)
@@ -171,7 +171,7 @@ Avant d'enchérir, la couleur choisie doit satisfaire **au moins une** condition
 - Contenir le **10** d'atout
 - Avoir **3+ cartes** dans la couleur
 
-**Raisonnement** : une couleur sans gros honneur et avec seulement 1-2 cartes ne peut pas servir d'atout de manière viable — même si le score est élevé grâce aux couleurs annexes (chicanes, As).
+**Raisonnement** : une couleur sans grosse carte et avec seulement 1-2 cartes ne peut pas servir d'atout de manière viable — même si le score est élevé grâce aux couleurs annexes (chicanes, As).
 
 ### 4.3 Table de conversion score → enchère (calibrée par tournoi)
 

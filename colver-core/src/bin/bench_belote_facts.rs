@@ -94,8 +94,8 @@ fn hidden_view(facts: &BeloteFacts, state: &GameState, observer: u8) -> HiddenVi
 }
 
 /// Position susceptible de porter une déduction sur un siège caché, **sans passer
-/// par `belote_facts`** : un honneur d'atout est tombé, l'autre n'est ni tombé ni
-/// dans la main de l'observateur.
+/// par `belote_facts`** : le Roi ou la Dame d'atout est tombé, l'autre n'est ni
+/// tombé ni dans la main de l'observateur.
 ///
 /// L'A/B ne peut pas sélectionner ses positions avec la chose qu'il ablate — sous
 /// `COLVER_NO_BELOTE_FACTS=1` la liste serait vide et les deux exécutions ne
@@ -127,7 +127,7 @@ struct Tally {
     constrained: usize,
     /// … dont une carte *placée* (annonce entendue).
     with_held: usize,
-    /// … dont seulement des cartes *exclues* (silence sur un honneur d'atout).
+    /// … dont seulement des cartes *exclues* (silence sur un Roi ou une Dame d'atout).
     banned_only: usize,
     deals_with_announcement: usize,
     /// Somme des probabilités qu'un monde uniforme aveugle soit impossible.

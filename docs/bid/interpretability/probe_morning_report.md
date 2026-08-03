@@ -243,7 +243,7 @@ Poids effectifs (coefficient individuel + contribution du bonus `trump_count=+3`
 
 | Interaction | Coef NN | Interprétation |
 |-------------|--------:|----------------|
-| **J × 9 (même atout)** | **−2** | Anti-synergie : J+9 ensemble vaut 2 pts de moins que la somme. Cohérent avec "trop concentré en honneurs". Consistant sur tous les scénarios. |
+| **J × 9 (même atout)** | **−2** | Anti-synergie : J+9 ensemble vaut 2 pts de moins que la somme. Cohérent avec "trop concentré en grosses cartes". Consistant sur tous les scénarios. |
 | J × A (même atout) | +1 | Légère synergie : si t'as l'A d'atout, en avoir le J l'aide à compenser sa toxicité. |
 | J × trump_count | −1 | Retours décroissants : chaque atout en plus vaut 1 pt de moins quand tu as déjà le J (le J contrôle déjà). |
 | 9 × trump_count | +1 | Retours croissants : le 9 a besoin de longueur pour courir. |
@@ -276,7 +276,7 @@ Règle testée : `annonce si score ≥ θ` (scan du meilleur θ par scénario).
 2. **L'As d'atout vaut essentiellement RIEN** en tant qu'atout (poids effectif +1, équivalent à un 7 ou un 8). Il prend une place dans la couleur atout sans contrôler.
 3. **L'As latéral est 3× moins précieux** que ce qu'on lui attribuait (+1 vs +3).
 4. **Les petits atouts (7, 8, Q, K) valent tous ~+2** de longueur pure — ils ne sont pas des "petits" différents.
-5. **Interaction J×9 = −2** : la double honneur vaut moins que naïvement. Non capturable sans ML.
+5. **Interaction J×9 = −2** : les deux grosses cartes ensemble valent moins que naïvement. Non capturable sans ML.
 6. **Le J en latéral NUIT** (−1) : on le perdra sur une coupe adverse.
 
 **Pour le joueur humain**, la table ci-dessus est directement utilisable. Le formula mentalement :

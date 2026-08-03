@@ -11,7 +11,7 @@ Concordance avec le NN : ~93%.
 
 Pour chaque couleur, compter :
 
-**Points d'honneur atout :**
+**Points des grosses cartes d'atout :**
 
 | Carte | Valeur |
 |-------|--------|
@@ -74,7 +74,7 @@ Avant de compter, pose-toi trois questions :
 | **9** + As atout + coupe | **ANNONCE** (97%) | 80-90 |
 | **9** + As atout, pas de coupe | Possible (78%) | 80 |
 
-Le 9 seul est un honneur fragile. Il a besoin de **longueur + distribution** pour justifier une annonce.
+Le 9 seul est une grosse carte fragile. Il a besoin de **longueur + distribution** pour justifier une annonce.
 
 ### Sans Valet ni 9
 
@@ -233,7 +233,7 @@ Tout sauf J et 9 est interchangeable. Un 7 de plus est mieux qu'un 10 ou un As.
 | 2 as, 0 coupe | +0.075 |
 | 3 as, 0 coupe | +0.044 |
 
-La distribution est plus importante que les honneurs latéraux.
+La distribution est plus importante que les grosses cartes latérales.
 
 ### La belote ne change pas la décision, mais le niveau
 

@@ -601,8 +601,8 @@ pub(crate) struct GenState {
     pub(crate) ceiling: [u8; 4],
     /// Cartes interdites par siège (bitmask de cartes, pas de rangs) — la belote.
     /// Figé au préfixe observé : une annonce est un fait public, alors qu'un
-    /// honneur d'atout *généré* ne dit pas si son poseur annonçait, donc la
-    /// continuation ne produit aucun fait nouveau.
+    /// Roi ou une Dame d'atout *généré* ne dit pas si son poseur annonçait,
+    /// donc la continuation ne produit aucun fait nouveau.
     pub(crate) banned: [u32; 4],
 }
 

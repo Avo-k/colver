@@ -72,7 +72,7 @@ const TEMPLATE = `
         <h4>Ench\u00e8res heuristiques</h4>
         <p>
             Syst\u00e8me d'ench\u00e8res \u00e0 base de r\u00e8gles cod\u00e9es \u00e0 la main :
-            \u00e9valuation de la main (honneurs d'atout, longueur, as annexes),
+            \u00e9valuation de la main (grosses cartes d'atout, longueur, as annexes),
             seuils de palier, plafonds d'annonce et conditions de coinche.
             Utilis\u00e9 pendant l'entra\u00eenement des r\u00e9seaux de neurones et disponible comme alternative.
         </p>

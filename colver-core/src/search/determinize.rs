@@ -414,7 +414,7 @@ mod tests {
         list.iter().fold(0, |acc, &c| acc | card_to_bit(c))
     }
 
-    /// Le siège 1 entame atout ; à lui de tenir (ou non) l'autre honneur.
+    /// Le siège 1 entame atout ; à lui de tenir (ou non) l'autre carte de la belote.
     fn state_after_king_of_trump(hands: [CardSet; 4]) -> GameState {
         let mut state = GameState::new(0, hands);
         state.phase = Phase::Playing;

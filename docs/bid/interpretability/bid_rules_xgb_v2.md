@@ -431,7 +431,7 @@ Le delta Q entre belote et non-belote **augmente avec le niveau** : +0.03 à 110
 
 ### Résumé pour le joueur humain
 
-1. **Longueur > Honneurs** (sauf J et 9 qui sont spéciaux)
+1. **Longueur > grosses cartes** (sauf J et 9 qui sont spéciaux)
 2. **Coupes > As latéraux** — une coupe vaut 3 As
 3. **L'As d'atout est toxique** — un 7 d'atout est meilleur
 4. **Le 10 d'atout est un poids mort** — mieux vaut un 8

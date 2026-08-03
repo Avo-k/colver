@@ -52,7 +52,7 @@ Defense is largely unchanged: coinche rate 17% → 15%, same trump profile (~2 a
 
 **Deux shifts opposés :**
 - **Plus prudent sur les mains courtes J/9-only** : le v5 sait qu'une main "J seul + 2 atouts" (57%) doit être filtrée par `trump_score` — sans as latéraux ni coupes c'est un piège.
-- **Plus agressif sur la longueur sans honneur** : ni J ni 9 + 4 atouts passe de 47% à 64%. La longueur pure suffit désormais.
+- **Plus agressif sur la longueur sans grosse carte** : ni J ni 9 + 4 atouts passe de 47% à 64%. La longueur pure suffit désormais.
 
 ### Seuils trump_score (pos1)
 

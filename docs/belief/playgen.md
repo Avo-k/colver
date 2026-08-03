@@ -69,10 +69,10 @@ ne plus les payer en aller-retours ; pas d'attendre un gain d'arène.
 exactement le principe déjà posé plus haut (« le masque fait l'arithmétique
 d'ensembles, le modèle n'apprend que la stratégie et l'inférence ») :
 
-- *silence* — un honneur d'atout tombé sans annonce : son poseur ne jouera jamais
+- *silence* — un Roi ou une Dame d'atout tombé sans annonce : son poseur ne jouera jamais
   l'autre → exclusion permanente dans **son** masque ;
 - *annonce* — `belote[t] == 1` : les **trois autres** sièges ne peuvent pas jouer
-  l'autre honneur → exclusion dans leurs masques, ce qui place la carte par
+  l'autre carte → exclusion dans leurs masques, ce qui place la carte par
   élimination sans avoir à exprimer « il l'a » dans un vocabulaire de coups.
 
 Les deux tiennent donc dans `TrumpCeilingTracker` / `compute_hard_constraints`,

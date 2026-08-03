@@ -89,7 +89,7 @@ Distribution réelle du niveau choisi par le NN selon `nn_score` (couleur annonc
 
 ## 6. Pièges à connaître
 
-- **L'As d'atout vaut presque rien** (+1, comme un 7). Les honneurs latéraux non plus (A = 0 net, J et 9 latéraux sont carrément *négatifs*).
+- **L'As d'atout vaut presque rien** (+1, comme un 7). Les grosses cartes latérales non plus (A = 0 net, J et 9 latéraux sont carrément *négatifs*).
 - **Le 10 d'atout est un poids mort** (+3, battable par J/9/A).
 - **J+9 ensemble** : −2 d'anti-synergie. Reste très fort mais pas "J seul" + "9 seul" additionnés.
 - **Belote (K+Q atout)** n'aide **pas** à annoncer mais permet de monter d'un palier (+20 pts garantis).

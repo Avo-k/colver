@@ -82,8 +82,8 @@ déductions en sortent, et **c'est la seconde qui tombe le plus souvent** :
 
 | | condition | ce qu'on apprend | fréquence¹ |
 |---|---|---|---|
-| **annonce** | `belote[t] == 1` | l'annonceur détient l'autre honneur, et personne d'autre | 5,7 % des positions |
-| **silence** | un honneur d'atout tombe sans annonce | son poseur n'a **jamais** l'autre (une main ne fait que rétrécir) | 20,5 % des positions |
+| **annonce** | `belote[t] == 1` | l'annonceur détient l'autre carte, et personne d'autre | 5,7 % des positions |
+| **silence** | le Roi ou la Dame d'atout tombe sans annonce | son poseur n'a **jamais** l'autre (une main ne fait que rétrécir) | 20,5 % des positions |
 
 La déduction est appliquée à la source, dans les trois `determinize*` — pas corrigée
 après coup — et `worlds::retain_valid` rejette les mondes d'un sampler qui l'ignore.
