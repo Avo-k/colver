@@ -1,42 +1,61 @@
 #!/usr/bin/env bash
-# Échelle de perplexité : exporte tout checkpoint v3-small pas encore exporté,
-# puis passe le bench sur lui et sur les .bin de v2 déjà disponibles.
+# Échelle de perplexité : exporte tout checkpoint pas encore exporté, puis passe
+# le bench dessus et sur les .bin de v2 déjà disponibles.
 #
 # L'axe honnête est le nombre d'**échantillons vus** (steps × batch), pas les
-# steps : v2 s'entraîne à batch 192, v3-small à 256. Deux courbes indexées sur
-# les steps se compareraient à budgets différents.
+# steps : les runs n'ont pas le même batch, donc deux courbes indexées sur les
+# steps compareraient des budgets différents.
 #
 #   usage: scripts/analysis/playgen_ppl_ladder.sh [n_donnes]
+#
+# Les runs à parcourir sont déclarés ici — <dir>:<d_model>:<layers>:<heads>:<batch>.
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
+RUNS=${RUNS:-"models/playgen_v3_small:256:4:8:256 models/playgen_v3_large:512:8:8:128"}
 N=${1:-500}
 GAMES=data/training/heldout_20k_s90210.bin
 OUT=data/analysis/playgen_ppl
 mkdir -p "$OUT"
 
-# v3-small : d=256 L=4 H=8, batch 256.
-for ckpt in models/playgen_v3_small/playgen_[0-9]*.safetensors; do
-    [ -e "$ckpt" ] || continue
-    step=$(basename "$ckpt" .safetensors | sed 's/playgen_//')
-    bin="models/playgen_v3_small/v3s_${step}.bin"
-    if [ ! -f "$bin" ]; then
-        echo "--- export $ckpt -> $bin"
-        CUDARC_CUDA_VERSION=13010 ./target/release/export_playgen \
-            "$ckpt" "$bin" --d-model 256 --layers 4 --heads 8 --v2 >/dev/null || continue
-    fi
-    log="$OUT/v3s_${step}_n${N}.txt"
-    [ -f "$log" ] || ./target/release/bench_playgen_ppl \
-        --model "$bin" --games "$GAMES" --n "$N" > "$log"
-    echo "== v3-small step $step  ($((step * 256 / 1000))k échantillons)"
+# Une ligne de résultats depuis un log de bench.
+emit() {
+    local log="$1" head="$2"
+    echo "$head"
     printf '   encheres '; grep -E "^     [1-6] \|" "$log" \
         | awk -F'|' '{gsub(/ /,"",$4); gsub(/ /,"",$2); printf "%s(n=%s) ", $4, $2}'
-    printf '\n   jeu      '; grep -E "^    [1-8] \|" "$log" \
-        | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
+    printf '\n   jeu/carte'; grep -E "^    [1-8] \|" "$log" \
+        | awk -F'|' '{gsub(/ /,"",$4); printf " %s", $4}'
+    # La ligne qui décide : un écart par carte se **compose** sur toutes les
+    # cartes restantes, donc c'est en continuations cumulées que se lit ce que
+    # le modèle fait gagner à IS-DD, pas en rapport par carte. Ancrer sur
+    # l'en-tête du tableau : les colonnes `n` des deux autres ont la même forme.
+    printf '\n   mondes   '; sed -n '/^  depuis pli/,$p' "$log" | tail -n +2 \
+        | awk -F'|' '{gsub(/ /,"",$2); printf " %s", $2}'
     echo
+}
+
+for run in $RUNS; do
+    IFS=: read -r dir d l h batch <<< "$run"
+    tag=$(basename "$dir" | sed 's/playgen_//')
+    for ckpt in "$dir"/playgen_[0-9]*.safetensors; do
+        [ -e "$ckpt" ] || continue
+        step=$(basename "$ckpt" .safetensors | sed 's/playgen_//')
+        bin="$dir/${tag}_${step}.bin"
+        if [ ! -f "$bin" ]; then
+            echo "--- export $ckpt -> $bin" >&2
+            CUDARC_CUDA_VERSION=13010 ./target/release/export_playgen \
+                "$ckpt" "$bin" --d-model "$d" --layers "$l" --heads "$h" --v2 \
+                >/dev/null || continue
+        fi
+        log="$OUT/${tag}_${step}_n${N}.txt"
+        [ -f "$log" ] || ./target/release/bench_playgen_ppl \
+            --model "$bin" --games "$GAMES" --n "$N" > "$log"
+        emit "$log" "== $tag step $step  ($((step * batch / 1000))k échantillons)"
+    done
 done
 
-# v2 : d=384 L=6 H=8, batch 192. Déjà exportés.
+# v2 : d=384 L=6 H=8, batch 192, déjà exportés.
 # v2_half.bin et v2_60k.bin sont le même fichier (md5 f3307df9…) : un seul point.
 for pair in "models/playgen_v2/playgen_v2_half.bin:60000" \
             "models/playgen/playgen_v2_120k.bin:120000" \
@@ -46,10 +65,5 @@ for pair in "models/playgen_v2/playgen_v2_half.bin:60000" \
     log="$OUT/v2_${step}_n${N}.txt"
     [ -f "$log" ] || ./target/release/bench_playgen_ppl \
         --model "$bin" --games "$GAMES" --n "$N" > "$log"
-    echo "== v2 step $step  ($((step * 192 / 1000))k échantillons)"
-    printf '   encheres '; grep -E "^     [1-6] \|" "$log" \
-        | awk -F'|' '{gsub(/ /,"",$4); gsub(/ /,"",$2); printf "%s(n=%s) ", $4, $2}'
-    printf '\n   jeu      '; grep -E "^    [1-8] \|" "$log" \
-        | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
-    echo
+    emit "$log" "== v2 step $step  ($((step * 192 / 1000))k échantillons)"
 done

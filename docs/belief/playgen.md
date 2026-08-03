@@ -497,6 +497,36 @@ C'est aussi là que le modèle sert le plus : **5,6× à 10,6× sur l'uniforme a
 1-2, contre 4,8× au mieux en jeu** — la version chiffrée du constat de
 `bench_world_cred` (« auctions are where samplers really differ »).
 
+### Verdict à budget égal : 3,22M params suffisent aux enchères, pas au jeu
+
+v3-small (d=256 L=4, 3,22M) contre v2 (d=384 L=6, 10,74M), **30,72M échantillons
+chacun**, même corpus retenu. Pas d'extrapolation : les deux runs sont complets.
+
+**Enchères** — v3-small `5,68 / 1,67 / 1,42`, v2 `5,66 / 1,66 / 1,41`. Écart de
+0,4 à 0,7 %, pour 3,3× moins de paramètres. Confirmé sur toute l'échelle : à
+23,04M, v3-small était même *devant* au tour 1 (5,65 contre 5,69).
+
+**Jeu** — en continuations cumulées, la seule unité qui dise ce qu'IS-DD gagne,
+parce qu'un écart par carte se **compose** sur toutes les cartes restantes :
+
+| depuis le pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| v3-small | 1,13e12 | 9,96e9 | 1,04e8 | 1,13e6 | 1,56e4 | 337 | 14,2 | 1,525 |
+| v2 | 3,12e11 | 2,89e9 | 3,23e7 | 4,02e5 | 6,58e3 | 175 | 9,60 | 1,445 |
+| **facteur** | **3,6×** | **3,4×** | **3,2×** | **2,8×** | **2,4×** | **1,9×** | **1,5×** | 1,06× |
+
+Le même écart lu par carte ne fait que +1,7 % à +11,7 % — d'où l'importance de
+l'unité : **c'est le produit sur les cartes restantes qui décide**, pas le rapport
+par carte. Repère qui situe l'ampleur : v3-small à 30,7M échantillons ne rattrape
+pas v2 à 11,5M au pli 4 (1,13e6 contre 1,49e6, soit à peine mieux pour 2,7× les
+données).
+
+**Conséquence pour v3** : la config reste celle de v2 ou plus grande. L'économie
+d'un modèle rétréci (~6 h de GPU au lieu de 13-20) se paierait en mondes à
+départager en milieu de donne, là où IS-DD en dépend le plus. En revanche la tête
+d'enchère n'a pas besoin de cette capacité — et comme elle est aussi saturée en
+données, seule de l'information nouvelle la fera bouger (le score de partie).
+
 ### Correction : v2 n'était pas saturé en jeu, seul le pli 1 l'est
 
 Un premier dépouillement de cette échelle a conclu « v2 était saturé bien avant la
