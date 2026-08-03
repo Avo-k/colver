@@ -44,6 +44,13 @@ avril → aujourd'hui, et les 9,3 pts d'excès en sont d'autant plus un **majora
 conclusion — ne pas regénérer — s'en trouve renforcée, pas fragilisée. Ce qui tombe, c'est
 l'attribution : on n'a pas isolé la dérive de code.
 
+**Chiffré depuis** (2026-08-03,
+[isdd_worlds_per_budget.py](../../scripts/analysis/isdd_worlds_per_budget.py)) : en mode
+temps à 20 ms/coup, IS-DD traverse une **médiane de 2 mondes au pli 1**, contre 20 pour les
+bras ci-dessous. Un facteur 10 sur les coups qui décident le plus de l'issue — l'écart de
+plancher est donc large, et le majorant d'autant plus lâche.
+[../play/is_dd.md](../play/is_dd.md#worlds-per-budget-measured-2026-08-03)
+
 Le bras B existe parce que le sidecar ne peut pas représenter une position atteinte par
 `setup_dd` : il rejoue `GameState::new` à travers une liste d'actions, et pour playgen v2
 **l'atout n'est porté que par les jetons d'enchère**. Il faut donc un préfixe qui nomme

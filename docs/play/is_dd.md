@@ -149,6 +149,43 @@ column by the rayon pool — world *generation* stays sequential and does not.
 | Resolved position (early term) | 1 × *endgame* ≈ 1.4 µs (≤ 12 cards left) | Single DD solve; 18.9× cheaper since the TT epoch change |
 | Forced move (early term) | <1 µs | Constant return |
 
+### Worlds per budget, measured (2026-08-03)
+
+`determinizations` is **not** the number of worlds once `time_limit_ms` is set — the loop only
+breaks on the deadline, so the count branch is unreachable and the nominal figure means nothing.
+Measured with [isdd_worlds_per_budget.py](../../scripts/analysis/isdd_worlds_per_budget.py),
+uniform worlds, `determinizations = 20` nominal, **median worlds actually searched per move**:
+
+| trick | sequential (`parallel = false`) 20 ms | parallel (arena/web default) 20 ms |
+|---|---|---|
+| 1 | **2** | 32 |
+| 2 | 4 | 32 |
+| 3 | 14 | 32 |
+| 4 | 54 | 64 |
+| 5 | 314 | 64 |
+| 6 | 1 052 | 96 |
+| 7 | 5 615 | 64 |
+| 8 | 0 (forced) | 0 (forced) |
+
+n = 160 / 96 moves per cell (40 / 24 deals × 4 seats). Trick 8 is always a forced move.
+
+Two things this says, neither of them visible from the config:
+
+1. **The nominal 20 is wrong in both directions** — never reached at trick 1, exceeded 280× at
+   trick 7. A trick-1 world *is* a full deal, so at 20 ms you buy **two samples** of a posterior
+   whose worlds scatter by more than 40 points a third of the time
+   ([../bid/bid_v7_plan.md](../bid/bid_v7_plan.md) §1.5). This is the depth behind
+   `scores_isdd_5M.sc`, which `enrich_pool_isdd` produced at exactly this setting.
+2. **`parallel` changes the agent, not just its speed.** Same TOML, same deadline: 16× deeper at
+   trick 1 and ~10-90× *shallower* from trick 5 on. The chunk is one rayon-pool's worth, so
+   parallel mode cannot stop below 32 worlds (a floor at the opening) and pays a per-chunk
+   dispatch in the endgame, where a world costs 1.4 µs and only ~2 chunks fit in the budget. The
+   endgame end of that trade is pure loss; whether it costs playing strength is unmeasured — the
+   information set is small there too.
+
+Anything reasoning about IS-DD label quality or bot strength from `determinizations` is reasoning
+from a number the code does not use.
+
 **Under a time budget the meaningful unit is worlds-per-budget, not milliseconds.** Per-world
 solve cost falls **~23 000× across a deal** while `effective_ms` only falls 8×, so from mid-deal
 onwards IS-DD is **world-generation-bound, not solver-bound**. Any future effort aimed at making

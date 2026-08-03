@@ -93,6 +93,11 @@ des entrées complètes.
 - `bid_equivariance.py` — 0,8 s pour 400 donnes × 23 permutations, donc utilisable comme
   test de non-régression à chaque checkpoint
 - `bid_q_flatness.py` — ~13-25 min par régime, c'est celui qui motivait tout ceci
+- `isdd_worlds_per_budget.py` — combien de mondes une recherche IS-DD traverse *vraiment*
+  par pli, sous une échéance. `determinizations` n'est pas ce nombre dès que
+  `time_limit_ms` est posé, et l'écart va de ×0,1 à ×280 selon le pli. Deux régimes à
+  mesurer séparément (`--parallel` ou non) : ils ne donnent pas le même agent.
+  ~2 min pour 40 donnes × 2 échéances
 - `dd_solver_bench.py` — enveloppe du binaire Rust `bench_dd`. Un binaire ne peut pas appeler
   `runlog` lui-même, donc ce script l'exécute, lit son tableau et journalise le run. Cas
   particulier de provenance : il n'y a aucun modèle à hacher, mais **le résultat dépend des

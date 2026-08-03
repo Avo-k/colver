@@ -131,6 +131,26 @@ T8.J9AT.-/-/-.B         les huit carreaux (belote comprise)
 Ce qui est **délibérément absent** : Dame, Valet, 9, 8, 7 de côté, tous mesurés sous le
 point. Et le rang exact des cartes de côté au-delà de l'As et du Dix.
 
+⚠️ **Absence mesurée coûteuse, découverte le 2026-08-03** : le code décrit une main
+**avec un atout désigné**, or une décision d'enchère *compare des atouts candidats*. Le J
+et le 9 d'une couleur de côté — ce qui déciderait d'y jouer l'atout — sont perdus, et ce
+sont les cartes qui pèsent +49 et +19 dès qu'on les regarde comme atout. Ajouter au code
+le descripteur de la deuxième meilleure couleur (longueur + lesquels de J/9/A/10) vaut
+**+1,5 pt à l'ouverture et +22,7 pt en défense** dans une table de correspondance sur la
+politique de v6 — [rule_ceiling.md](rule_ceiling.md) §4. En défense, `trump+2e` (2 647
+codes) **bat `full` (5 028 codes) de 9,7 points** : moitié moins de familles, dix points
+de mieux.
+
+La suite `length → trump → shape → tops → full` raffine le **côté** ; il manque un **axe
+orthogonal** qui porte les autres atouts possibles. Ce n'est pas un cran de plus sur le
+même axe — il en faut moins et il explique davantage.
+
+C'est bien un angle mort **du code**, et de lui seul : les 17 features agrégées de la
+distillation se calculent sur *la meilleure couleur de la main*, donc elles n'ont jamais
+perdu cette information (+0,8 point en défense quand on la leur ajoute explicitement).
+`HandCode` la perd parce qu'il faut lui *désigner* un atout, et qu'en défense l'atout
+désigné est celui de l'adversaire.
+
 ### Granularité, comptée exactement sur les 10 518 300 mains
 
 | niveau | codes | 50 % des mains dans | 90 % dans | plus gros code |
@@ -189,7 +209,12 @@ C'est la structure adoptée ici — et c'est aussi ce qui reste à faire, cf. §
 2. **Nommer les familles d'une suite de sondes** (§3.2 du plan) : capot forcé, 8 atouts,
    coupe franche + longue, mains limites.
 3. **Lire une politique d'annonce**, une fois l'obs canonicalisée (§1 ci-dessus, §3.6 du
-   plan).
+   plan). Sans attendre la canonicalisation, le code sert déjà à **écrire** la politique
+   et à **localiser** son résidu : « 93 % d'accord » devient une liste de familles où la
+   règle tombe, donc un domaine de validité. Ordre de grandeur : **73 familles retrouvent
+   87 % des décisions annoncer/passer de v6** à l'ouverture, à 7 points d'un XGBoost qui
+   n'est pas lisible du tout. Les tables : [bid_rules_v6.md](bid_rules_v6.md) ; la
+   métrologie : [rule_ceiling.md](rule_ceiling.md).
 4. **Dédupliquer** : deux donnes tirées au hasard ne sont jamais dans la même classe
    (une sur 830 millions), donc l'augmentation par les 24 permutations de
    [`suit_perm.rs`](../../../colver-core/src/suit_perm.rs) multiplie effectivement le
@@ -197,16 +222,60 @@ C'est la structure adoptée ici — et c'est aussi ce qui reste à faire, cf. §
 
 ---
 
-## 6. Ce qui n'est **pas** validé
+## 6. Quel niveau de code choisir — tranché par la mesure
 
-**Le niveau de code à choisir n'est pas tranché.** Le critère n'est pas esthétique, c'est
-celui du poker : à quel point le code prédit l'issue. Il faudrait calculer `E[DD | code]`
-et la **variance résiduelle intra-code** à chaque niveau, puis, dans l'autre sens,
-clusteriser les classes sur leur vecteur de valeurs DD (une par atout) et regarder si les
-clusters retombent sur le code. Là où ils divergent, on a trouvé une composante
-manquante.
+**Fait le 2026-08-03**, dans les deux sens, et le verdict est net.
 
-Tant que ce n'est pas fait, les cinq niveaux sont un choix raisonné mais arbitraire.
+### 6.1 Contre la valeur DD — `tops` sature, et la main ne dit qu'un quart
+
+60 000 mains × **3** répartitions des 24 autres cartes × 4 atouts = 720 000 solves
+([hand_code_dd_variance.py](../../../scripts/analysis/hand_code_dd_variance.py)). Les
+répétitions sont ce qui rend la mesure lisible : sans elles on ne peut pas séparer « le
+code est grossier » de « la donne est bruitée ». Variance expliquée, estimée par ANOVA
+(l'ICC, pas un R² brut — un R² monte mécaniquement avec le nombre de groupes) :
+
+| niveau | codes | atout ancré | meilleur atout |
+|---|---:|---:|---:|
+| **la main elle-même** | 60 000 | **23,5 %** | **17,1 %** ← plafond |
+| `length` | 7 | 8,6 % | 4,9 % |
+| `trump` | 73 | 15,7 % *(67 % du plafond)* | 7,8 % *(46 %)* |
+| `shape` | 252 | 16,6 % *(71 %)* | 9,6 % *(56 %)* |
+| `tops` | 2 983 | 23,9 % *(saturé)* | 17,1 % *(saturé)* |
+| `full` | 3 703 | 24,0 % *(saturé)* | 17,1 % *(saturé)* |
+
+Trois lectures.
+
+1. **La main n'explique que 23,5 % de la variance de sa propre valeur DD** (17,1 % pour
+   le meilleur atout). Les trois quarts restants sont la répartition des 24 autres
+   cartes. Aucune évaluation de main, aussi parfaite soit-elle, ne peut faire mieux —
+   c'est le chiffre qui dit pourquoi l'enchère est un jeu de communication et non
+   d'évaluation.
+2. **`tops` sature le plafond** ; `full` n'ajoute rien. C'est exactement ce que la
+   conception du code prédit : `full` ne rajoute que la belote, qui vaut **0 point
+   carte** et est donc invisible au DD par construction. Une confirmation interne, pas
+   une coïncidence.
+3. **`trump` (73 codes) capte les deux tiers de ce que la main peut dire** de la valeur à
+   l'atout ancré, mais moins de la moitié pour le meilleur atout — encore l'angle mort
+   des autres couleurs.
+
+Les 102 % de `tops` sont du bruit d'estimation : un grossissement de la main ne peut pas
+expliquer plus que la main. Deux estimateurs non biaisés qui se croisent à 2 % près.
+
+### 6.2 Contre la politique de v6 — et ce n'est pas la même réponse
+
+Précision hors échantillon d'une table `code → une réponse`, niveau par niveau :
+[rule_ceiling.md](rule_ceiling.md) §4. Le classement diffère de celui du §6.1, ce qui est
+le point : imiter un bidder et prédire une valeur ne sont pas la même cible. En défense,
+`trump+2e` (2 647 codes) **bat `full` (5 028 codes) de 9,7 points** — impossible si les
+deux cibles étaient interchangeables.
+
+### 6.3 Ce qui reste ouvert
+
+Le sens inverse : clusteriser les classes sur leur **vecteur** de valeurs DD (une par
+atout) et regarder si les clusters retombent sur le code. Là où ils divergent, on aurait
+une composante manquante trouvée par les données plutôt que par le raisonnement. Les
+deux mesures ci-dessus en désignent déjà une (la qualité d'atout des autres couleurs) ;
+rien ne dit qu'elle soit la seule.
 
 ---
 
@@ -220,6 +289,9 @@ uv run python scripts/analysis/hand_classes.py --verify
 # importance des cartes (~5 min sur 32 cœurs)
 uv run python scripts/analysis/card_importance.py --deals 600
 
+# §6.1 — variance DD expliquée par niveau (~31 min, 8 threads, 720 000 solves)
+uv run python scripts/analysis/hand_code_dd_variance.py --hands 60000 --reps 3 --tag dd-variance
+
 # nombre de codes par niveau, vérifié côté Rust
 cargo test -p colver-core --release --lib hand_class -- --ignored
 ```
@@ -227,3 +299,9 @@ cargo test -p colver-core --release --lib hand_class -- --ignored
 Le nombre de codes (9 / 80 / 339 / 5 277 / 6 654) est épinglé par le test Rust ; les
 colonnes de concentration viennent du script Python, qui interroge le binding plutôt que
 de réimplémenter la logique.
+
+**Les comptes de codes du §6 sont plus bas que ceux du §3.3** (73 au lieu de 80, 2 983 au
+lieu de 5 277) : le §3.3 énumère *tous* les codes possibles, le §6 ne voit que ceux qui
+sortent d'un tirage de 60 000 mains, et l'ancre y est toujours la couleur la mieux notée
+— les codes qui décrivent une main sous un atout qu'on ne choisirait jamais n'y
+apparaissent pas.

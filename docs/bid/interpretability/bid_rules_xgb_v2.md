@@ -4,6 +4,17 @@ Rules extracted by training interpretable models (Decision Trees, XGBoost) on 20
 
 **Accuracy of the distilled rules vs the NN:** ~93% for opening, ~85-90% for responses.
 
+> ⚠️ **Lire le « 93 % » avec son plafond (mesuré le 2026-08-03).** Une règle humaine ne
+> connaît pas le nom des couleurs, donc elle est équivariante ; le réseau, lui, ne l'est
+> pas. À l'ouverture, **aucune règle équivariante ne peut dépasser 97,4 % sur
+> annoncer/passer ni 83,5 % sur l'action exacte** — le reste est du bruit de symétrie du
+> réseau. Conséquence directe sur ce document : le §5 (« niveaux d'annonce ») décrit une
+> cible dont **un sixième est indécidable**, et son accord réel plafonne bien plus bas
+> qu'on ne le lisait. Ajouter aux 17 features le `trump_score` de la **deuxième**
+> meilleure couleur vaut +1,5 pt à l'ouverture et bien davantage en défense.
+> Métrologie : [rule_ceiling.md](rule_ceiling.md). Les mêmes règles, mesurées sur **v6**
+> et écrites famille par famille avec leur fiabilité : [bid_rules_v6.md](bid_rules_v6.md).
+
 ## Quick Reference: trump_score
 
 `trump_score = evaluate_for_trump(hand, suit)` is the single most predictive feature. It combines:

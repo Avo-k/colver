@@ -174,6 +174,28 @@ du label**. À budget CPU constant, scorer 1M donnes avec beaucoup de mondes est
 peut-être meilleur que 5M avec 20 — hypothèse à trancher avec `bench_label_variance`
 avant d'engager les 87 h. Cf. §2.8.
 
+**Et « 20 » n'a jamais été le nombre de mondes** (mesuré le 2026-08-03,
+[isdd_worlds_per_budget.py](../../scripts/analysis/isdd_worlds_per_budget.py)).
+`enrich_pool_isdd` tourne en **mode temps** à 20 ms/coup, et en mode temps la boucle
+d'IS-DD ne sort que sur l'échéance : `determinizations` est inatteignable. Le nombre réel,
+médiane par pli en régime séquentiel — celui du pool :
+
+| pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| mondes | **2** | 4 | 14 | 54 | 314 | 1 052 | 5 615 |
+
+Au pli 1 un monde **est** une donne complète, donc 20 ms achètent **deux échantillons** —
+d'un postérieur dont un tiers des mondes s'écarte de plus de 40 points, comme le dit le
+tableau juste au-dessus. C'est la profondeur derrière `scores_isdd_5M.sc`, et c'est un
+levier bien plus gros que tout ce qui reste dans le solveur. Détail et le second effet —
+`parallel` change l'agent et pas seulement sa vitesse — dans
+[../play/is_dd.md](../play/is_dd.md#worlds-per-budget-measured-2026-08-03).
+
+*Conséquence sur la mesure de péremption du pool* : le bras B0 tournait en mode **compte**
+à 20 mondes, donc ~10× plus profond qu'avril au pli 1. L'écart de plancher de bruit entre
+les deux est plus grand qu'estimé, ce qui **renforce** le « au moins 87 % » de
+[../data_gen/pool_staleness.md](../data_gen/pool_staleness.md) sans rien changer au verdict.
+
 ### 1.6 Acquis antérieurs qui contraignent v7
 
 Établis avant ce document, à ne pas re-litiger :
@@ -479,6 +501,12 @@ meilleur contrat. Les deux disent la même chose, pas au même endroit.)
 
 Le bruit de label à k mondes vaut `44,7/√k`, et **le budget de solves est `N × k`** :
 
+⚠️ **Le `k` de ce tableau est un paramètre d'allocation, pas le `k` du pool actuel.**
+Mesuré le 2026-08-03, `scores_isdd_5M.sc` tourne à k = 2 au pli 1 et k > 5 000 au pli 7
+(§1.5) : le budget est une échéance, jamais un compte. L'arbitrage ci-dessous — donnes
+contre mondes à `N × k` fixé — n'en est pas invalidé, il porte sur ce qu'on **choisirait**.
+Mais toute lecture de « le pool a k = 20 » l'est.
+
 | k | erreur type | rapport signal/bruit | donnes pour 100M solves |
 |---|---|---|---|
 | **20** | 10,0 pts | 2,9 | **5,0M** |
@@ -676,6 +704,21 @@ classes, donc l'énumération est acquise et testée. **Le blocage restant est e
 différentes (§1.1) et la table n'est pas bien définie. Le même module fournit `HandCode`,
 qui nomme les strates de §3.5 et les familles de §3.2 —
 [interpretability/hand_classification.md](interpretability/hand_classification.md).
+
+**En attendant, la version approchée est faite** (2026-08-03) : la politique de v6 lue
+par familles `HandCode`, chaque ligne avec son accord *et son plafond* —
+[interpretability/bid_rules_v6.md](interpretability/bid_rules_v6.md), métrologie dans
+[interpretability/rule_ceiling.md](interpretability/rule_ceiling.md). Trois retombées qui
+concernent v7 :
+- **Le plafond chiffre le coût de §1.1 côté lisibilité** : à l'ouverture, aucune règle
+  insensible aux couleurs ne peut dépasser **97,4 % sur annoncer/passer ni 83,5 % sur
+  l'action exacte**. Un bidder canonique porte ce plafond à 100 % par construction, ce
+  qui est un argument pour §3.1 indépendant du gain en force.
+- **v2 plafonne au même endroit que v6** (96,8 % / 83,1 %, et 7 points de mains stables
+  en *plus*) : l'incohérence de symétrie ne vient pas de l'entraînement.
+- **Négatif à ne pas re-tenter** : entraîner la règle distillée sur le réseau *symétrisé*
+  plutôt que sur sa réponse brute ne vaut rien (+0,5 pt). La réponse à l'identité est un
+  tirage non biaisé dans l'orbite, et l'apprenant moyenne ce bruit tout seul.
 
 ### 3.7 Évaluateur d'annonces candidates sur mondes playgen
 Voir §4 : c'est autant un outil de diagnostic qu'une source potentielle de labels.
