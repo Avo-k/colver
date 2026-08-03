@@ -539,6 +539,37 @@ lieu de 13,1 %, Elo +94/+74 au lieu de +112/+87. Choisir la carte la moins chèr
 DD-équivalentes vaut donc ~18 Elo à l'Oracle contre un adversaire imparfait — invisible en
 double-mort par construction, puisque les deux réalisent la même valeur DD.
 
+#### « DouDou50 est meilleur que DouDou35 » — d'où on le sait
+
+Ce n'est **pas** une hypothèse posée en nommant A et B : le plan mesure le signe, et il
+sort positif. Statistique au niveau de la donne (une valeur par donne, donc pas de sièges
+comptés comme indépendants) : **+17,2 ± 1,10 points, IC 95 % [+15,1 ; +19,4], z = 15,6**.
+
+Mais **le taux de victoire, lui, ne dit presque rien** : DouDou50 ne l'emporte que sur
+**52,4 %** des donnes (z = 3,0), contre 78,0 % pour l'Oracle face à DouDou50 (z = 35,5).
+C'est exactement l'argument de R3 sous une autre forme — à ce niveau d'écart, la marge
+porte le signal et le signe est quasi aveugle.
+
+Deux vérifications, parce que la configuration pouvait tout expliquer :
+
+- **La dimension d'observation est la bonne.** 10 260 612 − 10 244 228 = 16 384 octets
+  = 4 096 flottants = (415 − 411) × 1024. L'auto-détection donne donc 415 (héritée) pour
+  `dmc_35.bin` et 411 (canonique) pour `dmc_50.bin`, comme attendu.
+- **Le passage résiduel est correctement désactivé.** C'est le seul réglage libre du
+  couple et il est *indétectable depuis le fichier de poids*. Contrôle mesuré sur
+  1 999 donnes : forcer `residual = true` sur `dmc_35.bin` coûte **−63,5 points par siège
+  et −114 Elo**. Le réglage utilisé n'est donc pas celui qui bride le modèle.
+
+**Il n'existe aucune corroboration externe** : `matches.csv` ne contient aucun h2h
+`dmc_35` contre `dmc_50`, et ses 14 lignes DouDou35 datent toutes de mars, donc d'avant
+les deux ruptures de barème et la correction du solveur. Ce plan factoriel *est* la mesure.
+
+**Confusion résiduelle, non mesurée** : l'enchère est celle de v6 aux quatre sièges, alors
+que DouDou35 a été entraîné à côté de bid v2 et DouDou50 en triforge avec des bidders plus
+récents. Une part des +29 Elo peut donc être « mieux accordé à la distribution de contrats
+de v6 » plutôt que « joue mieux la carte ». Ça ne menace pas le signe, ça borne
+l'interprétation.
+
 **Limite du plan** : il mesure l'influence d'un siège *entre deux occupants donnés*. Un
 humain n'est aucun des trois. Les deux régimes bornent la question par en haut et par le
 milieu ; ce n'est pas une note.

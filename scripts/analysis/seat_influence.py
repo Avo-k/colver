@@ -112,6 +112,11 @@ hidden = 512
 OCCUPANTS = {
     "doudou35": ("DouDou35", 'method = "dmc"\nmodel = "models/dmc_35.bin"'),
     "doudou50": ("DouDou50", 'method = "dmc"\nmodel = "models/dmc_50.bin"\nresidual = true'),
+    # Variante de contrôle : le même fichier avec le passage résiduel forcé. `residual`
+    # est indétectable depuis le poids (CLAUDE.md), donc c'est le seul réglage libre du
+    # couple — et s'il était mal posé, « DouDou35 est plus faible » mesurerait une
+    # configuration ratée et non un niveau.
+    "doudou35res": ("DD35+res", 'method = "dmc"\nmodel = "models/dmc_35.bin"\nresidual = true'),
     "oracle": ("Oracle", 'method = "oracle_dd"'),
 }
 
