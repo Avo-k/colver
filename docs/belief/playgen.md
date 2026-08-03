@@ -463,6 +463,57 @@ sur le même corpus est légitime ; en tirer un chiffre absolu ne l'est pas.
 Aucun échantillonnage n'intervient, donc ce bench est immunisé par construction
 contre le piège maison des questions tirées du flux mesuré.
 
+### Les enchères, elles, sont saturées — sur les deux axes à la fois
+
+Le bench couvre aussi la tête d'enchère, par **tour** (les quatre sièges parlent
+une fois). La longueur est variable, donc `n` est imprimé : la plupart des
+enchères meurent au 1er ou 2e tour, et au-delà du 3e il n'y a plus d'échantillon
+(n = 150 au tour 4, n = 6 au tour 5 — du bruit, pas une mesure).
+
+Branchement effectif, sièges cachés, 500 donnes retenues × 4 observateurs :
+
+| modèle | params | éch. | tour 1 (n=5997) | tour 2 (n=4533) | tour 3 (n=1461) |
+|---|---|---|---|---|---|
+| v3-small @10K | 3,22M | 2,56M | 5,75 | 1,71 | 1,47 |
+| v3-small @50K | 3,22M | 12,8M | 5,68 | 1,68 | 1,42 |
+| v2 @60K | 10,74M | 11,5M | 5,69 | 1,68 | 1,42 |
+| v2 @160K | 10,74M | 30,7M | **5,66** | **1,66** | **1,41** |
+| *uniforme sur le masque légal* | | | *31,93* | *17,60* | *9,59* |
+
+**Un modèle 3,3× plus petit, à 8 % du budget de données, est à 1,6 % du meilleur.**
+Douze fois plus de données et trois fois plus de paramètres achètent 1,6 % au
+tour 1 et 4 % au tour 3. La tête d'enchère est donc saturée en capacité **et** en
+données — cohérent avec la précision d'enchère qui plafonnait à ~0,687 dès 50K
+pendant l'entraînement de v2.
+
+**Conséquence pour v3-B (le score de partie en entrée).** Si ni les paramètres ni
+les données ne déplacent cette tête, le seul levier restant est de **l'information
+nouvelle**. C'est exactement ce qu'est le score cumulé : v6 annonce autrement à
+1500-300 qu'à 0-0, et playgen n'a jamais rien vu d'autre que 0-0. Cette mesure ne
+prouve pas que le score aidera, mais elle **élimine l'alternative** « il suffirait
+d'entraîner plus gros ou plus longtemps ».
+
+C'est aussi là que le modèle sert le plus : **5,6× à 10,6× sur l'uniforme au tour
+1-2, contre 4,8× au mieux en jeu** — la version chiffrée du constat de
+`bench_world_cred` (« auctions are where samplers really differ »).
+
+### Correction : v2 n'était pas saturé en jeu, seul le pli 1 l'est
+
+Un premier dépouillement de cette échelle a conclu « v2 était saturé bien avant la
+fin — 2,7× d'échantillons pour 2,7 % » (commit 321547a). **C'est faux, et l'erreur
+était de lire la seule colonne du pli 1.** De 11,5M à 30,7M d'échantillons :
+
+| pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| gain v2 | −2,7 % | −4,7 % | −5,9 % | **−8,2 %** | −8,5 % | −10,2 % | **−11,7 %** | −2,6 % |
+
+v2 a progressé de 8 à 12 % en milieu et fin de donne pendant les deux tiers
+restants de son entraînement. Ce qui sature au pli 1 est un **plancher
+d'entropie**, pas le modèle : sans carte tombée il n'y a rien à déduire, et ce qui
+reste est de la politique, pas de la croyance. Le pli 1 est donc la colonne la
+moins informative de la table, et c'est précisément celle sur laquelle la
+conclusion avait été tirée.
+
 ## Next steps
 - [ ] **v3 : la belote dans le masque observable** (voir « Ce que le masque ne dit
       pas encore »). 15,4 % de mondes impossibles aux positions concernées, filtrés

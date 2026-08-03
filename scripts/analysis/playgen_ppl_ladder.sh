@@ -29,7 +29,10 @@ for ckpt in models/playgen_v3_small/playgen_[0-9]*.safetensors; do
     [ -f "$log" ] || ./target/release/bench_playgen_ppl \
         --model "$bin" --games "$GAMES" --n "$N" > "$log"
     echo "== v3-small step $step  ($((step * 256 / 1000))k échantillons)"
-    grep -E "^    [1-8] \|" "$log" | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
+    printf '   encheres '; grep -E "^     [1-6] \|" "$log" \
+        | awk -F'|' '{gsub(/ /,"",$4); gsub(/ /,"",$2); printf "%s(n=%s) ", $4, $2}'
+    printf '\n   jeu      '; grep -E "^    [1-8] \|" "$log" \
+        | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
     echo
 done
 
@@ -44,6 +47,9 @@ for pair in "models/playgen_v2/playgen_v2_half.bin:60000" \
     [ -f "$log" ] || ./target/release/bench_playgen_ppl \
         --model "$bin" --games "$GAMES" --n "$N" > "$log"
     echo "== v2 step $step  ($((step * 192 / 1000))k échantillons)"
-    grep -E "^    [1-8] \|" "$log" | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
+    printf '   encheres '; grep -E "^     [1-6] \|" "$log" \
+        | awk -F'|' '{gsub(/ /,"",$4); gsub(/ /,"",$2); printf "%s(n=%s) ", $4, $2}'
+    printf '\n   jeu      '; grep -E "^    [1-8] \|" "$log" \
+        | awk -F'|' '{gsub(/ /,"",$4); printf "%s ", $4}'
     echo
 done

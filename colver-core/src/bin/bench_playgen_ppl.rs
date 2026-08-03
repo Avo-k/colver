@@ -49,6 +49,12 @@ use colver_core::playgen::infer::{KvCache, PlaygenModel, Tok};
 use colver_core::playgen::tokens::{identity_perm, tokenize_replay_v2};
 
 const TRICKS: usize = 8;
+/// Tours d'enchère suivis. Un tour = les quatre sièges parlent une fois
+/// (`MAX_BID_ENTRIES_V2` = 24 places, soit 6 tours), mais la longueur réelle est
+/// **variable** : la plupart des enchères meurent au 1er ou 2e tour, donc les
+/// derniers tours reposent sur peu d'échantillons. La table imprime `n` pour que
+/// ça se voie, et saute les tours vides.
+const BID_ROUNDS: usize = 6;
 
 /// Accumulateur d'un lot de donnes.
 #[derive(Clone, Default)]
@@ -66,6 +72,10 @@ struct Acc {
     cum_unif: [f64; TRICKS],
     /// Échantillons ayant au moins une prédiction cachée au pli t ou après.
     cum_n: [u64; TRICKS],
+    /// Idem pour la tête d'enchère, par tour, sièges cachés seulement.
+    bnll: [f64; BID_ROUNDS],
+    bunif: [f64; BID_ROUNDS],
+    bn: [u64; BID_ROUNDS],
     samples: u64,
     skipped: u64,
 }
@@ -79,6 +89,11 @@ impl Acc {
             self.cum[t] += o.cum[t];
             self.cum_unif[t] += o.cum_unif[t];
             self.cum_n[t] += o.cum_n[t];
+        }
+        for r in 0..BID_ROUNDS {
+            self.bnll[r] += o.bnll[r];
+            self.bunif[r] += o.bunif[r];
+            self.bn[r] += o.bn[r];
         }
         self.samples += o.samples;
         self.skipped += o.skipped;
@@ -97,6 +112,7 @@ fn score_sample(model: &PlaygenModel, replay: &GameReplay, observer: u8, acc: &m
 
     let mut cache = KvCache::new(model);
     let mut pred_i = 0usize;
+    let mut bid_i = 0usize;
     for j in 0..s.primary.len() {
         let tok = Tok {
             primary: s.primary[j],
@@ -105,6 +121,35 @@ fn score_sample(model: &PlaygenModel, replay: &GameReplay, observer: u8, acc: &m
             segment: s.segment[j],
         };
         let hidden = model.forward_token(&mut cache, tok, j);
+        if bid_i < s.bid_pred_pos.len() && s.bid_pred_pos[bid_i] as usize == j {
+            // `actor` est relatif à l'observateur : 0 = lui-même. Le masque
+            // d'enchère est **public** (la légalité ne lit aucune main), donc
+            // ce qui distingue un siège caché ici n'est pas le masque mais la
+            // main que le modèle doit deviner derrière l'annonce.
+            if s.actor[j] != 0 {
+                let logits = model.bid_logits(&hidden);
+                let mask = s.bid_masks[bid_i];
+                let target = s.bid_targets[bid_i];
+                let mut max_l = f32::NEG_INFINITY;
+                for a in 0..logits.len() {
+                    if mask & (1u64 << a) != 0 && logits[a] > max_l {
+                        max_l = logits[a];
+                    }
+                }
+                let mut denom = 0.0f64;
+                for a in 0..logits.len() {
+                    if mask & (1u64 << a) != 0 {
+                        denom += ((logits[a] - max_l) as f64).exp();
+                    }
+                }
+                let logp = (logits[target as usize] - max_l) as f64 - denom.ln();
+                let r = (bid_i / 4).min(BID_ROUNDS - 1);
+                acc.bnll[r] += -logp;
+                acc.bunif[r] += (mask.count_ones() as f64).ln();
+                acc.bn[r] += 1;
+            }
+            bid_i += 1;
+        }
         if pred_i < s.pred_pos.len() && s.pred_pos[pred_i] as usize == j {
             // Seuls les sièges cachés portent de l'information sur le monde.
             if s.hidden_actor[pred_i] {
@@ -224,6 +269,30 @@ fn main() {
         "{} échantillons ({} ignorés), {} prédictions cachées, {:.1}s\n",
         acc.samples, acc.skipped, total_preds, elapsed
     );
+
+    let bid_preds: u64 = acc.bn.iter().sum();
+    if bid_preds > 0 {
+        println!("Par tour d'enchère — sièges cachés seulement, masque légal public :");
+        println!("  tour |    n   | nll modèle | branch. | nll uniforme | branch. | gain");
+        for r in 0..BID_ROUNDS {
+            if acc.bn[r] == 0 {
+                continue;
+            }
+            let m = acc.bnll[r] / acc.bn[r] as f64;
+            let u = acc.bunif[r] / acc.bn[r] as f64;
+            println!(
+                "  {:>4} | {:>6} |     {:.4} | {:>7.2} |       {:.4} | {:>7.2} | {:.2}×",
+                r + 1,
+                acc.bn[r],
+                m,
+                m.exp(),
+                u,
+                u.exp(),
+                (u - m).exp(),
+            );
+        }
+        println!();
+    }
 
     println!("Par pli — nll moyenne et facteur de branchement effectif exp(nll) :");
     println!("  pli |    n  | nll modèle | branch. | nll uniforme | branch. | gain");
