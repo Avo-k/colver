@@ -1103,10 +1103,24 @@ le **taux de victoire** bouge aussi : 88,2 % → **90,4 %**.
 - `solver::solve_best_card` — le web (Regarder, Rejouer, `/analyse/jeu`, `agent_review`), qui
   passe par le binding PyO3 `action_oracle_dd` et **n'utilise pas `OraclePlayer` du tout**.
 
-**Le défaut reste `order`.** Le gain est réel et mesuré, mais changer ce que l'Oracle joue et ce
-que l'analyse affiche est une décision produit — d'autant que l'Oracle du web est un outil
-pédagogique : lui faire jouer la carte la moins chère parmi des équivalentes le rend aussi plus
-*instructif*, ce qui est un argument de plus, mais pas un argument de vitesse.
+**Adopté le 2026-08-03 : `cheapest`, dans le solveur, donc sur les deux chemins d'un coup.**
+`solve_best_card` et `solve_with_scores` départagent maintenant par **moins de points de carte,
+puis indice le plus bas** — un résultat qui est enfin une fonction de la position et non du
+parcours de la recherche. Les valeurs DD ne bougent pas (c'est la carte *désignée* qui change),
+et le compte de nœuds est identique au nœud près.
+
+L'option `tiebreak` du TOML reste, pour pouvoir refaire la mesure ; `order` y signifie désormais
+« ce que rend le solveur », donc `cheapest`. Vérifié de bout en bout : `tb_order` et
+`tb_cheapest` rendent exactement le même résultat d'arène (90,4 %, +968 contre DouDou50, là où
+l'ancien `order` faisait 88,2 % / +905).
+
+`lowest` n'était qu'un `cheapest` **accidentel** : `PLAIN_POINTS` se trouve être croissante dans
+l'ordre des indices de rang, donc à la couleur les deux règles coïncident sur **0 divergence sur
+247 ensembles possibles**. `TRUMP_POINTS` ne l'est pas — le 9 vaut 14 et le Valet 20, coincés
+entre le 8 (0) et la Dame (3) — donc à l'atout elles divergent sur **18 %** des ensembles, et
+`lowest` y jette le 9 ou le Valet là où `cheapest` jette la Dame. S'y ajoute un biais pique :
+l'indice ordonne les couleurs ♠♥♦♣ sans rapport avec l'atout. **Ne pas retenir `lowest` : il
+marche par un artefact d'encodage qui casserait au premier changement de barème.**
 
 **Réplication** :
 ```bash
@@ -1116,3 +1130,33 @@ python3 scripts/analysis/dd_tiebreak_report.py /tmp/tiebreak_arena.csv
 ```
 Les bots `tb_*` et `opp_*` sont des sondes : enchère identique partout, `--no-save` dans le
 script, donc rien n'entre dans `matches.csv`.
+
+### Contrôle de robustesse : et si l'enchère était réaliste ?
+
+Le balayage ci-dessus fait annoncer `improved_v2` des deux côtés. C'est un vrai enchérisseur —
+pas un contrat forcé — mais **`bench_auction_profile` montre qu'il enchérit mal**, et une mesure
+faite dans un environnement pauvre mérite d'être refaite dans un environnement riche :
+
+| sur 4 000 donnes | `improved_v2` | **bid v6 (réaliste)** |
+|---|---:|---:|
+| contrat maximum atteint | **120** | **250** (capot) |
+| enchère à une seule annonce | **41,0 %** | 8,6 % |
+| annonces par enchère (mode) | 2 | **4** |
+| enchère contestée (les deux camps annoncent) | 41,9 % | **80,9 %** |
+| contrats contrés | 4,3 % | **25,9 %** |
+| contrats réussis | 62,2 % | 48,7 % |
+| donnes passées | 0,0 % | 0,1 % |
+
+Refait avec l'enchère v6 aux quatre sièges, contre DouDou50, 800 matchs par cellule, 3 graines :
+
+| départage | % victoires | marge | plage sur les 3 graines |
+|---|---:|---:|---|
+| **cheapest** | **94,1 %** | **+1203** | 1197 – 1212 |
+| lowest | 93,1 % | +1164 | 1145 – 1183 |
+| dearest | 90,6 % | +1056 | 997 – 1095 |
+
+**Les trois plages ne se recouvrent pas**, et l'écart `cheapest` − `dearest` passe de **105 points
+à 147** : l'effet est *plus grand* sous enchère réaliste, pas plus petit. C'est cohérent — des
+contrats plus hauts et plus disputés laissent plus de place à une carte à points gaspillée.
+
+Autrement dit, la première mesure **sous-estimait** la conclusion. Elle ne la biaisait pas.
