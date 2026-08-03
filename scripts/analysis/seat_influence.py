@@ -127,7 +127,42 @@ OCCUPANTS = {
 }
 
 
+# --- l'autre facteur : l'enchère -------------------------------------------------
+#
+# Le jeu de la carte ne fait qu'une **moitié** d'une donne, et les donnes du site couvrent
+# les deux. Une échelle de force mesurée à enchère figée décrit donc la moitié la moins
+# décisive du jeu. Mêmes 16 configurations, facteur inversé : le bloc `[bid]` varie, le
+# `[play]` est DouDou50 partout.
+#
+# Différence de nature avec le facteur « carte » : chaque configuration **produit son
+# propre contrat**, puisque c'est précisément le travail d'un enchérisseur. On ne peut donc
+# pas figer l'enchère — et une donne passée par une configuration marque 0, ce qui est la
+# bonne note pour un enchérisseur qui laisse filer une main jouable.
+BIDDERS = {
+    "b_heuristic": ("BidHeur", 'strategy = "heuristic"'),
+    "b_improved": ("BidImpr", 'strategy = "improved"'),
+    "b_improved_v2": ("BidImpV2", 'strategy = "improved_v2"'),
+    "b_roro": ("BidRoro", 'strategy = "roro"'),
+    "b_petit_bide": ("BidPetit", 'strategy = "petit_bide"'),
+    "b_moelleux": ("BidMoell", 'strategy = "moelleux"'),
+    "b_maxi": ("BidMaxi", 'strategy = "maxi"'),
+    "b_v6": ("BidV6", f'strategy = "nn"\nmodel = "{BID_MODEL}"\nhidden = 512'),
+}
+
+_PLAY_FIXED = '\n[play]\nmethod = "dmc"\nmodel = "models/dmc_50.bin"\nresidual = true\n'
+
+
+def is_bidder(name: str) -> bool:
+    return name in BIDDERS
+
+
+def label_of(name: str) -> str:
+    return (BIDDERS if is_bidder(name) else OCCUPANTS)[name][0]
+
+
 def spec_for(name: str, tiebreak: str) -> str:
+    if is_bidder(name):
+        return "\n[bid]\n" + BIDDERS[name][1] + "\n" + _PLAY_FIXED
     body = OCCUPANTS[name][1]
     if name == "oracle":
         body += f'\ntiebreak = "{tiebreak}"'
@@ -135,7 +170,8 @@ def spec_for(name: str, tiebreak: str) -> str:
 
 
 def model_of(name: str) -> str | None:
-    for line in OCCUPANTS[name][1].splitlines():
+    table = BIDDERS if is_bidder(name) else OCCUPANTS
+    for line in table[name][1].splitlines():
         if line.startswith("model = "):
             return line.split('"')[1]
     return None
@@ -156,6 +192,11 @@ def _init_worker(a: str, b: str, tiebreak: str, seed: int) -> None:
 
     _W["colver"] = colver
     _W["b_is_oracle"] = b == "oracle"
+    # Les deux occupants doivent varier le **même** facteur, sinon on ne mesure rien
+    # d'interprétable : un couple mixte ferait bouger l'enchère et la carte ensemble.
+    if is_bidder(a) != is_bidder(b):
+        raise SystemExit(f"--a {a} et --b {b} ne varient pas le même facteur")
+    _W["factor"] = "bid" if is_bidder(a) else "play"
     _W["a"] = [colver.Agent(spec_for(a, tiebreak), s, seed + s) for s in range(N_SEATS)]
     _W["b"] = [colver.Agent(spec_for(b, tiebreak), s, seed + 100 + s) for s in range(N_SEATS)]
 
@@ -220,23 +261,54 @@ def sweep(seed: int, check: bool = False) -> dict | None:
     hands = [sorted(deck[i * 8:(i + 1) * 8]) for i in range(N_SEATS)]
     dealer = rng.randrange(N_SEATS)
 
-    auc = _auction(colver, dealer, hands, _W["a"])
-    if auc is None:
-        return None
-    bid_actions, contract, taker = auc
-
     margins, card_margins, pts_ns = [], [], []
-    for mask in range(N_CONF):
-        occ = [_W["b"][s] if (mask >> s) & 1 else _W["a"][s] for s in range(N_SEATS)]
-        m, (ns, ew) = _play(colver, dealer, hands, bid_actions, occ)
-        margins.append(m)
-        card_margins.append(ns - ew)
-        pts_ns.append(ns)
+
+    if _W["factor"] == "bid":
+        # L'enchère est le facteur : chaque configuration mène la sienne, donc chaque
+        # configuration a son propre contrat — et parfois aucun. Une donne passée marque
+        # 0-0, la note qui convient à un enchérisseur qui laisse filer une main jouable.
+        taker, contract, bid_actions = None, {}, []
+        bid = 0
+        for mask in range(N_CONF):
+            occ = [_W["b"][s] if (mask >> s) & 1 else _W["a"][s] for s in range(N_SEATS)]
+            auc = _auction(colver, dealer, hands, occ)
+            if auc is None:
+                margins.append(0.0)
+                card_margins.append(0)
+                pts_ns.append(0)
+                continue
+            bid += 1
+            acts, ctr, tkr = auc
+            if not bid_actions:  # métadonnées de la configuration de référence
+                bid_actions, contract = acts, ctr
+                taker = tkr
+            m, (ns, ew) = _play(colver, dealer, hands, acts, occ)
+            margins.append(m)
+            card_margins.append(ns - ew)
+            pts_ns.append(ns)
+        if bid == 0:
+            return None  # aucune configuration n'a pris : la donne ne dit rien
+    else:
+        auc = _auction(colver, dealer, hands, _W["a"])
+        if auc is None:
+            return None
+        bid_actions, contract, taker = auc
+        for mask in range(N_CONF):
+            occ = [_W["b"][s] if (mask >> s) & 1 else _W["a"][s] for s in range(N_SEATS)]
+            m, (ns, ew) = _play(colver, dealer, hands, bid_actions, occ)
+            margins.append(m)
+            card_margins.append(ns - ew)
+            pts_ns.append(ns)
 
     rec = {
-        "seed": seed, "dealer": dealer, "taker": taker,
-        "value": int(contract["value"]), "trump": int(contract["trump"]),
-        "team": int(contract["team"]), "coinche": int(contract["coinche"]),
+        "seed": seed, "dealer": dealer,
+        "taker": None if _W["factor"] == "bid" else taker,
+        "value": int(contract.get("value", 0)), "trump": int(contract.get("trump", -1)),
+        "team": int(contract.get("team", -1)), "coinche": int(contract.get("coinche", 0)),
+        # Sous le facteur enchère le preneur **change d'une configuration à l'autre** :
+        # ventiler par rôle mélangerait des rôles différents dans une même différence
+        # appariée. On le met donc à None, et le rapport n'affiche qu'un agrégat.
+        "factor": _W["factor"],
         "margins": margins,
         # Les mêmes 16 configurations en **écart de points cartes** (N-S − E-O). C'est la
         # même partie jouée, lue sans le barème : comparer les deux échelles isole ce que
@@ -260,7 +332,9 @@ ROLES = ("preneur", "partenaire", "défenseur")
 MARGIN_SD = 316.0  # écart-type d'une marge de donne (deal_margin_scale, 2 999 donnes)
 
 
-def _role(seat: int, taker: int) -> str:
+def _role(seat: int, taker: int | None) -> str:
+    if taker is None:  # facteur enchère : le preneur varie selon la configuration
+        return "tous sièges"
     if seat == taker:
         return "preneur"
     return "partenaire" if seat == (taker ^ 2) else "défenseur"
@@ -281,9 +355,11 @@ def _mean_sd(xs):
 
 def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracle") -> dict:
     n = len(recs)
-    la, lb = OCCUPANTS[a][0], OCCUPANTS[b][0]
+    la, lb = label_of(a), label_of(b)
     tb = f" · départage Oracle = {tiebreak!r}" if b == "oracle" else ""
-    print(f"\n{n} donnes notables · {la} → {lb}{tb}\n")
+    facteur = "enchère" if is_bidder(a) else "jeu de la carte"
+    roles = ("tous sièges",) if is_bidder(a) else ROLES
+    print(f"\n{n} donnes notables · facteur = {facteur} · {la} → {lb}{tb}\n")
 
     # --- contrôle d'exactitude -------------------------------------------------
     checked = [r for r in recs if "dd_ns" in r]
@@ -312,7 +388,7 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
     # --- effet principal par siège, ventilé par rôle ---------------------------
     # Effet principal = moyenne des 8 différences appariées « ce siège passe de
     # DouDou à Oracle, les trois autres inchangés », relue du côté de son équipe.
-    by_role: dict[str, list[float]] = {r: [] for r in ROLES}
+    by_role: dict[str, list[float]] = {r: [] for r in roles}
     deltas_all: list[float] = []
     for r in recs:
         m = r["margins"]
@@ -326,7 +402,7 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
     print(f"\n── Effet principal d'un siège ({la} → {lb}), pour son équipe " + "─" * 8)
     print(f"  {'rôle':<12} {'n':>6} {'effet':>9} {'± err':>8} {'écart-type':>11} "
           f"{'>0':>7} {'p10':>7} {'p90':>7}")
-    for role in ROLES:
+    for role in roles:
         xs = by_role[role]
         mean, sd, err = _mean_sd(xs)
         pos = 100 * sum(1 for x in xs if x > 0) / len(xs) if xs else 0
@@ -369,7 +445,7 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
     card = None
     if all("card_margins" in r for r in recs):
         cpart: dict[int, list[float]] = {0: [], 1: []}
-        crole: dict[str, list[float]] = {r: [] for r in ROLES}
+        crole: dict[str, list[float]] = {r: [] for r in roles}
         for r in recs:
             cm = r["card_margins"]
             for s in range(N_SEATS):
@@ -380,7 +456,7 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
                     if not k & bit:
                         cpart[1 if k & pbit else 0].append(_gain(cm[k | bit] - cm[k], s))
         print("\n  les mêmes échanges lus en **points cartes** (sans le barème) :")
-        for role in ROLES:
+        for role in roles:
             mean, _, err = _mean_sd(crole[role])
             print(f"    effet {role:<12} {mean:>+8.1f} ± {err:.1f}")
         c0, _, e0 = _mean_sd(cpart[0])
@@ -392,7 +468,7 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
         if p0 > 0 and c0 > 0:
             print(f"    → amplification par un bon partenaire : ×{p1/p0:.2f} au barème, "
                   f"×{c1/c0:.2f} en points cartes")
-        card = {"effect": {r: round(_mean_sd(crole[r])[0], 1) for r in ROLES},
+        card = {"effect": {r: round(_mean_sd(crole[r])[0], 1) for r in roles},
                 "partner_dd": round(c0, 1), "partner_or": round(c1, 1)}
 
     # --- traduction en Elo -----------------------------------------------------
@@ -436,9 +512,9 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
     print("  s'en servir comme borne, ou comme dénominateur d'un score normalisé.")
 
     # --- ce que ça dit du classement ------------------------------------------
-    mt, sdt, _ = _mean_sd(by_role["preneur"])
+    mt, sdt, _ = _mean_sd(by_role[roles[0]])
     print("\n── Plafond de vitesse d'un classement " + "─" * 35)
-    print(f"  effet d'un siège au rôle le plus lourd (preneur) : {mt:+.1f} pts / donne")
+    print(f"  effet d'un siège ({roles[0]}) : {mt:+.1f} pts / donne")
     print(f"  bruit d'une donne, hors joueur (écart-type)      : {MARGIN_SD:.0f} pts")
     if mt > 0:
         print(f"  rapport signal / bruit                          : {mt/MARGIN_SD:.3f}")
@@ -456,9 +532,10 @@ def report(recs: list[dict], tiebreak: str, a: str = "doudou50", b: str = "oracl
         "spread_mean": round(statistics.fmean(spreads), 1),
         "spread_median": round(statistics.median(spreads), 1),
         "frozen_deals_pct": round(100 * figees / n, 1),
-        "effect": {role: round(_mean_sd(by_role[role])[0], 1) for role in ROLES},
-        "effect_err": {role: round(_mean_sd(by_role[role])[2], 1) for role in ROLES},
-        "effect_sd": {role: round(_mean_sd(by_role[role])[1], 1) for role in ROLES},
+        "factor": "bid" if is_bidder(a) else "play",
+        "effect": {role: round(_mean_sd(by_role[role])[0], 1) for role in roles},
+        "effect_err": {role: round(_mean_sd(by_role[role])[2], 1) for role in roles},
+        "effect_sd": {role: round(_mean_sd(by_role[role])[1], 1) for role in roles},
         "occupants": [a, b],
         "effect_partner_weak": round(_mean_sd(part[0])[0], 1),
         "effect_partner_strong": round(_mean_sd(part[1])[0], 1),
@@ -481,10 +558,10 @@ def main() -> int:
     ap.add_argument("--deals", type=int, default=400)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--jobs", type=int, default=1)
-    ap.add_argument("--a", default="doudou50", choices=sorted(OCCUPANTS),
+    ap.add_argument("--a", default="doudou50", choices=sorted(OCCUPANTS) + sorted(BIDDERS),
                     help="occupant de reference (le plus faible des deux)")
-    ap.add_argument("--b", default="oracle", choices=sorted(OCCUPANTS),
-                    help="occupant substitue (le plus fort)")
+    ap.add_argument("--b", default="oracle", choices=sorted(OCCUPANTS) + sorted(BIDDERS),
+                    help="occupant substitue (le plus fort) ; meme facteur que --a")
     ap.add_argument("--tiebreak", default="order",
                     choices=["order", "lowest", "highest", "cheapest", "dearest"])
     ap.add_argument("--check-every", type=int, default=25,

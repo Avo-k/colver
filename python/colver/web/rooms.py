@@ -375,11 +375,13 @@ class Room:
         await db.complete_game(
             self.game_id, points[0], points[1], session.env.get_contract())
         import colver.web.elo as elo
-        await elo.rate_game(self.game_id)
         if self.match.record(self.game_id, session.env.rewards()) and self.match.id:
             await db.update_match(
                 self.match.id, self.match.totals[0], self.match.totals[1],
                 len(self.match.deals), self.match.finished, self.match.winner)
+            # L'unité classée est la partie, pas la donne : on note à la clôture.
+            if self.match.finished:
+                await elo.rate_match(self.match.id)
         if self.match.finished:
             # Flip status BEFORE the terminal broadcast so an instant
             # "Revanche" (room_start) isn't rejected as still-playing.

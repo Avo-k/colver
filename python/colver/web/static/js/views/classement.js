@@ -16,7 +16,9 @@ const TEMPLATE = `
 <div class="compte-page classement-page">
     <div class="compte-card">
         <h2 class="compte-title">Classement Elo</h2>
-        <p class="salon-desc">Humains et IA, toutes donnes confondues (parties identifiées uniquement).</p>
+        <p class="salon-desc">Seules les <strong>parties en 2000 points</strong> comptent —
+        c'est le format des tournois. Les donnes seules et les parties en 1000 restent
+        libres, mais ne sont pas classées. Il faut 5 parties pour apparaître ici.</p>
         <div id="classement-body"><div class="an-loading">Chargement…</div></div>
     </div>
 </div>`;
@@ -29,17 +31,21 @@ export async function mount(container) {
         if (!resp.ok) throw new Error();
         const rows = await resp.json();
         if (rows.length === 0) {
-            body.innerHTML = '<div class="history-empty">Aucune partie classée — jouez-en une !</div>';
+            body.innerHTML = '<div class="history-empty">Aucune partie classée — ' +
+                'lancez une partie en 2000 points !</div>';
             return;
         }
         let me = null;
         try {
             const meResp = await fetch(`${base()}api/me`);
-            me = meResp.ok ? (await meResp.json()).user : null;
+            if (meResp.ok) {
+                const blob = await meResp.json();
+                me = blob.user ? { ...blob.user, stats: blob.stats } : null;
+            }
         } catch { /* anonymous */ }
 
         let html = '<table class="classement-table">' +
-            '<tr><th>#</th><th></th><th class="cl-right">Elo</th><th class="cl-right">Donnes</th></tr>';
+            '<tr><th>#</th><th></th><th class="cl-right">Elo</th><th class="cl-right">Parties</th></tr>';
         rows.forEach((r, i) => {
             const isBot = r.kind === 'bot';
             const isMe = me && !isBot && r.name === me.username;
@@ -51,6 +57,15 @@ export async function mount(container) {
                 `<td class="cl-right cl-games">${r.games}</td></tr>`;
         });
         html += '</table>';
+        // Un joueur sous le seuil ne se voit pas dans le tableau : sans cette ligne
+        // il ne saurait pas pourquoi, et croirait à un bug.
+        const st = me && me.stats && me.stats.elo;
+        if (st && st.ranked === false) {
+            const n = st.remaining;
+            html += `<p class="salon-desc">Vous n'êtes pas encore classé : encore ` +
+                `<strong>${n}</strong> partie${n > 1 ? 's' : ''} en 2000 points ` +
+                `(classement provisoire ${Math.round(st.elo)}).</p>`;
+        }
         body.innerHTML = html;
     } catch {
         body.innerHTML = '<div class="an-loading">Classement indisponible</div>';

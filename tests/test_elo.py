@@ -1,32 +1,41 @@
-"""Les bots sont l'étalon du classement, pas des joueurs.
+"""L'unité classée est la partie en 2000 points, et les bots en sont l'étalon.
 
-Avant le 2026-08-03 ils étaient notés comme tout le monde (K = 8) et dérivaient
-avec la population : Dédé était monté de 1000 à 1044, pic 1119, uniquement parce
-que les humains perdent contre lui. Comme *tout* le monde est mesuré contre eux,
-l'arrivée de joueurs plus faibles dévaluait en silence les inscrits.
+Deux invariants, tous deux invisibles à l'usage :
 
-Ce qui est épinglé ici, c'est donc surtout une **non-variation** : quoi qu'il
-arrive, l'Elo d'un bot ne bouge pas. Une non-variation ne se voit pas à l'usage
-— elle se voit six mois plus tard, quand l'échelle a glissé.
+- **une non-variation** — quoi qu'il arrive, l'Elo d'un bot ne bouge pas. Avant le
+  2026-08-03 ils dérivaient avec la population (Dédé était monté de 1000 à 1044,
+  pic 1119) et, comme *tout* le monde est mesuré contre eux, l'arrivée de joueurs
+  plus faibles dévaluait en silence les inscrits ;
+- **une abstention** — une donne isolée et une partie en 1000 ne comptent pas. Le
+  jour où quelqu'un les rebranchera « pour avoir plus de données », l'échelle
+  changera d'un facteur ~3,4 sans que rien ne le signale.
 """
-
-import re
-from pathlib import Path
 
 import colver.web.database as db
 from colver.web import elo
 
 
-async def _store_solo(hands, actions, user_id, human_seat=2, bot="dede"):
-    """Une donne solo terminée : un humain identifié, trois sièges bot."""
+async def _match(target=2000, winner=0, deals=1, user_id=1, human_seat=2,
+                 bot="dede", complete=True, abandoned=False):
+    """Une partie terminée : un humain identifié, trois sièges bot."""
+    match_id = await db.create_match("play", target, user_id=user_id,
+                                     human_seat=human_seat)
     agents = {str(s): bot for s in range(4) if s != human_seat}
     agents[str(human_seat)] = "human"
-    game_id = await db.create_game("play", 0, hands, agents,
-                                   human_seat=human_seat, user_id=user_id)
-    for entry in actions:
-        await db.append_action(game_id, entry)
-    await db.complete_game(game_id, 80, 82, None)
-    return game_id
+    hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+    for n in range(deals):
+        gid = await db.create_game("play", 0, hands, agents, human_seat=human_seat,
+                                   user_id=user_id, match_id=match_id, deal_no=n + 1)
+        await db.complete_game(gid, 80, 82, {"value": 80})
+    if abandoned:
+        # `db.abandon_match` exige `is_complete = 0` : en production on concède
+        # une partie **en cours**. La clôturer d'abord en ferait un no-op — et
+        # c'est exactement ce qui a fait échouer la première version de ce test.
+        await db.update_match(match_id, 2000, 900, deals, False, None)
+        await db.abandon_match(match_id, user_id)
+    else:
+        await db.update_match(match_id, 2000, 900, deals, complete, winner)
+    return match_id
 
 
 class TestAncrage:
@@ -34,106 +43,130 @@ class TestAncrage:
         assert elo.K_BOT == 0.0, "un K non nul laisse le bot redériver"
 
     def test_les_ancres_sont_celles_qui_ont_ete_posees(self):
-        """Dédé vaut 1000 par définition ; DouDou est à 50 en dessous.
+        """Dédé vaut 1000 par définition ; DouDou est 170 en dessous.
 
-        ⚠️ **Ces 50 points sont un arrondi, pas une mesure.** L'écart direct a
-        été mesuré à +37 dans la métrique *binaire*, périmée depuis R3 ; ré-estimé
-        par modèle dans la métrique à la marge il tombe dans [+28, +52], et 50 est
-        un chiffre rond dans le haut de cette fourchette. Ce test épingle donc la
-        valeur *courante*, pas une valeur juste — le jour où un h2h
-        Dédé-contre-DouDou rendra la ligne « Note à la marge », il faudra la
-        changer *ici et dans `elo.py`*, ensemble.
+        ⚠️ **Ces 170 points sont une conversion, pas une mesure.** L'écart valait
+        50 à la donne — lui-même un arrondi dans une fourchette modélisée
+        [+28, +52] — et 50 × 3,4 (facteur mesuré donne → partie) donne 170. Il
+        hérite donc de toute l'incertitude de son prédécesseur, amplifiée.
+
+        Ce test épingle la valeur *courante*, pas une valeur juste. Le jour où un
+        `arena h2h web_dede web_doudou` tournera sur un GPU tranquille, il rendra
+        directement le bon chiffre — c'est tout l'intérêt d'être passé à l'unité
+        de l'arène — et il faudra le changer *ici et dans `elo.py`*, ensemble.
         """
         assert elo.bot_elo("dede") == 1000.0
-        assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 50.0
+        assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 170.0
 
     def test_un_bot_inconnu_vaut_l_origine(self):
         """Repli délibéré : mieux vaut une hypothèse visible qu'une dérive."""
         assert elo.bot_elo("un_bot_qui_n_existe_pas") == elo.START_ELO
 
-
-class TestNoteALaMarge:
-    """R3 — une donne se note à la marge, plus au signe.
-
-    Le barème interdit les marges proches de zéro : un contrat réussi rapporte au
-    moins `3V − 162` (+78 à V=80), une chute exactement `−(162 + V)` (−242).
-    Zéro donne sur 2 999 mesurées sous 78 points d'écart. Le signe ne bouge donc
-    presque jamais alors que la marge suit — c'est ce qui rendait « Dédé gagne
-    55,4 % des donnes » incompatible avec « Dédé gagne 72 % des matchs ».
-    """
-
-    def test_symetrique_autour_de_zero(self):
-        for m in (0, 100, 300, 900):
-            assert elo.score_from_margin(m) + elo.score_from_margin(-m) == 1.0
-
-    def test_une_donne_nulle_vaut_un_demi(self):
-        assert elo.score_from_margin(0) == 0.5
-
-    def test_la_marge_change_la_note(self):
-        """La régression à empêcher : revenir à un score binaire déguisé."""
-        petite = elo.score_from_margin(100)
-        grosse = elo.score_from_margin(600)
-        assert 0.5 < petite < grosse < 1.0
-        assert grosse - petite > 0.1, "l'échelle écrase trop, on est retombé au binaire"
-
-    def test_l_echelle_est_celle_mesuree(self):
-        # Écart-type des marges de donne, 2 999 donnes bot contre bot.
-        assert elo.MARGIN_SCALE == 316.0
-        # Une marge « typique » (médiane |marge| = 272) doit être informative
-        # sans saturer : ni ~0,5 (échelle trop grande) ni ~1 (trop petite).
-        typique = elo.score_from_margin(272)
-        assert 0.75 < typique < 0.95, f"marge médiane -> {typique:.3f}"
-
-    def test_meme_echelle_que_l_arene(self):
-        """L'ancre des bots est calculée par `arena h2h` dans cette métrique.
-
-        Deux valeurs différentes donneraient une ancre incohérente avec
-        l'échelle qu'elle est censée ancrer — et le décalage serait invisible,
-        les deux nombres vivant dans deux langages.
-        """
-        rust = (Path(__file__).resolve().parents[1]
-                / "colver-core" / "src" / "bin" / "arena.rs").read_text()
-        m = re.search(r"const MARGIN_SCALE: f64 = ([0-9.]+);", rust)
-        assert m, "MARGIN_SCALE introuvable dans arena.rs"
-        assert float(m.group(1)) == elo.MARGIN_SCALE
+    def test_l_unite_est_dite_dans_la_version_d_etalonnage(self):
+        """Un Elo « donne » et un Elo « partie » ne se comparent pas (×3,4)."""
+        assert elo.ANCHOR_VERSION.endswith("match")
 
 
-class TestNotationDUneDonne:
-    async def _rate(self, clean_db, played_deal, user_id=1):
-        hands, actions = played_deal(seed=11)
-        gid = await _store_solo([list(h) for h in hands], actions, user_id)
-        assert await elo.rate_game(gid) is True
-        return gid
+class TestKParPaliers:
+    def test_le_k_decroit(self):
+        assert elo.k_for(0) > elo.k_for(10) > elo.k_for(30)
 
-    async def test_le_bot_reste_a_son_ancre_apres_une_donne(self, clean_db, played_deal):
-        await self._rate(clean_db, played_deal)
+    def test_les_paliers_sont_ceux_annonces(self):
+        assert elo.k_for(0) == elo.k_for(9) == 64.0
+        assert elo.k_for(10) == elo.k_for(29) == 32.0
+        assert elo.k_for(30) == elo.k_for(500) == 24.0
+
+
+class TestSeulesLesPartiesEn2000Comptent:
+    async def test_une_partie_en_2000_est_notee(self, clean_db):
+        assert await elo.rate_match(await _match(target=2000)) is True
+
+    async def test_une_donne_isolee_n_est_pas_notee(self, clean_db):
+        """`target = 0` est le **défaut du site** : c'est le cas fréquent."""
+        assert await elo.rate_match(await _match(target=0)) is False
+
+    async def test_une_partie_en_1000_n_est_pas_notee(self, clean_db):
+        assert await elo.rate_match(await _match(target=1000)) is False
+
+    async def test_une_partie_inachevee_n_est_pas_notee(self, clean_db):
+        assert await elo.rate_match(await _match(complete=False)) is False
+
+    async def test_une_partie_contenant_une_donne_invalide_est_ecartee(self, clean_db):
+        """Son score cumulé est faux : même règle que `integrity.scan`."""
+        mid = await _match()
+        conn = await db.get_db()
+        await conn.execute("UPDATE games SET invalid = 1 WHERE match_id = ?", (mid,))
+        await conn.commit()
+        assert await elo.rate_match(mid) is False
+
+
+class TestNotation:
+    async def test_l_humain_monte_en_gagnant(self, clean_db):
+        await elo.rate_match(await _match(winner=0, human_seat=2))  # siège 2 = N-S
+        assert (await elo.get_rating("user", 1))["elo"] > elo.START_ELO
+
+    async def test_l_humain_descend_en_perdant(self, clean_db):
+        await elo.rate_match(await _match(winner=1, human_seat=2))
+        assert (await elo.get_rating("user", 1))["elo"] < elo.START_ELO
+
+    async def test_le_bot_reste_a_son_ancre(self, clean_db):
+        await elo.rate_match(await _match())
         r = await elo.get_rating("bot", "dede")
         assert r["elo"] == 1000.0
-        # …et il a bien joué : le compteur avance même sans que l'Elo bouge.
-        assert r["games"] > 0
+        assert r["games"] == 1, "le compteur avance même sans que l'Elo bouge"
 
-    async def test_l_humain_bouge(self, clean_db, played_deal):
-        await self._rate(clean_db, played_deal)
-        r = await elo.get_rating("user", 1)
-        assert r["elo"] != elo.START_ELO, "l'humain doit être noté"
-        assert r["games"] == 1
+    async def test_games_compte_des_parties_pas_des_sieges(self, clean_db):
+        """Dédé tient trois sièges sur quatre ; ça reste **une** partie.
 
-    async def test_la_notation_est_idempotente(self, clean_db, played_deal):
-        """Le backfill tourne à chaque démarrage : re-noter ne doit rien faire.
-
-        Les lignes des bots sont écrites malgré un delta toujours nul, et c'est
-        précisément ce qui garantit l'idempotence — sans elles, une donne sans
-        humain n'aurait aucune trace dans `elo_history`.
+        Le compteur affichait 2 540 pour 881 donnes jouées, et la page mentait.
         """
-        gid = await self._rate(clean_db, played_deal)
+        await elo.rate_match(await _match())
+        assert (await elo.get_rating("bot", "dede"))["games"] == 1
+
+    async def test_la_notation_est_idempotente(self, clean_db):
+        """Le backfill tourne à chaque démarrage : re-noter ne doit rien faire."""
+        mid = await _match()
+        assert await elo.rate_match(mid) is True
         before = await elo.get_rating("user", 1)
-        assert await elo.rate_game(gid) is False, "seconde notation acceptée"
+        assert await elo.rate_match(mid) is False, "seconde notation acceptée"
         assert await elo.get_rating("user", 1) == before
 
-    async def test_le_classement_publie_l_ancre_du_bot(self, clean_db, played_deal):
+
+class TestAbandon:
+    async def test_abandonner_vaut_defaite(self, clean_db):
+        """Sans ça, quitter en étant mené serait gratuit.
+
+        La partie est marquée gagnée par N-S (`winner=0`) *et* abandonnée par
+        l'humain assis en N-S : c'est l'abandon qui doit l'emporter, sinon on
+        noterait une victoire à qui a quitté la table.
+        """
+        await elo.rate_match(await _match(winner=0, human_seat=2, abandoned=True))
+        assert (await elo.get_rating("user", 1))["elo"] < elo.START_ELO
+
+
+class TestSeuilDAffichage:
+    async def test_un_humain_sous_le_seuil_n_apparait_pas(self, clean_db):
+        await elo.rate_match(await _match())
+        board = await elo.leaderboard()
+        assert not [r for r in board if r["kind"] == "user"], \
+            "un classement sur 1 partie vaut ±609 Elo : c'est du bruit publié"
+        assert [r for r in board if r["kind"] == "bot"], "les étalons restent visibles"
+
+    async def test_il_apparait_au_seuil(self, clean_db):
+        for _ in range(elo.MIN_RATED_MATCHES):
+            await elo.rate_match(await _match())
+        assert [r for r in await elo.leaderboard() if r["kind"] == "user"]
+
+    async def test_standing_dit_ce_qui_reste_a_jouer(self, clean_db):
+        await elo.rate_match(await _match())
+        st = await elo.standing("user", 1)
+        assert st["ranked"] is False
+        assert st["remaining"] == elo.MIN_RATED_MATCHES - 1
+
+    async def test_le_classement_publie_l_ancre_du_bot(self, clean_db):
         """Le tableau lit `elo_ratings.elo` d'un seul SELECT : la copie en base
         doit donc valoir l'ancre, pas une valeur dérivée."""
-        await self._rate(clean_db, played_deal)
+        await elo.rate_match(await _match())
         board = await elo.leaderboard()
         dede = next(r for r in board if r["kind"] == "bot" and r["ref"] == "dede")
         assert dede["elo"] == 1000.0

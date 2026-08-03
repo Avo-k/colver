@@ -9,6 +9,37 @@ Tout ce qui est chiffré ici est mesuré ; ce qui ne l'est pas est marqué comme
 
 ---
 
+## 0. Ce qui a été décidé et livré le 2026-08-03
+
+**L'unité classée est la partie en 2000 points.** Une donne isolée (`target = 0`, le
+défaut du site) et une partie en 1000 restent jouables, analysables et partageables ;
+elles ne comptent simplement pas au classement. **Abandonner vaut défaite.** Il faut
+**5 parties** pour apparaître au tableau, et `K` décroît par paliers (64 / 32 / 24).
+
+| | avant | après |
+|---|---|---|
+| unité notée | une donne | **une partie en 2000 points** |
+| score | marge de donne écrasée (R3) | vainqueur (1 / 0) |
+| étendue du jeu de la carte | 171 Elo | **~580 Elo** (×3,4 mesuré) |
+| K | 32 fixe | 64 (<10) / 32 (<30) / 24 |
+| bots | ancrés (R1) | ancrés, en unité de partie |
+| `elo_ratings.games` | des sièges | **des parties** |
+
+Trois raisons, dans l'ordre : c'est le format des **tournois réels** ; c'est l'unité de
+l'**arène**, donc l'ancre d'un bot devient une mesure directe au lieu d'une conversion
+modélisée ; et c'est le **seul levier honnête** qui élargisse l'échelle — multiplier les
+écarts par une constante n'aurait rien créé, signal et bruit étant multipliés à
+l'identique.
+
+**Ce que ça ne règle pas, et qu'il faut savoir avant de lire le reste.** Le seuil de
+5 parties n'est **pas** un seuil de précision : en solo l'humain n'est qu'un des deux de
+son équipe, donc l'erreur-type vaut ~695/√n — **±609 Elo à 5 parties, ±431 à 10, ±193 à
+50**. À 5 comme à 10, l'intervalle reste plus large que l'étendue entière du jeu de la
+carte. Monter la barre n'achèterait rien ; ce qui achètera de la précision est la note à
+la **marge de partie** (dont l'échelle reste à mesurer) puis R4.
+
+---
+
 ## 1. Ce que fait le système aujourd'hui
 
 `python/colver/web/elo.py`, ~190 lignes :

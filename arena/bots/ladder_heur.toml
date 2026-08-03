@@ -1,0 +1,10 @@
+# Barreau de l'echelle de force (docs/classement_et_scoring.md §8) : enchere v6
+# identique partout, seul le jeu de la carte varie. Sert a mesurer l'echelle en
+# **parties de 2000 points**, l'unite du classement du site.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "heuristic"

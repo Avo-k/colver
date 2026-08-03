@@ -1448,6 +1448,8 @@ async def _websocket_session(ws: WebSocket):
                 await db.update_match(
                     play_match.id, play_match.totals[0], play_match.totals[1],
                     len(play_match.deals), play_match.finished, play_match.winner)
+                if play_match.finished:
+                    await elo.rate_match(play_match.id)
 
     async def _begin_deal():
         """Distribuer et lancer la donne suivante de la partie en cours."""
@@ -1851,6 +1853,10 @@ async def _websocket_session(ws: WebSocket):
                 dropped = str(data.get("match_id") or "").strip().lower()
                 if ws_user is not None and dropped:
                     await db.abandon_match(dropped, ws_user["id"])
+                    # Abandonner vaut défaite : sans ça, quitter en étant mené
+                    # serait gratuit. Une partie interrompue se *reprend*, donc
+                    # l'abandon est délibéré.
+                    await elo.rate_match(dropped)
                     if play_match is not None and play_match.id == dropped:
                         play_match = None
                         play_session = None
@@ -2570,11 +2576,15 @@ def _rebuild_session(row, human_seat, bot, time_ms, scores):
 
 
 async def _complete_game(game_id, session):
-    """Mark a game as complete in the database."""
+    """Mark a game as complete in the database.
+
+    Plus de notation ici : depuis le 2026-08-03 l'unité classée est la **partie
+    en 2000 points**, donc c'est la clôture de la partie qui appelle
+    `elo.rate_match`, pas celle d'une donne.
+    """
     points = list(session.env.get_points())
     contract = session.env.get_contract()
     await db.complete_game(game_id, points[0], points[1], contract)
-    await elo.rate_game(game_id)
 
 
 async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE,

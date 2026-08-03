@@ -430,7 +430,9 @@ async def me(request: Request):
     if user is None:
         return JSONResponse({"user": None})
     stats = await db.user_game_stats(user["id"])
-    stats["elo"] = await elo.get_rating("user", user["id"])
+    # `standing` = `get_rating` plus de quoi expliquer une absence du tableau
+    # (`ranked`, `remaining`) : un joueur sous le seuil doit savoir pourquoi.
+    stats["elo"] = await elo.standing("user", user["id"])
     return JSONResponse({"user": _public_user(user), "stats": stats})
 
 

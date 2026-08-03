@@ -247,6 +247,31 @@ MIGRATIONS = [
     DELETE FROM elo_history;
     DELETE FROM elo_ratings;
     """,
+    # v14 — l'unité notée devient la **partie en 2000 points**, plus la donne.
+    #
+    # Trois raisons, dans l'ordre d'importance : c'est le format des tournois
+    # réels, c'est celui de l'arène (donc l'ancre d'un bot devient une mesure
+    # directe au lieu d'une conversion), et c'est le seul levier honnête qui
+    # élargisse l'échelle — mesuré **×3,4** sur deux couples indépendants
+    # (DouDou35→DouDou50 : 62,5 % des parties contre 46,0 % des donnes ;
+    # Heuristique→DouDou50 : 69,3 % contre 42,7 %). L'étendue du jeu de la carte
+    # passe ainsi de 171 à ~580 Elo. Voir `docs/classement_et_scoring.md` §8.
+    #
+    # `elo_history` était clé sur `game_id` : on la reconstruit sur `match_id`.
+    # Les donnes isolées et les parties en 1000 restent jouables et analysables,
+    # elles ne comptent simplement plus au classement.
+    """
+    DROP TABLE elo_history;
+    CREATE TABLE elo_history (
+        match_id   TEXT NOT NULL REFERENCES matches(id),
+        kind       TEXT NOT NULL,
+        ref        TEXT NOT NULL,
+        delta      REAL NOT NULL,
+        elo_after  REAL NOT NULL,
+        PRIMARY KEY (match_id, kind, ref)
+    );
+    DELETE FROM elo_ratings;
+    """,
 ]
 
 
