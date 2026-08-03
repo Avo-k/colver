@@ -12,6 +12,9 @@ hidden = 512
 method = "isdd"
 time_ms = 1000
 determinizations = 20
+# La réponse cesse de bouger bien avant : regret < 0,10 point DD dès 60 mondes
+# (`isdd_dets_by_stage`, 250 positions). Au-delà on n'achète que de la charge GPU.
+max_worlds = 256
 
 [worlds]
 source = "sidecar"

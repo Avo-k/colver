@@ -65,6 +65,21 @@ pub struct IsDdConfig {
     /// constraint-uniform. Only has an effect when a belief source is active.
     /// Default 1.0.
     pub belief_frac: f32,
+    /// Plafond de mondes **résolus** par décision, sous échéance uniquement.
+    ///
+    /// Sous budget de temps la boucle ne sortait que sur l'échéance, donc elle
+    /// consommait tout le temps disponible même quand la réponse avait cessé de
+    /// bouger. Mesuré (`isdd_dets_by_stage`, 250 positions) : le regret contre
+    /// une référence à 2000 mondes est sous 0,10 point DD dès **60** mondes, et
+    /// sous 0,03 dès **15** en dessous de cinq cartes restantes — alors que
+    /// Dédé en traversait de 256 à 697 selon le stade.
+    ///
+    /// `None` par défaut : aucun appelant existant ne change de comportement, et
+    /// aucune donnée déjà produite n'est périmée. C'est aux specs qui le veulent
+    /// de le poser (`[play] max_worlds`). Sans effet en mode compte, où
+    /// `determinizations` borne déjà la boucle — c'est ce qui garde
+    /// reproductibles le sweep ci-dessus et `enrich_pool_isdd`.
+    pub max_worlds: Option<u32>,
     /// Credibility importance weighting of worlds in the DD aggregation. Each
     /// world's weight is the product of per-action rank factors — "would the
     /// reference policy replay the observed hidden action holding this world's
@@ -98,6 +113,7 @@ impl Default for IsDdConfig {
             early_termination: true,
             world_batch: 128,
             belief_frac: 1.0,
+            max_worlds: None,
             cred_alpha: 0.0,
             parallel: false,
         }
@@ -929,6 +945,12 @@ impl IsDdSearch {
                 if Instant::now() >= d {
                     break;
                 }
+                // Assez de mondes : la réponse a cessé de bouger, le temps qui
+                // reste n'achèterait que de la charge GPU. Sous échéance
+                // seulement — en mode compte c'est `determinizations` qui borne.
+                if config.max_worlds.is_some_and(|m| successful_dets >= m) {
+                    break;
+                }
             } else if det_count >= config.determinizations {
                 break;
             }
@@ -965,11 +987,23 @@ impl IsDdSearch {
                     if no_time_left {
                         out_of_time_to_refill = true;
                     } else {
-                        let want = if deadline.is_some() {
+                        let mut want = if deadline.is_some() {
                             config.world_batch.max(remaining)
                         } else {
                             ((config.determinizations - det_count) as usize).max(remaining)
                         };
+                        // Ne pas commander plus que le plafond ne laisse résoudre.
+                        // Sans ça le plafond n'économise que du CPU : on
+                        // recevait le lot entier puis on s'arrêtait au milieu —
+                        // mesuré à 34,5 % de mondes jetés, le sidecar les ayant
+                        // fabriqués pour rien.
+                        if let Some(m) = config.max_worlds {
+                            let already = successful_dets as usize + self.world_queue.len();
+                            want = want.min((m as usize).saturating_sub(already));
+                        }
+                        if want == 0 {
+                            out_of_time_to_refill = true;
+                        } else {
                         let t0 = Instant::now();
                         let batch = src.worlds(state, observer, want, rng)?;
                         let took_us = t0.elapsed().as_micros() as f64;
@@ -987,6 +1021,7 @@ impl IsDdSearch {
                             source_dry = true;
                         } else {
                             self.world_queue.extend(batch);
+                        }
                         }
                     }
                 }

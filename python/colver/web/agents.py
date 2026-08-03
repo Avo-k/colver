@@ -35,6 +35,12 @@ ISDD_DETS = int(os.environ.get("COLVER_ISDD_DETS", "0"))
 # Worlds requested per sidecar round trip under a time budget.
 ISDD_WORLD_BATCH = int(os.environ.get("COLVER_ISDD_PLAYGEN_WORLDS", "256"))
 
+# Plafond de mondes résolus par coup, sous échéance. 0 = pas de plafond.
+# 256 est ~4× le plateau mesuré à l'entame et ~17× celui de la fin de donne :
+# large exprès, pour que le premier pas soit une réduction du gaspillage mesuré
+# et non un pari sur la marge.
+ISDD_MAX_WORLDS = int(os.environ.get("COLVER_ISDD_MAX_WORLDS", "256"))
+
 # Playgen GPU sidecar. Empty = no sidecar configured, in which case IS-DD bots
 # sample constraint-uniform worlds and say so in their stats.
 SIDECAR_URL = os.environ.get("COLVER_PLAYGEN_GPU_URL", "").rstrip("/")
@@ -207,6 +213,13 @@ def spec_for(kind, *, bid_model=None, play_model=None, belief_model=None, time_m
         # In count mode the time budget must be zero, or it wins.
         f"time_ms = {0 if ISDD_DETS > 0 else time_ms}\n"
         f"determinizations = {ISDD_DETS if ISDD_DETS > 0 else 20}\n"
+        # Sous échéance, plafonner les mondes résolus par coup. La réponse cesse
+        # de bouger bien avant : regret sous 0,10 point DD dès 60 mondes, sous
+        # 0,03 dès 15 en fin de donne (`isdd_dets_by_stage`, 250 positions),
+        # alors que Dédé en traversait 256 à 697 selon le stade. Le temps
+        # au-delà n'achète que de la charge GPU — et le joueur ne la voit pas,
+        # `pacing.hold` absorbe le temps rendu. Sans effet en mode compte.
+        f"max_worlds = {ISDD_MAX_WORLDS}\n"
     )
     belief = f'\n[belief]\nmodel = "{belief_model}"\n' if belief_model else ""
     return bid + play + "\n" + _worlds_section() + belief
