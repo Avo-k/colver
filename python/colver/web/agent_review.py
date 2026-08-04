@@ -181,8 +181,42 @@ class _Runner:
         }
 
 
-def _fresh(blob):
-    return blob is not None and blob.get("version") == REVIEW_VERSION
+def _expected(play_model):
+    """Les bots dont l'absence, dans une revue en cache, justifie de la refaire.
+
+    « Attendu » veut dire disponible *maintenant*. Exiger IS-DD sur une machine
+    qui n'a pas de sidecar ferait recalculer la revue à chaque ouverture de
+    Rejouer sans qu'elle puisse jamais aboutir — d'où `REQUIRE_SIDECAR`, qui est
+    précisément la déclaration « ce déploiement attend un sidecar ».
+    """
+    keys = ["oracle"]  # DD pur : ni modèle ni réseau, toujours attendu
+    if play_model:
+        keys.append("doudou")
+    if agents.sidecar_expected():
+        keys.append("isdd")
+    return keys
+
+
+def _fresh(blob, play_model=None):
+    """Une revue en cache est périmée à un bump de version — **et aussi quand
+    elle a été calculée sans un bot qui répond aujourd'hui.**
+
+    Sans ce second test, une revue produite pendant que le sidecar playgen était
+    injoignable (les quatre Dédé échouent alors à la construction, cf. `_build`)
+    est écrite avec `available.isdd = false` et servie **pour toujours** : aucun
+    bump ne la rattrapera, puisqu'elle porte bien la version courante. La donne
+    perd sa colonne IS-DD définitivement, en silence.
+
+    `analysis._is_fresh` ferme exactement ce trou-là pour playgen ; c'est le
+    même raisonnement, sur le bot au lieu du modèle. Le test est volontairement
+    dissymétrique : on recalcule quand un bot manquant est *redevenu*
+    disponible, jamais l'inverse — sinon un sidecar tombé invaliderait tout le
+    cache au pire moment.
+    """
+    if blob is None or blob.get("version") != REVIEW_VERSION:
+        return False
+    available = blob.get("available") or {}
+    return all(available.get(key) for key in _expected(play_model))
 
 
 async def stream(game_id, *, play_model=None, belief_model=None):
@@ -196,7 +230,7 @@ async def stream(game_id, *, play_model=None, belief_model=None):
     and the semaphore, and nothing partial is written to the cache.
     """
     cached = await db.get_agent_review(game_id)
-    if _fresh(cached):
+    if _fresh(cached, play_model):
         yield "done", cached
         return
 
@@ -212,7 +246,7 @@ async def stream(game_id, *, play_model=None, belief_model=None):
     async with lock:
         # Another request may have computed it while we waited on the lock
         cached = await db.get_agent_review(game_id)
-        if _fresh(cached):
+        if _fresh(cached, play_model):
             yield "done", cached
             return
 
