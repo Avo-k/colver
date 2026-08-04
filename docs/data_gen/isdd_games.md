@@ -17,6 +17,18 @@ Les deux premiers produisent une *étiquette* par donne, ce qui suffit à
 entraîner un bidder. Entraîner un playgen sur du jeu fort demande la
 trajectoire.
 
+Le chemin le plus court, qui enchaîne sidecar → génération → vérification →
+restitution de la VRAM, et qui porte les trois disciplines de ce document sous
+forme de garde-fous plutôt que de prose :
+
+```bash
+COLVER_GEN_GPU_HOST=moxxi scripts/training/gen_isdd_corpus.sh --deals 100000
+```
+
+Il refuse de démarrer si une génération tourne déjà, si des éclats d'un run
+précédent traînent, ou s'il reste moins de 10 Go de VRAM ; il ne tue que le
+sidecar qu'il a lui-même démarré, y compris sur Ctrl-C. À la main :
+
 ```bash
 # Un GPU
 COLVER_PLAYGEN_GPU_URL=http://gpu-host:8003 \
