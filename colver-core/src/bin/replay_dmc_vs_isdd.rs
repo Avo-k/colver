@@ -135,16 +135,13 @@ fn main() {
         total_games, elapsed, total_games as f64 / elapsed);
 
     // Save replays
-    let dmc_replays: Vec<GameReplay> = results.iter().map(|r| GameReplay {
-        dealer: r.dealer,
-        hands: r.hands,
-        actions: r.dmc_actions.clone(),
-    }).collect();
-    let isdd_replays: Vec<GameReplay> = results.iter().map(|r| GameReplay {
-        dealer: r.dealer,
-        hands: r.hands,
-        actions: r.isdd_actions.clone(),
-    }).collect();
+    // Ces donnes sont rejouées isolément, hors de toute partie.
+    let dmc_replays: Vec<GameReplay> = results.iter()
+        .map(|r| GameReplay::independent(r.dealer, r.hands, r.dmc_actions.clone()))
+        .collect();
+    let isdd_replays: Vec<GameReplay> = results.iter()
+        .map(|r| GameReplay::independent(r.dealer, r.hands, r.isdd_actions.clone()))
+        .collect();
 
     let dmc_path = format!("{}/dmc.bin", output_dir);
     let isdd_path = format!("{}/isdd.bin", output_dir);

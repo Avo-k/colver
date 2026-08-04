@@ -47,7 +47,7 @@
 use colver_core::game_replay::GameReplay;
 use colver_core::play::belote_facts;
 use colver_core::playgen::infer::{KvCache, PlaygenModel, Tok};
-use colver_core::playgen::tokens::{identity_perm, tokenize_replay_v2};
+use colver_core::playgen::tokens::{identity_perm, tokenize_replay_v2, tokenize_replay_v3};
 use colver_core::state::{GameState, Phase};
 
 const TRICKS: usize = 8;
@@ -165,7 +165,13 @@ fn boot(n: usize, seed: u64, stat: impl Fn(&[usize]) -> f64) -> (f64, f64, f64) 
 
 /// Une donne vue par un observateur : nll par pli, acteurs cachés seulement.
 fn score_sample(model: &PlaygenModel, replay: &GameReplay, observer: u8, acc: &mut Acc) {
-    let Some(s) = tokenize_replay_v2(replay, observer, &identity_perm()) else {
+    // Le tokeniseur suit le **modèle**, pas une constante : un v3 attend deux
+    // jetons de score en tête, et lui servir une séquence v2 décalerait tout
+    // d'une position sans rien lever. C'est le seul endroit où l'on compare un
+    // modèle à un corpus, donc le seul où l'incohérence se paierait en chiffres
+    // faux plutôt qu'en panne.
+    let toks = if model.v3 { tokenize_replay_v3 } else { tokenize_replay_v2 };
+    let Some(s) = toks(replay, observer, &identity_perm()) else {
         acc.skipped += 1;
         return;
     };
@@ -311,8 +317,11 @@ fn main() {
         std::process::exit(1);
     });
     if !model.v2 {
-        eprintln!("bench_playgen_ppl attend un modèle COLVPG02 (tokenisation v2)");
+        eprintln!("bench_playgen_ppl attend un modèle COLVPG02 ou COLVPG03");
         std::process::exit(1);
+    }
+    if model.v3 {
+        println!("modèle v3 (COLVPG03) — tokenisation avec les jetons de score de partie");
     }
     let replays = GameReplay::load_all(&games_path).unwrap_or_else(|e| {
         eprintln!("load games {}: {}", games_path, e);

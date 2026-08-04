@@ -1,12 +1,20 @@
 //! Offline supervised training of the playgen causal transformer.
 //!
-//! Teacher forcing on pre-generated self-play games (COLVGM01 replays):
+//! Teacher forcing on pre-generated self-play games (COLVGM01/02 replays):
 //! predict every played card given the observer-visible prefix, masked to the
 //! observer-visible legal set. Pure supervised CE — no env in the loop.
 //!
 //! `--v2`: physical suits (full 24-perm augmentation) + auction actions as
 //! prediction targets through a 43-way bid head. Void deals are kept as
 //! auction-only samples.
+//!
+//! `--v3`: v2 + le **score de partie** en tête de séquence (deux jetons
+//! bucketés, relatifs à l'observateur). N'a d'intérêt que sur un corpus produit
+//! en mode partie (`gen_games_isdd --match-mode`) : sur un corpus de donnes
+//! indépendantes, les deux jetons valent toujours le même seau et le modèle ne
+//! paie que dix lignes d'embedding pour rien. Le checkpoint est un `COLVPG03`
+//! — vocabulaire 41 au lieu de 31 — donc **`export_playgen` veut `--v3` aussi**,
+//! rien dans le safetensors ne rappelant avec quel tokeniseur il a été entraîné.
 //!
 //! Usage (v1):
 //!   cargo run -p colver-core --bin train_playgen --features dmc_train --release -- \
@@ -18,6 +26,11 @@
 //!     --v2 --games data/training/playgen_games_9M.bin \
 //!     --steps 60000 --batch-size 512 --d-model 384 --layers 6 --heads 8 \
 //!     --save-dir models/playgen_v2
+//! Usage (v3, corpus de parties) :
+//!   cargo run -p colver-core --bin train_playgen --features dmc_train --release -- \
+//!     --v3 --games data/training/isdd_matches.bin \
+//!     --steps 60000 --batch-size 512 --d-model 384 --layers 6 --heads 8 \
+//!     --save-dir models/playgen_v3
 
 use std::time::Instant;
 
@@ -29,7 +42,8 @@ use colver_core::game_replay::GameReplay;
 use colver_core::playgen::model::{PlaygenBatch, PlaygenConfig, PlaygenTrainer};
 use colver_core::playgen::tokens::{
     canonical_trump_perm, identity_perm, random_suit_perm, random_trump_perm, tokenize_replay,
-    tokenize_replay_v2, PlaygenSample, PlaygenSampleV2, NUM_BID_ACTIONS, NUM_CARD_ACTIONS,
+    tokenize_replay_v2, tokenize_replay_v3, PlaygenSample, PlaygenSampleV2,
+    NUM_BID_ACTIONS, NUM_CARD_ACTIONS,
 };
 use colver_core::state::{GameState, Phase};
 
@@ -54,6 +68,7 @@ fn main() {
     let mut seed: u64 = 42;
     let mut resume: Option<String> = None;
     let mut v2 = false;
+    let mut v3 = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -76,6 +91,10 @@ fn main() {
             "--seed" => { seed = args[i + 1].parse().unwrap(); i += 2; }
             "--resume" => { resume = Some(args[i + 1].clone()); i += 2; }
             "--v2" => { v2 = true; i += 1; }
+            // v3 = v2 + les deux jetons de score de partie en tête. Implique
+            // `--v2` : il n'y a pas de v3 sans tête d'enchère, c'est elle que
+            // le score sert à expliquer.
+            "--v3" => { v3 = true; v2 = true; i += 1; }
             other => {
                 eprintln!("Unknown argument: {}", other);
                 std::process::exit(1);
@@ -88,7 +107,8 @@ fn main() {
     } else {
         Device::Cpu
     };
-    println!("=== Playgen Training ({}) ===", if v2 { "v2" } else { "v1" });
+    let version = if v3 { "v3" } else if v2 { "v2" } else { "v1" };
+    println!("=== Playgen Training ({version}) ===");
     println!("Device:     {}", match device { Device::Cpu => "CPU", _ => "CUDA" });
     println!("Games:      {}", games_path);
     println!("Model:      d={} L={} H={}", d_model, n_layers, n_heads);
@@ -119,7 +139,9 @@ fn main() {
 
     std::fs::create_dir_all(&save_dir).ok();
 
-    let cfg = if v2 {
+    let cfg = if v3 {
+        PlaygenConfig::v3(d_model, n_layers, n_heads)
+    } else if v2 {
         PlaygenConfig::v2(d_model, n_layers, n_heads)
     } else {
         PlaygenConfig::v1(d_model, n_layers, n_heads)
@@ -155,7 +177,11 @@ fn main() {
             let observer = rng.gen_range(0..4u8);
             let s = if v2 {
                 let perm = random_suit_perm(&mut rng);
-                tokenize_replay_v2(&replays[gi], observer, &perm)
+                if v3 {
+                    tokenize_replay_v3(&replays[gi], observer, &perm)
+                } else {
+                    tokenize_replay_v2(&replays[gi], observer, &perm)
+                }
             } else {
                 let perm = random_trump_perm(trumps[gi], &mut rng);
                 tokenize_replay(&replays[gi], observer, &perm).map(v1_to_v2)
@@ -203,7 +229,7 @@ fn main() {
         if step % eval_freq == 0 || step == steps {
             run_eval(
                 &trainer, &replays[n_train..], &trumps, n_train,
-                batch_size, eval_batches, v2,
+                batch_size, eval_batches, v2, v3,
             );
             window_t = Instant::now();
         }
@@ -326,6 +352,7 @@ fn run_eval(
     batch_size: usize,
     eval_batches: usize,
     v2: bool,
+    v3: bool,
 ) {
     let t0 = Instant::now();
     let mut loss_sum = 0.0f64;
@@ -348,7 +375,9 @@ fn run_eval(
         for (j, r) in chunk.iter().enumerate() {
             let gi = chunk_idx * batch_size + j;
             let observer = (gi % 4) as u8;
-            let s = if v2 {
+            let s = if v3 {
+                tokenize_replay_v3(r, observer, &identity_perm())
+            } else if v2 {
                 tokenize_replay_v2(r, observer, &identity_perm())
             } else {
                 let perm = canonical_trump_perm(trumps[n_train + gi]);

@@ -315,6 +315,14 @@ fn main() {
 
     let model = Arc::new(PlaygenModel::load(&playgen_path).expect("load playgen model"));
     assert!(model.v2, "playgen_gpu_server requires a v2 (COLVPG02) model");
+    // Même raison que dans `PlaygenSampler::new` : le sidecar reçoit une
+    // position de donne, pas un score de partie, donc il ne saurait pas
+    // construire le préfixe d'un v3.
+    assert!(
+        !model.v3,
+        "playgen v3 (COLVPG03) : le protocole du sidecar ne transporte pas encore \
+         le score de partie — servir ce modèle produirait des mondes au mauvais préfixe"
+    );
     let device = candle_core::Device::new_cuda(0).expect("CUDA device 0");
     let gpu = GpuPlaygen::new(&model, device).expect("upload model to GPU");
     let (d, n_layers) = (model.d, model.n_layers);

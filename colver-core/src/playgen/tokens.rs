@@ -335,6 +335,53 @@ pub const NUM_BID_ACTIONS: usize = 43;
 pub const MAX_BID_ENTRIES_V2: usize = 24;
 pub const MAX_SEQ_LEN_V2: usize = 2 + 8 + 2 * MAX_BID_ENTRIES_V2 + 64; // 122
 
+// ---------------------------------------------------------------------------
+// V3: le score de partie entre dans la séquence
+// ---------------------------------------------------------------------------
+//
+// Deux jetons d'en-tête de plus, juste après `OBSPOS` :
+//
+//   [BOS] [OBSPOS_d] [SCORE_moi] [SCORE_adverse] [h1..h8] (…)
+//
+// **Pourquoi deux jetons et pas un écart signé.** L'écart seul ne suffit pas :
+// la mesure du 2026-08-04 montre que 1800-1200 (écart 600, tout près de la
+// cible) ne coûte rien, alors que 1200-0 coûte +0,074 — donc l'écart *et* la
+// proximité de la cible comptent, et deux positions absolues portent les deux.
+//
+// **Pourquoi relatifs à l'observateur.** Le fichier stocke N-S / E-O, mais le
+// modèle raisonne du point de vue d'un siège. Passer l'ordre brut ferait croire
+// aux quatre observateurs qu'ils sont dans le même camp — c'est exactement le
+// piège déjà épinglé sur `write_bid_observation_score_aware_v3`. Le contrôle
+// qui l'attrape est dans les tests : deux observateurs de camps opposés doivent
+// voir leurs deux jetons **échangés**.
+//
+// **Pourquoi bucketé et non continu.** L'entrée du modèle est un vocabulaire de
+// jetons, pas un vecteur de flottants : il n'y a pas de place pour un scalaire.
+// 200 points par seau, soit 10 seaux pour couvrir 0-1999 — assez fin pour
+// séparer les régimes mesurés (rien sous 600 d'écart, net à 1200), assez
+// grossier pour que chaque seau soit vu souvent.
+//
+// **Un modèle v3 a un vocabulaire plus large (41 au lieu de 31)**, donc ses
+// poids ne sont pas ceux d'un v2 : d'où un magic de modèle distinct
+// (`COLVPG03`). Sans ça, charger un v2 avec le vocabulaire v3 décalerait
+// silencieusement toutes les matrices suivantes.
+
+/// Premier jeton de score. `+0..NUM_SCORE_BUCKETS-1`. **v3 seulement.**
+pub const P_SCORE0: u8 = 31;
+pub const NUM_SCORE_BUCKETS: usize = 10;
+/// Vocabulaire primaire d'un modèle v3 : les 31 jetons v2 + les 10 seaux.
+pub const NUM_PRIMARY_V3: usize = NUM_PRIMARY + NUM_SCORE_BUCKETS; // 41
+/// Deux jetons d'en-tête de plus que v2.
+pub const MAX_SEQ_LEN_V3: usize = MAX_SEQ_LEN_V2 + 2; // 124
+
+/// Seau d'un score cumulé de partie : 200 points par seau, saturé au dernier.
+///
+/// La saturation n'est pas de la défensive gratuite : à égalité parfaite sur la
+/// cible, la FFB fait rejouer, donc une donne *peut* commencer au-delà de 2000.
+pub fn score_bucket(score: u16) -> u8 {
+    ((score / 200) as usize).min(NUM_SCORE_BUCKETS - 1) as u8
+}
+
 /// One tokenized game from one observer's perspective (v2).
 pub struct PlaygenSampleV2 {
     pub primary: Vec<u8>,
@@ -418,9 +465,31 @@ pub fn tokenize_replay_v2(
     observer: u8,
     perm: &[u8; 4],
 ) -> Option<PlaygenSampleV2> {
+    tokenize_replay_impl(replay, observer, perm, false)
+}
+
+/// Tokenize a full game replay from `observer`'s perspective (v3).
+///
+/// Identique à v2, plus les deux jetons de score de partie en tête. À utiliser
+/// avec un modèle `COLVPG03` — le vocabulaire diffère, les mélanger produit des
+/// indices d'embedding hors bornes ou, pire, silencieusement décalés.
+pub fn tokenize_replay_v3(
+    replay: &GameReplay,
+    observer: u8,
+    perm: &[u8; 4],
+) -> Option<PlaygenSampleV2> {
+    tokenize_replay_impl(replay, observer, perm, true)
+}
+
+fn tokenize_replay_impl(
+    replay: &GameReplay,
+    observer: u8,
+    perm: &[u8; 4],
+    with_score: bool,
+) -> Option<PlaygenSampleV2> {
     let mut state = GameState::new(replay.dealer, replay.hands);
 
-    let est_len = 2 + 8 + 2 * replay.actions.len();
+    let est_len = 4 + 8 + 2 * replay.actions.len();
     let mut primary = Vec::with_capacity(est_len);
     let mut suit = Vec::with_capacity(est_len);
     let mut actor = Vec::with_capacity(est_len);
@@ -445,6 +514,23 @@ pub fn tokenize_replay_v2(
     suit.push(S_NULL);
     actor.push(A_NULL);
     segment.push(SEG_HEADER);
+
+    // V3 : le score de partie, **du point de vue de l'observateur**. Le fichier
+    // stocke N-S / E-O ; l'ordre est rétabli ici, où l'on sait qui regarde.
+    // Sièges 0 et 2 = N-S (team = seat & 1).
+    if with_score {
+        let (mine, theirs) = if observer & 1 == 0 {
+            (replay.score_ns, replay.score_ew)
+        } else {
+            (replay.score_ew, replay.score_ns)
+        };
+        for s in [mine, theirs] {
+            primary.push(P_SCORE0 + score_bucket(s));
+            suit.push(S_NULL);
+            actor.push(A_NULL);
+            segment.push(SEG_HEADER);
+        }
+    }
 
     // Hand: observer's 8 initial cards, sorted in permuted (suit, rank) order
     let mut hand_cards: Vec<u8> = (0..32u8)
@@ -577,7 +663,7 @@ mod tests {
             actions.push(action);
             state.step(action);
         }
-        GameReplay { dealer, hands, actions }
+        GameReplay::independent(dealer, hands, actions)
     }
 
     fn final_trump(replay: &GameReplay) -> Option<u8> {
@@ -589,6 +675,98 @@ mod tests {
             state.step(a);
         }
         None
+    }
+
+    /// v3 = v2 **plus deux jetons d'en-tête**, et rien d'autre.
+    ///
+    /// C'est l'invariant qui rend la version peu coûteuse à raisonner : tout ce
+    /// qu'on sait de v2 (masques, cibles, alignement des `ACT`) reste vrai, à un
+    /// décalage constant de 2 près. S'il tombe, c'est que le score a fui
+    /// ailleurs que dans l'en-tête.
+    #[test]
+    fn v3_is_v2_plus_two_header_tokens() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut checked = 0;
+        for _ in 0..60 {
+            let mut replay = random_replay(&mut rng);
+            replay.score_ns = rng.gen_range(0..2000);
+            replay.score_ew = rng.gen_range(0..2000);
+            for observer in 0..4u8 {
+                let perm = random_suit_perm(&mut rng);
+                let (Some(v2), Some(v3)) = (
+                    tokenize_replay_v2(&replay, observer, &perm),
+                    tokenize_replay_v3(&replay, observer, &perm),
+                ) else {
+                    continue;
+                };
+                assert_eq!(v3.len(), v2.len() + 2);
+                // Les deux jetons s'insèrent après BOS et OBSPOS.
+                assert_eq!(v3.primary[..2], v2.primary[..2]);
+                assert_eq!(v3.primary[4..], v2.primary[2..]);
+                assert_eq!(v3.suit[4..], v2.suit[2..]);
+                assert_eq!(v3.actor[4..], v2.actor[2..]);
+                assert_eq!(v3.segment[4..], v2.segment[2..]);
+                // Tout le reste est identique, aux positions décalées de 2.
+                assert_eq!(v3.targets, v2.targets);
+                assert_eq!(v3.masks, v2.masks);
+                assert_eq!(v3.bid_targets, v2.bid_targets);
+                assert_eq!(v3.bid_masks, v2.bid_masks);
+                for (a, b) in v3.pred_pos.iter().zip(&v2.pred_pos) {
+                    assert_eq!(*a, b + 2);
+                }
+                for (a, b) in v3.bid_pred_pos.iter().zip(&v2.bid_pred_pos) {
+                    assert_eq!(*a, b + 2);
+                }
+                // Vocabulaire : les jetons de score vivent au-dessus de v2, donc
+                // ils n'écrasent aucun sens existant, et restent dans les bornes.
+                for &p in &v3.primary {
+                    assert!((p as usize) < NUM_PRIMARY_V3);
+                }
+                assert!(v3.primary[2] >= P_SCORE0 && v3.primary[3] >= P_SCORE0);
+                checked += 1;
+            }
+        }
+        assert!(checked > 100, "trop peu de donnes vérifiées ({checked})");
+    }
+
+    /// Les deux jetons sont **relatifs à l'observateur**, pas à N-S.
+    ///
+    /// L'erreur que ce test existe pour attraper : passer `(score_ns, score_ew)`
+    /// tel quel aux quatre sièges, ce qui ferait croire à E et O qu'ils mènent
+    /// quand ce sont N et S qui mènent. Elle a déjà été commise une fois côté
+    /// enchères (`write_bid_observation_score_aware_v3`).
+    #[test]
+    fn score_tokens_are_observer_relative() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut replay = random_replay(&mut rng);
+        // Deux seaux franchement distincts, sinon le test passerait par hasard.
+        replay.score_ns = 1700;
+        replay.score_ew = 300;
+        let perm = identity_perm();
+
+        let tok = |obs: u8| {
+            let s = tokenize_replay_v3(&replay, obs, &perm).expect("tokenize");
+            (s.primary[2], s.primary[3])
+        };
+        let (ns_mine, ns_theirs) = tok(0);
+        assert_eq!(tok(2), (ns_mine, ns_theirs), "N et S sont du même camp");
+        assert_eq!(tok(1), (ns_theirs, ns_mine), "E voit l'ordre inverse de N");
+        assert_eq!(tok(3), (ns_theirs, ns_mine), "O voit l'ordre inverse de N");
+        assert_eq!(ns_mine, P_SCORE0 + score_bucket(1700));
+        assert_eq!(ns_theirs, P_SCORE0 + score_bucket(300));
+        assert_ne!(ns_mine, ns_theirs);
+    }
+
+    /// La saturation du dernier seau existe parce qu'une partie peut dépasser la
+    /// cible : à égalité parfaite sur 2000, on rejoue une donne.
+    #[test]
+    fn score_bucket_saturates_above_target() {
+        assert_eq!(score_bucket(0), 0);
+        assert_eq!(score_bucket(199), 0);
+        assert_eq!(score_bucket(200), 1);
+        assert_eq!(score_bucket(1999), 9);
+        assert_eq!(score_bucket(2000), 9);
+        assert_eq!(score_bucket(u16::MAX), 9);
     }
 
     #[test]

@@ -33,7 +33,13 @@ def main():
     a = ap.parse_args()
 
     raw = np.memmap(a.path, dtype=np.uint8, mode="r")
-    assert raw[:8].tobytes() == b"COLVGM01"
+    magic = raw[:8].tobytes()
+    # COLVGM02 insère `score_ns`/`score_ew` (2×u16) entre les mains et le compte
+    # d'actions. Lire un v2 avec le pas de v1 ne lèverait aucune erreur — ça
+    # décalerait simplement chaque donne de 4 octets et rendrait des statistiques
+    # d'enchères entièrement fausses. D'où le pas dérivé du magic, pas constant.
+    assert magic in (b"COLVGM01", b"COLVGM02"), magic
+    score_len = 4 if magic == b"COLVGM02" else 0
     total = int(np.frombuffer(raw[8:16].tobytes(), dtype="<u8")[0])
     n = min(a.games, total)
 
@@ -45,9 +51,10 @@ def main():
         dealer = int(raw[p])
         hands = [bits_to_cards(int(h)) for h in
                  np.frombuffer(raw[p + 1:p + 17].tobytes(), dtype="<u4")]
-        na = int(raw[p + 17])
-        acts = raw[p + 18:p + 18 + na].tolist()
-        p += 18 + na
+        head = p + 17 + score_len
+        na = int(raw[head])
+        acts = raw[head + 1:head + 1 + na].tolist()
+        p = head + 1 + na
 
         jobs.append((dealer, hands, acts))
 

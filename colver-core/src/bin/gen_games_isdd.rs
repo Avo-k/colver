@@ -364,6 +364,15 @@ fn main() {
 
                 let mut state = GameState::deal_random(dealer, &mut rng);
                 let hands = state.hands;
+                // Le score **d'avant la donne** : c'est celui que le bidder a
+                // lu pour annoncer. Capturé ici, donc avant que `play_and_record`
+                // n'y ajoute le résultat — l'ordre est l'invariant, pas un détail
+                // de style : stocker le score d'après reviendrait à montrer au
+                // modèle la conséquence de la donne qu'il doit prédire.
+                let (score_ns, score_ew) = (
+                    ctx.scores[0].max(0) as u16,
+                    ctx.scores[1].max(0) as u16,
+                );
                 match play_and_record(&mut state, &mut players, &mut ctx, &mut actions) {
                     Ok(score) => {
                         if match_mode {
@@ -373,6 +382,8 @@ fn main() {
                         out.lock().unwrap().push(GameReplay {
                             dealer,
                             hands,
+                            score_ns,
+                            score_ew,
                             actions: actions.clone(),
                         });
                     }
@@ -677,6 +688,46 @@ fn describe(r: &[GameReplay]) -> bool {
         .map(|(val, n)| format!("{val} : {:.0} %", pct(*n)))
         .collect();
     println!("  contrats : {}", v.join("  "));
+
+    // ── Régime de score ───────────────────────────────────────────────────
+    //
+    // La perplexité de la tête d'enchère ne bouge **pas** sous 600 points
+    // d'écart et coûte +0,074 à +0,121 à partir de 1200 (`bench_playgen_ppl`,
+    // 2026-08-04). Un corpus n'est donc utile à cette question qu'en proportion
+    // de ses donnes dans le régime large — et cette fraction n'avait jamais été
+    // mesurée sur un corpus réel, ce qui laissait le gain attendu d'une entrée
+    // « score » sans dénominateur. Elle est ici, et elle est gratuite.
+    let gaps: Vec<u32> = r
+        .iter()
+        .map(|g| (g.score_ns as i32 - g.score_ew as i32).unsigned_abs())
+        .collect();
+    let n = gaps.len() as f64;
+    let at_zero = r.iter().filter(|g| g.score_ns == 0 && g.score_ew == 0).count();
+    if at_zero == r.len() {
+        println!("  score : toutes les donnes à 0-0 (donnes indépendantes ou corpus COLVGM01)");
+        return true;
+    }
+    // L'histogramme, et pas deux seuils : la pénalité mesurée est nulle à 600
+    // d'écart et franche à 1200, donc le seuil vit **entre les deux** et n'est
+    // pas connu plus précisément. Deux fractions cadrant cet intervalle ne
+    // diraient pas où le corpus tombe dedans ; l'histogramme, si.
+    let edges = [300u32, 600, 900, 1200];
+    let mut hist = [0usize; 5];
+    for &g in &gaps {
+        hist[edges.iter().filter(|&&e| g >= e).count()] += 1;
+    }
+    let labels = ["<300", "300-599", "600-899", "900-1199", "≥1200"];
+    let h: Vec<String> = labels
+        .iter()
+        .zip(hist)
+        .map(|(l, c)| format!("{l} : {:.1} %", 100.0 * c as f64 / n))
+        .collect();
+    println!("  écart de score au début de la donne — {}", h.join("  "));
+    println!(
+        "  dont {:.1} % à 0-0  ·  un camp ≥ 1500 : {:.1} %",
+        100.0 * at_zero as f64 / n,
+        100.0 * r.iter().filter(|g| g.score_ns >= 1500 || g.score_ew >= 1500).count() as f64 / n,
+    );
     true
 }
 

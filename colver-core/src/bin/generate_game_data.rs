@@ -205,7 +205,8 @@ fn generate_chunk(
             state.step(action);
         }
 
-        replays.push(GameReplay { dealer, hands, actions });
+        // Donnes tirées indépendamment : le score de partie n'existe pas ici.
+        replays.push(GameReplay::independent(dealer, hands, actions));
 
         if thread_id == 0 && ((game_idx + 1) % report_interval == 0 || game_idx + 1 == num_games) {
             let elapsed = start.elapsed().as_secs_f64();

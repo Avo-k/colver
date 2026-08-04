@@ -2,7 +2,7 @@
 
 `gen_games_isdd` produit des **donnes entières** — enchère réelle, tous les
 tours, et les 32 cartes dans l'ordre — jouées par le joueur de référence du
-projet (bid v6 + IS-DD sur mondes playgen). Sortie au format `COLVGM01`, celui
+projet (bid v6 + IS-DD sur mondes playgen). Sortie au format `COLVGM02`, celui
 que `train_playgen --games` consomme déjà.
 
 C'est ce qui manquait. Les deux générateurs existants jettent la trajectoire :
@@ -72,14 +72,82 @@ tirer indépendantes. Ce n'est pas cosmétique : bid v6 lit une observation
 playgen actuel est **entièrement à 0-0**. C'est le manque relevé dans
 [playgen v3](../belief/playgen.md).
 
-⚠️ **Mais ce n'est pas encore le bon défaut, et pour une raison qui tient au
-format.** `COLVGM01` ne porte pas le score de partie. Un playgen entraîné sur
-des donnes de mode partie verrait donc des enchères qu'il **ne peut pas
-expliquer** — la variable qui les décide n'est pas dans son entrée. Ce n'est
-pas de l'information en plus, c'est de l'entropie irréductible en plus. Le
-défaut reste donc la donne indépendante à 0-0, cohérente avec elle-même ;
-`--match-mode` devient le bon choix le jour où le format transporte le score,
-et c'est exactement le changement que réclame la note playgen v3.
+## Le score de partie est dans le format (COLVGM02, 2026-08-04)
+
+Jusqu'ici `--match-mode` produisait un corpus qu'on ne pouvait pas exploiter :
+`COLVGM01` ne portait pas le score, donc un playgen entraîné dessus voyait des
+enchères qu'il **ne pouvait pas expliquer** — la variable qui les décide n'était
+pas dans son entrée. Ce n'est pas de l'information manquante, c'est de
+l'entropie irréductible ajoutée, et elle est chiffrée : +0,074 à +0,121 de
+perplexité sur la tête d'enchère dès 1200 points d'écart, contre +0,0028 pour
+diviser les paramètres du modèle par 3,3.
+
+Le format porte donc deux `u16` de plus par donne — **le cumul de partie
+*avant* la donne**, celui que l'annonceur a lu. 62 octets au lieu de 58.
+
+```text
+COLVGM01  dealer(1) hands(16)                  n(1) actions(n)
+COLVGM02  dealer(1) hands(16) score_ns/ew(4)   n(1) actions(n)
+```
+
+Trois décisions, chacune contre une erreur précise :
+
+1. **Le score d'avant, jamais celui d'après.** Le score d'après est une
+   conséquence de la donne à prédire : le donner reviendrait à montrer la
+   réponse. `gen_games_isdd` le capture donc avant `play_and_record`, et l'ordre
+   des deux lignes est l'invariant, pas un détail de style.
+2. **N-S et E-O bruts dans le fichier, « moi / l'adversaire » dans le
+   tokeniseur.** Le fichier porte le fait objectif ; seule la tokenisation sait
+   qui observe. Passer l'ordre brut aux quatre sièges ferait croire à E et O
+   qu'ils mènent quand ce sont N et S — l'erreur exacte déjà commise une fois
+   sur `write_bid_observation_score_aware_v3`, et que
+   `score_tokens_are_observer_relative` épingle ici.
+3. **Les deux versions se relisent, la sortie est toujours du v2.** Un
+   `COLVGM01` rend 0-0, ce qui n'est pas un repli arbitraire : *tous* les corpus
+   existants viennent de donnes indépendantes, donc 0-0 y est la vérité. En
+   revanche les enregistrements n'ont pas la même longueur, donc concaténer des
+   corps bruts de l'un sous le magic de l'autre produirait un fichier qui se
+   relit sans erreur et décale tout — le pire mode de défaillance possible pour
+   un corpus. `merge_colvgm.py` convertit au lieu de concaténer.
+
+**Côté modèle, le vocabulaire change, donc le magic aussi.** Deux jetons
+d'en-tête après `OBSPOS`, bucketés par 200 points (10 seaux) et relatifs à
+l'observateur, portent le vocabulaire primaire de 31 à 41 et la séquence de 122
+à 124. Un modèle entraîné ainsi est un **`COLVPG03`** : sans magic distinct,
+charger un v2 avec le vocabulaire v3 décalerait silencieusement toutes les
+matrices suivantes. `train_playgen --v3`, `export_playgen --v3`.
+
+L'invariant qui rend la version bon marché à raisonner est testé :
+**v3 = v2 plus deux jetons d'en-tête, et rien d'autre** — mêmes cibles, mêmes
+masques, positions décalées de 2 (`v3_is_v2_plus_two_header_tokens`).
+
+⚠️ **Un v3 s'entraîne et s'évalue, il ne s'échantillonne pas encore.** Le
+préfixe d'inférence se construit depuis un `GameState`, qui ne porte pas le
+cumul de partie ; il faudrait le transporter depuis `MatchContext` à travers
+`WorldSource` puis le protocole HTTP du sidecar. Rien de tout cela n'est fait,
+et rien ne serait validable de bout en bout tant qu'aucun v3 n'existe. En
+attendant, `PlaygenSampler::new` et `playgen_gpu_server` **refusent** un
+COLVPG03 en le nommant, plutôt que de produire des mondes tirés d'un préfixe
+que le modèle n'a jamais vu.
+
+### Combien de donnes sont réellement dans le régime qui compte
+
+`--check` rend l'histogramme des écarts de score en début de donne. C'est le
+dénominateur qui manquait : la pénalité mesurée est **nulle** à 600 points
+d'écart et franche à 1200, donc ce qu'une entrée « score » peut récupérer est
+proportionnel à la part du corpus au-delà du seuil — part qui n'avait jamais été
+mesurée sur du jeu réel.
+
+Premier relevé (90 donnes seulement, **indicatif**) :
+
+| écart | <300 | 300-599 | 600-899 | 900-1199 | ≥1200 |
+|---|---|---|---|---|---|
+| part des donnes | 43 % | 29 % | 13 % | 13 % | **1 %** |
+
+Si ça se confirme sur un vrai corpus, le régime franchement pénalisé est
+**rare**, et le gain attendu bien plus petit que le +0,074-0,121 ne le laisse
+croire. À refaire sur ≥10 000 donnes avant d'en conclure quoi que ce soit —
+et c'est désormais gratuit, l'histogramme sort de `--check`.
 
 Ce qui change *déjà* sans mode partie, et qui est l'objet du binaire :
 l'enchère est **réellement jouée** — tous les tours, contres et surcontres
@@ -96,8 +164,8 @@ action légale à son tour, dernière action terminale — et **rien n'est écri
 une seule échoue**. `--check` refait la vérification depuis le fichier, ce qui
 ferme l'aller-retour écriture → lecture.
 
-Taille : **58 octets par donne**, ~40 actions. 1 M de donnes = 58 Mo, soit
-exactement le gabarit de `playgen_games_1M.bin`.
+Taille : **62 octets par donne** en `COLVGM02`, ~40 actions. 1 M de donnes =
+62 Mo (58 Mo en `COLVGM01`, sans les quatre octets de score).
 
 `--check` décrit aussi le **contenu**, pas seulement la structure : un corpus
 peut être parfaitement rejouable et inutilisable, rien n'interdisant à un

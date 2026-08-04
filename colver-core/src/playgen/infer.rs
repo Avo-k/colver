@@ -26,9 +26,12 @@ use super::tokens::{
 
 const MAGIC: &[u8; 8] = b"COLVPG01";
 const MAGIC_V2: &[u8; 8] = b"COLVPG02";
+/// V3 = V2 + les deux jetons de score de partie en tête (vocabulaire 41, pas 31).
+const MAGIC_V3: &[u8; 8] = b"COLVPG03";
 /// Upper bound on sequence length across model versions (buffer sizing).
-const SEQ_BUF: usize = MAX_SEQ_LEN_V2;
+const SEQ_BUF: usize = super::tokens::MAX_SEQ_LEN_V3;
 const NUM_PRIMARY: usize = super::tokens::NUM_PRIMARY;
+const NUM_PRIMARY_V3: usize = super::tokens::NUM_PRIMARY_V3;
 const NUM_SUIT: usize = super::tokens::NUM_SUIT;
 const NUM_ACTOR: usize = super::tokens::NUM_ACTOR;
 const NUM_SEG: usize = super::tokens::NUM_SEG;
@@ -58,8 +61,18 @@ pub struct PlaygenModel {
     pub n_layers: usize,
     pub n_heads: usize,
     /// V2: physical suits, auction as prediction target (COLVPG02).
+    ///
+    /// Vrai aussi pour un v3, qui n'en est qu'une extension : tout code qui
+    /// teste `v2` pour « a une tête d'enchère » reste correct.
     pub v2: bool,
-    /// Sequence-length capacity (98 for v1, 122 for v2).
+    /// V3: deux jetons de score de partie en tête (COLVPG03). Implique `v2`.
+    pub v3: bool,
+    /// Taille du vocabulaire primaire — 31 (v1/v2) ou 41 (v3). **Doit venir du
+    /// fichier et non d'une constante compilée** : sinon un changement de
+    /// vocabulaire décale silencieusement toutes les matrices d'un ancien
+    /// checkpoint au lieu d'échouer.
+    pub n_primary: usize,
+    /// Sequence-length capacity (98 for v1, 122 for v2, 124 for v3).
     pub max_seq_len: usize,
     pub dff: usize,
     pub primary_emb: Vec<f32>,
@@ -97,14 +110,20 @@ impl PlaygenModel {
         if bytes.len() < 20 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "weight file too short"));
         }
-        let v2 = match &bytes[..8] {
-            m if m == MAGIC => false,
-            m if m == MAGIC_V2 => true,
+        let (v2, v3) = match &bytes[..8] {
+            m if m == MAGIC => (false, false),
+            m if m == MAGIC_V2 => (true, false),
+            m if m == MAGIC_V3 => (true, true),
             _ => {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "bad COLVPG magic"));
             }
         };
-        let max_seq_len = if v2 { MAX_SEQ_LEN_V2 } else { MAX_SEQ_LEN };
+        let max_seq_len = match (v2, v3) {
+            (_, true) => super::tokens::MAX_SEQ_LEN_V3,
+            (true, false) => MAX_SEQ_LEN_V2,
+            _ => MAX_SEQ_LEN,
+        };
+        let n_primary = if v3 { NUM_PRIMARY_V3 } else { NUM_PRIMARY };
         let d = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
         let n_layers = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
         let n_heads = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
@@ -116,7 +135,7 @@ impl PlaygenModel {
             .collect();
         let mut r = Reader { data: &floats, pos: 0 };
 
-        let primary_emb = r.take(NUM_PRIMARY * d)?;
+        let primary_emb = r.take(n_primary * d)?;
         let suit_emb = r.take(NUM_SUIT * d)?;
         let actor_emb = r.take(NUM_ACTOR * d)?;
         let seg_emb = r.take(NUM_SEG * d)?;
@@ -152,7 +171,7 @@ impl PlaygenModel {
         }
 
         Ok(PlaygenModel {
-            d, n_layers, n_heads, v2, max_seq_len, dff,
+            d, n_layers, n_heads, v2, v3, n_primary, max_seq_len, dff,
             primary_emb, suit_emb, actor_emb, seg_emb, pos_emb,
             blocks, out_norm, head_w, head_b, bid_head_w, bid_head_b,
         })
@@ -903,6 +922,24 @@ pub struct PlaygenSampler {
 
 impl PlaygenSampler {
     pub fn new(model: Arc<PlaygenModel>) -> Self {
+        // Un modèle v3 attend deux jetons de score en tête de séquence, et le
+        // préfixe d'inférence se construit ici depuis un `GameState` — qui ne
+        // porte que la donne, jamais le cumul de partie. L'échantillonner
+        // rendrait des mondes tirés d'un préfixe que le modèle n'a jamais vu à
+        // l'entraînement : décalés de deux positions et amputés de la variable
+        // qui les conditionne. Silencieux, et donc pire qu'une panne.
+        //
+        // Ce qui manque pour lever cette barrière : porter le score de partie
+        // de `MatchContext` jusqu'ici, à travers `WorldSource` et le protocole
+        // HTTP du sidecar. Rien de tout cela n'est fait, et rien ne peut être
+        // validé de bout en bout tant qu'aucun modèle v3 n'existe.
+        assert!(
+            !model.v3,
+            "playgen v3 (COLVPG03) ne peut pas encore servir de source de mondes : \
+             le score de partie n'est pas transporté jusqu'à l'inférence. \
+             Un v3 s'entraîne et s'évalue (train_playgen --v3, bench_playgen_ppl), \
+             il ne s'échantillonne pas."
+        );
         let cache = KvCache::new(&model);
         PlaygenSampler {
             model,
@@ -1967,11 +2004,14 @@ mod tests {
     #[test]
     #[ignore]
     fn playgen_forward_accuracy_v2() {
-        use crate::playgen::tokens::tokenize_replay_v2;
+        use crate::playgen::tokens::{tokenize_replay_v2, tokenize_replay_v3};
         let model_path = std::env::var("COLVER_PLAYGEN_BIN").expect("set COLVER_PLAYGEN_BIN");
         let games_path = std::env::var("COLVER_GAMES").expect("set COLVER_GAMES");
         let model = PlaygenModel::load(&model_path).expect("load model");
-        assert!(model.v2, "playgen_forward_accuracy_v2 needs a COLVPG02 model");
+        assert!(model.v2, "playgen_forward_accuracy_v2 needs a COLVPG02 or COLVPG03 model");
+        // Le tokeniseur suit le modèle : c'est ce test qui doit reproduire
+        // l'éval du trainer candle, donc il doit voir la même séquence.
+        let toks = if model.v3 { tokenize_replay_v3 } else { tokenize_replay_v2 };
         let replays = GameReplay::load_all(&games_path).expect("load games");
         let n_games: usize = std::env::var("COLVER_N")
             .ok()
@@ -1984,7 +2024,7 @@ mod tests {
 
         for (gi, replay) in replays.iter().take(n_games).enumerate() {
             let observer = (gi % 4) as u8;
-            let Some(s) = tokenize_replay_v2(replay, observer, &identity_perm()) else {
+            let Some(s) = toks(replay, observer, &identity_perm()) else {
                 continue;
             };
             let mut cache = KvCache::new(&model);

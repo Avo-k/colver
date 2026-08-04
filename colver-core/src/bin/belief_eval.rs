@@ -1124,7 +1124,9 @@ fn run_per_trick_eval(model_path: &str, replays_path: &str, num_games: usize) {
     let subset: Vec<GameReplay> = (0..num_games)
         .map(|i| {
             let r = &replays[(i * step) % replays.len()];
-            GameReplay { dealer: r.dealer, hands: r.hands, actions: r.actions.clone() }
+            GameReplay { dealer: r.dealer, hands: r.hands,
+                         score_ns: r.score_ns, score_ew: r.score_ew,
+                         actions: r.actions.clone() }
         })
         .collect();
 
@@ -1280,6 +1282,8 @@ fn run_ablation(model_path: &str, replays_path: &str, num_games: usize) {
         let owned: Vec<GameReplay> = subset.iter().map(|r| GameReplay {
             dealer: r.dealer,
             hands: r.hands,
+            score_ns: r.score_ns,
+            score_ew: r.score_ew,
             actions: r.actions.clone(),
         }).collect();
         colver_core::game_replay::extract_belief_samples_v2(&owned)
@@ -1441,7 +1445,9 @@ fn run_ensemble_eval(model_paths: &str, replays_path: &str, num_games: usize) {
     let subset: Vec<GameReplay> = (0..num_games)
         .map(|i| {
             let r = &replays[(i * step) % replays.len()];
-            GameReplay { dealer: r.dealer, hands: r.hands, actions: r.actions.clone() }
+            GameReplay { dealer: r.dealer, hands: r.hands,
+                         score_ns: r.score_ns, score_ew: r.score_ew,
+                         actions: r.actions.clone() }
         })
         .collect();
     let samples = if obs_dim == BELIEF_OBS_DIM_V2 {

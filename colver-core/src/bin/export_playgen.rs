@@ -1,12 +1,18 @@
 //! Export a playgen safetensors checkpoint to flat-f32 weights for pure-Rust
 //! inference (`playgen::infer::PlaygenModel`). V1 → COLVPG01; `--v2` (bid
 //! head, physical suits, 122-token positions) → COLVPG02 with the bid head
-//! appended after the card head.
+//! appended after the card head; `--v3` (v2 + les deux jetons de score de
+//! partie, vocabulaire primaire 41, 124 positions) → COLVPG03.
+//!
+//! ⚠️ **Le drapeau doit être celui de l'entraînement.** Rien dans le
+//! safetensors ne dit s'il a été entraîné avec les jetons de score : exporter
+//! un v3 sans `--v3` produirait un fichier au vocabulaire tronqué, et le
+//! chargeur ne verrait qu'un modèle « aux poids en trop ».
 //!
 //! Usage:
 //!   cargo run -p colver-core --bin export_playgen --features dmc_train --release -- \
 //!     models/playgen/playgen_final.safetensors models/playgen/playgen_final.bin \
-//!     --d-model 256 --layers 4 --heads 8 [--v2]
+//!     --d-model 256 --layers 4 --heads 8 [--v2|--v3]
 
 use candle_core::Device;
 use colver_core::playgen::model::{PlaygenConfig, PlaygenTrainer};
@@ -23,6 +29,7 @@ fn main() {
     let mut n_layers = 4usize;
     let mut n_heads = 8usize;
     let mut v2 = false;
+    let mut v3 = false;
     let mut i = 3;
     while i < args.len() {
         match args[i].as_str() {
@@ -30,11 +37,14 @@ fn main() {
             "--layers" => { n_layers = args[i + 1].parse().unwrap(); i += 2; }
             "--heads" => { n_heads = args[i + 1].parse().unwrap(); i += 2; }
             "--v2" => { v2 = true; i += 1; }
+            "--v3" => { v3 = true; v2 = true; i += 1; }
             other => { eprintln!("unknown arg {}", other); std::process::exit(1); }
         }
     }
 
-    let cfg = if v2 {
+    let cfg = if v3 {
+        PlaygenConfig::v3(d_model, n_layers, n_heads)
+    } else if v2 {
         PlaygenConfig::v2(d_model, n_layers, n_heads)
     } else {
         PlaygenConfig::v1(d_model, n_layers, n_heads)
@@ -81,7 +91,11 @@ fn main() {
     }
 
     let mut bytes: Vec<u8> = Vec::with_capacity(20 + floats.len() * 4);
-    bytes.extend_from_slice(if v2 { b"COLVPG02" } else { b"COLVPG01" });
+    bytes.extend_from_slice(match (v3, v2) {
+        (true, _) => b"COLVPG03",
+        (false, true) => b"COLVPG02",
+        _ => b"COLVPG01",
+    });
     bytes.extend_from_slice(&(d_model as u32).to_le_bytes());
     bytes.extend_from_slice(&(n_layers as u32).to_le_bytes());
     bytes.extend_from_slice(&(n_heads as u32).to_le_bytes());

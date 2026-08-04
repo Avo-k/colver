@@ -1,21 +1,49 @@
 /// Game replay storage and extraction.
 ///
-/// A game is fully deterministic from `(dealer, hands, action_sequence)` — just ~62 bytes.
+/// A game is fully deterministic from `(dealer, hands, action_sequence)` — just ~66 bytes.
 /// Storing raw replays lets us re-extract any task-specific data cheaply without re-playing
 /// expensive DMC/NN inference.
 ///
-/// Binary format `COLVGM01` — variable-length records:
+/// Binary format `COLVGM02` — variable-length records:
 /// ```text
 /// Header (16 bytes):
-///   magic: "COLVGM01" (8 bytes)
+///   magic: "COLVGM02" (8 bytes)
 ///   num_games: u64 LE (8 bytes)
 ///
 /// Per game:
 ///   dealer: u8 (1 byte)
 ///   hands: [u32; 4] LE (16 bytes)
+///   score_ns: u16 LE (2 bytes)   ← cumul de partie AVANT la donne
+///   score_ew: u16 LE (2 bytes)
 ///   num_actions: u8 (1 byte)
 ///   actions: [u8; num_actions] (variable, typically 36-48)
 /// ```
+///
+/// ## Pourquoi le score de partie est dans le format (2026-08-04)
+///
+/// `COLVGM01` ne portait que la donne, ce qui est exact tant qu'on tire des
+/// donnes **indépendantes**. Dès qu'on les enchaîne en parties de 2000 points,
+/// c'est faux : bid v6 lit une observation *score-aware* et annonce autrement à
+/// 1800-600 qu'à 0-0. Un modèle entraîné sur un tel corpus verrait donc des
+/// enchères qu'il ne peut pas expliquer — la variable qui les décide n'est pas
+/// dans son entrée. **Ce n'est pas de l'information manquante, c'est de
+/// l'entropie irréductible ajoutée**, et elle est chiffrée : +0,074 à +0,121 de
+/// perplexité sur la tête d'enchère dès 1200 points d'écart, contre +0,0028 pour
+/// diviser les paramètres du modèle par 3,3 (`bench_playgen_ppl`, 2026-08-04).
+///
+/// **Le score stocké est celui d'AVANT la donne**, parce que c'est celui que
+/// l'annonceur a vu. Le score d'après est une conséquence de la donne, donc
+/// le donner au modèle serait lui montrer la réponse.
+///
+/// **On stocke N-S et E-O bruts, pas « moi » et « l'adversaire »** : le fichier
+/// porte le fait objectif, la mise en perspective appartient au tokeniseur, qui
+/// seul connaît l'observateur. C'est la même erreur que celle épinglée côté
+/// enchères — passer `(ns, ew)` là où la fonction attend `(mien, adverse)` fait
+/// croire aux quatre sièges qu'ils sont dans le même camp.
+///
+/// Un `COLVGM01` se relit toujours, avec un score 0-0. Ce n'est pas une valeur
+/// de repli arbitraire : **tous** les corpus existants ont été produits en
+/// donnes indépendantes, donc 0-0 y est la vérité, pas une approximation.
 
 use std::io::{self, Write};
 
@@ -25,13 +53,30 @@ use crate::trick;
 use crate::dmc_obs::EnvTracking;
 use crate::state::{GameState, Phase};
 
-const MAGIC: &[u8; 8] = b"COLVGM01";
+const MAGIC_V1: &[u8; 8] = b"COLVGM01";
+const MAGIC: &[u8; 8] = b"COLVGM02";
 
 /// A complete game replay: initial state + all actions taken.
 pub struct GameReplay {
     pub dealer: u8,
     pub hands: [u32; 4],
+    /// Cumul de partie **avant** cette donne, `[N-S, E-O]`. `0-0` pour une
+    /// donne tirée indépendamment — ce qui est le cas de tout `COLVGM01`.
+    pub score_ns: u16,
+    pub score_ew: u16,
     pub actions: Vec<u8>,
+}
+
+impl GameReplay {
+    /// Une donne tirée **indépendamment**, hors de toute partie : score 0-0.
+    ///
+    /// Existe pour que le cas « pas de contexte de partie » se dise, au lieu de
+    /// s'obtenir par omission. Un générateur qui enchaîne des donnes et oublie
+    /// de renseigner le score produirait un corpus faux *sans que rien ne le
+    /// signale* : les enchères de fin de partie y seraient étiquetées 0-0.
+    pub fn independent(dealer: u8, hands: [u32; 4], actions: Vec<u8>) -> Self {
+        GameReplay { dealer, hands, score_ns: 0, score_ew: 0, actions }
+    }
 }
 
 /// A single belief training sample extracted from a replay.
@@ -48,10 +93,10 @@ pub struct BeliefSample {
 }
 
 impl GameReplay {
-    /// Write a collection of game replays to a COLVGM01 binary file.
+    /// Write a collection of game replays to a COLVGM02 binary file.
     pub fn write_all(path: &str, replays: &[GameReplay]) -> io::Result<()> {
-        // Estimate total size: header + per-game (18 + avg ~40 actions)
-        let est_size = 16 + replays.len() * 60;
+        // Estimate total size: header + per-game (22 + avg ~40 actions)
+        let est_size = 16 + replays.len() * 64;
         let mut buf = Vec::with_capacity(est_size);
 
         // Header
@@ -64,6 +109,8 @@ impl GameReplay {
             for &hand in &replay.hands {
                 buf.write_all(&hand.to_le_bytes())?;
             }
+            buf.write_all(&replay.score_ns.to_le_bytes())?;
+            buf.write_all(&replay.score_ew.to_le_bytes())?;
             buf.push(replay.actions.len() as u8);
             buf.write_all(&replay.actions)?;
         }
@@ -74,19 +121,26 @@ impl GameReplay {
         std::fs::write(path, &buf)
     }
 
-    /// Load all game replays from a COLVGM01 binary file.
+    /// Load all game replays from a COLVGM01 or COLVGM02 binary file.
+    ///
+    /// Les deux versions se relisent : un `COLVGM01` rend un score 0-0, ce qui
+    /// est la vérité pour ces corpus (donnes indépendantes) et non un défaut.
     pub fn load_all(path: &str) -> io::Result<Vec<GameReplay>> {
         let data = std::fs::read(path)?;
         if data.len() < 16 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "file too small"));
         }
 
-        if &data[..8] != MAGIC {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid magic: expected COLVGM01, got {:?}", &data[..8]),
-            ));
-        }
+        let with_scores = match &data[..8] {
+            m if m == MAGIC => true,
+            m if m == MAGIC_V1 => false,
+            other => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid magic: expected COLVGM01 or COLVGM02, got {other:?}"),
+                ));
+            }
+        };
 
         let num_games = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
         let mut replays = Vec::with_capacity(num_games);
@@ -109,6 +163,18 @@ impl GameReplay {
                 pos += 4;
             }
 
+            let (score_ns, score_ew) = if with_scores {
+                if pos + 4 > data.len() {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated scores"));
+                }
+                let ns = u16::from_le_bytes(data[pos..pos + 2].try_into().unwrap());
+                let ew = u16::from_le_bytes(data[pos + 2..pos + 4].try_into().unwrap());
+                pos += 4;
+                (ns, ew)
+            } else {
+                (0, 0)
+            };
+
             if pos >= data.len() {
                 return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated num_actions"));
             }
@@ -121,7 +187,7 @@ impl GameReplay {
             let actions = data[pos..pos + num_actions].to_vec();
             pos += num_actions;
 
-            replays.push(GameReplay { dealer, hands, actions });
+            replays.push(GameReplay { dealer, hands, score_ns, score_ew, actions });
         }
 
         Ok(replays)
@@ -749,13 +815,15 @@ mod tests {
             GameReplay {
                 dealer: 0,
                 hands: [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000],
+                score_ns: 1780,
+                score_ew: 420,
                 actions: vec![0, 0, 0, 5, 0, 0, 0], // 3 passes + bid + 3 passes
             },
-            GameReplay {
-                dealer: 2,
-                hands: [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000],
-                actions: vec![0, 0, 0, 0], // 4 passes (void deal)
-            },
+            GameReplay::independent(
+                2,
+                [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000],
+                vec![0, 0, 0, 0], // 4 passes (void deal)
+            ),
         ];
 
         let path = "/tmp/test_game_replay_roundtrip.bin";
@@ -766,9 +834,42 @@ mod tests {
         assert_eq!(loaded[0].dealer, 0);
         assert_eq!(loaded[0].hands, [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000]);
         assert_eq!(loaded[0].actions, vec![0, 0, 0, 5, 0, 0, 0]);
+        assert_eq!((loaded[0].score_ns, loaded[0].score_ew), (1780, 420));
         assert_eq!(loaded[1].dealer, 2);
         assert_eq!(loaded[1].actions, vec![0, 0, 0, 0]);
+        assert_eq!((loaded[1].score_ns, loaded[1].score_ew), (0, 0));
 
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Un corpus `COLVGM01` doit continuer de se relire — les 9 M de donnes de
+    /// `playgen_games_9M.bin` ne seront pas régénérées pour un champ de score
+    /// qui y vaut zéro de toute façon.
+    #[test]
+    fn colvgm01_still_loads_with_zero_scores() {
+        // Écrit un COLVGM01 à la main : deux donnes, sans champ de score.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(MAGIC_V1);
+        buf.extend_from_slice(&2u64.to_le_bytes());
+        for (dealer, actions) in [(1u8, vec![0u8, 0, 0, 9, 0, 0, 0]), (3u8, vec![0u8, 0, 0, 0])] {
+            buf.push(dealer);
+            for h in [0xFFu32, 0xFF00, 0xFF_0000, 0xFF00_0000] {
+                buf.extend_from_slice(&h.to_le_bytes());
+            }
+            buf.push(actions.len() as u8);
+            buf.extend_from_slice(&actions);
+        }
+        let path = "/tmp/test_game_replay_v1_compat.bin";
+        std::fs::write(path, &buf).unwrap();
+
+        let loaded = GameReplay::load_all(path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].dealer, 1);
+        assert_eq!(loaded[0].actions, vec![0, 0, 0, 9, 0, 0, 0]);
+        assert_eq!(loaded[1].dealer, 3);
+        for r in &loaded {
+            assert_eq!((r.score_ns, r.score_ew), (0, 0), "COLVGM01 = donnes indépendantes");
+        }
         std::fs::remove_file(path).ok();
     }
 
@@ -783,11 +884,11 @@ mod tests {
 
     #[test]
     fn test_replay_with_callback() {
-        let replay = GameReplay {
-            dealer: 0,
-            hands: [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000],
-            actions: vec![0, 0, 0, 0], // 4 passes
-        };
+        let replay = GameReplay::independent(
+            0,
+            [0xFF, 0xFF00, 0xFF_0000, 0xFF00_0000],
+            vec![0, 0, 0, 0], // 4 passes
+        );
 
         let mut step_count = 0;
         replay.replay_with(|_state, _tracking, _action| {
@@ -822,7 +923,7 @@ mod tests {
                 state.step(action);
             }
 
-            let replay = GameReplay { dealer, hands, actions: actions.clone() };
+            let replay = GameReplay::independent(dealer, hands, actions.clone());
 
             // Verify replay produces same terminal state
             let mut replayed_state = GameState::new(dealer, hands);
@@ -867,7 +968,7 @@ mod tests {
                 state.step(action);
             }
 
-            replays.push(GameReplay { dealer, hands, actions });
+            replays.push(GameReplay::independent(dealer, hands, actions));
         }
 
         let samples = extract_belief_samples(&replays);
@@ -907,7 +1008,7 @@ mod tests {
                 state.step(action);
             }
 
-            replays.push(GameReplay { dealer, hands, actions });
+            replays.push(GameReplay::independent(dealer, hands, actions));
         }
 
         let samples = extract_belief_samples_v2(&replays);

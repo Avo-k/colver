@@ -11,13 +11,14 @@ use candle_nn::{embedding, linear, AdamW, Embedding, Linear, Module, Optimizer, 
                 VarBuilder, VarMap};
 
 use super::tokens::{
-    MAX_SEQ_LEN, MAX_SEQ_LEN_V2, NUM_ACTOR, NUM_BID_ACTIONS, NUM_CARD_ACTIONS, NUM_PRIMARY,
-    NUM_SEG, NUM_SUIT,
+    MAX_SEQ_LEN, MAX_SEQ_LEN_V2, MAX_SEQ_LEN_V3, NUM_ACTOR, NUM_BID_ACTIONS, NUM_CARD_ACTIONS,
+    NUM_PRIMARY, NUM_PRIMARY_V3, NUM_SEG, NUM_SUIT,
 };
 
 /// Architecture config. V1: `bid_head = false`, `max_seq_len = MAX_SEQ_LEN`.
 /// V2 (physical suits + auction targets): `bid_head = true`,
 /// `max_seq_len = MAX_SEQ_LEN_V2`.
+/// V3 (+ score de partie en tête) : vocabulaire primaire élargi à 41.
 #[derive(Clone, Copy)]
 pub struct PlaygenConfig {
     pub d_model: usize,
@@ -25,15 +26,27 @@ pub struct PlaygenConfig {
     pub n_heads: usize,
     pub bid_head: bool,
     pub max_seq_len: usize,
+    /// Taille du vocabulaire primaire. **Doit suivre le tokeniseur employé** :
+    /// entraîner avec les jetons de score sur un vocabulaire de 31 lèverait un
+    /// index hors bornes, l'inverse gaspillerait dix lignes d'embedding jamais
+    /// touchées par un gradient.
+    pub n_primary: usize,
 }
 
 impl PlaygenConfig {
     pub fn v1(d_model: usize, n_layers: usize, n_heads: usize) -> Self {
-        PlaygenConfig { d_model, n_layers, n_heads, bid_head: false, max_seq_len: MAX_SEQ_LEN }
+        PlaygenConfig { d_model, n_layers, n_heads, bid_head: false,
+                        max_seq_len: MAX_SEQ_LEN, n_primary: NUM_PRIMARY }
     }
 
     pub fn v2(d_model: usize, n_layers: usize, n_heads: usize) -> Self {
-        PlaygenConfig { d_model, n_layers, n_heads, bid_head: true, max_seq_len: MAX_SEQ_LEN_V2 }
+        PlaygenConfig { d_model, n_layers, n_heads, bid_head: true,
+                        max_seq_len: MAX_SEQ_LEN_V2, n_primary: NUM_PRIMARY }
+    }
+
+    pub fn v3(d_model: usize, n_layers: usize, n_heads: usize) -> Self {
+        PlaygenConfig { d_model, n_layers, n_heads, bid_head: true,
+                        max_seq_len: MAX_SEQ_LEN_V3, n_primary: NUM_PRIMARY_V3 }
     }
 }
 
@@ -173,7 +186,7 @@ impl PlaygenNet {
             None
         };
         Ok(PlaygenNet {
-            primary_emb: embedding(NUM_PRIMARY, d_model, vb.pp("primary_emb"))?,
+            primary_emb: embedding(cfg.n_primary, d_model, vb.pp("primary_emb"))?,
             suit_emb: embedding(NUM_SUIT, d_model, vb.pp("suit_emb"))?,
             actor_emb: embedding(NUM_ACTOR, d_model, vb.pp("actor_emb"))?,
             seg_emb: embedding(NUM_SEG, d_model, vb.pp("seg_emb"))?,

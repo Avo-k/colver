@@ -28,11 +28,17 @@
 #   --port P         port du sidecar de génération (défaut 8013 — PAS 8003, la prod)
 #   --model PATH     modèle playgen sur l'hôte GPU
 #                    ($COLVER_GEN_SIDECAR_BIN pour le binaire du sidecar)
+#   --match-mode     enchaîner les donnes en parties de 2000 points. Le corpus
+#                    porte alors le score d'avant chaque donne (COLVGM02), et
+#                    c'est la seule façon d'obtenir des enchères de fin de
+#                    partie — bid v6 est score-aware. À réserver à un modèle
+#                    entraîné avec `--v3` : un playgen sans entrée « score » y
+#                    verrait des annonces qu'il ne peut pas expliquer.
 #   --keep-sidecar   ne pas l'arrêter à la fin
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-DEALS=""; DETS=40; OUT=""; THREADS=256
+DEALS=""; DETS=40; OUT=""; THREADS=256; MATCH_MODE=
 GPU_HOST="${COLVER_GEN_GPU_HOST:-localhost}"
 PORT=8013
 MODEL="${COLVER_GEN_PLAYGEN_MODEL:-models/playgen/playgen_v2_final.bin}"
@@ -51,6 +57,7 @@ while [ $# -gt 0 ]; do
     --gpu-host) GPU_HOST="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
+    --match-mode) MATCH_MODE="--match-mode"; shift ;;
     --keep-sidecar) KEEP=1; shift ;;
     *) echo "argument inconnu : $1" >&2; exit 2 ;;
   esac
@@ -109,10 +116,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "▸ $DEALS donnes, $DETS mondes/décision, $THREADS threads → $OUT"
+echo "▸ $DEALS donnes, $DETS mondes/décision, $THREADS threads${MATCH_MODE:+, parties 2000} → $OUT"
 COLVER_PLAYGEN_GPU_URL="$URL" ./target/release/gen_games_isdd \
   --deals "$DEALS" --dets "$DETS" --threads "$THREADS" \
-  --shard 5000 --progress-every $(( DEALS / 20 > 0 ? DEALS / 20 : 1 )) --out "$OUT"
+  --shard 5000 --progress-every $(( DEALS / 20 > 0 ? DEALS / 20 : 1 )) \
+  $MATCH_MODE --out "$OUT"
 
 # ── Discipline 3 : valider chez le consommateur ────────────────────────────
 echo "▸ relecture"
