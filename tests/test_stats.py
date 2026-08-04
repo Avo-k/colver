@@ -457,3 +457,66 @@ class TestOracle:
             ids.append(gid)
         await self._cache(ids[0], [{"player": 2, "cost": 0, "category": "parfait"}])
         assert set(await stats.unanalysed_games(uid)) == set(ids[1:])
+
+
+class TestActivite:
+    """Le calendrier : des donnes par jour, alignées sur les semaines.
+
+    L'alignement est ce qui rend la grille lisible — sans lui, les lignes ne
+    sont plus des jours de semaine mais un décalage arbitraire.
+    """
+
+    async def _deal_on(self, uid, day):
+        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+        gid = await db.create_game("play", 0, hands, {"2": "human"},
+                                   human_seat=2, user_id=uid)
+        await db.complete_game(gid, 90, 72, {"value": 90, "team": 0},
+                               score_ns=172, score_ew=0)
+        conn = await db.get_db()
+        await conn.execute("UPDATE games SET created_at = ? WHERE id = ?",
+                           (f"{day}T12:00:00+00:00", gid))
+        await conn.commit()
+
+    async def test_la_grille_est_alignee_sur_les_semaines(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        a = await stats.activity(uid, weeks=12)
+        assert len(a["days"]) == 84
+        from datetime import date
+        # Le premier jour est un lundi, le dernier un dimanche : c'est ce qui
+        # fait que la ligne i du calendrier est toujours le même jour.
+        assert date.fromisoformat(a["start"]).weekday() == 0
+        assert date.fromisoformat(a["end"]).weekday() == 6
+
+    async def test_les_donnes_tombent_le_bon_jour(self, clean_db):
+        from datetime import datetime, timedelta, timezone
+        uid = await db.create_user("alice", "x")
+        today = datetime.now(timezone.utc).date()
+        await self._deal_on(uid, today.isoformat())
+        await self._deal_on(uid, today.isoformat())
+        await self._deal_on(uid, (today - timedelta(days=3)).isoformat())
+
+        a = await stats.activity(uid, weeks=12)
+        from datetime import date
+        start = date.fromisoformat(a["start"])
+        assert a["days"][(today - start).days] == 2
+        assert a["days"][(today - timedelta(days=3) - start).days] == 1
+        assert a["max"] == 2
+
+    async def test_un_jour_a_venir_vaut_none_pas_zero(self, clean_db):
+        """Un zéro dit « vous n'avez pas joué », None dit « ce jour n'existe pas
+        encore » : les confondre ferait passer la fin de semaine pour un trou."""
+        from datetime import datetime, timezone
+        uid = await db.create_user("alice", "x")
+        a = await stats.activity(uid, weeks=12)
+        today = datetime.now(timezone.utc).date()
+        from datetime import date
+        idx = (today - date.fromisoformat(a["start"])).days
+        assert a["days"][idx] == 0, "aujourd'hui existe, même sans donne"
+        assert all(v is None for v in a["days"][idx + 1:]), "les jours à venir sont None"
+
+    async def test_le_calendrier_accompagne_les_stats(self, clean_db, played_deal):
+        uid = await db.create_user("alice", "x")
+        hands, actions = played_deal(seed=1)
+        await _store_played(hands, actions, user_id=uid, seat=2)
+        st = await stats.my_stats(uid)
+        assert len(st["activity"]["days"]) == 84

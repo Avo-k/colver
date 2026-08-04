@@ -355,6 +355,7 @@ async def my_stats(user_id):
         "belotes": belotes,
         "partners": await _partners(user_id),
         "tempo": await _tempo(user_id),
+        "activity": await activity(user_id),
     }
 
 
@@ -397,6 +398,49 @@ def _today():
 def _yesterday():
     from datetime import datetime, timedelta, timezone
     return (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+
+
+async def activity(user_id, weeks=12):
+    """Donnes par jour, en colonnes de semaines — la matière du calendrier.
+
+    Rend `weeks × 7` entiers, du plus ancien au plus récent, alignés sur les
+    semaines : l'indice `i` a pour jour de semaine `i % 7` (0 = lundi). C'est ce
+    qui fait que les lignes du calendrier sont des jours de semaine et non un
+    décalage arbitraire — sans l'alignement, la grille ne dit plus rien.
+
+    La fenêtre s'arrête à la fin de la semaine **en cours**, pas à aujourd'hui :
+    la dernière colonne est donc partielle, et les cases à venir valent `None`
+    plutôt que 0. Un zéro dit « vous n'avez pas joué », un `None` dit « ce jour
+    n'existe pas encore » — les afficher pareil ferait passer la fin de semaine
+    pour une panne d'assiduité.
+
+    Jours en **UTC**, comme `_streak` : une seule règle pour tout le monde.
+    """
+    from datetime import datetime, timedelta, timezone
+    today = datetime.now(timezone.utc).date()
+    end = today + timedelta(days=6 - today.weekday())      # dimanche de la semaine
+    start = end - timedelta(days=weeks * 7 - 1)            # lundi, weeks plus tôt
+
+    conn = await db.get_db()
+    rows = await conn.execute_fetchall(f"""
+        WITH s AS ({_SEATS})
+        SELECT date(created_at) AS d, COUNT(*) AS n
+          FROM s WHERE uid = ? AND date(created_at) >= ?
+         GROUP BY d
+    """, (user_id, start.isoformat()))
+    counts = {r[0]: r[1] for r in rows}
+
+    days = []
+    for i in range(weeks * 7):
+        d = start + timedelta(days=i)
+        days.append(None if d > today else counts.get(d.isoformat(), 0))
+    return {
+        "days": days,
+        "weeks": weeks,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "max": max((c for c in days if c), default=0),
+    }
 
 
 async def _partners(user_id, limit=5):

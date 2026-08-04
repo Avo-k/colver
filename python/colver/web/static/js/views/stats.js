@@ -1,48 +1,44 @@
-// Mes stats — le portrait chiffré d'un joueur.
+// Mes stats — le portrait chiffré d'un joueur, en profil deux colonnes.
 //
-// Deux moitiés, et la séparation est le sujet de la page.
+// Le rail de gauche est **qui vous êtes** : pseudo, classement, compteurs,
+// activité, partenaires, faits d'armes. Il reste à l'écran (sticky) pendant
+// qu'on parcourt l'analyse à droite, qui est **comment vous jouez**. Sous
+// 900 px il passe simplement au-dessus.
 //
-// Le haut est **gratuit** : du SQL sur des colonnes déjà écrites. Combien de
-// donnes, quelle série, à quelle fréquence vous prenez, si c'est plutôt vous ou
-// votre partenaire, quelle couleur vous préférez. Ça s'affiche toujours et ça ne
-// coûte rien.
+// La page se divise aussi en deux moitiés d'un autre genre, et c'est celle-là
+// qui compte vraiment :
 //
-// Le bas est **payé** : une recherche double-mort par décision. Il ne se calcule
-// que si le joueur appuie sur le bouton, comme la demande d'analyse de lichess.
-// Rien ne se déclenche au chargement — un GET qui lancerait des solves partirait
-// au premier préchargeur de navigateur.
+// - tout ce qui vient de `/api/me/stats` est **gratuit** — du SQL sur des
+//   colonnes déjà écrites. Ça s'affiche toujours, sans attente.
+// - le bloc « Face à l'oracle » est **payé** : une recherche double-mort par
+//   décision. Il ne se calcule que si le joueur appuie sur le bouton, comme la
+//   demande d'analyse de lichess. Rien ne se déclenche au chargement — un GET
+//   qui lancerait des solves partirait au premier préchargeur de navigateur.
 //
 // Règle d'affichage qui traverse tout le fichier : un taux ne se montre jamais
 // sans son n et son intervalle, et pas du tout sous cinq observations. Sur
-// quelques dizaines de donnes, « 62 % » sans rien d'autre est une affirmation
-// que les données ne soutiennent pas.
+// quelques dizaines de donnes, « 62 % » tout seul est une affirmation que les
+// données ne soutiennent pas — d'où les intervalles *dessinés* (`ciRow`) : la
+// barre est la précision, et on voit d'un coup d'œil qu'un chiffre ne vaut rien.
 
 const base = () => document.querySelector('base')?.getAttribute('href') || '/';
 
-// Sous ce seuil, l'intervalle de Wilson couvre à peu près tout [0, 100] : le
-// chiffre n'informe sur rien, et sa seule fonction serait de se faire lire
-// comme une mesure.
+// Sous ce seuil, l'intervalle de Wilson couvre à peu près tout [0, 100].
 const MIN_OBS = 5;
 
 const CAT_LABELS = {
-    parfait: 'Sans perte',
-    bon: 'Bon',
-    imprecision: 'Imprécision',
-    erreur: 'Erreur',
-    faute: 'Faute',
+    parfait: 'Sans perte', bon: 'Bon', imprecision: 'Imprécision',
+    erreur: 'Erreur', faute: 'Faute',
 };
 const CAT_ORDER = ['parfait', 'bon', 'imprecision', 'erreur', 'faute'];
+const WEEKDAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
 const TEMPLATE = `
-<div class="compte-page stats-page">
-    <div class="compte-card">
-        <h2 class="compte-title">Mes statistiques</h2>
-        <div id="stats-body"><div class="an-loading">Chargement…</div></div>
-    </div>
-    <div class="compte-card" id="stats-oracle-card">
-        <h3 class="compte-subtitle">Face à l'oracle</h3>
-        <div id="stats-oracle"><div class="an-loading">Chargement…</div></div>
-    </div>
+<div class="st-page">
+    <aside class="st-rail" id="st-rail"></aside>
+    <main class="st-main" id="st-main">
+        <div class="an-loading">Chargement…</div>
+    </main>
 </div>`;
 
 let poller = null;
@@ -53,213 +49,282 @@ function esc(s) {
     }[c]));
 }
 
-// ---- Briques d'affichage ---------------------------------------------------
+// ---- Briques ---------------------------------------------------------------
 
-function row(label, value, hint) {
-    if (value === null || value === undefined || value === '') return '';
-    return '<div class="cs-row">' +
-        `<span class="cs-label">${label}</span>` +
-        `<span class="cs-val">${value}</span>` +
-        `<span class="cs-hint">${hint || ''}</span></div>`;
-}
-
-/** Un taux avec son intervalle, ou rien du tout s'il repose sur trop peu. */
-function pct(label, blob, unit = '') {
-    if (!blob || !blob.n) return '';
-    if (blob.n < MIN_OBS) return row(label, '—', `seulement ${blob.n} obs.`);
-    return row(label, `${blob.pct} %`,
-        `n = ${blob.n}${unit} · IC95 ${blob.lo}–${blob.hi} %`);
-}
-
-/** Une barre proportionnelle : plus lisible qu'une colonne de pourcentages. */
-function bars(segments) {
-    const total = segments.reduce((s, x) => s + x.n, 0);
-    if (!total) return '';
-    const bar = segments.filter(s => s.n).map(s =>
-        `<span class="cs-bar-seg cs-bar-${s.key}" style="flex:${s.n}" ` +
-        `title="${esc(s.label)} : ${s.n}"></span>`).join('');
-    const legend = segments.filter(s => s.n).map(s =>
-        `<span class="cs-legend"><i class="cs-bar-${s.key}"></i>${esc(s.label)} ` +
-        `<b>${Math.round(100 * s.n / total)} %</b></span>`).join('');
-    return `<div class="cs-bar">${bar}</div><div class="cs-legends">${legend}</div>`;
-}
-
-function section(title, inner) {
+function card(title, inner, cls = '') {
     const body = inner.filter(Boolean).join('');
-    return body ? `<h4 class="compte-section-title">${title}</h4>${body}` : '';
+    if (!body) return '';
+    return `<section class="st-card ${cls}">` +
+        (title ? `<h3 class="st-h">${title}</h3>` : '') + body + '</section>';
 }
 
-// ---- La moitié gratuite ----------------------------------------------------
+/** Un chiffre et son libellé. `tone` : 'gold' pour l'accent, 'neg' pour un écart négatif. */
+function stat(v, k, n, tone = '', size = '') {
+    if (v === null || v === undefined || v === '') return '';
+    return `<div class="st-stat">
+        <span class="st-v ${tone} ${size} num">${v}</span>
+        <span class="st-k">${k}</span>
+        ${n ? `<span class="st-n num">${n}</span>` : ''}</div>`;
+}
 
-function renderFree(st) {
-    if (!st || !st.deals) {
-        return '<div class="history-empty">Aucune donne terminée pour l\'instant — ' +
-            '<a href="/jouer/humain">jouez-en une !</a></div>';
+/** Un taux, avec son intervalle **dessiné**. La barre est la précision. */
+function ciRow(label, b, unit = '') {
+    if (!b || !b.n) return '';
+    if (b.n < MIN_OBS) {
+        return `<div class="st-stat"><span class="st-v sm">—</span>
+            <span class="st-k">${label}</span>
+            <span class="st-n">seulement ${b.n} observation${b.n > 1 ? 's' : ''}</span></div>`;
     }
-    const out = [];
+    return `<div class="st-stat" title="Intervalle de confiance à 95 % : ${b.lo}–${b.hi} %">
+        <span class="st-v gold num">${b.pct} %</span>
+        <span class="st-k">${label}</span>
+        <div class="st-ci"><span class="st-ci-span" style="left:${b.lo}%;width:${b.hi - b.lo}%"></span>
+            <span class="st-ci-dot" style="left:${b.pct}%"></span></div>
+        <span class="st-n num">n = ${b.n}${unit} · IC95 ${b.lo}–${b.hi} %</span></div>`;
+}
 
-    out.push(section('Au compteur', [
-        row('Donnes jouées', st.deals,
-            st.modes && st.modes.multi ? `dont ${st.modes.multi} en salon` : 'en solo'),
-        row('Jours de jeu', st.days,
-            st.density ? `${st.density} donnes par jour joué` : ''),
-        row('Série en cours', st.streak ? `${st.streak} jour${st.streak > 1 ? 's' : ''}` : '—',
-            st.streak ? 'jours consécutifs' : 'reprenez aujourd\'hui pour la relancer'),
-    ]));
+/** Barre segmentée + légende directe : l'identité n'est jamais portée par la
+ *  couleur seule. */
+function segbar(segs) {
+    const tot = segs.reduce((s, x) => s + x.n, 0);
+    if (!tot) return '';
+    const pct = n => Math.round(100 * n / tot);
+    return `<div class="st-bar">${segs.map(s =>
+        `<span style="flex:${s.n};background:var(${s.c})" title="${esc(s.k)} : ${s.n}"></span>`).join('')}</div>
+    <div class="st-legend">${segs.map(s =>
+        `<span><i style="background:var(${s.c})"></i>${esc(s.k)} <b class="num">${pct(s.n)} %</b></span>`).join('')}</div>`;
+}
 
-    out.push(section('Résultats', [
-        pct('Donnes gagnées', st.won),
+/** Barres par catégorie. */
+function bars(items, { wide = false, fill = '--c-series-you' } = {}) {
+    if (!items.length) return '';
+    const max = Math.max(...items.map(i => i.n), 1);
+    return `<div class="st-rows">${items.map(i =>
+        `<div class="st-row ${wide ? 'wide' : ''}" title="${esc(i.tip || i.lab)}">
+            <span class="st-row-lab ${i.cls || ''}">${i.lab}</span>
+            <span class="st-track"><span class="st-fill" style="width:${Math.max(3, 100 * i.n / max)}%;background:var(${i.fill || fill})"></span></span>
+            <span class="st-row-val num">${i.n}</span></div>`).join('')}</div>`;
+}
+
+/** Calendrier d'activité. Le seul objet de la page qui montre le *temps*. */
+function heatmap(a) {
+    if (!a || !a.days) return '';
+    const start = new Date(a.start + 'T00:00:00Z');
+    const cells = [];
+    for (let w = 0; w < a.weeks; w++) {
+        let col = '';
+        for (let d = 0; d < 7; d++) {
+            const i = w * 7 + d, v = a.days[i];
+            if (v === null || v === undefined) { col += '<i class="st-cell void"></i>'; continue; }
+            // Quatre paliers relatifs au meilleur jour : une échelle absolue
+            // laisserait la grille éteinte pour qui joue trois donnes par jour.
+            const lvl = v === 0 ? 0 : Math.min(4, Math.ceil(4 * v / Math.max(a.max, 1)));
+            const day = new Date(start.getTime() + i * 86400000);
+            const txt = day.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+            col += `<i class="st-cell" data-l="${lvl}" title="${WEEKDAYS[d]} ${txt} — ${
+                v ? `${v} donne${v > 1 ? 's' : ''}` : 'aucune donne'}"></i>`;
+        }
+        cells.push(`<div class="st-heat-col">${col}</div>`);
+    }
+    return `<div class="st-heat-wrap"><div class="st-heat">${cells.join('')}</div>
+        <div class="st-heat-foot"><span>${a.weeks} dernières semaines</span>
+        <span class="st-heat-key">moins ${[0, 1, 2, 3, 4]
+            .map(l => `<i class="st-cell" data-l="${l}"></i>`).join('')} plus</span></div></div>`;
+}
+
+/** Anneau de progression : une proportion unique, sans axe. */
+function ring(pct, val, key, note) {
+    const r = 30, c = 2 * Math.PI * r, on = c * Math.max(0, Math.min(100, pct)) / 100;
+    return `<div class="st-ring">
+        <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true">
+            <circle cx="38" cy="38" r="${r}" fill="none" stroke="var(--c-surface-2)" stroke-width="8"/>
+            <circle cx="38" cy="38" r="${r}" fill="none" stroke="var(--c-q1)" stroke-width="8"
+                stroke-linecap="round" stroke-dasharray="${on} ${c - on}" transform="rotate(-90 38 38)"/>
+        </svg>
+        <div><div class="st-ring-v num">${val}</div>
+        <div class="st-ring-k">${key}</div>
+        <div class="st-ring-n num">${note}</div></div></div>`;
+}
+
+// ---- Le rail : qui vous êtes -----------------------------------------------
+
+function renderRail(me, st) {
+    const elo = me && me.stats && me.stats.elo;
+    const since = me && me.user ? new Date(me.user.created_at)
+        .toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : null;
+
+    const identity = `<div class="st-id">
+        <span class="st-name">${esc(me.user.username)}</span>
+        <span class="st-since">${elo && elo.games
+            ? `Classement <b class="num">${Math.round(elo.elo)}</b>${elo.ranked ? '' : ' (provisoire)'} · `
+            : ''}membre depuis ${since}</span>
+        <div class="st-mini">
+            ${stat(st.deals, 'donnes', '', 'gold', 'sm')}
+            ${stat(st.days, 'jours', '', '', 'sm')}
+            ${stat(st.streak || '—', 'série', '', '', 'sm')}
+        </div></div>`;
+
+    const arms = [
+        ['Capots réussis', st.capots_for], ['Capots subis', st.capots_against],
+        ['Belotes', st.belotes], ['Coinches', st.coinches],
+        ['Surcoinches', st.surcoinches], ['Donnes contrées', st.contres_played],
+    ].filter(([, v]) => v);
+
+    return card('', [identity], 'st-card-id')
+        + card('Activité', [heatmap(st.activity)])
+        + card('Partenaires', [
+            st.partners.length
+                ? bars(st.partners.map(p => ({
+                    lab: esc(p.name), n: p.deals,
+                    tip: `${p.deals} donnes avec ${p.name}`,
+                })), { wide: true, fill: '--c-series-mate' })
+                : '',
+            st.partners.length
+                ? '<p class="st-hint">En salon. En solo, votre partenaire est un bot.</p>'
+                : '<p class="st-hint">Vous n\'avez encore joué qu\'avec des bots. '
+                  + 'En <a href="/jouer/salon">salon</a>, votre partenaire apparaîtra ici.</p>',
+        ])
+        + card("Faits d'armes", [
+            arms.length
+                ? `<div class="st-chips">${arms.map(([k, v]) =>
+                    `<span class="st-chip">${k} <b class="num">${v}</b></span>`).join('')}</div>`
+                : '<p class="st-hint">Ni capot, ni belote, ni coinche pour l\'instant.</p>',
+        ]);
+}
+
+// ---- Le corps : comment vous jouez -----------------------------------------
+
+function renderMain(st) {
+    const t = st.takes || {};
+    const b = st.bidding || {};
+    const w = st.who_takes || {};
+    const tempo = st.tempo || {};
+    const trumps = (t.trumps || []).filter(x => x.n);
+
+    const results = card('Résultats', [
+        ciRow('donnes gagnées', st.won),
         st.margin && st.margin.n >= MIN_OBS
-            ? row('Écart moyen par donne',
-                `${st.margin.mean > 0 ? '+' : ''}${st.margin.mean}`,
-                `n = ${st.margin.n} · ±${st.margin.ci} · médiane ${st.margin.median}`)
+            ? stat(`${st.margin.mean > 0 ? '+' : ''}${st.margin.mean}`, 'écart moyen par donne',
+                `n = ${st.margin.n} · ±${st.margin.ci} · médiane ${st.margin.median}`,
+                st.margin.mean < 0 ? 'neg' : '', 'sm')
             : '',
         st.deals !== st.scored
-            ? `<p class="compte-hint">${st.deals - st.scored} donne(s) en attente de ` +
-              'calcul, exclues des taux ci-dessus.</p>'
+            ? `<p class="st-hint">${st.deals - st.scored} donne(s) en attente de calcul, `
+              + 'exclues des taux ci-dessus.</p>'
             : '',
-    ]));
+    ]);
 
-    // Qui prend : la dynamique la plus parlante de la page. Un joueur qui ne
-    // prend jamais et dont le partenaire prend tout ne joue pas le même jeu que
-    // celui qui prend une fois sur trois.
-    const w = st.who_takes || {};
-    out.push(section('Qui prend', [
-        w.n ? bars([
-            { key: 'me', label: 'Vous', n: w.me },
-            { key: 'partner', label: 'Votre partenaire', n: w.partner },
-            { key: 'opp', label: 'Les adversaires', n: w.opponents },
-        ]) : '',
-        w.n ? row('Sur les donnes contractées', w.n,
-            w.passed ? `${w.passed} donne(s) passée(s) en plus` : '') : '',
-    ]));
+    const who = card('Qui prend', [
+        w.n ? segbar([
+            { k: 'Vous', n: w.me, c: '--c-series-you' },
+            { k: 'Votre partenaire', n: w.partner, c: '--c-series-mate' },
+            { k: 'Les adversaires', n: w.opponents, c: '--c-series-rest' },
+        ]) : '<p class="st-hint">Aucune donne contractée pour l\'instant.</p>',
+        w.n ? `<p class="st-hint">Sur ${w.n} donnes contractées`
+            + (w.passed ? `, ${w.passed} passée${w.passed > 1 ? 's' : ''} en plus` : '')
+            + '. En solo, trois sièges sur quatre sont des bots : « mon camp a pris » '
+            + 'ne dit pas « j\'ai pris ».</p>' : '',
+    ]);
 
-    const t = st.takes || {};
-    const trumps = (t.trumps || []).filter(x => x.n);
-    out.push(section('Quand vous prenez', [
-        t.n ? row('Contrats pris', t.n,
-            `${t.per_100} pour 100 donnes · hauteur moyenne ${t.avg_value ?? '—'}`) : '',
-        pct('Contrats tenus', t.held, ' prises'),
-        trumps.length ? row('Atout préféré',
-            trumps.slice().sort((a, b) => b.n - a.n)[0].suit,
-            trumps.map(x => `${x.suit} ${x.n}`).join(' · ')) : '',
-        st.bidding && st.bidding.capots
-            ? row('Capots annoncés', st.bidding.capots, '') : '',
-    ]));
+    const taking = card('Quand vous prenez', [
+        t.n ? stat(t.n, 'contrats pris',
+            `${t.per_100} pour 100 donnes · hauteur moyenne ${t.avg_value ?? '—'}`, '', 'sm') : '',
+        ciRow('contrats tenus', t.held, ' prises'),
+        trumps.length ? '<h4 class="st-h4">Atout</h4>' + bars(trumps.map(x => ({
+            lab: x.suit, n: x.n,
+            cls: (x.suit === '♥' || x.suit === '♦') ? 'st-suit-r' : 'st-suit-b',
+            tip: `${x.n} contrat${x.n > 1 ? 's' : ''} pris à ${x.suit}`,
+        }))) : '',
+        b.capots ? stat(b.capots, 'capots annoncés', '', '', 'sm') : '',
+    ]);
 
-    const b = st.bidding || {};
-    out.push(section('À l\'enchère', [
-        pct('Vous passez', b.pass, ' décisions'),
+    const bidding = card('À l\'enchère & en défense', [
+        ciRow('vous passez', b.pass, ' décisions'),
         b.height_n >= MIN_OBS
-            ? row('Hauteur annoncée', b.avg_height,
-                `moyenne sur ${b.height_n} annonces`) : '',
-        // Le trio prises / hauteur / tenus se lit ensemble : un taux de
-        // contrats tenus se maximise en n'annonçant plus que 80.
-        (t.n >= MIN_OBS && b.height_n >= MIN_OBS)
-            ? '<p class="compte-hint">Un taux de contrats tenus très haut avec une ' +
-              'hauteur basse décrit surtout de la prudence — les deux se lisent ensemble.</p>'
+            ? stat(b.avg_height, 'hauteur annoncée', `moyenne sur ${b.height_n} annonces`, '', 'sm')
             : '',
-    ]));
+        ciRow('chutes infligées', st.defense, ' défenses'),
+        (t.n >= MIN_OBS && b.height_n >= MIN_OBS)
+            ? '<p class="st-hint">Un taux de contrats tenus très haut avec une hauteur '
+              + 'basse décrit surtout de la prudence — les deux se lisent ensemble.</p>'
+            : '',
+    ]);
 
-    out.push(section('Défense et faits d\'armes', [
-        pct('Chutes infligées', st.defense, ' défenses'),
-        st.capots_for ? row('Capots réalisés', st.capots_for, '') : '',
-        st.capots_against ? row('Capots subis', st.capots_against, '') : '',
-        st.belotes ? row('Belotes en main', st.belotes,
-            `sur ${st.deals} donnes`) : '',
-        st.coinches ? row('Coinches annoncées', st.coinches, '') : '',
-        st.surcoinches ? row('Surcoinches', st.surcoinches, '') : '',
-        st.contres_played ? row('Donnes contrées', st.contres_played,
-            'tous camps confondus') : '',
-    ]));
+    const pace = tempo.n >= MIN_OBS ? card('Tempo', [
+        stat(`${tempo.median} s`, 'temps par donne',
+            `médiane sur ${tempo.n} donnes en partie · ${tempo.p25}–${tempo.p75} s`
+            + (tempo.dropped ? ` · ${tempo.dropped} interruption${tempo.dropped > 1 ? 's' : ''} exclue${tempo.dropped > 1 ? 's' : ''}` : ''),
+            '', 'sm'),
+    ]) : '';
 
-    const partners = st.partners || [];
-    out.push(section('Vos partenaires', [
-        partners.length
-            ? partners.map(p => row(esc(p.name), p.deals, 'donnes ensemble')).join('')
-            : '<p class="compte-hint">Vous n\'avez encore joué qu\'avec des bots. ' +
-              'En <a href="/jouer/salon">salon</a>, votre partenaire apparaîtra ici.</p>',
-    ]));
-
-    const tempo = st.tempo || {};
-    if (tempo.n >= MIN_OBS) {
-        const dropped = tempo.dropped
-            ? ` · ${tempo.dropped} interruption${tempo.dropped > 1 ? 's' : ''} exclue${tempo.dropped > 1 ? 's' : ''}`
-            : '';
-        out.push(section('Tempo', [
-            row('Temps par donne', `${tempo.median} s`,
-                `médiane sur ${tempo.n} donnes en partie · ${tempo.p25}–${tempo.p75} s${dropped}`),
-        ]));
-    }
-
-    return `<div class="compte-stats-list">${out.filter(Boolean).join('')}</div>`;
+    return `<div class="st-duo">${results}${who}</div>`
+        + `<div class="st-duo">${taking}${bidding}</div>`
+        + '<section class="st-card" id="st-oracle-card">'
+        + '<h3 class="st-h">Face à l\'oracle</h3>'
+        + '<div id="st-oracle"><div class="an-loading">Chargement…</div></div></section>'
+        + pace;
 }
 
-// ---- La moitié payée -------------------------------------------------------
+// ---- Le bloc payé ----------------------------------------------------------
 
 function renderOracle(o) {
     if (!o || !o.total) {
-        return '<p class="compte-hint">Rien à analyser pour l\'instant : ' +
-            'jouez quelques donnes d\'abord.</p>';
+        return '<p class="st-hint">Rien à analyser pour l\'instant : jouez quelques donnes d\'abord.</p>';
     }
     const out = [];
     const job = o.job;
+    const cov = Math.round(100 * o.analysed / o.total);
 
-    // La couverture d'abord, toujours. Sans elle, un joueur qui n'a analysé
-    // qu'une poignée de donnes lirait une moyenne sans savoir sur quoi elle
-    // porte — et le choix des donnes analysées lui appartient.
-    const pctDone = Math.round(100 * o.analysed / o.total);
-    out.push(`<div class="cs-cover"><div class="cs-cover-bar">` +
-        `<span style="width:${pctDone}%"></span></div>` +
-        `<span class="cs-cover-txt">${o.analysed} / ${o.total} donnes analysées ` +
-        `(${pctDone} %)</span></div>`);
+    // La couverture d'abord, toujours : c'est le joueur qui choisit quand
+    // analyser, donc une moyenne calculée sur un dixième de ses donnes doit se
+    // lire comme telle.
+    out.push(`<div class="st-cover"><div class="st-cover-bar"><span style="width:${cov}%"></span></div>
+        <span class="st-n num">${o.analysed} / ${o.total} donnes analysées (${cov} %)</span></div>`);
 
     if (job && job.running) {
         const p = job.total ? Math.round(100 * job.done / job.total) : 0;
-        out.push(`<p class="compte-hint">Analyse en cours — ${job.done} / ${job.total} ` +
-            `(${p} %). Vous pouvez quitter la page, elle continue.</p>`);
+        out.push(`<p class="st-hint">Analyse en cours — ${job.done} / ${job.total} (${p} %). `
+            + 'Vous pouvez quitter la page, elle continue.</p>');
     } else if (o.pending > 0) {
-        out.push(`<button id="stats-analyse" class="compte-submit">` +
-            `Analyser mes ${o.pending} donne${o.pending > 1 ? 's' : ''} restante${o.pending > 1 ? 's' : ''}</button>`);
-        out.push('<p class="compte-hint">Chaque donne passe au solveur double-mort, ' +
-            'qui calcule le meilleur coup possible à chaque décision. Comptez ' +
-            'environ un quart de seconde par donne. Le résultat sert aussi à ' +
-            '<a href="/analyse/rejouer">Rejouer</a>, qui devient instantané.</p>');
+        out.push(`<button id="st-analyse" class="compte-submit">Analyser mes ${o.pending} `
+            + `donne${o.pending > 1 ? 's' : ''} restante${o.pending > 1 ? 's' : ''}</button>`);
+        out.push('<p class="st-hint">Chaque donne passe au solveur double-mort, qui rejoue '
+            + 'chaque décision en voyant les quatre mains. Comptez environ un quart de '
+            + 'seconde par donne. Le résultat sert aussi à '
+            + '<a href="/analyse/rejouer">Rejouer</a>, qui devient instantané.</p>');
     }
     if (job && !job.running && job.errors) {
-        out.push(`<p class="compte-hint compte-hint-warn">${job.errors} donne(s) ` +
-            'n\'ont pas pu être analysées.</p>');
+        out.push(`<p class="st-hint compte-hint-warn">${job.errors} donne(s) n'ont pas pu être analysées.</p>`);
     }
-
-    if (!o.decisions) {
-        return out.join('');
-    }
+    if (!o.decisions) return out.join('');
 
     const counts = o.counts || {};
-    const segments = CAT_ORDER
-        .map(k => ({ key: k, label: CAT_LABELS[k], n: counts[k] || 0 }))
+    const segs = CAT_ORDER.map((k, i) => ({ k: CAT_LABELS[k], n: counts[k] || 0, c: `--c-q${i + 1}` }))
         .filter(s => s.n);
 
-    out.push('<div class="compte-stats-list">');
-    out.push(row('Points perdus par décision', o.avg_cost,
-        `n = ${o.decisions} décisions${o.cost_ci ? ` · ±${o.cost_ci}` : ''}`));
-    out.push(pct('Décisions sans perte', o.clean, ' décisions'));
-    out.push(row('Coups sans choix', o.forced,
-        'une seule carte jouable — hors du calcul'));
+    // Pas de barre pour « points perdus » : une barre a besoin d'une échelle que
+    // le lecteur comprenne, et il n'y en a pas ici (perdre 2 points par décision,
+    // c'est beaucoup ou peu ?). Une barre à un seul item est en plus toujours
+    // pleine — elle aurait l'air d'un maximum atteint.
+    out.push('<div class="st-oracle-split">');
+    out.push('<div>' + ring(o.clean.pct, `${o.clean.pct} %`, 'décisions sans perte',
+        `n = ${o.clean.n} · IC95 ${o.clean.lo}–${o.clean.hi} %`) + '</div>');
+    out.push('<div>' + segbar(segs)
+        + stat(o.avg_cost, 'points perdus par décision',
+            `sur ${o.decisions} décisions${o.cost_ci ? ` · ±${o.cost_ci}` : ''}`, '', 'sm')
+        + `<p class="st-hint">${o.forced} coups n'offraient qu'une carte : ils sont `
+        + 'hors du calcul, sinon le taux gonflerait sans rien dire de vous.</p></div>');
     out.push('</div>');
-    out.push(bars(segments));
-    out.push('<p class="compte-hint">« Sans perte » veut dire que le solveur ne ' +
-        'valorise aucune autre carte plus haut — pas que vous avez joué sa carte ' +
-        'préférée : plus d\'une position sur deux a plusieurs cartes également ' +
-        'bonnes. Les coups forcés sont exclus, sinon le taux gonflerait d\'un ' +
-        'tiers sans rien dire de vous.</p>');
+    out.push('<p class="st-hint">« Sans perte » veut dire que le solveur ne valorise aucune '
+        + 'autre carte plus haut — pas que vous avez joué sa carte préférée : plus d\'une '
+        + 'position sur deux a plusieurs cartes également bonnes.</p>');
     return out.join('');
 }
 
 // ---- Chargement ------------------------------------------------------------
 
 async function loadOracle() {
-    const box = document.getElementById('stats-oracle');
+    const box = document.getElementById('st-oracle');
     if (!box) return null;
     let o = null;
     try {
@@ -267,25 +332,24 @@ async function loadOracle() {
         o = resp.ok ? await resp.json() : null;
         box.innerHTML = renderOracle(o);
     } catch {
-        box.innerHTML = '<div class="an-loading">Indisponible</div>';
+        box.innerHTML = '<p class="st-hint">Indisponible.</p>';
         return null;
     }
-    const btn = document.getElementById('stats-analyse');
+    const btn = document.getElementById('st-analyse');
     if (btn) {
         btn.addEventListener('click', async () => {
             btn.disabled = true;
             btn.textContent = 'Lancement…';
-            try {
-                await fetch(`${base()}api/me/oracle`, { method: 'POST' });
-            } catch { /* le sondage rattrapera */ }
+            try { await fetch(`${base()}api/me/oracle`, { method: 'POST' }); }
+            catch { /* le sondage rattrapera */ }
             startPolling();
         });
     }
     return o;
 }
 
-/** Sonder tant qu'un balayage tourne. Une seconde : le travail se compte en
- *  centaines de millisecondes par donne, et la page doit donner signe de vie. */
+/** Sonder tant qu'un balayage tourne : le travail se compte en centaines de
+ *  millisecondes par donne, et la page doit donner signe de vie. */
 function startPolling() {
     stopPolling();
     poller = setInterval(async () => {
@@ -301,24 +365,34 @@ function stopPolling() {
 
 export async function mount(container) {
     container.innerHTML = TEMPLATE;
-    const body = document.getElementById('stats-body');
+    const main = document.getElementById('st-main');
 
-    let resp;
+    let st, me;
     try {
-        resp = await fetch(`${base()}api/me/stats`);
+        const [rs, rm] = await Promise.all([
+            fetch(`${base()}api/me/stats`), fetch(`${base()}api/me`),
+        ]);
+        if (rs.status === 401) {
+            // Ces chiffres n'existent que rattachés à quelqu'un.
+            main.innerHTML = '<div class="history-empty">Ces statistiques sont celles de '
+                + 'votre compte — <a href="/compte">connectez-vous</a> pour les voir.</div>';
+            return;
+        }
+        st = await rs.json();
+        me = rm.ok ? await rm.json() : null;
     } catch {
-        body.innerHTML = '<div class="an-loading">Statistiques indisponibles</div>';
+        main.innerHTML = '<div class="an-loading">Statistiques indisponibles</div>';
         return;
     }
-    if (resp.status === 401) {
-        // Pas de compte, pas de stats : elles n'existent que rattachées à
-        // quelqu'un. On le dit et on propose la porte d'entrée.
-        body.innerHTML = '<div class="history-empty">Ces statistiques sont celles ' +
-            'de votre compte — <a href="/compte">connectez-vous</a> pour les voir.</div>';
-        document.getElementById('stats-oracle-card').classList.add('hidden');
+
+    if (!st || !st.deals) {
+        main.innerHTML = '<div class="history-empty">Aucune donne terminée pour l\'instant — '
+            + '<a href="/jouer/humain">jouez-en une !</a></div>';
         return;
     }
-    body.innerHTML = renderFree(await resp.json());
+
+    if (me && me.user) document.getElementById('st-rail').innerHTML = renderRail(me, st);
+    main.innerHTML = renderMain(st);
 
     const o = await loadOracle();
     if (o && o.job && o.job.running) startPolling();

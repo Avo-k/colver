@@ -3807,152 +3807,165 @@
 .cl-scroll .classement-table { width: 100%; min-width: 22rem; }
 
 
-/* ===== MES STATS (page /compte) ===== */
+/* ============================================================
+   MES STATS (/stats) — profil deux colonnes
+   ------------------------------------------------------------
+   Rail « qui vous êtes » à gauche, collant ; analyse « comment
+   vous jouez » à droite. Sous 900px le rail passe au-dessus et
+   tout s'empile — c'est le seul palier de la page.
+   ============================================================ */
 
-/* Trois colonnes : libellé, valeur, précision. La troisième porte le n et
-   l'intervalle — c'est elle qui empêche « 62 % » de se lire comme une mesure
-   quand il repose sur seize observations. Elle passe sous les deux autres au
-   téléphone plutôt que de disparaître. */
-.compte-stats-list { display: flex; flex-direction: column; }
-
-.cs-row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-areas: "label val" "hint hint";
-    gap: 0 var(--sp-3);
-    padding: var(--sp-2) 0;
-    border-bottom: 1px solid var(--c-border);
-    align-items: baseline;
-}
-.cs-row:last-child { border-bottom: none; }
-.cs-label { grid-area: label; color: var(--c-text-muted); font-size: var(--fs-sm); }
-.cs-val {
-    grid-area: val;
-    color: var(--c-text);
-    font-weight: var(--fw-semi);
-    font-variant-numeric: tabular-nums;
-}
-.cs-hint {
-    grid-area: hint;
-    color: var(--c-text-dim);
-    font-size: var(--fs-2xs);
-    font-variant-numeric: tabular-nums;
-}
-.cs-hint:empty { display: none; }
-
-@media (min-width: 560px) {
-    /* Assez large pour tout tenir sur une ligne : la précision cesse d'être
-       reléguée sous la valeur qu'elle qualifie. */
-    .cs-row {
-        grid-template-columns: 1fr auto minmax(11rem, auto);
-        grid-template-areas: "label val hint";
-    }
-    .cs-hint { text-align: right; }
-}
-
-.stats-page { max-width: 640px; }
-.compte-stats-list + .compte-section-title,
-.cs-legends + .compte-section-title { margin-top: var(--sp-4); }
-
-/* --- Barres de répartition ---
-   Une proportion se lit mieux en longueur qu'en colonne de pourcentages ;
-   `flex: n` fait toute la mise à l'échelle, sans calcul en JS. */
-.cs-bar {
-    display: flex;
-    height: 0.75rem;
-    border-radius: var(--r-sm);
-    overflow: hidden;
-    margin: var(--sp-2) 0;
-    background: var(--c-surface-2);
-}
-.cs-bar-seg { display: block; min-width: 2px; }
-
-.cs-legends {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--sp-2) var(--sp-3);
-    font-size: var(--fs-2xs);
-    color: var(--c-text-muted);
-    margin-bottom: var(--sp-3);
-}
-.cs-legend { display: inline-flex; align-items: center; gap: 0.35em; }
-.cs-legend b { color: var(--c-text); font-variant-numeric: tabular-nums; }
-.cs-legend i {
-    width: 0.6em; height: 0.6em; border-radius: 2px; display: inline-block;
-}
-
-/* Qui prend : vous / partenaire / adversaires. L'accent est sur « vous »,
-   c'est la part que le joueur vient lire. */
-.cs-bar-me, .cs-legend i.cs-bar-me { background: var(--c-accent); }
-.cs-bar-partner, .cs-legend i.cs-bar-partner { background: #6aa9d8; }
-.cs-bar-opp, .cs-legend i.cs-bar-opp { background: var(--c-surface-3); }
-
-/* Qualité des coups : un dégradé du vert au rouge, dans l'ordre de gravité.
-   Mêmes teintes que les catégories de Rejouer, pour qu'un joueur qui passe de
-   l'une à l'autre reconnaisse la même échelle. */
-.cs-bar-parfait, .cs-legend i.cs-bar-parfait { background: #81c784; }
-.cs-bar-bon, .cs-legend i.cs-bar-bon { background: #aed581; }
-.cs-bar-imprecision, .cs-legend i.cs-bar-imprecision { background: #ffd54f; }
-.cs-bar-erreur, .cs-legend i.cs-bar-erreur { background: #ff8a65; }
-.cs-bar-faute, .cs-legend i.cs-bar-faute { background: var(--c-danger-txt); }
-
-/* --- Couverture d'analyse ---
-   Toujours en tête du bloc oracle : sans elle, une moyenne calculée sur un
-   dixième des donnes se lit comme une mesure de tout le jeu. */
-.cs-cover { margin-bottom: var(--sp-3); }
-.cs-cover-bar {
-    height: 0.4rem;
-    background: var(--c-surface-2);
-    border-radius: var(--r-sm);
-    overflow: hidden;
-}
-.cs-cover-bar span {
-    display: block;
-    height: 100%;
-    background: var(--c-accent);
-}
-.cs-cover-txt {
-    display: block;
-    font-size: var(--fs-2xs);
-    color: var(--c-text-muted);
-    margin-top: var(--sp-1);
-    font-variant-numeric: tabular-nums;
-}
-
-.classement-table {
+.st-page {
+    /* `width: 100%` en plus de `max-width` : sans lui, un enfant plus large que
+       la page (une barre, un calendrier) fait remonter sa largeur intrinsèque
+       jusqu'ici. `overflow-x` ne coupe pas cette propagation — seule une
+       largeur *définie* le fait. Même piège que `#aj-wrap` et `.compte-page`. */
     width: 100%;
-    border-collapse: collapse;
-    font-size: var(--fs-sm);
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--sp-6) var(--sp-4);
+    display: grid;
+    gap: var(--sp-4);
+    grid-template-columns: 1fr;
+    align-items: start;
+    overflow-y: auto;
+    max-height: 100%;
 }
-.classement-table th {
-    color: #888;
-    font-size: var(--fs-2xs);
+@media (min-width: 900px) {
+    .st-page { grid-template-columns: 300px 1fr; }
+    /* Le rail reste à l'écran pendant qu'on parcourt l'analyse : c'est tout
+       l'intérêt de la forme. `align-self: start` est indispensable — un item
+       de grille étiré sur toute la hauteur ne peut pas coller. */
+    .st-rail { position: sticky; top: var(--sp-4); align-self: start; }
+}
+
+.st-rail, .st-main { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+
+/* Deux cartes côte à côte quand la place le permet. */
+.st-duo { display: grid; gap: var(--sp-4); grid-template-columns: 1fr; }
+@media (min-width: 1180px) { .st-duo { grid-template-columns: 1fr 1fr; } }
+
+.st-card {
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-lg);
+    padding: var(--sp-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    min-width: 0;
+}
+.st-h, .st-h4 {
+    margin: 0;
+    font-size: var(--fs-xs);
+    font-weight: var(--fw-semi);
+    color: var(--c-text-muted);
     text-transform: uppercase;
-    letter-spacing: 1px;
-    text-align: left;
-    padding: 4px 8px;
-    border-bottom: 1px solid color-mix(in srgb, var(--c-accent) 25%, transparent);
+    letter-spacing: var(--tracking-caps);
 }
-.classement-table td {
-    padding: 6px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    color: #ccc;
+.st-h4 { margin-top: var(--sp-1); }
+.st-hint { margin: 0; font-size: var(--fs-2xs); color: var(--c-text-dim); line-height: var(--lh-snug); }
+
+/* ---------- Identité ---------- */
+.st-card-id { gap: var(--sp-3); }
+.st-id { display: flex; flex-direction: column; gap: var(--sp-2); }
+.st-name { font-size: var(--fs-xl); font-weight: var(--fw-bold); letter-spacing: -0.01em; }
+.st-since { font-size: var(--fs-2xs); color: var(--c-text-muted); }
+.st-since b { color: var(--c-accent); font-size: var(--fs-sm); }
+.st-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); }
+
+/* ---------- Chiffre ---------- */
+.st-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.st-v { font-size: var(--fs-2xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: -0.02em; }
+.st-v.sm { font-size: var(--fs-xl); }
+.st-v.gold { color: var(--c-accent); }
+.st-v.neg { color: var(--c-danger-txt); }
+.st-k { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.st-n { font-size: var(--fs-2xs); color: var(--c-text-dim); }
+
+/* ---------- Intervalle de confiance, dessiné ----------
+   La barre EST la précision : à n = 20, l'empan couvre la moitié de l'échelle
+   et le chiffre se lit pour ce qu'il vaut. Une ligne de texte ne fait pas
+   passer ça. */
+.st-ci { height: 4px; border-radius: 2px; background: var(--c-surface-2); position: relative; margin: var(--sp-1) 0; }
+.st-ci-span { position: absolute; top: 0; bottom: 0; background: var(--c-accent-a30); border-radius: 2px; }
+.st-ci-dot {
+    position: absolute; top: -2px; width: 8px; height: 8px; border-radius: var(--r-full);
+    background: var(--c-accent); transform: translateX(-50%);
+    box-shadow: 0 0 0 2px var(--c-bg);
 }
-.classement-table .cl-right { text-align: right; }
-.cl-rank { color: #777; font-family: monospace; width: 2em; }
-.cl-elo { font-family: monospace; font-weight: 700; color: #e0e0e0; }
-.cl-games { font-family: monospace; color: #888; }
-.cl-bot .cl-name { color: #9fa8da; }
-.cl-human .cl-name { color: #e0e0e0; font-weight: 600; }
-.cl-me { background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
-.cl-me .cl-name, .cl-me .cl-elo { color: var(--c-accent); }
-.cl-you { color: #997c22; font-size: var(--fs-2xs); font-weight: 400; }
-.classement-table tr:first-child + tr .cl-rank { color: var(--c-accent); font-weight: 800; }
 
-.compte-elo { color: var(--c-accent); }
+/* ---------- Barre segmentée ----------
+   Le `gap` de 2px sépare les segments par la surface, pas par un trait : deux
+   fills adjacents se lisent sinon comme un seul. */
+.st-bar { display: flex; height: 12px; border-radius: var(--r-sm); overflow: hidden; background: var(--c-surface-2); gap: 2px; }
+.st-bar span { display: block; min-width: 3px; }
+.st-legend { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-4); font-size: var(--fs-2xs); color: var(--c-text-muted); }
+.st-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; margin-right: 0.4em; vertical-align: -1px; }
+.st-legend b { color: var(--c-text); }
 
-/* `.history-elo-delta` a vécu ici : une donne ne porte plus de variation d'Elo
-   depuis que l'unité notée est la partie (migration v14). */
+/* ---------- Barres par catégorie ---------- */
+.st-rows { display: flex; flex-direction: column; gap: var(--sp-2); }
+.st-row { display: grid; grid-template-columns: 2.2rem 1fr 2.2rem; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+/* `wide` : assez pour « Points perdus » — la version étroite le tronquait. */
+.st-row.wide { grid-template-columns: 7.5rem 1fr 3rem; }
+.st-row-lab { color: var(--c-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-track { height: 8px; background: var(--c-surface-2); border-radius: var(--r-sm); overflow: hidden; }
+.st-fill { display: block; height: 100%; border-radius: var(--r-sm); }
+.st-row-val { text-align: right; color: var(--c-text); font-variant-numeric: tabular-nums; }
+.st-suit-r { color: var(--c-suit-red); }
+.st-suit-b { color: var(--c-suit-black); }
+
+/* ---------- Calendrier d'activité ----------
+   `max-content` sur l'enveloppe : sans lui la légende « moins / plus » part se
+   coller au bord de la carte, à un demi-écran du calendrier qu'elle légende. */
+.st-heat-wrap { max-width: max-content; }
+.st-heat { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 2px; }
+.st-heat-col { display: flex; flex-direction: column; gap: 3px; }
+.st-cell { width: 15px; height: 15px; border-radius: 3px; background: var(--c-surface-2); display: block; }
+.st-cell[data-l="1"] { background: var(--c-accent-a30); }
+.st-cell[data-l="2"] { background: color-mix(in srgb, var(--c-accent) 50%, transparent); }
+.st-cell[data-l="3"] { background: color-mix(in srgb, var(--c-accent) 75%, transparent); }
+.st-cell[data-l="4"] { background: var(--c-accent); }
+/* Un jour à venir n'est pas un jour sans donne : il ne doit pas se lire comme
+   un trou d'assiduité. */
+.st-cell.void { background: transparent; }
+/* `flex-wrap` : dans le rail de 300px, la ligne « 12 dernières semaines » +
+   l'échelle dépasse la largeur du calendrier et se cassait au milieu d'un mot.
+   Elle passe désormais à la ligne entière plutôt que de se déchirer. */
+.st-heat-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); margin-top: var(--sp-1);
+    font-size: var(--fs-2xs); color: var(--c-text-dim);
+}
+.st-heat-foot > span { white-space: nowrap; }
+.st-heat-key { display: flex; align-items: center; gap: 3px; }
+.st-heat-key .st-cell { width: 10px; height: 10px; }
+
+/* ---------- Pastilles ---------- */
+.st-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.st-chip {
+    display: flex; align-items: baseline; gap: var(--sp-1);
+    padding: var(--sp-1) var(--sp-2); border-radius: var(--r-full);
+    background: var(--c-surface-2); border: 1px solid var(--c-border);
+    font-size: var(--fs-2xs); color: var(--c-text-muted);
+}
+.st-chip b { color: var(--c-text); font-size: var(--fs-xs); }
+
+/* ---------- Anneau ---------- */
+.st-ring { display: flex; align-items: center; gap: var(--sp-4); }
+.st-ring svg { flex: 0 0 auto; }
+.st-ring-v { font-size: var(--fs-xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); }
+.st-ring-k { font-size: var(--fs-xs); color: var(--c-text-muted); }
+.st-ring-n { font-size: var(--fs-2xs); color: var(--c-text-dim); }
+
+/* ---------- Bloc oracle ---------- */
+.st-cover { display: flex; flex-direction: column; gap: var(--sp-1); }
+.st-cover-bar { height: 4px; border-radius: 2px; background: var(--c-surface-2); overflow: hidden; }
+.st-cover-bar span { display: block; height: 100%; background: var(--c-accent); }
+.st-oracle-split { display: grid; gap: var(--sp-4); grid-template-columns: 1fr; align-items: start; }
+@media (min-width: 720px) { .st-oracle-split { grid-template-columns: auto 1fr; } }
+.st-oracle-split > div { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 
 /* ===== REPLAY — navigable moves list ===== */
 

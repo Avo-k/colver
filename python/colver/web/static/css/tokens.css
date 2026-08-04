@@ -70,6 +70,33 @@
     --c-warn:        #e0a13a;
     --c-info:        #5b9ff5;
 
+    /* ---------- Séries de graphique (page Mes stats) ----------
+       Deux séries seulement, et un « reste » neutre. Validées contre le fond
+       #14161a : ΔE 32 en vision normale, 29,6 en protanopie, 22,2 en
+       tritanopie — l'écart tient pour tout le monde.
+
+       ⚠️ **Ne pas y mettre --c-team-ns et --c-team-ew.** Le bleu et le violet
+       des équipes s'opposent très bien sur la table, où la *position* porte
+       l'information ; côte à côte dans une barre ils sont à ΔE 2,7 en
+       deutéranopie, donc indiscernables. Le troisième segment est un gris
+       récessif assumé : ce n'est pas une troisième identité, c'est « le
+       reste ». */
+    --c-series-you:  #c08a12;
+    --c-series-mate: #2f80ed;
+    --c-series-rest: #3f444d;
+
+    /* ---------- Gravité d'un coup (parfait → faute) ----------
+       Rampe séquentielle, pas catégorielle : sa **luminosité décroît
+       strictement** (OKLCH L 0,659 → 0,513), donc l'ordre survit au niveau de
+       gris et à toute forme de daltonisme. C'est la monotonie qui la valide,
+       pas la séparation des teintes deux à deux. Mêmes cinq paliers que les
+       catégories de Rejouer. */
+    --c-q1: #60a46f;   /* parfait     */
+    --c-q2: #908a3c;   /* bon         */
+    --c-q3: #a56f1c;   /* imprécision */
+    --c-q4: #ae532d;   /* erreur      */
+    --c-q5: #aa3c3f;   /* faute       */
+
     /* ---------- Contrôles ---------- */
     --c-field-bg:     #1a1c20;
     --c-field-border: #3a3d44;
