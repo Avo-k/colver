@@ -405,8 +405,13 @@ data/
   belief/             Belief net training data
     belief_train_500k.bin  (COLVBL01, 20GB, play-phase samples)
     bid_belief_500k.bin    (COLVBB01, 6.3GB, 14.2M bid-phase samples from bid_v2)
-  training/           Game replay / value data
+  training/           Game replay / value data (COLVGM01 : dealer + 4 mains + actions, 58 o/donne)
     games_500k.bin       500K full game replays (28MB)
+    playgen_games_9M.bin 9M donnes jouées par DouDou50 — le corpus playgen actuel
+    isdd_games_v1.bin    43 076 donnes jouées par **IS-DD** (bid v6 + mondes playgen, 40 mondes/décision,
+                         2026-08-04) : enchère réelle, 1,4 M de prédictions d'enchère, 0 irrejouable.
+                         Un ordre de grandeur plus cher par donne que DouDou50, et le seul corpus de
+                         jeu fort — cf. docs/data_gen/isdd_games.md
     value_train.bin      Value net training data (171MB)
   distill/            Bid distillation analysis
     bid_distill.csv      7.2M rows of bid NN Q-values + features (1GB)
