@@ -197,6 +197,31 @@ franchement limitée par le GPU, à 60 les deux ressources se rapprochent. C'est
 le signe que l'optimisation a fait son travail — au départ ce rapport était de
 93/7.
 
+### Un calendrier de mondes par stade — 1,24×, et une erreur à ne pas refaire
+
+Le besoin de mondes n'est pas uniforme : `isdd_dets_by_stage` place tout le
+regret au-dessus de 0,10 point DD à **8-6 cartes restantes**, et **zéro en
+dessous de 3 cartes à n'importe quel budget**. Un monde tiré en finale n'achète
+rien. D'où `--dets-schedule 40,40,40,30,20,15,15` (de 8 cartes à 2) :
+
+| réglage | mondes/donne | donnes/s |
+|---|---|---|
+| plat 40 | 280 | 2,02 |
+| `60,60,60,30,30,20,20` | **280** | 1,63 |
+| `40,40,40,30,20,15,15` | 200 | **2,50** |
+
+⚠️ **La ligne du milieu est le piège, et j'y suis tombé.** Le raisonnement
+« même total de mondes, donc même coût, donc redistribuer vers l'entame est
+gratuit » est **faux** : un monde à 8 cartes restantes demande 24 cartes
+cachées au sampler, soit 48 pas de décodage, contre 6 cartes et 12 pas à deux
+cartes restantes. Un monde d'entame coûte donc ~4× un monde de finale sur le
+GPU — et bien davantage encore au solveur. À total égal, le calendrier montant
+est **plus lent de 20 %**, pas neutre.
+
+Le sens qui paie est donc le sens **décroissant**, et il paie deux fois : il
+coupe les mondes là où ils sont à la fois les moins utiles et… les moins chers.
+Le gain vient surtout du nombre, pas de la redistribution.
+
 ⚠️ **La VRAM libre est un paramètre caché de ces mesures.** Une série entière a
 été mesurée 30 % trop lente parce que trois sidecars de test oisifs occupaient
 21 Go des 24 de la carte : le sidecar actif n'a jamais planté, il a juste

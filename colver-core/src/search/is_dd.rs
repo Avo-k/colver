@@ -133,6 +133,30 @@ fn world_belote(hands: &[crate::card::CardSet; 4], played_by: &[u32; 4], trump: 
 pub struct IsDdConfig {
     /// Number of determinized worlds to sample (default 20).
     pub determinizations: u32,
+    /// Mondes par décision **selon les cartes restantes** (index 1..=8), en
+    /// mode compte. `None` = compte fixe, le comportement historique.
+    ///
+    /// Un compte plat dépense pareil partout, alors que le besoin ne l'est pas :
+    /// `isdd_dets_by_stage` place tout le regret au-dessus de 0,10 point DD à
+    /// 8-6 cartes restantes, et **zéro en dessous de 3 cartes, à n'importe quel
+    /// budget**. Un monde tiré en finale n'achète donc rien.
+    ///
+    /// ⚠️ **Un total constant ne fait pas un coût constant** — c'est l'erreur
+    /// qu'il faut ne pas refaire ici. Un monde à 8 cartes restantes demande au
+    /// sampler 24 cartes cachées, soit 48 pas de décodage ; un monde à 2 cartes
+    /// en demande 6, soit 12 pas. Le premier coûte donc ~4× le second sur le
+    /// GPU, et bien davantage encore au solveur DD. Mesuré : le calendrier
+    /// `60,60,60,30,30,20,20`, qui dépense exactement les mêmes 280 mondes
+    /// qu'un plat à 40, tourne à **1,90 et 1,35 donnes/s contre 2,15 et 2,34** —
+    /// il est plus *lent*, pas gratuit.
+    ///
+    /// Le sens qui paie est donc le sens **décroissant**, et il paie deux fois :
+    /// `40,40,40,30,20,15,15` garde 40 mondes là où vit le regret, coupe là où
+    /// il est nul, et rend **2,50 contre 2,02 donnes/s — 1,24×**.
+    ///
+    /// Change l'agent, donc se déclare : `[play] dets_schedule` ou
+    /// `--dets-schedule`.
+    pub det_schedule: Option<[u32; 9]>,
     /// Whether to use soft (probabilistic) heuristic inference from play (dominance,
     /// "ne pisse pas", etc.) in addition to hard constraints. **Off by default.**
     pub use_soft_inference: bool,
@@ -208,6 +232,7 @@ impl Default for IsDdConfig {
     fn default() -> Self {
         IsDdConfig {
             determinizations: 20,
+            det_schedule: None,
             // All soft beliefs OFF by default. Hard constraints are facts, always applied.
             use_soft_inference: false,
             time_limit_ms: None,
@@ -444,6 +469,17 @@ pub struct IsDdSearch {
     /// réduit le repli local en fin de recherche.
     source_fill: f64,
     tt_buf: crate::solver::TtBuf,
+}
+
+impl IsDdConfig {
+    /// Mondes visés à cette position, en mode compte.
+    #[inline]
+    pub fn dets_for(&self, cards_left: u32) -> u32 {
+        match &self.det_schedule {
+            Some(s) => s[(cards_left as usize).min(8)],
+            None => self.determinizations,
+        }
+    }
 }
 
 /// Poids de la dernière mesure dans la moyenne mobile de latence.
@@ -1093,6 +1129,9 @@ impl IsDdSearch {
 
         // Scale time budget by cards remaining
         let cards_left = card_count(state.hands[observer as usize]);
+        // Mondes visés ici : un compte plat, ou l'échelon du calendrier
+        // correspondant au stade de la donne (cf. `IsDdConfig::det_schedule`).
+        let det_target = config.dets_for(cards_left);
         let deadline = config.time_limit_ms.map(|ms| {
             let scaled_ms = (ms as u64 * cards_left as u64) / 8;
             Instant::now() + Duration::from_millis(scaled_ms.max(1))
@@ -1143,7 +1182,7 @@ impl IsDdSearch {
                 if config.max_worlds.is_some_and(|m| successful_dets >= m) {
                     break;
                 }
-            } else if det_count >= config.determinizations {
+            } else if det_count >= det_target {
                 break;
             }
 
@@ -1151,7 +1190,7 @@ impl IsDdSearch {
             let remaining = if deadline.is_some() {
                 chunk_size
             } else {
-                chunk_size.min((config.determinizations - det_count) as usize)
+                chunk_size.min((det_target - det_count) as usize)
             };
 
             // --- Refill from the world source when the queue cannot cover the
@@ -1182,7 +1221,7 @@ impl IsDdSearch {
                         let mut want = if deadline.is_some() {
                             config.world_batch.max(remaining)
                         } else {
-                            ((config.determinizations - det_count) as usize).max(remaining)
+                            ((det_target - det_count) as usize).max(remaining)
                         };
                         // Ne pas commander plus que le plafond ne laisse résoudre.
                         // Sans ça le plafond n'économise que du CPU : on

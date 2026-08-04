@@ -54,6 +54,8 @@ struct Args {
     bot: String,
     deals: usize,
     dets: Option<u32>,
+    /// `"60,60,60,30,30,20,20"` — mondes par décision de 8 cartes restantes à 2.
+    dets_schedule: Option<String>,
     threads: usize,
     out: Option<String>,
     url: Option<String>,
@@ -77,6 +79,7 @@ fn parse_args() -> Args {
         bot: String::from("arena/bots/gen_isdd.toml"),
         deals: 100,
         dets: None,
+        dets_schedule: None,
         threads: 0,
         out: None,
         url: None,
@@ -97,6 +100,7 @@ fn parse_args() -> Args {
             "--bot" => { a.bot = next(i); i += 2 }
             "--deals" => { a.deals = next(i).parse().unwrap(); i += 2 }
             "--dets" => { a.dets = Some(next(i).parse().unwrap()); i += 2 }
+            "--dets-schedule" => { a.dets_schedule = Some(next(i)); i += 2 }
             "--threads" => { a.threads = next(i).parse().unwrap(); i += 2 }
             "--out" => { a.out = Some(next(i)); i += 2 }
             "--url" => { a.url = Some(next(i)); i += 2 }
@@ -202,6 +206,15 @@ fn main() {
         spec.play.determinizations = d;
         spec.play.time_ms = 0; // mode compte : D mondes exactement, quel qu'en soit le temps
     }
+    if let Some(sched) = &args.dets_schedule {
+        spec.play.det_schedule = Some(
+            colver_core::agent::spec::parse_det_schedule(sched).unwrap_or_else(|e| {
+                eprintln!("--dets-schedule : {e}");
+                std::process::exit(2);
+            }),
+        );
+        spec.play.time_ms = 0;
+    }
     if let Some(u) = &args.url {
         spec.worlds.url = Some(u.clone());
     }
@@ -213,7 +226,7 @@ fn main() {
     eprintln!(
         "gen_games_isdd : bot={} dets={} threads={} donnes={} mode={}",
         spec.label(),
-        spec.play.determinizations,
+        args.dets_schedule.clone().unwrap_or_else(|| spec.play.determinizations.to_string()),
         args.threads,
         args.deals,
         if args.match_mode { "parties 2000" } else { "donnes indépendantes" },

@@ -115,6 +115,10 @@ pub struct PlaySpec {
     /// `determinizations` worlds.
     pub time_ms: u32,
     pub determinizations: u32,
+    /// Mondes par décision selon les cartes restantes (index 1..=8), en mode
+    /// compte. TOML : `dets_schedule = "60,60,60,30,30,20,20"`, de 8 cartes
+    /// restantes à 2. Voir [`crate::is_dd::IsDdConfig::det_schedule`].
+    pub det_schedule: Option<[u32; 9]>,
     pub oracle_iters: u32,
     /// `dmc_then_isdd`: trick index at which IS-DD takes over.
     pub switch_at: u8,
@@ -143,6 +147,7 @@ impl Default for PlaySpec {
             residual: false,
             time_ms: 0,
             determinizations: 20,
+            det_schedule: None,
             oracle_iters: 2000,
             switch_at: 5,
             early_termination: None,
@@ -159,6 +164,33 @@ impl Default for PlaySpec {
             parallel: true,
         }
     }
+}
+
+/// `"60,60,60,30,30,20,20"` → un tableau indexé par cartes restantes.
+///
+/// La liste se lit **de 8 cartes restantes vers 1**, sens de lecture d'une
+/// donne. L'index 0 n'est jamais consulté (zéro carte = pas de décision), et
+/// une liste plus courte que 8 reconduit sa dernière valeur — écrire les
+/// échelons qui comptent suffit, les finales n'en ont pas besoin.
+pub fn parse_det_schedule(s: &str) -> Result<[u32; 9], String> {
+    let vals: Vec<u32> = s
+        .split(',')
+        .map(|t| t.trim().parse::<u32>().map_err(|_| format!("« {} » n'est pas un entier", t.trim())))
+        .collect::<Result<_, _>>()?;
+    if vals.is_empty() {
+        return Err("liste vide".into());
+    }
+    if vals.len() > 8 {
+        return Err(format!("{} valeurs pour 8 échelons au plus", vals.len()));
+    }
+    if vals.iter().any(|&v| v == 0) {
+        return Err("un échelon à zéro ne chercherait aucun monde".into());
+    }
+    let mut out = [0u32; 9];
+    for (i, cards) in (1..=8u32).rev().enumerate() {
+        out[cards as usize] = *vals.get(i).unwrap_or_else(|| vals.last().unwrap());
+    }
+    Ok(out)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -276,6 +308,11 @@ impl AgentSpec {
                 ("play", "residual") => spec.play.residual = flag(),
                 ("play", "time_ms") => spec.play.time_ms = int(0),
                 ("play", "determinizations") => spec.play.determinizations = int(20),
+                ("play", "dets_schedule") => {
+                    spec.play.det_schedule = Some(parse_det_schedule(val).map_err(|e| {
+                        AgentError::Config(format!("play.dets_schedule: {e}"))
+                    })?);
+                }
                 ("play", "oracle_iters") => spec.play.oracle_iters = int(2000),
                 ("play", "switch_at") => spec.play.switch_at = int(5) as u8,
                 ("play", "early_termination") => spec.play.early_termination = Some(flag()),
@@ -408,6 +445,7 @@ impl AgentSpec {
     fn is_dd_config(&self) -> IsDdConfig {
         let mut cfg = IsDdConfig {
             determinizations: self.play.determinizations,
+            det_schedule: self.play.det_schedule,
             // A zero budget means "count mode": solve exactly N worlds however
             // long it takes. That is what evaluations want; production sets a
             // clock instead.
@@ -702,5 +740,39 @@ mod tests {
         assert!(AgentSpec::from_toml_str("[worlds]\nsource = \"magic\"\n").is_err());
         let spec = AgentSpec::from_toml_str("[play]\nmethod = \"telepathy\"\n").unwrap();
         assert!(spec.build(0).is_err());
+    }
+}
+
+#[cfg(test)]
+mod det_schedule_tests {
+    use super::parse_det_schedule;
+
+    /// La liste se lit de 8 cartes restantes vers 1, et une liste courte
+    /// reconduit sa dernière valeur — on n'écrit que les échelons qui comptent.
+    #[test]
+    fn schedule_reads_from_eight_cards_down() {
+        let s = parse_det_schedule("60,60,60,30,30,20,20").unwrap();
+        assert_eq!(s[8], 60, "entame");
+        assert_eq!(s[6], 60);
+        assert_eq!(s[5], 30);
+        assert_eq!(s[2], 20);
+        assert_eq!(s[1], 20, "la dernière valeur se reconduit jusqu'à 1 carte");
+    }
+
+    /// À total constant, un calendrier ne change que la répartition : c'est
+    /// l'argument qui justifie de l'offrir, il doit rester vérifiable.
+    #[test]
+    fn the_reference_schedule_costs_the_same_as_a_flat_forty() {
+        let s = parse_det_schedule("60,60,60,30,30,20,20").unwrap();
+        let total: u32 = (2..=8).map(|c| s[c]).sum();
+        assert_eq!(total, 7 * 40, "280 mondes, comme un plat à 40 sur 7 échelons");
+    }
+
+    #[test]
+    fn a_broken_schedule_is_a_config_error() {
+        assert!(parse_det_schedule("").is_err());
+        assert!(parse_det_schedule("60,x").is_err());
+        assert!(parse_det_schedule("60,0,20").is_err(), "un échelon nul ne cherche rien");
+        assert!(parse_det_schedule("1,2,3,4,5,6,7,8,9").is_err(), "9 échelons pour 8 stades");
     }
 }
