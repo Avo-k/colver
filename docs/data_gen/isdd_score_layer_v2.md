@@ -624,6 +624,47 @@ une même reward** — et il arriverait ici par omission plutôt que par choix.
 celui-là. Aucune modification du trainer, et le décompte devient vérifiable — le pool et
 la couche doivent annoncer le même nombre de donnes.
 
+#### ⚠️⚠️ Tronquer ne suffit pas : `--pool-size` est obligatoire
+
+Vérifié à blanc le 2026-08-05, et c'est pire que ce qui précède.
+`DealPool::load_or_generate(path, n, …)` **regénère** dès que le fichier contient moins
+de `n` donnes, et `--pool-size` vaut **1 000 000 par défaut**. Donner un pool tronqué à
+3 013 donnes sans toucher ce drapeau produit :
+
+```
+  Pool has 3013 deals but 1000000 requested, generating more...
+  --- Chunk 1 : generating 500000 deals (3013/1000000 total) ---
+```
+
+…c'est-à-dire **997 000 donnes fraîches ajoutées au fichier tronqué**, puis un
+entraînement dont 99,7 % des épisodes retombent sur `dd_pts`. La troncature est annulée
+en silence, et le fichier d'entrée est modifié au passage.
+
+#### La recette validée de bout en bout
+
+```bash
+N=$(python3 -c "import struct;d=open('data/deals/scores_isdd_v2.sc','rb').read();\
+nl=struct.unpack('<H',d[8:10])[0];print(struct.unpack('<I',d[10+nl:14+nl])[0])")
+uv run python scripts/analysis/truncate_pool.py data/deals/base_5M.bin "$N" "data/deals/base_$N.bin"
+
+./target/release/train_bid_nn --num-envs 256 --hidden 512 --layers 3 \
+  --pool-size "$N" --pool-file "data/deals/base_$N.bin" \
+  --scores data/deals/scores_isdd_v2.sc \
+  --reward real --score-aware --sa-features-v3 --canonical --match-sim \
+  --reward-clip 1.0 ...   # le reste comme scripts/training/v6_isdd.sh
+```
+
+Le contrôle qui dit que c'est bon, à lire dans les vingt premières lignes du log :
+
+```
+  Loaded 3013 deals in 0.0s                      ← PAS de « generating more »
+  Activated score layer 'isdd_v2' (3523 deals)
+  Canonical suit ordering: obs, mask and stored actions in canonical space
+```
+
+`--canonical` est le seul changement d'architecture de v7 (§ bid_v7_plan) : les six
+flottants faits main ont été retirés, donc **v6 lui-même est le témoin à budget égal**.
+
 ## 10. Ce qui n'est pas décidé — trois mesures d'abord
 
 | | quoi | coût | ce qu'elle décide |
