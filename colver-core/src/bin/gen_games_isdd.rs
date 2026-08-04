@@ -116,14 +116,44 @@ fn parse_args() -> Args {
                     .and_then(|p| argv.get(p + 1))
                     .cloned()
                     .unwrap_or_else(|| format!("{prefix}.bin"));
+                // Tolérant aux trous, comme le rassemblage interne : un éclat
+                // manquant au milieu (écriture ratée) ne doit pas faire
+                // silencieusement abandonner tous les suivants. S'arrêter au
+                // premier trou et rendre « 0 donne » était le même travail avec
+                // la politique inverse.
                 let mut all: Vec<GameReplay> = Vec::new();
-                for n in 0.. {
+                let (mut found, mut run, mut last) = (0usize, 0usize, 0usize);
+                let mut missing: Vec<usize> = Vec::new();
+                for n in 0..10_000 {
                     let p = format!("{prefix}.{n:04}");
                     match GameReplay::load_all(&p) {
-                        Ok(mut r) => all.append(&mut r),
-                        Err(_) => break,
+                        Ok(mut r) => {
+                            found += 1;
+                            last = n;
+                            run = 0;
+                            all.append(&mut r);
+                        }
+                        Err(_) => {
+                            missing.push(n);
+                            run += 1;
+                            // 64 index absents d'affilée : la série est finie.
+                            if run > 64 {
+                                break;
+                            }
+                        }
                     }
                 }
+                // Seuls les trous *avant* le dernier éclat lu en sont : la
+                // queue de la sonde n'est pas un trou, c'est la fin de la série.
+                let holes: Vec<usize> = missing.into_iter().filter(|&n| n < last).collect();
+                if !holes.is_empty() {
+                    eprintln!(
+                        "⚠️  {} éclat(s) manquant(s) au milieu de la série : {:?}",
+                        holes.len(),
+                        &holes[..holes.len().min(10)]
+                    );
+                }
+                println!("{found} éclat(s) lus");
                 let bad = verify(&all);
                 println!("{} donnes rassemblées, {bad} irrejouables", all.len());
                 // Un préfixe qui ne désigne aucun éclat rendait ici un corpus
@@ -159,8 +189,8 @@ fn parse_args() -> Args {
                     acts,
                     acts as f64 / r.len().max(1) as f64
                 );
-                describe(&r);
-                std::process::exit(if bad == 0 { 0 } else { 1 });
+                let ok = describe(&r);
+                std::process::exit(if bad == 0 && ok { 0 } else { 1 });
             }
             other => { eprintln!("argument inconnu : {other}"); std::process::exit(2) }
         }
@@ -264,6 +294,19 @@ fn main() {
     let next_deal = Arc::new(AtomicUsize::new(0));
     let done = Arc::new(AtomicUsize::new(0));
     let failed = Arc::new(AtomicBool::new(false));
+    // Donnes abandonnées sur erreur de source. Leur jeton est rendu, sinon
+    // `--deals N` rendrait N moins les incidents.
+    let extra = Arc::new(AtomicUsize::new(0));
+    let errors = Arc::new(AtomicUsize::new(0));
+    // Un hoquet passe, une panne dure. Le budget doit se lire en *secondes de
+    // panne*, pas en nombre d'erreurs : sous une coupure totale chaque thread
+    // en produit une par expiration de lecture (6 s), donc les erreurs
+    // s'accumulent à `threads / 6` par seconde — 43/s à 256 threads. Un budget
+    // fixe à 50 abandonnerait après une seconde de coupure. `threads × 4` vaut
+    // ~25 s de coupure totale quel que soit le parallélisme, ce qui laisse
+    // passer un redémarrage de sidecar sans laisser tourner une nuit contre un
+    // GPU mort.
+    let error_budget = (args.threads * 4).max(args.deals / 20).max(50);
     let out: Arc<Mutex<Vec<GameReplay>>> = Arc::new(Mutex::new(Vec::with_capacity(args.deals)));
     let start = Instant::now();
 
@@ -273,6 +316,8 @@ fn main() {
         let next_deal = next_deal.clone();
         let done = done.clone();
         let failed = failed.clone();
+        let extra = extra.clone();
+        let errors = errors.clone();
         let out = out.clone();
         let total = args.deals;
         let seed = args.seed;
@@ -304,7 +349,7 @@ fn main() {
                     break;
                 }
                 let idx = next_deal.fetch_add(1, Ordering::Relaxed);
-                if idx >= total {
+                if idx >= total + extra.load(Ordering::Relaxed) {
                     break;
                 }
 
@@ -332,9 +377,34 @@ fn main() {
                         });
                     }
                     Err(e) => {
-                        eprintln!("thread {tid} donne {idx} : {e}");
-                        failed.store(true, Ordering::Relaxed);
-                        break;
+                        // Une erreur de source **ne tue pas le run**. Sous
+                        // `fallback = "strict"` — le seul réglage honnête pour
+                        // un corpus — un aller-retour qui expire rend une
+                        // erreur, et un GPU momentanément saturé en produit
+                        // plusieurs d'un coup. Faire tomber la génération
+                        // entière là-dessus, c'est perdre des heures de travail
+                        // sur un hoquet de quelques secondes : mesuré, un run
+                        // de 28 000 donnes s'est arrêté à 5 076 parce qu'un
+                        // second processus s'est mis à partager le GPU.
+                        //
+                        // La donne en cours est **jetée** — jamais enregistrée
+                        // à moitié — et son jeton rendu, pour que `--deals N`
+                        // reste un compte de donnes complètes. Le run ne
+                        // s'arrête que si le budget d'erreurs saute, c'est-à-dire
+                        // si la panne dure au lieu de passer.
+                        let n = errors.fetch_add(1, Ordering::Relaxed) + 1;
+                        extra.fetch_add(1, Ordering::Relaxed);
+                        if n <= 5 || n % 100 == 0 {
+                            eprintln!("thread {tid} donne {idx} abandonnée ({n}e erreur) : {e}");
+                        }
+                        if n > error_budget {
+                            eprintln!(
+                                "❌ {n} erreurs de source dépassent le budget ({error_budget}) —                                  la panne dure, arrêt"
+                            );
+                            failed.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        continue;
                     }
                 }
                 dealer = (dealer + 1) % 4;
@@ -428,8 +498,14 @@ fn main() {
         None => Arc::try_unwrap(out).ok().unwrap().into_inner().unwrap(),
     };
 
+    let n_err = errors.load(Ordering::Relaxed);
+    if n_err > 0 {
+        eprintln!(
+            "\n⚠️  {n_err} donne(s) abandonnée(s) sur erreur de source (budget {error_budget})"
+        );
+    }
     if failed.load(Ordering::Relaxed) {
-        eprintln!("\n⚠️  arrêt sur erreur — {} donnes complètes malgré tout", replays.len());
+        eprintln!("⚠️  arrêt sur erreur — {} donnes complètes malgré tout", replays.len());
     }
 
     // ── Profil ────────────────────────────────────────────────────────────
@@ -475,11 +551,21 @@ fn main() {
         // moins sans le dire, c'est exactement le mode de défaillance que la
         // vérification de légalité est censée fermer, transposé au compte.
         if broken || replays.len() != args.deals {
+            // Distinguer les deux causes : un run qui s'est ARRÊTÉ n'a rien
+            // perdu, il n'a simplement pas tout produit — et le message le
+            // disait quand même, ce qui envoyait chercher des donnes disparues
+            // là où il n'y avait qu'une URL morte.
+            let cause = if lost.load(Ordering::Relaxed) {
+                " — des donnes écrites ont été perdues"
+            } else if failed.load(Ordering::Relaxed) {
+                " — le run s'est arrêté sur une erreur (voir plus haut)"
+            } else {
+                ""
+            };
             eprintln!(
-                "❌ corpus INCOMPLET : {} donnes sur {} demandées{}. Les éclats sont conservés.",
+                "❌ corpus INCOMPLET : {} donnes sur {} demandées{cause}. Les éclats sont conservés.",
                 replays.len(),
                 args.deals,
-                if broken { ", et des donnes ont été perdues en route" } else { "" },
             );
             std::process::exit(1);
         }
@@ -516,14 +602,18 @@ fn verify(replays: &[GameReplay]) -> usize {
 
 /// Ce qu'il y a *dans* le corpus, pas seulement qu'il se relit.
 ///
+/// Rend `false` sur un corpus vide : c'est le cas le plus dégénéré possible, et
+/// c'était justement celui sur lequel cette fonction restait muette.
+///
 /// Un corpus peut être parfaitement rejouable et pourtant inutilisable : rien
 /// n'interdit à un joueur mal configuré de passer neuf donnes sur dix, et une
 /// donne passée ne contient aucune carte. La vérification de format ne le
 /// verrait pas — d'où ce résumé, qui décrit la *distribution* et pas la
 /// structure.
-fn describe(r: &[GameReplay]) {
+fn describe(r: &[GameReplay]) -> bool {
     if r.is_empty() {
-        return;
+        eprintln!("❌ corpus VIDE — 0 donne");
+        return false;
     }
     let mut passed = 0usize;
     let mut by_value: std::collections::BTreeMap<u8, usize> = Default::default();
@@ -571,7 +661,8 @@ fn describe(r: &[GameReplay]) {
         bid_actions as f64 / r.len() as f64,
     );
     if played == 0 {
-        return;
+        eprintln!("❌ aucune donne jouée — toutes passées");
+        return false;
     }
     let pct = |n: usize| 100.0 * n as f64 / played as f64;
     println!(
@@ -586,6 +677,7 @@ fn describe(r: &[GameReplay]) {
         .map(|(val, n)| format!("{val} : {:.0} %", pct(*n)))
         .collect();
     println!("  contrats : {}", v.join("  "));
+    true
 }
 
 /// Où passe le temps, par nombre de cartes restantes.
