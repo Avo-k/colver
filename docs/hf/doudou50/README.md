@@ -19,8 +19,9 @@ Donnez-lui une position, il vous dit **quelle carte jouer**, en une demi-millise
 sans aucune recherche. C'est le joueur du mode « rapide » de
 [colver.net](https://colver.net).
 
-[Colver](https://github.com/Avo-k/colver) est un moteur de Belote Contrée écrit en Rust,
-utilisable depuis Python.
+Colver est un moteur de Belote Contrée écrit en Rust, utilisable depuis Python.
+
+[Code source](https://github.com/Avo-k/colver) · [PyPI](https://pypi.org/project/colver/) · [Jouer en ligne](https://colver.net)
 
 *Règles appliquées : [colver.net/regles](https://colver.net/regles) — et [pourquoi ces choix](https://colver.net/regles/choix).*
 

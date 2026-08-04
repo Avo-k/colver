@@ -17,10 +17,22 @@ tags:
 chaque main adverse**. C'est la couche de croyances de l'agent à recherche de
 [colver.net](https://colver.net) : elle pondère l'échantillonnage des mains possibles.
 
-[Colver](https://github.com/Avo-k/colver) est un moteur de Belote Contrée écrit en Rust,
-utilisable depuis Python.
+Colver est un moteur de Belote Contrée écrit en Rust, utilisable depuis Python.
+
+[Code source](https://github.com/Avo-k/colver) · [PyPI](https://pypi.org/project/colver/) · [Jouer en ligne](https://colver.net)
 
 *Règles appliquées : [colver.net/regles](https://colver.net/regles) — et [pourquoi ces choix](https://colver.net/regles/choix).*
+
+> **Deux modèles pour la même question.** Celui-ci et
+> [playgen v2](https://huggingface.co/Avo-k/colver-playgen-v2) répondent tous deux à
+> « où sont les cartes cachées ? », par deux chemins opposés. **belief v4 est le rapide** :
+> une seule passe d'un MLP de 1,9 Mo, mais sa sortie est une probabilité par carte,
+> indépendante des autres. **playgen est le fidèle** : il produit des mains entières et
+> cohérentes, donc il peut représenter que deux cartes voyagent ensemble — au prix d'un
+> déroulement autorégressif complet par monde (~93 ms, 43 Mo).
+>
+> playgen est la source de mondes par défaut. Celui-ci reste utile là où une pondération
+> approximative suffit et où le budget ne permet pas de tirer des mondes.
 
 ## Essayer en 30 secondes
 
@@ -94,10 +106,10 @@ d'entraînement : la sortie est une liste de marginales, il n'y a pas de place p
 que deux cartes voyagent ensemble.
 
 C'est exactement ce qui a motivé
-[playgen](https://huggingface.co/Avo-k/colver-playgen-v2), un transformer autorégressif
-qui échantillonne des mains entières et capture la structure jointe gratuitement.
-Playgen est aujourd'hui la source de mondes par défaut ; ce réseau-ci reste utile comme
-couche de pondération, bien moins chère (1,9 Mo contre 43 Mo).
+[playgen](https://huggingface.co/Avo-k/colver-playgen-v2) : plutôt que de prédire des
+emplacements, il prédit la **carte suivante**, et on le déroule jusqu'au bout de la donne.
+Chaque déroulement rend une main entière et cohérente, donc la structure jointe est là
+sans qu'on ait eu à la modéliser.
 
 **Il ne porte pas les certitudes.** Coupes révélées, plafonds d'atout, cartes déjà
 tombées, belote annoncée : ce sont des *faits*, appliqués directement par le moteur sans

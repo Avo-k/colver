@@ -13,20 +13,43 @@ tags:
   - autoregressive
 ---
 
-# Colver — playgen v2 : le réseau qui devine les mains cachées
+# Colver — playgen v2 : le réseau qui rejoue la donne
 
-Il répond à la question centrale de tout jeu de cartes : **« qui a quoi ? »**
+**Ce n'est pas un modèle de croyances, c'est un modèle de coup suivant.** Un transformer
+causal qui, à partir de ce qu'un joueur voit, prédit `p(prochaine carte jouée)`. Rien de
+plus.
 
-C'est un transformer causal qui continue une donne carte par carte à partir de ce qu'un
-joueur peut voir. Dérouler la continuation jusqu'au bout fait tomber les 32 cartes, donc
-révèle une distribution complète et plausible des mains cachées. Il alimente l'agent à
-recherche de [colver.net](https://colver.net) : échantillonner des mondes possibles, les
-résoudre exactement, agréger.
+Ce qu'on en tire vient de son usage, pas de sa sortie. Le dérouler jusqu'au bout de la
+donne fait tomber les 32 cartes : chaque déroulement est **un** partage complet et
+cohérent des mains cachées. Le relancer donne un autre partage. C'est en accumulant ces
+tirages qu'on obtient une distribution — ou plutôt, qu'on obtient de quoi en calculer
+autant qu'on veut : « qui a l'As de carreau », « quelles mains sont compatibles avec ces
+enchères », « combien de mondes où l'atout est réparti ainsi ».
 
-[Colver](https://github.com/Avo-k/colver) est un moteur de Belote Contrée écrit en Rust,
-utilisable depuis Python.
+La distinction n'est pas de la pédanterie. Un modèle qui rendrait directement des
+probabilités par carte ne peut pas dire que deux cartes voyagent ensemble ; un modèle qui
+rend des **mondes entiers**, si. C'est exactement pourquoi il a remplacé le réseau de
+croyances (voir plus bas).
+
+Il alimente l'agent à recherche de [colver.net](https://colver.net) : échantillonner des
+mondes possibles, les résoudre exactement, agréger.
+
+Colver est un moteur de Belote Contrée écrit en Rust, utilisable depuis Python.
+
+[Code source](https://github.com/Avo-k/colver) · [PyPI](https://pypi.org/project/colver/) · [Jouer en ligne](https://colver.net)
 
 *Règles appliquées : [colver.net/regles](https://colver.net/regles) — et [pourquoi ces choix](https://colver.net/regles/choix).*
+
+> **Deux modèles pour la même question.** Celui-ci et
+> [belief v4](https://huggingface.co/Avo-k/colver-belief-v4) répondent tous deux à
+> « où sont les cartes cachées ? », par deux chemins opposés. **playgen est le fidèle** :
+> il produit des mains entières et cohérentes, donc il peut représenter que deux cartes
+> voyagent ensemble — au prix d'un déroulement autorégressif complet par monde (~93 ms,
+> 43 Mo). **belief v4 est le rapide** : une seule passe d'un MLP de 1,9 Mo, mais sa sortie
+> est une probabilité par carte, indépendante des autres.
+>
+> playgen est la source de mondes par défaut. belief reste utile là où une pondération
+> approximative suffit et où le budget ne permet pas de tirer des mondes.
 
 ## Essayer en 30 secondes
 
@@ -116,6 +139,11 @@ mais ne rendent que des **marginales indépendantes** : ils ne peuvent pas repr�
 « si l'Ouest a le Valet d'atout, il a probablement le 9 aussi ». La factorisation
 autorégressive dilue la tâche sur beaucoup de jetons et **capture la structure jointe
 gratuitement**. C'est la partie transférable à d'autres jeux à information imparfaite.
+
+Corollaire à garder en tête en lisant les marginales de l'exemple ci-dessus : **elles ne
+sortent pas du modèle, elles sont un résumé de ses tirages** — et un résumé qui jette
+précisément ce qui fait sa valeur, les corrélations. Pour un solveur, ce sont les mondes
+qu'il faut lui donner, pas leur moyenne.
 
 Deux choix de conception portent le reste :
 
