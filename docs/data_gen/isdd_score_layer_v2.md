@@ -403,8 +403,54 @@ depuis `dd_pts` :
 | meilleur atout ≥ 150 | 17,89 % |
 
 ⚠️ **Un capot atteignable *en DD* n'est pas un capot annonçable** — le solveur voit les
-quatre mains. La quantité qui dimensionne la strate est `P(capot | mes 8 cartes)`, et
-elle n'est pas mesurée.
+quatre mains. La quantité qui dimensionne la strate est `P(capot | mes 8 cartes)`.
+
+### Mesure C — `P(capot | mes 8 cartes)`, 2026-08-04
+
+*[bench_capot_prior.rs](../../colver-core/src/bin/bench_capot_prior.rs) +
+[capot_prior.py](../../scripts/analysis/capot_prior.py). 1 200 mains × 80 complétions des
+24 cartes restantes × 4 solves = 384 000 solves, **sans GPU**, 9 min sur 16 cœurs. Le
+donneur est retiré à chaque complétion : il décide qui entame, donc il change la valeur
+DD, et la moyenne sur les positions est ce qu'un bidder voit avant de connaître la sienne.*
+
+| | |
+|---|--:|
+| capot N-S atteignable en DD (marginale, **vue des 4 mains**) | 16,08 % |
+| `P(capot \| ma main)`, un atout quelconque | 15,75 % |
+| **`P(capot \| ma main)`, à l'atout que j'annoncerais** | **8,68 %** |
+
+Les deux premières se ressemblent **par coïncidence** ; c'est la troisième qui décide,
+parce qu'on annonce *une* couleur et pas « l'une des quatre ». Confondre les deux
+premières avec la troisième était le piège.
+
+**Et la queue est courte, ce qui change ce que la strate peut enseigner :**
+
+| seuil (au meilleur atout) | part des mains |
+|---|--:|
+| P ≥ 10 % | 34,5 % |
+| P ≥ 25 % | 6,1 % |
+| P ≥ 50 % | **0,17 %** (2 mains sur 1 200) |
+| P ≥ 75 % | **0** |
+
+**Aucune main ne rend le capot majoritairement vrai.** Une strate « mains à capot » ne
+peut donc pas apprendre au modèle *à annoncer capot ici* — au mieux *ici c'est à 25 %*.
+`tail_100k` doit donc contenir des mains où le capot est **envisageable**, et le modèle
+y apprend surtout à **ne pas le prendre**. C'est un objectif différent de celui que §6
+supposait, et il est plus modeste.
+
+**Bonne nouvelle : la strate se construit par filtre, sans simuler.**
+
+| `eval_max` | n | P(capot) | points moyens |
+|---|--:|--:|--:|
+| [15 ; 20) | 467 | 6,9 % | 113 |
+| [20 ; 25) | 248 | 14,6 % | 136 |
+| [25 ; 30) | 87 | **25,0 %** | 158 |
+| [30 ; 35) | 10 | 27,9 % | 163 |
+
+`evaluate_for_trump` — le repère le moins cher qui existe, déjà dans le moteur — sépare
+d'un facteur **18** entre les tranches basses et hautes, et le centile supérieur en
+P(capot) a un `eval_max` moyen de 29,1 contre 17,0 sur l'ensemble. Pas besoin de payer
+384 000 solves pour bâtir `tail_100k` : un seuil sur `eval_max` suffit.
 
 ## 7. Les quatre invariants sur le donneur
 
@@ -483,7 +529,7 @@ Tous déjà écrits ailleurs ; il s'agit de les brancher.
 |---|---|---|---|
 | ~~**A**~~ | ✅ **faite le 2026-08-04** (§4) : oui, le préfixe est hors distribution, sur la **forme** (une seule annonce contre 11,9 % de réel, 0 % de contestation contre 81,3 %, 0 % de coinche contre 25,7 %) et non sur l'identité du preneur (camp bon à 89,4 %). A aussi **réfuté « v6 masqué sur la couleur »**, la variante qu'elle-même avait suggérée | 7 min, 0 GPU | a **fermé** la famille des enchères à atout imposé, retiré l'échelle valeur ↔ force, et fixé la forme du générateur : une case « or » par donne, trois « argent » |
 | **B** | l'étiquette d'une case sous préfixe « or » contre préfixe « argent », écart apparié en points cartes ; **et** camp du preneur | ~2 h GPU | ce que coûte l'argent, et `[u8;4]` contre `[u8;8]` (§4) |
-| **C** | `P(capot \| mes 8 cartes)` sur les 913 476 cases à `dd_pts == 252` | quelques h GPU | le contenu de `tail_100k` (§6) et le plancher d'exploration conditionnée |
+| ~~**C**~~ | ✅ **faite le 2026-08-04** (§6) : `P(capot \| main)` à l'atout annoncé vaut **8,68 %**, pas 16,08 % ; **aucune** main ne dépasse 75 % et deux sur 1 200 dépassent 50 % | 9 min, **0 GPU** | `tail_100k` se filtre sur `eval_max` (facteur 18 entre tranches), et il enseigne à **ne pas** annoncer capot plutôt qu'à l'annoncer |
 
 **A ne dispense pas de B, elle la recadre.** Un préfixe hors distribution n'est un défaut
 que s'il déplace l'étiquette ; au milieu d'une donne, playgen lit aussi les cartes déjà

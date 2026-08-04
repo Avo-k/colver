@@ -161,6 +161,27 @@ des entrées complètes.
   ⚠️ Ne pas rediriger sa sortie dans `head` : le SIGPIPE tue le processus **avant**
   l'écriture du JSON, et la mesure a l'air d'avoir réussi.
 
+- `prefix_label.py` — enveloppe de `bench_prefix_label` (mesure B) : la même case
+  `(donne, atout)` étiquetée par IS-DD sous quatre **préfixes d'enchère** différents, pour
+  savoir si le préfixe déplace l'étiquette d'une couche de scores. ~1 h de GPU pour
+  2 000 donnes × 5 bras. Trois points de méthode réutilisables :
+  (1) **le cinquième bras est le même préfixe avec une autre graine** — deux étiquetages
+  IS-DD de la même case ne rendent pas le même nombre, donc sans ce plancher un écart ne
+  se distingue pas de deux tirages du même bras ; le digest publie chaque contraste
+  **rapporté à ce plancher** (`in_control_sd`), parce qu'un z énorme sur 0,3 point ne
+  change rien à une couche ;
+  (2) les préfixes ne nomment pas tous le même atout, donc **on ne compare que ce qui
+  partage une case** ;
+  (3) **96 threads, pas 256** — deux jeux de joueurs par thread font 2 048 clients IS-DD
+  contre 64 threads d'accueil du sidecar, et les timeouts en cascade abandonnent des
+  donnes qui ne sont pas un tirage au hasard (ce sont celles jouées pendant la saturation).
+- `bench_capot_prior` (binaire, mesure C) — `P(capot | mes 8 cartes)` par simulation :
+  une main, K complétions des 24 cartes restantes, 4 solves chacune. **Sans GPU** : c'est
+  le solveur DD qu'on interroge, pas playgen, donc il tourne sur les cœurs libres pendant
+  qu'une mesure GPU occupe la carte. Le donneur est **retiré à chaque complétion** — il
+  décide qui entame donc il change la valeur DD, et le fixer répondrait à une autre
+  question.
+
 - `dd_ab_revs.sh` / `dd_ab_flags.sh` / `dd_ablation.sh` — les harnais A/B du solveur : le
   premier alterne deux **révisions git**, le deuxième trois **cibles de compilation** bâties de
   la même source, le troisième cinq **configurations d'heuristiques** dans un seul binaire.

@@ -32,7 +32,11 @@ chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder.
   fabriquer une ; ~1,3 case, l'argent quand l'annonce retirée était une relance, le bronze
   quand c'était une ouverture et que son auteur devient muet), et « fer » (~1,6 case
   construite, irréductiblement hors distribution : pour une couleur que personne n'a
-  annoncée, aucune enchère réaliste n'existe **sur cette donne**).
+  annoncée, aucune enchère réaliste n'existe **sur cette donne**). La **mesure C** est
+  faite aussi (§6) : `P(capot | ma main)` à l'atout qu'on annoncerait vaut **8,68 %** et
+  non 16,08 % — aucune main sur 1 200 ne dépasse 75 %, deux dépassent 50 %. Une strate
+  « capot » enseigne donc à **ne pas** l'annoncer, et se filtre sur `evaluate_for_trump`
+  (facteur 18 entre tranches) sans payer de simulation.
 
 ## Donnes complètes
 
