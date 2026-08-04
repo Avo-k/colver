@@ -12,6 +12,7 @@ Belote Contrée engine + RL training stack.
 - [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
 - [classement_et_scoring.md](classement_et_scoring.md) — **l'Elo du web et la fonction d'utilité des bots** : pourquoi c'est le même sujet, et pourquoi Dédé optimise des points cartes là où le barème a une marche
 - [engine_todo.md](engine_todo.md) — backlog moteur & modèles (règles, données, entraînement, zoo)
+- [idees/](idees/) — **pistes cadrées mais pas lancées** : ce qu'on ferait, ce que ça coûterait, la mesure qui trancherait. Une fiche d'ici a le droit de ne jamais être faite — c'est ce qui la distingue d'un backlog
 - [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
 - `règles officielles belote contrée.pdf` — official FFB rules
 
@@ -50,3 +51,5 @@ Belote Contrée engine + RL training stack.
 | Un pool DD périmé : ce que ça coûte (**ne pas regénérer pour ça**) | [data_gen/pool_staleness.md](data_gen/pool_staleness.md) |
 | Générer des donnes **complètes** jouées par IS-DD (enchère réelle + 32 cartes) | [data_gen/isdd_games.md](data_gen/isdd_games.md) |
 | Registre des mesures (provenance + agrégats, versionné) | [measurements/README.md](measurements/README.md) |
+| Un corpus de jeu fort pour playgen v3 (**idée cadrée, pas lancée**) | [idees/corpus_isdd_playgen_v3.md](idees/corpus_isdd_playgen_v3.md) |
+| Le coût d'un pas de décodage playgen, et le décodage spéculatif (**idée cadrée, pas lancée**) | [idees/decodage_speculatif_playgen.md](idees/decodage_speculatif_playgen.md) |
