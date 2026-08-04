@@ -107,6 +107,33 @@ table humaine, un playgen entraîné là-dessus apprendra une distribution
 d'enchères biaisée — mais c'est une question sur le *bidder*, pas sur le
 générateur, et elle n'est pas tranchée ici.
 
+### La recette d'acceptation : le tokeniseur de playgen lui-même
+
+`--check` dit que le corpus est un corpus. Ce qui dit qu'il est **utilisable**,
+c'est le tokeniseur qui le consommera — il vérifie que la carte réellement
+jouée est toujours dans le masque visible par l'observateur, ce qu'aucune
+vérification de format ne peut voir :
+
+```bash
+COLVER_GAMES=$PWD/data/training/isdd_games.bin \
+  cargo test -p colver-core --release --lib validate_games_file -- --ignored --nocapture
+```
+
+Sur 5 076 donnes générées, les deux variantes passent :
+
+```
+validated 5070 games, 648960 preds, 13.0% forced, avg hidden-mask size 12.0
+validated 5076 games (0 skipped): 648960 play preds, 165132 bid preds
+```
+
+Deux choses à y lire. **`0 skipped`** : toutes les donnes sont exploitables.
+Et **165 132 prédictions d'enchère**, soit 32,5 par donne — c'est exactement ce
+que les générateurs à atout imposé produisent en quantité *nulle*, et la raison
+d'être de ce binaire. Les 13,0 % de coups forcés et la taille de masque moyenne
+de 12,0 collent aux valeurs publiées pour le corpus de référence
+(« ~13.5% forced, avg hidden-actor mask ≈ 12 cards »), donc la distribution est
+indiscernable de celle sur laquelle playgen a déjà été entraîné.
+
 ## Survivre à une nuit
 
 Un run de plusieurs heures rencontre des pannes passagères, et le comportement
