@@ -660,10 +660,26 @@ cet arbitrage repose explicitement sur *« un bruit non biaisé ne biaise pas un
 ajustement aux moindres carrés »*, mesuré en mondes uniformes. **Changer la source de
 mondes change ce que vaut un monde, et l'argument ne se transporte pas tel quel.**
 
-Deuxième effet : 500 k donnes = 2 M mains, contre les 6,2 M de tirages que le coupon
-collector demande pour voir les 472 579 classes ([bid_v7_plan §1.4](../bid/bid_v7_plan.md)).
-La couverture de classes n'est plus acquise — c'est précisément la raison d'être de
-`tail_100k`, et non un effet secondaire à absorber.
+**Deuxième effet — mesuré, et beaucoup plus petit que craint** ([bench_class_coverage.rs](../../colver-core/src/bin/bench_class_coverage.rs)) :
+
+| donnes étiquetées | mains | classes couvertes | vues 1 seule fois |
+|---|--:|--:|--:|
+| 100 k | 400 k | 56,46 % | 62,9 % |
+| **500 k** | **2 M** | **97,59 %** | **7,7 %** |
+| 1 M | 4 M | 99,78 % | 0,8 % |
+| 5 M | 20 M | 100,00 % | 0,0 % |
+
+À 500 k donnes, **90,1 %** des classes sont vues au moins deux fois et 42,3 % au moins
+cinq. Le risque de couverture était donc surestimé, et l'erreur est identifiable : les
+**6,2 M** de tirages du coupon collector ([bid_v7_plan §1.4](../bid/bid_v7_plan.md))
+mesurent le coût du **dernier** coupon, pas celui des 97 premiers pourcents. La
+distribution aide en plus — mesurée quasi **uniforme** (le centile le plus fréquent porte
+2,5 % des mains, contre 1,0 % à l'uniforme exacte), donc la couverture monte vite et ne
+traîne qu'à la toute fin.
+
+Ce que ça retire à `tail_100k` : sa justification par la **couverture**. Ce qu'il lui
+reste, et qui est mesuré : la strate décisive de §6 — et la mesure C a montré qu'elle se
+filtre sur `evaluate_for_trump` sans simuler.
 
 **Mitigation intégrée** : les couches composent par `offset`/`count`, et les 500 k
 donnes sont **les mêmes** que celles de l'ancienne couche. L'A/B ancienne étiquette
