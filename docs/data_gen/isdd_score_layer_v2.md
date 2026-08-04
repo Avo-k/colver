@@ -208,33 +208,119 @@ masqués sont à 80 ou 90, contre 11,1 % en réel.
 Aucune construction à atout imposé ne peut donc être dans la distribution — ni celle du
 plan, ni une version plus soignée. Ce n'est pas un défaut de réglage.
 
-### Ce qui reste : une case « or » par donne, trois « argent »
+### L'épluchage : ne rien fabriquer, retirer
 
-La seule enchère dans la distribution est **l'enchère libre de v6**, et elle n'étiquette
-qu'**une** case. Ce qu'elle couvre est mesuré — rang de l'atout qu'elle choisit, vu du
-camp preneur :
+*Idée de l'utilisateur, mesurée dans la foulée. Elle change la réponse.*
 
-| rang 0 | rang 1 | rang 2 | rang 3 |
-|--:|--:|--:|--:|
-| 70,7 % | 21,2 % | 6,5 % | 1,6 % |
+Toutes les constructions précédentes **fabriquaient** une enchère. Celle-ci en **retire**
+une : on prend l'enchère réelle, on remplace sa dernière annonce par une passe, on
+referme. Ce qui reste est un vrai préfixe — chaque action y a été choisie par v6 dans la
+situation où elle a eu lieu. On recommence tant qu'il reste des annonces, ce qui descend
+la chaîne des couleurs annoncées.
 
-**91,9 % sur les rangs 0-1**, exactement la région où §5 place 81,1 % des consultations
-d'une politique entraînée. D'où la forme que prend le générateur :
+**Le plafond est structurel, et il n'était pas évident** : on ne peut retirer que des
+annonces qui ont eu lieu, et deux annonces *dans la même couleur* ne donnent qu'une case.
+Or une vraie enchère ne nomme que **2,17 couleurs distinctes** en moyenne — 57,7 % en
+nomment exactement deux, 13,4 % une seule, 2,0 % les quatre.
 
-- **case « or »** — l'atout que v6 annonce librement, avec sa vraie enchère. Une par
-  donne, prefixe parfait, ~0,4 ms.
-- **trois cases « argent »** — la construction bon marché du début de §4, hors
-  distribution **et assumée comme telle**, avec le budget dégressif de §5.
+| niveau | cases | sans enchère | atout neuf | contestée | = v6 redemandé |
+|---|--:|--:|--:|--:|--:|
+| **or** (enchère libre) | 43 031 | 0,0 % | 100 % | 81,3 % | — |
+| **−1** | 43 031 | 11,9 % | **84,2 %** | 67,0 % | 78,8 % |
+| **−2** | 37 922 | 26,2 % | 18,0 % | 56,2 % | 56,3 % |
+| **−3** | 27 996 | 35,3 % | 14,2 % | 38,7 % | 38,1 % |
 
-C'est **la mesure B** qui dira ce que l'argent coûte, en comparant l'étiquette d'une case
-sous les deux préfixes. Et elle garde tout son sens : un préfixe hors distribution n'est
-un défaut que s'il déplace l'étiquette — au milieu d'une donne playgen lit surtout les
-cartes déjà jouées, bien plus informatives que 8 jetons d'enchère.
+Deux lectures :
 
-⚠️ **Le biais de sélection de la case « or » est à nommer** : c'est v6 qui la choisit,
-donc ce sont les atouts que *v6* aime qui reçoivent le bon préfixe. Si v7 s'en écarte —
-ce qui est l'objectif — la couverture se déplace sans que rien ne le signale. C'est un
-argument de plus pour ne pas élaguer les trois autres cases.
+1. **Le premier épluchage paie, les suivants beaucoup moins.** −1 tombe sur une couleur
+   neuve **84,2 %** du temps ; −2 et −3 seulement 18 % et 14 %. Ce n'est pas un défaut de
+   la méthode, c'est le plafond des 2,17 couleurs qui mord : les annonces qui restent sont
+   dans des couleurs déjà couvertes. La chaîne entière couvre **2,09** cases sur 4
+   (**2,37** si l'on redemande à v6, cf. ci-dessous). Les valeurs suivent la descente :
+   116 → 107 → 101 → 95.
+2. **La qualité se dégrade doucement, pas d'un coup.** Même à −3, l'enchère est contestée
+   38,7 % du temps — contre **0 %** pour la construction du plan et 0,06 % pour v6 masqué.
+   Un préfixe épluché reste incomparablement plus réaliste qu'un préfixe fabriqué.
+
+**Refermer par des passes affirmées, ou redemander à v6 ?** La troncature affirme que
+personne ne relance ; c'est vrai **78,8 %** du temps au premier épluchage, 56,3 % au
+deuxième, 38,1 % au troisième. **Redemander à v6 est le bon choix** : même coût (~0,4 ms),
+continuation réelle au lieu d'affirmée, et **meilleure couverture** (2,37 contre 2,09,
+avec seulement 1,1 % de donnes réduites à une seule couleur contre 13,4 %). La troncature
+n'achète qu'un atout déterministe — dont on n'a pas besoin, puisqu'on étiquette la case
+sur laquelle l'enchère tombe.
+
+### Relance ou ouverture : ce qui sépare l'argent du bronze
+
+*Deuxième idée de l'utilisateur, et elle ne remplace pas l'épluchage — elle le **gradue**.*
+
+Toutes les annonces retirées ne coûtent pas la même chose. Si l'annonce retirée était une
+**relance** de son auteur, celui-ci reste visible dans le préfixe : il a annoncé plus tôt,
+playgen sait qu'il tient quelque chose, on lui a seulement retiré une enchère de plus. Si
+c'était son **ouverture**, la passe forcée le rend **muet** — et playgen en déduit qu'il
+n'a rien, alors qu'il tient précisément la couleur qui décidait de la donne. C'est le
+mensonge le plus cher qu'on puisse mettre dans un préfixe.
+
+| épluchage | relance | **ouverture** |
+|---|--:|--:|
+| −1 | 32,6 % | **67,4 %** |
+| −2 | 12,9 % | 87,1 % |
+| −3 | 3,6 % | 96,4 % |
+
+**Le cas coûteux est le cas courant, pas l'exception** — la contre-intuition ici, c'est
+que les enchères sont courtes : l'annonce gagnante est le plus souvent la première de son
+auteur. Et refuser catégoriquement de rendre un siège muet coûte cher : la chaîne tombe à
+**1,32** case couverte au lieu de 2,37, avec **68,3 %** des donnes réduites à leur seule
+case « or ».
+
+D'où le compromis : **on n'arrête pas la chaîne, on étiquette la qualité de chaque case**.
+Le critère « relance ou ouverture » est exactement ce qui sépare l'argent du bronze, et il
+est gratuit — le siège d'une action se déduit sans rejeu (`seat(i) = (dealer+1+i) % 4`,
+l'enchère avançant d'un siège par action).
+
+### Pourquoi les deux cases restantes ne peuvent pas être sauvées
+
+L'épluchage porte le compte de **1 case sur 4 à ~2,4**. Les ~1,6 restantes sont les
+couleurs que **personne n'a annoncées** — et pour celles-là il n'existe aucune enchère
+réaliste *sur cette donne*, parce que la raison pour laquelle personne ne les a annoncées
+est que personne n'avait la main pour. Demander « et si l'atout avait été carreau ? »
+contredit la donne elle-même.
+
+**Ce n'est donc pas un défaut d'imagination, c'est la question posée.** Un `[u8;4]`
+demande une contrefactuelle pour ~1,6 de ses 4 entrées, et aucune construction ne la
+rendra plausible. C'est aussi, précisément, ce que le bidder doit apprendre : *pourquoi
+ne pas annoncer cette couleur*. Le label reste utile ; c'est son préfixe qui est
+irréductiblement hors distribution.
+
+### La forme du générateur
+
+| rang | source de l'enchère | ce qu'on a menti | cases/donne | contestée |
+|---|---|---|--:|--:|
+| **or** | enchère libre de v6 | rien | 1,00 | 81,3 % |
+| **argent** | épluchage, **relance** retirée | une enchère de plus, l'auteur reste visible | ~0,3 | 67 % |
+| **bronze** | épluchage, **ouverture** retirée | un siège devient muet | ~1,0 | 39-67 % |
+| **fer** | construction §4 | tout le préfixe | ~1,6 | 0 % |
+
+C'est **la mesure B** qui dira ce que chaque rang coûte, en comparant l'étiquette d'une
+même case sous chacun des quatre préfixes. Et elle garde tout son sens : un préfixe hors
+distribution n'est un défaut que s'il déplace l'étiquette — au milieu d'une donne playgen
+lit surtout les cartes déjà jouées, bien plus informatives que 8 jetons d'enchère.
+
+**Les rangs sont une hypothèse ordonnée, pas un résultat.** On les a construits sur ce
+qu'ils *mentent*, pas sur ce qu'ils coûtent en points cartes ; il est parfaitement
+possible que bronze vaille or et que le classement s'effondre à trois rangs, voire deux.
+C'est justement ce qui rend B mesurable : quatre préfixes nommés, une hypothèse d'ordre,
+et un plancher de bruit pour la réfuter.
+
+⚠️ **Deux réserves à ne pas perdre de vue.**
+
+1. **Le biais de sélection de la case « or »** : c'est v6 qui la choisit, donc ce sont les
+   atouts que *v6* aime qui reçoivent le bon préfixe. Si v7 s'en écarte — ce qui est
+   l'objectif — la couverture se déplace sans que rien ne le signale.
+2. **L'ordre de l'épluchage n'est pas l'ordre des rangs DD de §5.** L'épluchage descend
+   les couleurs *annoncées* ; le budget dégressif descend les rangs de `dd_pts`. Les deux
+   coïncident probablement souvent, mais **ce n'est pas mesuré** et il ne faut pas les
+   confondre en câblant l'un sur l'autre.
 
 ### Le camp preneur est déterminé, donc `[u8;8]` n'est pas nécessaire
 

@@ -93,6 +93,7 @@ def digest(raw):
         # 5. les variantes candidates, aux mêmes cibles (absentes sans --bid-model)
         "free_v6": raw.get("free_v6"),
         "masked_v6": raw.get("masked_v6"),
+        "peel": raw.get("peel"),
     }
 
 
@@ -132,6 +133,25 @@ def show(name, d):
     print(f"    {'cases sans aucune enchère':<42}{'—':>9}{'—':>11}{m['void_pct']:>10.2f}%")
     print("  rang de l'atout que v6 choisit librement, vu de son camp : "
           + "  ".join(f"{i}:{p:.1f}%" for i, p in enumerate(u["rank_pct"])))
+    q = d.get("peel")
+    if not q:
+        return
+    print(f"  ÉPLUCHAGE — une vraie enchère nomme {q['mean_real_suits']:.2f} couleurs "
+          f"distinctes (plafond)")
+    print(f"    {'niveau':<8}{'cases':>9}{'sans ench.':>12}{'atout neuf':>12}"
+          f"{'contestée':>11}{'= v6 redemandé':>16}")
+    for k, lv in enumerate(q["levels"]):
+        name = "or" if k == 0 else f"−{k}"
+        agree = "—" if k == 0 else f"{lv['agree_free_pct']:.1f}%"
+        print(f"    {name:<8}{lv['cells']:>9}{lv['void_pct']:>11.1f}%"
+              f"{lv['fresh_suit_pct']:>11.1f}%{lv['contested_pct']:>10.1f}%{agree:>16}")
+    print(f"    couleurs couvertes : troncature {q['mean_covered']:.2f}, "
+          f"v6 redemandé {q['mean_covered_free']:.2f}, "
+          f"sans jamais rendre un siège muet {q['mean_covered_safe']:.2f} — sur 4")
+    print("    annonce retirée : "
+          + "  ".join(
+              f"−{k} relance {100 * q['peel_raise'][k] / max(1, q['peel_raise'][k] + q['peel_open'][k]):.1f}%"
+              for k in range(1, 4)))
 
 
 def main():

@@ -26,8 +26,13 @@ chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder.
   à 26 % — et non sur l'identité du preneur, dont le camp est bon à 89,4 %. Elle a
   ensuite **fermé toute la famille** : la contestation *est* le mécanisme qui sélectionne
   l'atout, donc aucune enchère à atout imposé ne peut être réaliste (v6 masqué sur la
-  couleur : 0,06 % de contestation). D'où la forme retenue — une case « or » par donne,
-  avec l'enchère libre de v6, et trois cases « argent » hors distribution assumées.
+  couleur : 0,06 % de contestation). D'où la forme retenue, **quatre rangs par qualité de
+  préfixe** : « or » (l'enchère libre de v6, 1 case), « argent » et « bronze »
+  (**épluchage** — on retire la dernière annonce d'une enchère réelle au lieu d'en
+  fabriquer une ; ~1,3 case, l'argent quand l'annonce retirée était une relance, le bronze
+  quand c'était une ouverture et que son auteur devient muet), et « fer » (~1,6 case
+  construite, irréductiblement hors distribution : pour une couleur que personne n'a
+  annoncée, aucune enchère réaliste n'existe **sur cette donne**).
 
 ## Donnes complètes
 
