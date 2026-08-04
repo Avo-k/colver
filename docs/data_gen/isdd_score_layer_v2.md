@@ -528,6 +528,41 @@ D'où quatre contraintes sur le générateur, dont deux ne se voient pas :
 
 ## 8. Le coût
 
+### Ce qui tourne réellement, et son débit mesuré (2026-08-05)
+
+```bash
+./target/release/gen_score_layer --pool data/deals/base_5M.bin --offset 0 --count 500000 \
+  --threads 160 --checkpoint 500 --out data/deals/scores_isdd_v2.sc \
+  --url "http://localhost:8003,http://localhost:8003,http://localhost:8003,http://192.168.1.23:8003"
+```
+
+| | mesuré |
+|---|--:|
+| débit, **deux GPU** (4090 ×3/4 + 3090 ×1/4) | **1,25 donnes/s** = 5,0 étiquetages/s |
+| un GPU seul | 0,33 → 0,72 donnes/s selon la charge |
+| 500 000 donnes à ce rythme | **~111 h ≈ 4,6 jours** |
+| par nuit de 9 h | ~40 000 donnes |
+
+**Trois écarts assumés entre le plan et ce qui tourne**, pour que le document ne décrive
+pas un binaire qui n'existe pas :
+
+1. **Budget plat à 40 mondes, pas gradué.** Le −31 % de §5 demande trois jeux de joueurs
+   par thread (un par budget), donc 3× les clients IS-DD sur un sidecar qui plafonne déjà
+   — le réglage à 96-160 threads a coûté deux faux départs. Gain refusé au profit de la
+   robustesse d'un run de plusieurs jours.
+2. **Pas de `dets_schedule` décroissant.** Même raison : un réglage de plus à valider en
+   pleine nuit sur un binaire neuf. Le 1,24× reste disponible pour la reprise du matin.
+3. **Pas encore de `tail_100k`.** La mesure C (§6) a montré que la strate se filtre sur
+   `evaluate_for_trump` sans simuler ; elle se construira à part, quand le corps de la
+   couche existera.
+
+**160 threads, et pas plus** : deux jeux de joueurs par thread en font 2 048 clients
+IS-DD contre 64 threads d'accueil du sidecar, ce qui produit 1 050 lanes par lot et des
+timeouts en cascade. Et les donnes perdues ainsi ne sont pas un tirage au hasard — ce
+sont celles jouées pendant la saturation.
+
+### L'estimation d'origine, gardée pour mémoire
+
 Base : `gen_games_isdd` fait **2,62 donnes/s** sur une 3090 à 40 mondes/décision
 ([isdd_games.md](isdd_games.md)), soit ~32 recherches IS-DD par donne. 600 k donnes ×
 4 atouts = 2,4 M déroulements.
@@ -537,6 +572,10 @@ Base : `gen_games_isdd` fait **2,62 donnes/s** sur une 3090 à 40 mondes/décisi
 | à plat | 254 h | 127 h |
 | + `dets_schedule` décroissant (**1,24×** mesuré) | 205 h | 102 h |
 | + budget gradué (§5, −31 %) | **141 h** | **~70 h ≈ 3 jours** |
+
+L'écart avec le mesuré (111 h contre 127 h à plat sur 2 GPU) vient de ce que la 4090
+locale est plus rapide que la 3090 de référence, et que les quatre étiquetages d'une
+donne partagent le coût fixe de sa lecture.
 
 Leviers, avec leur prix :
 - **`dets_schedule = "40,40,40,30,20,15,15"`** — 1,24×, et le gain vient surtout du
