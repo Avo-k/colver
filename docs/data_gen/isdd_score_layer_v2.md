@@ -523,6 +523,26 @@ Tous déjà écrits ailleurs ; il s'agit de les brancher.
 - **Équilibre des donneurs** asserté par fichier et par strate (§7.3).
 - **Journalisation** : `runlog.save` pour chaque mesure.
 
+### ⚠️ Une couche partielle ne s'entraîne pas sur le pool entier
+
+Trouvé le 2026-08-04, avant le premier run. `RewardMode::RealOnly` fait
+`self.real_pts.map(...).unwrap_or(ns_dd_pts)`
+([bid_train_env.rs:1005](../../colver-core/src/bid/bid_train_env.rs#L1005)) : une donne
+que la couche ne couvre pas **retombe sur `dd_pts`, sans un mot**. Et
+`DealPool::load_or_generate` ne tronque pas — il rend le pool entier dès qu'il est assez
+grand, donc `--pool-size` ne restreint pas l'échantillonnage.
+
+Conséquence : entraîner avec `--pool-file base_5M.bin --score-file scores_isdd_v2.sc`
+alors que la couche couvre 30 k donnes ferait tirer 99,4 % d'épisodes étiquetés en
+**valeur DD périmée** (antérieure au retrait de `quick_tricks`) et 0,6 % en IS-DD frais.
+C'est exactement le défaut que §5 refuse pour l'élagage — **deux échelles de label dans
+une même reward** — et il arriverait ici par omission plutôt que par choix.
+
+**La parade est un fichier, pas un drapeau** : tronquer le pool au préfixe couvert
+(`base_5M.bin` → `base_<N>.bin`, en-tête `COLVDD01` + 21 o/donne) et entraîner sur
+celui-là. Aucune modification du trainer, et le décompte devient vérifiable — le pool et
+la couche doivent annoncer le même nombre de donnes.
+
 ## 10. Ce qui n'est pas décidé — trois mesures d'abord
 
 | | quoi | coût | ce qu'elle décide |
