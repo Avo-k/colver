@@ -10,6 +10,27 @@ Environnement de Belote Contree rapide pour l'apprentissage par renforcement. Mo
 
 **Jouer en ligne : [colver.net](https://colver.net)** — un site public auto-heberge : parties solo ou multijoueur, comptes, classement et analyse.
 
+## Demarrage rapide
+
+```bash
+pip install colver
+```
+
+```python
+import colver
+
+env = colver.Env()
+env.reset()
+env.load_bid_model(colver.download_bid_model())   # recupere depuis le Hub au premier appel
+print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
+```
+
+Les poids vivent sur le [Hub Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65)
+— un depot par modele, chacun avec une fiche qui dit ce qu'il fait, ce qu'il vaut et ce
+qu'il ne sait pas faire. `download_*()` les met en cache dans `~/.cache/colver/models/`
+(GitHub Releases reste en repli) ; `COLVER_MODEL_PATH` et consorts permettent de pointer
+vers ses propres fichiers.
+
 ## Caracteristiques
 
 - **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complete

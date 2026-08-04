@@ -17,6 +17,26 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 
 **Play online: [colver.net](https://colver.net)** — a self-hosted public site: solo or multiplayer games, accounts, ratings and analysis.
 
+## Quickstart
+
+```bash
+pip install colver
+```
+
+```python
+import colver
+
+env = colver.Env()
+env.reset()
+env.load_bid_model(colver.download_bid_model())   # fetched from the Hub on first use
+print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
+```
+
+Model weights live on the [Hugging Face Hub](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65)
+— one repo per model, each with a card explaining what it does, what it is worth and what
+it cannot do. `download_*()` caches them under `~/.cache/colver/models/` (GitHub Releases
+is kept as a fallback); point `COLVER_MODEL_PATH` & co. at your own files to override.
+
 ## Features
 
 - **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal

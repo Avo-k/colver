@@ -390,6 +390,11 @@ Legacy keys (`is_dd`/`smart_is_dd`/`dmc_then_dd` method names, `playgen_model`, 
 
 Tagging without the bump is what broke v0.3.0, v0.3.1, v0.4.0, v0.5.0 and v0.8.0 — the build reused the previous version's filenames and PyPI rejected them with `400 File already exists`. The `check-version` job now blocks that in ~10s. `colver.__version__` derives from package metadata, so it never needs a manual bump.
 
+**Poids des modèles : Hugging Face, avec GitHub Releases en repli** (depuis la 0.10). Un dépôt public par modèle sous `Avo-k/colver-*`, regroupés dans une [collection](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65) ; les fiches sont versionnées dans [docs/hf/](docs/hf/) et le `README.md` d'un dépôt HF en est une copie. `python/colver/_model.py` porte le registre `nom → (dépôt, fichier, URL de repli)`.
+- **Ne jamais supprimer un asset de release GitHub** : les roues 0.4.0 → 0.9.1 y pointent en dur, le repli des versions récentes aussi.
+- **Tout téléchargement de modèle passe par `colver.download_*()`.** `entrypoint.sh` en avait une copie locale qui importait `_model._DEFAULT_URL` — nom privé disparu au passage au Hub. Son `|| echo` transformait l'`ImportError` en avertissement : le conteneur démarrait **sans DouDou50**, donc le mode « rapide » retombait sur Dédé sans que rien ne le signale. Même famille que le sidecar périmé : un repli silencieux est pire qu'une panne.
+- **`pip install colver` doit rester maigre.** 103 paquets / 296 Mo jusqu'à la 0.9.1, à cause de `runpod` (un script de location de GPU) qui tirait `fastapi[all]`, `boto3` et `paramiko`, et de `matplotlib` (scripts de tracé). Ni l'un ni l'autre n'est importé par le paquet livré — maturin n'embarque que `python/colver/`. Aujourd'hui : `numpy` + `huggingface_hub`, 19 paquets / 94 Mo. Avant d'ajouter une dépendance, vérifier qu'elle est importée par `python/colver/`, pas seulement par `scripts/`.
+
 **Docker:** `docker build -t colver . && docker run -p 8000:8000 colver`. Cross-builds for ARM64.
 
 ## Data Directory Layout
