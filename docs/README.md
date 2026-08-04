@@ -52,4 +52,4 @@ Belote Contrée engine + RL training stack.
 | Générer des donnes **complètes** jouées par IS-DD (enchère réelle + 32 cartes) | [data_gen/isdd_games.md](data_gen/isdd_games.md) |
 | Registre des mesures (provenance + agrégats, versionné) | [measurements/README.md](measurements/README.md) |
 | Un corpus de jeu fort pour playgen v3 (**idée cadrée, pas lancée**) | [idees/corpus_isdd_playgen_v3.md](idees/corpus_isdd_playgen_v3.md) |
-| Le coût d'un pas de décodage playgen, et le décodage spéculatif (**idée cadrée, pas lancée**) | [idees/decodage_speculatif_playgen.md](idees/decodage_speculatif_playgen.md) |
+| Le coût d'un pas de décodage playgen, et le décodage spéculatif (**cadré ; le levier a été pris, le spéculatif reste en attente d'une mesure**) | [idees/decodage_speculatif_playgen.md](idees/decodage_speculatif_playgen.md) |

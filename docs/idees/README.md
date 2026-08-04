@@ -33,6 +33,8 @@ dormir se réveille toujours avec ses hypothèses converties en certitudes.
   (2026-08-04)
 - [decodage_speculatif_playgen.md](decodage_speculatif_playgen.md) — **un mini
   modèle comme brouillon du gros** : pourquoi ça vise le mauvais poste de coût
-  (le modèle pèse moins de 5 % d'un pas de décodage), ce que le spéculatif
-  rendrait quand même (~1,5× au plafond), et le levier exact à ~1,8× qui ne
-  demande aucun second modèle. (2026-08-04)
+  (le modèle pèse moins de 5 % d'un pas de décodage), et ce que le spéculatif
+  rendrait quand même (~1,5× au plafond, contre 1,62× rendus par la fusion
+  ACT+CARD sans second modèle). Le levier qu'elle pointait est **fait et
+  mesuré** ; ce qui reste ouvert tient en une mesure de dix minutes.
+  (2026-08-04, révisée le même jour)
