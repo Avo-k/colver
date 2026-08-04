@@ -447,6 +447,17 @@ async def my_games(request: Request, limit: int = 50, offset: int = 0):
     return JSONResponse(games)
 
 
+def _scope(request):
+    """Le périmètre demandé, ramené à une valeur connue.
+
+    Vérifié ici plutôt qu'en aval : `stats` construit du SQL avec, donc une
+    valeur inattendue ne doit jamais y arriver. `stats._seats` retombe aussi sur
+    « all » de son côté — deux gardes valent mieux qu'une pour un littéral.
+    """
+    want = (request.query_params.get("scope") or "all").strip()
+    return want if want in stats.SCOPES else "all"
+
+
 @router.get("/me/stats")
 async def my_stats(request: Request):
     """Le portrait chiffré du joueur connecté — taux, moyennes, intervalles.
@@ -462,7 +473,7 @@ async def my_stats(request: Request):
     user = await current_user(request)
     if user is None:
         return JSONResponse({"error": "Non connecté"}, status_code=401)
-    return JSONResponse(await stats.my_stats(user["id"]))
+    return JSONResponse(await stats.my_stats(user["id"], _scope(request)))
 
 
 @router.get("/me/oracle")
@@ -476,7 +487,7 @@ async def my_oracle(request: Request):
     user = await current_user(request)
     if user is None:
         return JSONResponse({"error": "Non connecté"}, status_code=401)
-    blob = await stats.oracle_stats(user["id"])
+    blob = await stats.oracle_stats(user["id"], _scope(request))
     blob["job"] = _job_view(analysis.bulk_status(user["id"]))
     return JSONResponse(blob)
 
@@ -493,7 +504,7 @@ async def start_my_oracle(request: Request):
     user = await current_user(request)
     if user is None:
         return JSONResponse({"error": "Non connecté"}, status_code=401)
-    pending = await stats.unanalysed_games(user["id"])
+    pending = await stats.unanalysed_games(user["id"], _scope(request))
     # Les chemins de modèles vivent dans `server`, qui importe `auth` : on les
     # lit tardivement pour ne pas créer de cycle à l'import.
     from colver.web import server as _server

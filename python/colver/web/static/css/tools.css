@@ -3831,8 +3831,24 @@
     overflow-y: auto;
     max-height: 100%;
 }
+/* Le filtre de format traverse les deux colonnes : il vaut pour toute la page,
+   rail compris. Il reste affiché même quand un format ne contient aucune donne
+   — sinon on s'y enferme, sans moyen d'en sortir. */
+.st-filter { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.st-filter.hidden { display: none; }
+/* `.pc-seg-btn` est taillé pour les réglages de « Compter les points » : deux
+   lignes, alignées à gauche, et `flex: 1 1 auto` pour remplir la rangée. Ici les
+   libellés tiennent sur une ligne — sans ces trois lignes, quatre boutons
+   s'étirent sur toute la largeur de la page et ressemblent à des barres. */
+.st-filter .pc-seg-btn {
+    flex: 0 0 auto;
+    flex-direction: row;
+    text-align: center;
+}
+
 @media (min-width: 900px) {
     .st-page { grid-template-columns: 300px 1fr; }
+    .st-filter { grid-column: 1 / -1; }
     /* Le rail reste à l'écran pendant qu'on parcourt l'analyse : c'est tout
        l'intérêt de la forme. `align-self: start` est indispensable — un item
        de grille étiré sur toute la hauteur ne peut pas coller. */
@@ -3840,6 +3856,12 @@
 }
 
 .st-rail, .st-main { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+
+/* Le site n'a pas de style d'ancre global — chaque page habille les siennes.
+   Sans cette règle, les liens des notes et des états vides tombent sur le bleu
+   par défaut du navigateur, illisible sur le fond sombre. */
+.st-page a { color: var(--c-accent); }
+.st-page a:hover { color: var(--c-accent-bright); }
 
 /* Deux cartes côte à côte quand la place le permet. */
 .st-duo { display: grid; gap: var(--sp-4); grid-template-columns: 1fr; }

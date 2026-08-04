@@ -134,6 +134,46 @@ _BID_AGG = """
 
 SUITS = ["♠", "♥", "♦", "♣"]
 
+# Les formats jouables, tels que le filtre les propose. « Toutes » est le défaut
+# et le restera : c'est le seul périmètre qui ne demande rien à comprendre.
+#
+# Une donne seule se reconnaît à `games.match_id IS NULL`, et pas autrement :
+# `target = 0` **ne crée pas de ligne `matches`** (`Match.is_match` est
+# `target > 0`, et les deux appelants de `create_match` sont gardés dessus).
+# Chercher `target = 0` dans `matches` ne rendrait donc jamais rien.
+SCOPES = ("all", "2000", "1000", "deal")
+
+
+def _seats(scope="all"):
+    """La brique `_SEATS`, restreinte à un format de jeu.
+
+    Le filtre s'applique **par-dessus** l'union plutôt qu'à l'intérieur de ses
+    deux branches : `match_id` est dans la liste de sélection, donc une seule
+    clause couvre le solo et le salon. Les dupliquer serait deux fois plus de
+    surface pour la même règle.
+
+    `scope` vient d'une requête HTTP : il est vérifié contre `SCOPES` avant de
+    servir de littéral, jamais interpolé tel quel.
+    """
+    if scope not in SCOPES:
+        scope = "all"
+    if scope == "all":
+        return _SEATS
+    if scope == "deal":
+        return f"SELECT * FROM ({_SEATS}) WHERE match_id IS NULL"
+    return (f"SELECT * FROM ({_SEATS}) WHERE match_id IN "
+            f"(SELECT id FROM matches WHERE target = {int(scope)})")
+
+
+def _scope_clause(scope, alias):
+    """La même restriction, pour une requête qui ne part pas de `_seats`."""
+    if scope not in SCOPES or scope == "all":
+        return ""
+    if scope == "deal":
+        return f"AND {alias}.match_id IS NULL"
+    return (f"AND {alias}.match_id IN "
+            f"(SELECT id FROM matches WHERE target = {int(scope)})")
+
 # Au-delà, l'écart entre deux donnes d'une même partie ne mesure plus une
 # donne : le joueur s'est absenté et il est revenu. Une donne coûte ~42 s au
 # tempo standard et ~16 s au tempo rapide, donc ce plafond est ~20× la valeur
@@ -213,7 +253,7 @@ def _pct(values, q):
 
 # ===== Le portrait =====
 
-async def my_stats(user_id):
+async def my_stats(user_id, scope="all"):
     """Tout ce qu'on sait d'un joueur sans rien calculer.
 
     Une seule requête ramène une ligne par donne jouée, avec ses agrégats
@@ -226,7 +266,7 @@ async def my_stats(user_id):
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS})
+        WITH s AS ({_seats(scope)})
         SELECT s.game_id, s.created_at, s.match_id, s.seat, s.mode,
                s.my_pts, s.opp_pts, s.my_score, s.opp_score,
                json_extract(s.contract, '$.value') AS contract_value,
@@ -311,7 +351,7 @@ async def my_stats(user_id):
         "deals": deals,
         "scored": scored,
         "days": len(days),
-        "streak": await _streak(user_id),
+        "streak": await _streak(user_id, scope),
         "density": round(deals / len(days), 1) if days else None,
         "modes": modes,
         "won": rate(wins, scored),
@@ -353,13 +393,13 @@ async def my_stats(user_id):
         "capots_for": capots_for,
         "capots_against": capots_against,
         "belotes": belotes,
-        "partners": await _partners(user_id),
-        "tempo": await _tempo(user_id),
-        "activity": await activity(user_id),
+        "partners": await _partners(user_id, scope),
+        "tempo": await _tempo(user_id, scope),
+        "activity": await activity(user_id, scope),
     }
 
 
-async def _streak(user_id):
+async def _streak(user_id, scope="all"):
     """Jours consécutifs joués, en cours.
 
     Technique des « îlots » : on numérote les jours distincts, puis on retranche
@@ -377,7 +417,7 @@ async def _streak(user_id):
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS}),
+        WITH s AS ({_seats(scope)}),
         days AS (SELECT DISTINCT date(created_at) AS d FROM s WHERE uid = ?),
         numbered AS (SELECT d, ROW_NUMBER() OVER (ORDER BY d) AS rn FROM days),
         islands AS (SELECT d, date(d, '-' || rn || ' days') AS grp FROM numbered)
@@ -400,7 +440,7 @@ def _yesterday():
     return (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
 
 
-async def activity(user_id, weeks=12):
+async def activity(user_id, scope="all", weeks=12):
     """Donnes par jour, en colonnes de semaines — la matière du calendrier.
 
     Rend `weeks × 7` entiers, du plus ancien au plus récent, alignés sur les
@@ -423,7 +463,7 @@ async def activity(user_id, weeks=12):
 
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS})
+        WITH s AS ({_seats(scope)})
         SELECT date(created_at) AS d, COUNT(*) AS n
           FROM s WHERE uid = ? AND date(created_at) >= ?
          GROUP BY d
@@ -443,7 +483,7 @@ async def activity(user_id, weeks=12):
     }
 
 
-async def _partners(user_id, limit=5):
+async def _partners(user_id, scope="all", limit=5):
     """Les humains avec qui ce joueur a le plus souvent fait équipe.
 
     Le partenaire d'un siège est en face : `(seat + 2) % 4`. SQLite n'a pas
@@ -455,7 +495,7 @@ async def _partners(user_id, limit=5):
     le dit ainsi plutôt que de montrer une section vide.
     """
     conn = await db.get_db()
-    rows = await conn.execute_fetchall("""
+    rows = await conn.execute_fetchall(f"""
         SELECT u.username, COUNT(*) AS n
           FROM game_players me
           JOIN games g ON g.id = me.game_id
@@ -463,12 +503,13 @@ async def _partners(user_id, limit=5):
                                 AND mate.seat = (me.seat + 2) % 4
           JOIN users u ON u.id = mate.user_id
          WHERE me.user_id = ? AND g.is_complete = 1 AND g.invalid = 0
+               {_scope_clause(scope, 'g')}
          GROUP BY u.id ORDER BY n DESC, u.username LIMIT ?
     """, (user_id, limit))
     return [{"name": r[0], "deals": r[1]} for r in rows]
 
 
-async def _tempo(user_id):
+async def _tempo(user_id, scope="all"):
     """Durée d'une donne, en secondes, mesurée **à l'intérieur d'une partie**.
 
     Rien n'enregistre la fin d'une donne : seul `created_at` existe. L'écart
@@ -485,7 +526,7 @@ async def _tempo(user_id):
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS}),
+        WITH s AS ({_seats(scope)}),
         mine AS (
             SELECT match_id, created_at,
                    LAG(created_at) OVER (PARTITION BY match_id ORDER BY created_at)
@@ -515,7 +556,7 @@ async def _tempo(user_id):
 # donc jamais tout seul — le joueur appuie sur un bouton (`analysis.bulk`), et
 # ce qui suit ne fait que relire ce qui est déjà en cache.
 
-async def oracle_stats(user_id):
+async def oracle_stats(user_id, scope="all"):
     """Ce que le solveur dit du jeu de la carte de ce joueur.
 
     Ne calcule rien : agrège les analyses **déjà en cache** (`analysis.data`)
@@ -537,13 +578,13 @@ async def oracle_stats(user_id):
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS})
+        WITH s AS ({_seats(scope)})
         SELECT s.seat, a.data
           FROM s JOIN analysis a ON a.game_id = s.game_id
          WHERE s.uid = ? AND a.version = ?
     """, (user_id, ANALYSIS_VERSION))
 
-    total = await _analysable_count(user_id)
+    total = await _analysable_count(user_id, scope)
     decisions = forced = 0
     cost_sum = 0
     costs = []
@@ -585,16 +626,16 @@ async def oracle_stats(user_id):
     return out
 
 
-async def _analysable_count(user_id):
+async def _analysable_count(user_id, scope="all"):
     """Combien de donnes de ce joueur peuvent être analysées, en tout."""
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS}) SELECT COUNT(*) FROM s WHERE uid = ?
+        WITH s AS ({_seats(scope)}) SELECT COUNT(*) FROM s WHERE uid = ?
     """, (user_id,))
     return rows[0][0] if rows else 0
 
 
-async def unanalysed_games(user_id, limit=2000):
+async def unanalysed_games(user_id, scope="all", limit=2000):
     """Les donnes du joueur qui n'ont pas d'analyse à la version courante.
 
     Rendues de la plus récente à la plus ancienne : si le travail est
@@ -602,7 +643,7 @@ async def unanalysed_games(user_id, limit=2000):
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(f"""
-        WITH s AS ({_SEATS})
+        WITH s AS ({_seats(scope)})
         SELECT s.game_id FROM s
           LEFT JOIN analysis a ON a.game_id = s.game_id AND a.version = ?
          WHERE s.uid = ? AND a.game_id IS NULL

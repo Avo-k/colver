@@ -520,3 +520,81 @@ class TestActivite:
         await _store_played(hands, actions, user_id=uid, seat=2)
         st = await stats.my_stats(uid)
         assert len(st["activity"]["days"]) == 84
+
+
+class TestPerimetre:
+    """Le filtre de format : toutes / parties 2000 / parties 1000 / donnes seules.
+
+    Le point à ne pas rater est **comment se reconnaît une donne seule** :
+    `target = 0` ne crée aucune ligne `matches` (`Match.is_match` vaut
+    `target > 0`), donc c'est `games.match_id IS NULL` et rien d'autre. Chercher
+    `target = 0` dans `matches` ne rendrait jamais rien.
+    """
+
+    async def _deal(self, uid, target=None):
+        """Une donne, rattachée ou non à une partie du format demandé."""
+        mid = None
+        if target:
+            mid = await db.create_match("play", target, user_id=uid, human_seat=2)
+        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+        gid = await db.create_game("play", 0, hands, {"2": "human"},
+                                   human_seat=2, user_id=uid, match_id=mid)
+        await db.append_action(gid, {"player": 2, "action": 9, "phase": 0})
+        await db.complete_game(gid, 100, 62, {"value": 100, "team": 0, "trump": 0},
+                               score_ns=200, score_ew=0)
+        return gid
+
+    async def _seed(self, uid):
+        for _ in range(4):
+            await self._deal(uid, 2000)
+        for _ in range(3):
+            await self._deal(uid, 1000)
+        for _ in range(2):
+            await self._deal(uid, None)
+
+    async def test_chaque_format_compte_ses_donnes(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        await self._seed(uid)
+        counts = {s: (await stats.my_stats(uid, s))["deals"] for s in stats.SCOPES}
+        assert counts == {"all": 9, "2000": 4, "1000": 3, "deal": 2}
+        # Les sous-ensembles partitionnent bien le tout : rien n'est compté deux
+        # fois, rien n'est perdu.
+        assert counts["2000"] + counts["1000"] + counts["deal"] == counts["all"]
+
+    async def test_le_filtre_porte_sur_les_prises_aussi(self, clean_db):
+        """Pas seulement sur le compteur : tout l'agrégat doit suivre."""
+        uid = await db.create_user("alice", "x")
+        await self._seed(uid)
+        assert (await stats.my_stats(uid, "2000"))["who_takes"]["me"] == 4
+        assert (await stats.my_stats(uid, "deal"))["who_takes"]["me"] == 2
+
+    async def test_un_perimetre_inconnu_retombe_sur_tout(self, clean_db):
+        """`scope` sert de littéral SQL : une valeur inattendue ne doit jamais
+        y arriver, et le repli est « toutes » plutôt qu'une erreur."""
+        uid = await db.create_user("alice", "x")
+        await self._seed(uid)
+        assert (await stats.my_stats(uid, "'; DROP TABLE games; --"))["deals"] == 9
+        rows = await (await db.get_db()).execute_fetchall(
+            "SELECT COUNT(*) FROM games")
+        assert rows[0][0] == 9, "la table est toujours là"
+
+    async def test_le_calendrier_suit_le_perimetre(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        await self._seed(uid)
+        assert (await stats.activity(uid, "all"))["max"] == 9
+        assert (await stats.activity(uid, "2000"))["max"] == 4
+        assert (await stats.activity(uid, "deal"))["max"] == 2
+
+    async def test_l_oracle_suit_le_perimetre(self, clean_db):
+        """« À quel point je joue près de l'oracle en tournoi » est une question
+        différente de « en donne seule »."""
+        uid = await db.create_user("alice", "x")
+        await self._seed(uid)
+        assert (await stats.oracle_stats(uid, "all"))["total"] == 9
+        assert (await stats.oracle_stats(uid, "1000"))["total"] == 3
+        assert len(await stats.unanalysed_games(uid, "1000")) == 3
+
+    async def test_un_format_vide_ne_casse_rien(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        await self._deal(uid, 1000)
+        assert (await stats.my_stats(uid, "2000")) == {"deals": 0}

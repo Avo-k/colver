@@ -33,8 +33,23 @@ const CAT_LABELS = {
 const CAT_ORDER = ['parfait', 'bon', 'imprecision', 'erreur', 'faute'];
 const WEEKDAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
+// Le filtre de format. « Toutes » est le défaut et le reste : c'est le seul
+// périmètre qui ne demande rien à comprendre. Les trois autres répondent à des
+// questions différentes — on n'annonce pas pareil en tournoi qu'en donne seule,
+// et le score de partie entre dans l'observation du bidder.
+const SCOPES = [
+    { id: 'all', label: 'Toutes' },
+    { id: '2000', label: 'Parties 2000' },
+    { id: '1000', label: 'Parties 1000' },
+    { id: 'deal', label: 'Donnes seules' },
+];
+
 const TEMPLATE = `
 <div class="st-page">
+    <div class="st-filter" id="st-filter" role="radiogroup" aria-label="Format de jeu">
+        ${SCOPES.map(s => `<button class="pc-seg-btn" role="radio" data-scope="${s.id}"
+            aria-checked="${s.id === 'all'}">${s.label}</button>`).join('')}
+    </div>
     <aside class="st-rail" id="st-rail"></aside>
     <main class="st-main" id="st-main">
         <div class="an-loading">Chargement…</div>
@@ -42,6 +57,19 @@ const TEMPLATE = `
 </div>`;
 
 let poller = null;
+let scope = 'all';
+
+/** Le périmètre vit dans la query string : un rechargement, un signet ou un
+ *  lien partagé retombent sur la même vue. Jamais dans un `#fragment` — le
+ *  routeur le traite comme une URL héritée et le redirigerait. */
+function syncUrl() {
+    const url = new URL(location.href);
+    if (scope === 'all') url.searchParams.delete('f');
+    else url.searchParams.set('f', scope);
+    history.replaceState(history.state, '', url);
+}
+
+function qs() { return scope === 'all' ? '' : `?scope=${scope}`; }
 
 function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({
@@ -328,7 +356,7 @@ async function loadOracle() {
     if (!box) return null;
     let o = null;
     try {
-        const resp = await fetch(`${base()}api/me/oracle`);
+        const resp = await fetch(`${base()}api/me/oracle${qs()}`);
         o = resp.ok ? await resp.json() : null;
         box.innerHTML = renderOracle(o);
     } catch {
@@ -340,7 +368,7 @@ async function loadOracle() {
         btn.addEventListener('click', async () => {
             btn.disabled = true;
             btn.textContent = 'Lancement…';
-            try { await fetch(`${base()}api/me/oracle`, { method: 'POST' }); }
+            try { await fetch(`${base()}api/me/oracle${qs()}`, { method: 'POST' }); }
             catch { /* le sondage rattrapera */ }
             startPolling();
         });
@@ -363,39 +391,76 @@ function stopPolling() {
     if (poller) { clearInterval(poller); poller = null; }
 }
 
-export async function mount(container) {
-    container.innerHTML = TEMPLATE;
-    const main = document.getElementById('st-main');
+let cachedMe = null;
 
-    let st, me;
+/** Charger et rendre pour le périmètre courant. Le filtre, lui, ne bouge pas :
+ *  il doit rester atteignable même quand un format ne contient aucune donne,
+ *  sinon on s'y enferme. */
+async function load() {
+    const rail = document.getElementById('st-rail');
+    const main = document.getElementById('st-main');
+    if (!main) return;
+    stopPolling();
+    main.innerHTML = '<div class="an-loading">Chargement…</div>';
+    rail.innerHTML = '';
+
+    let st;
     try {
         const [rs, rm] = await Promise.all([
-            fetch(`${base()}api/me/stats`), fetch(`${base()}api/me`),
+            fetch(`${base()}api/me/stats${qs()}`),
+            cachedMe ? Promise.resolve(null) : fetch(`${base()}api/me`),
         ]);
         if (rs.status === 401) {
             // Ces chiffres n'existent que rattachés à quelqu'un.
+            document.getElementById('st-filter').classList.add('hidden');
             main.innerHTML = '<div class="history-empty">Ces statistiques sont celles de '
                 + 'votre compte — <a href="/compte">connectez-vous</a> pour les voir.</div>';
             return;
         }
         st = await rs.json();
-        me = rm.ok ? await rm.json() : null;
+        if (rm && rm.ok) cachedMe = await rm.json();
     } catch {
         main.innerHTML = '<div class="an-loading">Statistiques indisponibles</div>';
         return;
     }
 
     if (!st || !st.deals) {
-        main.innerHTML = '<div class="history-empty">Aucune donne terminée pour l\'instant — '
-            + '<a href="/jouer/humain">jouez-en une !</a></div>';
+        main.innerHTML = '<div class="history-empty">'
+            + (scope === 'all'
+                ? 'Aucune donne terminée pour l\'instant — <a href="/jouer/humain">jouez-en une !</a>'
+                : 'Aucune donne dans ce format. Choisissez « Toutes » pour tout revoir.')
+            + '</div>';
         return;
     }
 
-    if (me && me.user) document.getElementById('st-rail').innerHTML = renderRail(me, st);
+    if (cachedMe && cachedMe.user) rail.innerHTML = renderRail(cachedMe, st);
     main.innerHTML = renderMain(st);
 
     const o = await loadOracle();
     if (o && o.job && o.job.running) startPolling();
+}
+
+export async function mount(container) {
+    container.innerHTML = TEMPLATE;
+    cachedMe = null;
+
+    const wanted = new URL(location.href).searchParams.get('f');
+    scope = SCOPES.some(x => x.id === wanted) ? wanted : 'all';
+
+    const bar = document.getElementById('st-filter');
+    bar.querySelectorAll('[data-scope]').forEach(b => {
+        b.setAttribute('aria-checked', String(b.dataset.scope === scope));
+        b.addEventListener('click', () => {
+            if (b.dataset.scope === scope) return;
+            scope = b.dataset.scope;
+            bar.querySelectorAll('[data-scope]').forEach(x =>
+                x.setAttribute('aria-checked', String(x.dataset.scope === scope)));
+            syncUrl();
+            load();
+        });
+    });
+    syncUrl();
+    await load();
 }
 
 export function unmount() {
