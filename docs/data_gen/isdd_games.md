@@ -197,6 +197,18 @@ restantes, 0 s à deux — alors que le coût d'un monde playgen reste du même
 ordre à tous les stades. **Le générateur est limité par le GPU, et le CPU est
 oisif à plus de 80 %.** Toute l'optimisation est donc partie du sidecar.
 
+**Combien de marge reste-t-il avant que le CPU devienne le mur ?** À lire sur
+un run **non sur-souscrit** (32 threads, un par cœur), le seul où la mesure
+sépare le calcul de l'attente d'ordonnancement : **1,96 s de solve DD par
+donne**, soit ~16 donnes/s de capacité sur 32 cœurs. On en est à 2,8. **Le GPU
+peut donc gagner encore ~6× avant que le CPU ne borne quoi que ce soit** —
+autrement dit un second GPU, puis un troisième, se paient entièrement.
+
+⚠️ Ne pas lire ce chiffre sur un run à 256 threads : `total_us − source_us` y
+compte aussi le temps où un thread est *prêt mais pas ordonnancé*, ce qui
+gonfle « solve DD » à 15 s par donne. Le même run qui semblerait alors saturer
+le CPU en utilise en réalité le huitième.
+
 Corollaire sur la concurrence : `--threads` doit être **très au-dessus de
 `nproc`**. Un thread alterne « dormir en attendant des mondes » et « brûler un
 cœur à résoudre » ; un thread par cœur laisse les deux moitiés inoccupées à
