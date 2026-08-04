@@ -95,6 +95,9 @@ A♦  siège0=1.00  siège1=0.00  siège2=0.00  siège3=0.00
 R♥  siège0=0.00  siège1=0.50  siège2=0.00  siège3=0.50
 ```
 
+Ces chiffres se reproduisent à l'identique : `Analyst` prend une graine, qui vaut 0 par
+défaut. Un échantillonneur n'est pas obligé d'être imprévisible.
+
 L'As de carreau est chez nous : le modèle en est **certain**, parce que nous l'avons en
 main. Le Roi de cœur est ailleurs, et le modèle hésite entre deux sièges à parts égales.
 C'est ce qu'on attend d'un modèle de croyances — la certitude là où elle est justifiée,

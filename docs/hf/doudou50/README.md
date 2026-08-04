@@ -63,10 +63,12 @@ env.load_dmc_model(poids)
 
 reponse = env.action_dmc_with_stats()
 print(nom_carte(reponse["best_action"]))   # -> V♦
-print(reponse["elapsed_ms"])               # -> ~0.7
+print(reponse["elapsed_ms"])               # -> ~0.5
 ```
 
-Il entame **Valet de carreau** — la plus forte carte à l'atout. En moins d'une milliseconde.
+Il entame **Valet de carreau** — la plus forte carte à l'atout. En une demi-milliseconde.
+
+La carte est reproductible : le réseau est déterministe, seul le chrono bouge.
 
 > ⚠️ La réponse contient aussi `reponse["q_values"]`, les 32 valeurs brutes. **Ne les
 > décodez pas comme des cartes** : `best_action` est reconverti en indice physique, mais
@@ -101,7 +103,7 @@ print(bot.action(env))
 | Type | Dueling DQN résiduel (MLP), 411 entrées → 32 valeurs Q |
 | Taille | 10,2 Mo — 2 561 057 paramètres |
 | Entraînement | 50 M pas de self-play |
-| Vitesse | ~0,6 ms par coup, sur CPU |
+| Vitesse | ~0,5 ms par coup, sur CPU |
 | sha256 | `f9fb4c4bc9ea…` |
 
 En entrée : la main, le pli en cours, les cartes déjà tombées, les coupes révélées, le
@@ -125,7 +127,7 @@ IS-DD tire les atouts. Deux joueurs d'égale force moyenne ne jouent pas le mêm
 
 - **Il ne raisonne pas sur les mains cachées.** Face à l'agent IS-DD — qui échantillonne
   des mondes possibles et les résout exactement — il perd nettement. C'est un compromis
-  de latence assumé : 0,6 ms contre 1,2 s par coup.
+  de latence assumé : 0,5 ms contre 1,2 s par coup.
 - **Il a appris contre un bidder plus ancien** (v2, pas le v6 actuel), donc la
   distribution de contrats qu'il a vue n'est plus tout à fait celle de la production.
 
