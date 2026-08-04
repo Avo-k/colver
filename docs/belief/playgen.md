@@ -570,6 +570,20 @@ fin de partie que v6 change d'annonce, donc le bénéfice de v3-B se concentre s
 les dernières donnes d'un match — ce qui reste la situation de production (l'arène
 joue en 2000 points, le web en parties).
 
+**Et grossir n'aide pas — ça nuit légèrement.** Même sonde sur les deux tailles :
+
+| | 0-0 | 1500-300 | pénalité |
+|---|---|---|---|
+| v2 (10,74M) | 1,7160 | 1,7967 | **+0,0807** |
+| v3-small (3,22M) | 1,7194 | 1,7923 | **+0,0729** |
+
+À 0-0 le gros modèle est devant ; à 1500-300 l'ordre s'inverse. Plus de paramètres
+= ajustement plus net à la distribution d'enchères vue à l'entraînement, donc
+pénalité plus lourde quand la vraie distribution diffère. **Le déficit de score
+n'est donc pas une limite de capacité, et le scaling l'aggrave** — c'est le
+contrôle le plus direct qu'on puisse opposer à « il suffirait d'un plus gros
+modèle ».
+
 **Contrôle de symétrie, qui a payé.** `write_bid_observation_score_aware_v3` prend
 `my_score, opp_score` **relatifs à l'annonceur**, pas des scores de camp. Une
 première version passait `(ns, ew)` tel quel : les quatre sièges se croyaient dans
