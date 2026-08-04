@@ -5,6 +5,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use colver_core::bid_eval;
@@ -22,6 +23,17 @@ use colver_core::naive_ismcts::{NaiveIsMctsConfig, NaiveIsMctsSearch};
 use colver_core::rollout;
 use colver_core::smart_ismcts::{SmartIsMctsConfig, SmartIsMctsSearch};
 use colver_core::state::{Contract, GameState, Phase};
+
+/// Les chemins entrent en `PathBuf` — PyO3 accepte alors `str` comme tout
+/// `os.PathLike`, donc un `pathlib.Path` (ce que rendent `colver.*_path()` et
+/// `download_*`) passe sans `str()`. Le cœur, lui, prend des `&str`, d'où cette
+/// conversion à la frontière. L'erreur est un garde-fou : un chemin venu de
+/// Python est déjà de l'UTF-8 valide, on ne veut simplement pas d'un `unwrap`.
+fn path_str(p: &Path) -> PyResult<&str> {
+    p.to_str().ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("chemin non-UTF-8 : {}", p.display()))
+    })
+}
 
 const OBS_DIM: usize = 415;
 const BID_HISTORY_FLOATS: usize = 72; // 12 slots × 6 floats per slot
@@ -913,8 +925,9 @@ impl Env {
         py: Python<'_>,
         observer: u8,
         n_worlds: usize,
-        model_path: &str,
+        model_path: PathBuf,
     ) -> PyResult<Option<Vec<Vec<Vec<u8>>>>> {
+        let model_path = path_str(&model_path)?;
         if observer >= 4 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "observer must be 0-3",
@@ -1042,7 +1055,8 @@ impl Env {
     /// Load DMC Q-network weights from a raw binary file.
     /// Call once, then use action_dmc_with_stats() for inference.
     #[pyo3(signature = (path, hidden=None))]
-    fn load_dmc_model(&mut self, path: &str, hidden: Option<usize>) -> PyResult<()> {
+    fn load_dmc_model(&mut self, path: PathBuf, hidden: Option<usize>) -> PyResult<()> {
+        let path = path_str(&path)?;
         let h = hidden.unwrap_or(1024);
         let net = DmcNet::load_with_hidden(path, h).map_err(|e| {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to load DMC model: {}", e))
@@ -1111,7 +1125,8 @@ impl Env {
     /// Load NN bid model weights from a raw binary file.
     /// Call once, then use action_bid_nn() for inference.
     #[pyo3(signature = (path, hidden=None))]
-    fn load_bid_model(&mut self, path: &str, hidden: Option<usize>) -> PyResult<()> {
+    fn load_bid_model(&mut self, path: PathBuf, hidden: Option<usize>) -> PyResult<()> {
+        let path = path_str(&path)?;
         let net = if let Some(h) = hidden {
             BidNet::load_with_hidden(path, h)
         } else {
@@ -1325,7 +1340,8 @@ impl Agent {
     /// Build from a bot spec file, e.g. `arena/bots/v6_isdd_75M_belief.toml`.
     #[staticmethod]
     #[pyo3(signature = (path, seat, seed=0))]
-    fn from_file(path: &str, seat: u8, seed: u64) -> PyResult<Self> {
+    fn from_file(path: PathBuf, seat: u8, seed: u64) -> PyResult<Self> {
+        let path = path_str(&path)?;
         let spec = std::fs::read_to_string(path)
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;
         Agent::new(&spec, seat, seed)
@@ -1428,7 +1444,8 @@ struct Analyst {
 impl Analyst {
     #[new]
     #[pyo3(signature = (model_path, seed=0))]
-    fn new(model_path: &str, seed: u64) -> PyResult<Self> {
+    fn new(model_path: PathBuf, seed: u64) -> PyResult<Self> {
+        let model_path = path_str(&model_path)?;
         let model = colver_core::agent::models::playgen_model(model_path).map_err(agent_err)?;
         Ok(Analyst { inner: PlaygenAnalyst::new(model), rng: StdRng::seed_from_u64(seed) })
     }
@@ -1438,7 +1455,7 @@ impl Analyst {
     #[staticmethod]
     #[pyo3(signature = (model_path, dealer, hands, actions, observer, seed=0))]
     fn replay(
-        model_path: &str,
+        model_path: PathBuf,
         dealer: u8,
         hands: Vec<Vec<u8>>,
         actions: Vec<u8>,
@@ -1606,14 +1623,15 @@ impl Beliefs {
         hands: Vec<Vec<u8>>,
         actions: Vec<u8>,
         observer: u8,
-        belief_model: Option<&str>,
+        belief_model: Option<PathBuf>,
     ) -> PyResult<Self> {
         if observer >= 4 {
             return Err(pyo3::exceptions::PyValueError::new_err("observer must be 0-3"));
         }
         let mut env = Env::deal_with_hands(dealer, hands)?;
         let mut search = IsDdSearch::new();
-        if let Some(path) = belief_model {
+        if let Some(ref buf) = belief_model {
+            let path = path_str(buf)?;
             search
                 .load_belief_net(path)
                 .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{path}: {e}")))?;

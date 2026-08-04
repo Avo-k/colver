@@ -1,6 +1,6 @@
 [project]
 name = "colver"
-version = "0.9.1"
+version = "0.10.0"
 description = "Fast Belote Contree game engine with AI agents"
 readme = "README.md"
 license = "MIT"
@@ -14,10 +14,23 @@ classifiers = [
     "Topic :: Games/Entertainment :: Board Games",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Le strict nécessaire pour `pip install colver`. Rien d'autre : la roue ne livre
+# que `python/colver/`, donc ce que les scripts du dépôt importent n'a pas à être
+# imposé à qui veut seulement charger un modèle. `matplotlib` (4 scripts de tracé)
+# et `runpod` (un script de location de GPU) étaient ici et tiraient à eux seuls
+# 103 paquets / 296 Mo, dont fastapi[all], boto3 et paramiko via runpod — contre
+# 19 paquets / 94 Mo sans eux, à comportement identique. Ils vivent en groupe dev.
+#
+# `numpy` reste obligatoire : sans lui l'extension ne panique pas à l'import mais
+# au premier appel qui rend un tableau (`legal_action_mask`), ce qui est pire.
+# `huggingface_hub` l'est aussi depuis la 0.10 : les poids sont sur le Hub et
+# `download_*` les rapatrie sans que l'utilisateur ait rien à installer de plus
+# (+15 paquets, +23 Mo — on reste à 94 Mo contre 296 avant l'élagage). Le repli
+# GitHub Releases survit à son absence, mais on ne veut pas en dépendre.
+# `sentry-sdk` reste volontairement absent — cf. `web/server.py`.
 dependencies = [
     "numpy",
-    "matplotlib>=3.5",
-    "runpod>=1.8.1",
+    "huggingface_hub>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -27,11 +40,6 @@ web = [
     "websockets>=12.0",
     "aiosqlite>=0.20.0",
     "bcrypt>=4.0",
-]
-dev = [
-    "colver[web]",
-    "torch>=2.0",
-    "maturin>=1.0,<2.0",
 ]
 
 [project.scripts]
@@ -59,7 +67,8 @@ dev = [
     "scikit-learn>=1.7.2",
     "xgboost>=3.2.0",
     "shap>=0.49.1",
-    "matplotlib>=3.10.8",
+    "matplotlib>=3.10.8",   # scripts/analysis/ : tracés et SHAP
+    "runpod>=1.8.1",        # scripts/training/runpod_race.py, location de GPU
     {include-group = "test"},
 ]
 # Séparé de `dev` : la CI installe *ce* groupe, pas torch et scikit-learn.
