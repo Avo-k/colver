@@ -126,6 +126,14 @@ fn parse_args() -> Args {
                 }
                 let bad = verify(&all);
                 println!("{} donnes rassemblées, {bad} irrejouables", all.len());
+                // Un préfixe qui ne désigne aucun éclat rendait ici un corpus
+                // vide, parfaitement « valide » (zéro donne irrejouable), écrit
+                // par-dessus `--out`. Une faute de frappe suffisait donc à
+                // effacer un corpus existant en sortant 0.
+                if all.is_empty() {
+                    eprintln!("❌ aucun éclat trouvé en {prefix}.0000 — rien n'est écrit");
+                    std::process::exit(1);
+                }
                 if bad > 0 {
                     std::process::exit(1);
                 }
@@ -233,6 +241,25 @@ fn main() {
         if args.match_mode { "parties 2000" } else { "donnes indépendantes" },
     );
 
+    // Des éclats d'un run précédent au même chemin seraient écrasés un à un,
+    // et le run interrompu qu'ils représentent deviendrait irrécupérable avant
+    // même que quiconque sache qu'il existait.
+    if let Some(path) = &args.out {
+        let leftover: Vec<String> = (0..)
+            .map(|n| format!("{path}.{n:04}"))
+            .take_while(|p| std::path::Path::new(p).exists())
+            .collect();
+        if !leftover.is_empty() {
+            eprintln!(
+                "❌ {} éclat(s) d'un run précédent en {path}.* — les rassembler d'abord :\n\
+                 \t--merge {path} --out {path}\n\
+                 ou les déplacer. Ils ne seront pas écrasés.",
+                leftover.len()
+            );
+            std::process::exit(1);
+        }
+    }
+
     let spec = Arc::new(spec);
     let next_deal = Arc::new(AtomicUsize::new(0));
     let done = Arc::new(AtomicUsize::new(0));
@@ -330,10 +357,12 @@ fn main() {
     let shard_prefix = args.out.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let shard_n = Arc::new(AtomicUsize::new(0));
+    let lost = Arc::new(AtomicBool::new(false));
     let flusher = {
         let out = out.clone();
         let stop = stop.clone();
         let shard_n = shard_n.clone();
+        let lost = lost.clone();
         let want = args.shard;
         std::thread::spawn(move || {
             let Some(prefix) = shard_prefix else { return };
@@ -351,7 +380,12 @@ fn main() {
                     let n = shard_n.fetch_add(1, Ordering::Relaxed);
                     let path = format!("{prefix}.{n:04}");
                     if let Err(e) = GameReplay::write_all(&path, &batch) {
-                        eprintln!("éclat {path} : {e}");
+                        // Les donnes de cet éclat n'existent plus nulle part :
+                        // le tampon a été vidé pour les écrire. On ne peut pas
+                        // les récupérer — on peut seulement refuser de faire
+                        // passer le corpus tronqué pour complet.
+                        eprintln!("éclat {path} : {e} — {} donnes perdues", batch.len());
+                        lost.store(true, Ordering::Relaxed);
                     }
                 }
                 if last {
@@ -362,7 +396,14 @@ fn main() {
     };
 
     for h in handles {
-        let _ = h.join();
+        // Un thread qui panique rend `Err` ici. Sans ce test le run écrivait un
+        // corpus court au chemin de sortie normal et sortait 0 — la panique
+        // n'apparaissant que dans le journal, que personne ne relit quand tout
+        // « a marché ».
+        if h.join().is_err() {
+            eprintln!("un thread a paniqué");
+            failed.store(true, Ordering::Relaxed);
+        }
     }
     stop.store(true, Ordering::Relaxed);
     let _ = flusher.join();
@@ -376,7 +417,10 @@ fn main() {
                 let p = format!("{prefix}.{n:04}");
                 match GameReplay::load_all(&p) {
                     Ok(mut r) => all.append(&mut r),
-                    Err(e) => eprintln!("relecture {p} : {e}"),
+                    Err(e) => {
+                        eprintln!("relecture {p} : {e}");
+                        lost.store(true, Ordering::Relaxed);
+                    }
                 }
             }
             all
@@ -411,9 +455,14 @@ fn main() {
         GameReplay::write_all(path, &replays).expect("écriture COLVGM01");
         let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         // Le fichier fusionné existe et se rejoue : les éclats n'ont plus de
-        // raison d'être. On ne les efface qu'ici, jamais avant.
-        for n in 0..shard_n.load(Ordering::Relaxed) {
-            let _ = std::fs::remove_file(format!("{path}.{n:04}"));
+        // raison d'être. On ne les efface qu'ici, jamais avant — et jamais du
+        // tout si quelque chose s'est perdu en route, parce qu'ils sont alors
+        // la seule copie de ce qui reste.
+        let broken = lost.load(Ordering::Relaxed) || failed.load(Ordering::Relaxed);
+        if !broken {
+            for n in 0..shard_n.load(Ordering::Relaxed) {
+                let _ = std::fs::remove_file(format!("{path}.{n:04}"));
+            }
         }
         eprintln!(
             "→ {path} : {} donnes, {:.1} Mo ({:.0} o/donne)",
@@ -421,6 +470,19 @@ fn main() {
             bytes as f64 / 1e6,
             bytes as f64 / replays.len().max(1) as f64,
         );
+        // Un corpus court doit se voir au code de retour, pas seulement dans un
+        // journal. `--deals N` est une commande, pas un souhait : en rendre
+        // moins sans le dire, c'est exactement le mode de défaillance que la
+        // vérification de légalité est censée fermer, transposé au compte.
+        if broken || replays.len() != args.deals {
+            eprintln!(
+                "❌ corpus INCOMPLET : {} donnes sur {} demandées{}. Les éclats sont conservés.",
+                replays.len(),
+                args.deals,
+                if broken { ", et des donnes ont été perdues en route" } else { "" },
+            );
+            std::process::exit(1);
+        }
     }
 }
 

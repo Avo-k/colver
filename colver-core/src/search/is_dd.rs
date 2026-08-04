@@ -473,10 +473,17 @@ pub struct IsDdSearch {
 
 impl IsDdConfig {
     /// Mondes visés à cette position, en mode compte.
+    ///
+    /// Le `max(1)` n'est pas de la superstition : un objectif à zéro rendrait
+    /// `det_count >= det_target` vrai au premier tour, donc une recherche qui
+    /// sort **sans avoir résolu un seul monde** — toutes les cartes à la valeur
+    /// neutre, et le premier coup légal joué. Une régression silencieuse, pas un
+    /// plantage. `parse_det_schedule` refuse déjà les zéros, mais le champ est
+    /// public et se construit aussi à la main.
     #[inline]
     pub fn dets_for(&self, cards_left: u32) -> u32 {
         match &self.det_schedule {
-            Some(s) => s[(cards_left as usize).min(8)],
+            Some(s) => s[(cards_left as usize).min(8)].max(1),
             None => self.determinizations,
         }
     }
