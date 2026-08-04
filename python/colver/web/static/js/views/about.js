@@ -12,6 +12,8 @@ const TEMPLATE = `
     </p>
     <p class="docs-link">
         Code source : <a href="https://github.com/Avo-k/colver" target="_blank" rel="noopener">github.com/Avo-k/colver</a>
+        \u2014 paquet Python : <a href="https://pypi.org/project/colver/" target="_blank" rel="noopener">PyPI</a>
+        \u2014 poids des mod\u00e8les : <a href="https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65" target="_blank" rel="noopener">Hugging Face</a>
     </p>
 
     <h3>Jeu de la carte</h3>
@@ -52,6 +54,9 @@ const TEMPLATE = `
             entra\u00een\u00e9 50M pas. L'inf\u00e9rence tourne en Rust pur \u00e0 ~1ms par d\u00e9cision.
             Agent le plus fort dans l'ensemble.
         </p>
+        <p class="docs-model-link">
+            <a href="https://huggingface.co/Avo-k/colver-doudou50" target="_blank" rel="noopener">Poids et fiche du mod\u00e8le sur Hugging Face \u2197</a>
+        </p>
     </div>
 
     <h3>Ench\u00e8res</h3>
@@ -65,6 +70,9 @@ const TEMPLATE = `
             (scores cumul\u00e9s, rotation du donneur, reset \u00e0 2000) et reward sensible \u00e0 la belote (Q+K d'atout en m\u00eame main = +20).
             Stabilisation : reward clipping, EMA des poids (&tau;=0.005), cosine LR decay.
             Succ\u00e8de \u00e0 <em>Bid V5 IS-DD</em> (113-dim, 25M pas) avec un \u00e9cart de +55-65% en match arena.
+        </p>
+        <p class="docs-model-link">
+            <a href="https://huggingface.co/Avo-k/colver-bid-v6" target="_blank" rel="noopener">Poids et fiche du mod\u00e8le sur Hugging Face \u2197</a>
         </p>
     </div>
 
@@ -94,6 +102,9 @@ const TEMPLATE = `
             la probabilit\u00e9 qu'elle soit dans chaque main. Le mod\u00e8le sait aussi annoncer, ce qui lui
             permet de tirer des donnes en <em>cours</em> d'ench\u00e8re et, accessoirement, de servir
             d'ench\u00e9risseur (son avis appara\u00eet dans la revue d'ench\u00e8re de Rejouer).
+        </p>
+        <p class="docs-model-link">
+            <a href="https://huggingface.co/Avo-k/colver-playgen-v2" target="_blank" rel="noopener">Poids et fiche du mod\u00e8le sur Hugging Face \u2197</a>
         </p>
     </div>
 

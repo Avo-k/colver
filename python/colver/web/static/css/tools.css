@@ -1891,6 +1891,19 @@
 
 .docs-section p + p { margin-top: 6px; }
 
+/* Renvoi vers les poids publiés. Volontairement plus discret que le corps du
+   texte : c'est une note de bas de section, pas une invitation à quitter la page. */
+.docs-model-link {
+    margin-top: 6px;
+    font-size: var(--fs-sm);
+}
+.docs-model-link a {
+    color: var(--c-accent);
+    text-decoration: none;
+    opacity: 0.85;
+}
+.docs-model-link a:hover { text-decoration: underline; opacity: 1; }
+
 /* Section pointée par ?s= : un liseré discret, sans animation qui saute */
 .docs-section--target {
     border-left: 2px solid var(--c-accent);
