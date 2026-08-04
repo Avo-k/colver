@@ -47,6 +47,44 @@ CONTRASTS = [
     ("bronze_minus_fer", "  dont bronze (ouverture)"),
 ]
 
+# ⚠️ Les contrastes ci-dessus sont en points **N-S**, et c'est la mauvaise lecture.
+# L'étiquette est un total N-S, mais l'effet du préfixe porte sur **le camp qui prend** :
+# un préfixe réaliste place correctement la force, donc le preneur joue mieux. En N-S
+# l'effet change de signe selon qui prend (+6,7 quand N-S prend, −2,1 quand c'est E-O) et
+# s'annule presque à la moyenne — +2,2 au lieu de +4,4. Exactement le piège de
+# `bid_contract_ranks` (rang « de la donne » contre rang « vu du preneur »), deuxième fois.
+def _side(ns_dd):
+    """Camp qui peut tenir le contrat à cet atout : 0 = N-S. Les points cartes étant à
+    somme constante, un seul des deux le peut."""
+    return 0 if ns_dd > 81 else 1
+
+
+def taker_oriented(rows):
+    """Les mêmes contrastes, comptés du côté du preneur plausible.
+
+    `rows` : [t1, t2, peel_is_raise, or1, or2, fer1, peel, fer2, dd1, dd2].
+    """
+    import statistics as st
+
+    def agg(xs):
+        m = sum(xs) / len(xs)
+        se = st.stdev(xs) / len(xs) ** 0.5
+        return {"mean": round(m, 3), "se": round(se, 3),
+                "z": round(m / se, 2) if se else None,
+                "sd": round(st.stdev(xs), 3), "n": len(xs)}
+
+    sign1 = [1 if _side(r[8]) == 0 else -1 for r in rows]
+    sign2 = [1 if _side(r[9]) == 0 else -1 for r in rows]
+    out = {
+        "or_minus_fer": agg([s * (r[3] - r[5]) for s, r in zip(sign1, rows, strict=True)]),
+        "peel_minus_fer": agg([s * (r[6] - r[7]) for s, r in zip(sign2, rows, strict=True)]),
+    }
+    for name, keep in [("silver_minus_fer", True), ("bronze_minus_fer", False)]:
+        sel = [s * (r[6] - r[7]) for s, r in zip(sign2, rows, strict=True) if bool(r[2]) == keep]
+        if len(sel) > 2:
+            out[name] = agg(sel)
+    return out
+
 
 def run(deals, threads, dets, out_json):
     cmd = [BIN, "--games", GAMES, "--bot", BOT, "--bid-model", BID_MODEL,
@@ -67,6 +105,9 @@ def digest(raw):
         "labels_per_s": round(5 * raw["deals"] / raw["secs"], 2),
         "control_sd": round(sd0, 3),
         "control_mean": round(raw["control_mean"], 3),
+        # La lecture qui compte. Gardée à part de `*_ns` pour que l'index versionné
+        # porte les deux et qu'on voie l'écart entre elles.
+        "taker_oriented": taker_oriented(raw["rows"]),
     }
     for key, _ in CONTRASTS:
         c = raw[key]
@@ -85,6 +126,20 @@ def digest(raw):
 
 
 def show(d):
+    print("\n=== ORIENTÉ PRENEUR — la lecture qui compte ===")
+    print(f"  {'contraste':<26}{'n':>7}{'moyenne':>11}{'±':>8}{'z':>8}{'en σ témoin':>14}")
+    for key, label in CONTRASTS:
+        c = d["taker_oriented"].get(key)
+        if not c:
+            continue
+        ratio = c["mean"] / d["control_sd"] if d["control_sd"] else 0
+        print(f"  {label.split('(')[0].strip():<26}{c['n']:>7}{c['mean']:>+11.2f}"
+              f"{c['se']:>8.2f}{c['z']:>+8.1f}{ratio:>+14.2f}")
+    print("\n  (ci-dessous : les mêmes en points N-S bruts — l'effet s'y annule à moitié,")
+    print("   parce qu'il change de signe selon le camp qui prend)")
+
+
+def show_ns(d):
     print(f"\n=== {d['deals']} donnes, {d['secs']:.0f} s ({d['labels_per_s']:.1f} étiquetages/s) ===")
     print(f"\nTÉMOIN — même préfixe, deux graines : "
           f"moyenne {d['control_mean']:+.2f}, **écart-type apparié {d['control_sd']:.2f} points**")
@@ -98,26 +153,42 @@ def show(d):
 
 
 def verdict(d):
-    """La lecture qu'on veut retrouver dans six mois, pas la table brute."""
+    """La lecture qu'on veut retrouver dans six mois, pas la table brute.
+
+    **Un écart petit devant le bruit n'est pas un écart négligeable.** Le bruit de
+    l'étiqueteur (σ ≈ 24 pts) est *non biaisé* : il se moyenne sur des centaines de
+    milliers de donnes. Un décalage systématique de 4 points ne se moyenne pas — il
+    reste dans chaque étiquette, dans le même sens. C'est pourquoi on lit le z, et pas
+    seulement le rapport au plancher.
+    """
     sd0 = d["control_sd"]
     print("\n=== LECTURE ===")
     for key, label in CONTRASTS[:2]:
-        c = d[key]
-        # Marge d'erreur à 2σ sur la moyenne, exprimée en points cartes.
+        c = d["taker_oriented"][key]
         lo, hi = c["mean"] - 2 * c["se"], c["mean"] + 2 * c["se"]
-        if abs(c["mean"]) < 0.5 * sd0 and abs(hi) < sd0 and abs(lo) < sd0:
-            note = "sous le bruit de l'étiqueteur — le préfixe ne se voit pas"
-        elif c["z"] is not None and abs(c["z"]) > 3:
-            note = f"déplacement réel, {abs(c['mean']) / sd0:.2f}× le bruit propre"
-        else:
+        if c["z"] is None or abs(c["z"]) < 2:
             note = "non résolu à cet échantillon"
-        print(f"  {label.strip():<28} [{lo:+.1f} ; {hi:+.1f}] pts à 2σ — {note}")
-    ag, br = d["silver_minus_fer"], d["bronze_minus_fer"]
-    gap = ag["mean"] - br["mean"]
-    gse = math.hypot(ag["se"], br["se"])
-    print(f"\n  argent − bronze : {gap:+.2f} ±{2 * gse:.2f} (2σ) — "
-          + ("l'ordre du mensonge se voit dans les points"
-             if abs(gap) > 2 * gse else "les deux rangs ne se distinguent pas"))
+        else:
+            note = (f"décalage SYSTÉMATIQUE de {c['mean']:+.1f} pt pour le preneur "
+                    f"({abs(c['mean']) / sd0:.2f}× le bruit par étiquette, mais il ne "
+                    f"se moyenne pas)")
+        print(f"  {label.split('(')[0].strip():<22} [{lo:+.1f} ; {hi:+.1f}] pts à 2σ — {note}")
+
+    ag = d["taker_oriented"].get("silver_minus_fer")
+    br = d["taker_oriented"].get("bronze_minus_fer")
+    if ag and br:
+        gap = ag["mean"] - br["mean"]
+        gse = math.hypot(ag["se"], br["se"])
+        print(f"\n  argent − bronze : {gap:+.2f} ±{2 * gse:.2f} (2σ) — "
+              + ("l'ordre du mensonge se voit dans les points"
+                 if abs(gap) > 2 * gse else "les deux rangs ne se distinguent pas"))
+
+    o = d["taker_oriented"]["or_minus_fer"]["mean"]
+    p = d["taker_oriented"]["peel_minus_fer"]["mean"]
+    print(f"\n  Hiérarchie mesurée : or {o:+.2f}  >  épluchage {p:+.2f}  >  fer 0 (référence)")
+    print("  Conséquence pour une couche MIXTE : ses cases ne sont pas comparables entre")
+    print("  elles — celle que v6 annonce est mieux étiquetée que les autres, ce qui")
+    print("  incline vers la politique qu'on cherche à dépasser. D'où le fichier de rangs.")
 
 
 def main():
@@ -142,6 +213,7 @@ def main():
 
     d = digest(raw)
     show(d)
+    show_ns(d)
     verdict(d)
 
     if not args.no_log:

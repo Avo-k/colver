@@ -203,6 +203,29 @@ struct Args {
     dets: Option<u32>,
 }
 
+/// Écrit le rang de préfixe de chaque case, un octet par case, 4 par donne.
+///
+/// **Ce fichier rend le choix réversible, et c'est sa seule raison d'être.** La mesure B
+/// a montré que le préfixe déplace l'étiquette de **+4,36 points pour le preneur** (or
+/// contre fer) et **+2,73** (épluchage contre fer) — monotone, z > 4. Une couche bâtie
+/// sur la hiérarchie porte donc un écart *entre ses propres cases* : celle que v6 a
+/// annoncée est systématiquement mieux étiquetée que les autres, ce qui incline vers la
+/// politique qu'on cherche justement à dépasser.
+///
+/// On ne tranche pas ça en pleine nuit sur un run de plusieurs jours. On **enregistre**
+/// de quoi le trancher après : avec le rang de chaque case, la correction se calcule,
+/// s'annule ou se mesure. Sans lui, la couche est un mélange irrécupérable.
+fn save_ranks(path: &str, ranks: &[[u8; 4]]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    f.write_all(b"COLVRK01")?;
+    f.write_all(&(ranks.len() as u32).to_le_bytes())?;
+    for r in ranks {
+        f.write_all(r)?;
+    }
+    f.flush()
+}
+
 fn parse() -> Args {
     let mut a = Args {
         pool: "data/deals/base_5M.bin".into(),
@@ -304,6 +327,24 @@ fn main() {
         args.threads, spec.play.determinizations
     );
 
+    // Rangs de préfixe, parallèles aux scores. Repartis à zéro sur une reprise : les
+    // rangs des donnes déjà faites sont dans le fichier précédent, et les réinventer
+    // serait pire que de les laisser vides.
+    let mut ranks_v: Vec<[u8; 4]> = vec![[9; 4]; count];
+    if resume > 0 {
+        if let Ok(d) = std::fs::read(format!("{}.ranks", args.out)) {
+            if d.len() >= 12 && &d[..8] == b"COLVRK01" {
+                let n = (u32::from_le_bytes(d[8..12].try_into().unwrap()) as usize)
+                    .min(resume)
+                    .min((d.len() - 12) / 4);
+                for k in 0..n {
+                    ranks_v[k].copy_from_slice(&d[12 + 4 * k..16 + 4 * k]);
+                }
+                eprintln!("reprise : {n} lignes de rangs relues");
+            }
+        }
+    }
+    let ranks_v = Arc::new(Mutex::new(ranks_v));
     let scores = Arc::new(Mutex::new(scores));
     // `done[k]` : la donne `offset+k` est étiquetée. Sert à trouver le préfixe dense.
     let done = Arc::new(Mutex::new(vec![false; count]));
@@ -324,6 +365,7 @@ fn main() {
     {
         let (scores, done, n_done, stop, ranks) =
             (scores.clone(), done.clone(), n_done.clone(), stop.clone(), ranks.clone());
+        let ranks_v = ranks_v.clone();
         let (out, offset, checkpoint) = (args.out.clone(), args.offset, args.checkpoint);
         std::thread::spawn(move || {
             let mut last = 0usize;
@@ -343,6 +385,10 @@ fn main() {
                     continue;
                 }
                 let sc = scores.lock().unwrap()[..dense].to_vec();
+                let rk = ranks_v.lock().unwrap()[..dense].to_vec();
+                if let Err(e) = save_ranks(&format!("{out}.ranks"), &rk) {
+                    eprintln!("  ⚠ écriture des rangs : {e}");
+                }
                 match DealPool::save_scores("isdd_v2", offset, &sc, &out) {
                     Ok(()) => {
                         let el = start.elapsed().as_secs_f64();
@@ -370,6 +416,7 @@ fn main() {
             (scores.clone(), done.clone(), next.clone(), n_done.clone(),
              errors.clone(), ranks.clone(), stop.clone());
         let (pool, spec, bid_model) = (pool.clone(), spec.clone(), args.bid_model.clone());
+        let ranks_v = ranks_v.clone();
         let offset = args.offset;
         handles.push(std::thread::spawn(move || {
             let mut players: [Box<dyn Player>; 4] = match (0..4)
@@ -408,11 +455,13 @@ fn main() {
                 let pfx = prefixes(&hands, dealer, &dd, key, &mut net, &mut obs);
 
                 let mut row = [0u8; 4];
+                let mut rrow = [0u8; 4];
                 let mut ok = true;
                 for (t, (auc, rank)) in pfx.iter().enumerate() {
                     match label(hands, dealer, auc, &mut players, &mut ctx) {
                         Ok(Some(v)) => {
                             row[t] = v;
+                            rrow[t] = *rank;
                             ranks[*rank as usize].fetch_add(1, Ordering::Relaxed);
                         }
                         _ => { ok = false; break }
@@ -428,6 +477,7 @@ fn main() {
                     continue;
                 }
                 scores.lock().unwrap()[k] = row;
+                ranks_v.lock().unwrap()[k] = rrow;
                 done.lock().unwrap()[k] = true;
                 n_done.fetch_add(1, Ordering::Relaxed);
             }

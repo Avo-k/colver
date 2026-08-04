@@ -301,16 +301,58 @@ irréductiblement hors distribution.
 | **bronze** | épluchage, **ouverture** retirée | un siège devient muet | ~1,0 | 39-67 % |
 | **fer** | construction §4 | tout le préfixe | ~1,6 | 0 % |
 
-C'est **la mesure B** qui dira ce que chaque rang coûte, en comparant l'étiquette d'une
-même case sous chacun des quatre préfixes. Et elle garde tout son sens : un préfixe hors
-distribution n'est un défaut que s'il déplace l'étiquette — au milieu d'une donne playgen
-lit surtout les cartes déjà jouées, bien plus informatives que 8 jetons d'enchère.
+### Mesure B — ce que chaque rang coûte, 2026-08-05
 
-**Les rangs sont une hypothèse ordonnée, pas un résultat.** On les a construits sur ce
-qu'ils *mentent*, pas sur ce qu'ils coûtent en points cartes ; il est parfaitement
-possible que bronze vaille or et que le classement s'effondre à trois rangs, voire deux.
-C'est justement ce qui rend B mesurable : quatre préfixes nommés, une hypothèse d'ordre,
-et un plancher de bruit pour la réfuter.
+*[bench_prefix_label.rs](../../colver-core/src/bin/bench_prefix_label.rs) +
+[prefix_label.py](../../scripts/analysis/prefix_label.py). 1 985 donnes × 5 bras
+= 9 925 étiquetages IS-DD, 33 min sur deux GPU. La même case `(donne, atout)` étiquetée
+sous chaque préfixe, donc **comparaison appariée**.*
+
+**Le témoin d'abord** : le même préfixe étiqueté deux fois avec deux graines donne un
+écart-type apparié de **24,37 points cartes**. C'est le bruit propre de l'étiqueteur à
+40 mondes/décision, et il est **non biaisé** — il se moyenne sur des centaines de
+milliers de donnes.
+
+**L'ordre du mensonge *est* l'ordre du coût. L'hypothèse tient.**
+
+| rang | points cartes **du preneur**, contre le fer | z |
+|---|--:|--:|
+| **or** (enchère réelle) | **+4,36 ± 0,65** | +6,7 |
+| **argent** (relance retirée) | **+4,34 ± 1,18** | +3,7 |
+| **bronze** (ouverture retirée) | **+1,92 ± 0,73** | +2,6 |
+| fer (construit) | référence | — |
+
+Lecture : **un préfixe réaliste fait jouer le preneur ~4 points mieux**, parce que
+playgen y place correctement la force et qu'IS-DD cherche donc avec de bonnes croyances.
+Et **l'argent vaut l'or** — retirer une relance ne coûte rien, l'auteur reste visible ;
+c'est rendre un siège muet qui coûte la moitié du bénéfice. La distinction relance /
+ouverture était la bonne.
+
+⚠️ **Il a fallu orienter par le preneur pour voir quoi que ce soit.** En points N-S
+bruts, or − fer ne donne que **+2,22** : l'effet change de signe selon le camp qui prend
+(+6,69 quand N-S prend, −2,10 quand c'est E-O) et s'annule à moitié à la moyenne. C'est
+**exactement** le piège de [bid_v7_plan §1.11](../bid/bid_v7_plan.md) — rang « de la
+donne » contre rang « vu du preneur » — et je suis retombé dedans, y compris dans la
+première version du dépouillement journalisé.
+
+⚠️ **Et « petit devant le bruit » ne veut pas dire « négligeable ».** 4,36 points ne font
+que 0,18× l'écart-type du témoin, ce qui invite à conclure que le préfixe ne se voit pas.
+C'est faux : le bruit du témoin est **non biaisé** et se moyenne, le décalage est
+**systématique** et ne se moyenne pas. Il reste dans chaque étiquette, dans le même sens.
+
+### Ce que B impose au générateur
+
+Une couche **mixte** — or sur la case que v6 annonce, fer sur les autres — porte donc un
+écart **entre ses propres cases** : celle que v6 a choisie est mieux étiquetée que les
+trois autres, ce qui incline le futur bidder vers la politique qu'on cherche justement à
+dépasser. Un préfixe uniforme n'aurait pas ce défaut, mais il l'échangerait contre un
+biais commun (−4 points au preneur partout, donc sous-annonce systématique).
+
+**On ne tranche pas ça sur un run de plusieurs jours : on enregistre de quoi le trancher
+après.** `gen_score_layer` écrit un fichier `<couche>.ranks` — un octet par case, quatre
+par donne, magic `COLVRK01` — qui dit quel rang de préfixe a produit chaque étiquette.
+Avec lui, la correction se calcule, s'annule ou se mesure. Sans lui, la couche est un
+mélange irrécupérable.
 
 ⚠️ **Deux réserves à ne pas perdre de vue.**
 
