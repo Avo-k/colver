@@ -584,6 +584,27 @@ n'est donc pas une limite de capacité, et le scaling l'aggrave** — c'est le
 contrôle le plus direct qu'on puisse opposer à « il suffirait d'un plus gros
 modèle ».
 
+**La tête de jeu paie aussi, mais pas pour la même raison — et le score ne la
+soignerait pas.** Sur les mêmes corpus, `playgen_v2_final` perd 1 à 8 % par carte
+et **2,20× de continuations au pli 1** (7,12e11 contre 3,24e11). Tentant d'y voir
+un second bénéfice du score ; c'est faux :
+
+- Le **plancher uniforme est identique** (3,1338 des deux côtés, et à 0,002 près
+  sur les huit plis) : les positions ont les mêmes tailles de masque, et les mains
+  sont littéralement les mêmes (même seed). La différence n'est pas structurelle.
+- **DouDou50 est aveugle au score de partie** — son obs ne porte que
+  `state.points[team] / 252`, les points *cartes de la donne*. Le score ne change
+  donc rien à la façon dont les cartes sont jouées.
+
+Ce qui change, c'est le **contrat atteint** : v6 annonce autrement en fin de
+partie, et playgen prédit moins bien le jeu sous ces contrats-là, plus rares dans
+son corpus à 0-0. C'est un **décalage de distribution**, pas une information
+manquante — et le contrat, lui, est déjà dans ses tokens. Conséquence de design :
+**le token de score est informatif pour la tête d'enchère et redondant pour la
+tête de jeu**. Ce qui soigne la seconde est un corpus de matchs qui *contienne*
+ces contrats, pas une entrée supplémentaire. Les deux justifient le corpus ; un
+seul justifie l'entrée.
+
 **Contrôle de symétrie, qui a payé.** `write_bid_observation_score_aware_v3` prend
 `my_score, opp_score` **relatifs à l'annonceur**, pas des scores de camp. Une
 première version passait `(ns, ew)` tel quel : les quatre sièges se croyaient dans
