@@ -79,6 +79,26 @@ ferme l'aller-retour écriture → lecture.
 Taille : **58 octets par donne**, ~40 actions. 1 M de donnes = 58 Mo, soit
 exactement le gabarit de `playgen_games_1M.bin`.
 
+`--check` décrit aussi le **contenu**, pas seulement la structure : un corpus
+peut être parfaitement rejouable et inutilisable, rien n'interdisant à un
+joueur mal configuré de passer neuf donnes sur dix. Et il donne au passage une
+validation gratuite — le corpus produit ici et `heldout_20k_s90210.bin`, un
+corpus playgen existant, ont **le même profil** :
+
+| | ce générateur | `heldout_20k_s90210.bin` |
+|---|---|---|
+| donnes passées | 0,1 % | 0,1 % |
+| annonces par donne | 8,2 | 8,2 |
+| preneur N-S | 50,5 % | 49,9 % |
+| contrat réussi | 64,6 % | 64,0 % |
+| contré | 25,2 % | 25,1 % |
+
+Ce n'est donc pas un artefact de ce binaire : **un quart des contrats sont
+contrés**, chez les bidders de ce projet, depuis toujours. Si c'est loin d'une
+table humaine, un playgen entraîné là-dessus apprendra une distribution
+d'enchères biaisée — mais c'est une question sur le *bidder*, pas sur le
+générateur, et elle n'est pas tranchée ici.
+
 ## Où passe le temps
 
 Profil mesuré le 2026-08-04 (sidecar playgen v2_final sur une 3090, client sur
