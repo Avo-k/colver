@@ -15,6 +15,12 @@ determinizations = 20
 # La réponse cesse de bouger bien avant : regret < 0,10 point DD dès 60 mondes
 # (`isdd_dets_by_stage`, 250 positions). Au-delà on n'achète que de la charge GPU.
 max_worlds = 256
+# Plancher : sous pression de calcul, la dégradation se paie en **latence**
+# (visible) et non en **force de jeu** (invisible). Sans lui, un GPU chargé
+# faisait rendre à Dédé une réponse à l'heure fondée sur une poignée de mondes,
+# et rien ne le signalait — le joueur voyait un coup arriver au rythme habituel,
+# simplement moins bon.
+min_worlds = 64
 # Redondant avec le défaut, écrit quand même : c'est ce qui distingue ce bot de
 # `web_dede_cardpts`, et l'objectif est ce qui décide de tenter un contrat
 # improbable ou de gratter des points cartes qui ne valent rien.

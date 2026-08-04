@@ -208,6 +208,29 @@ pub struct IsDdConfig {
     /// `determinizations` borne déjà la boucle — c'est ce qui garde
     /// reproductibles le sweep ci-dessus et `enrich_pool_isdd`.
     pub max_worlds: Option<u32>,
+    /// Plancher de mondes **résolus** par décision, sous échéance uniquement.
+    ///
+    /// Le pendant de `max_worlds`, et il répond à une question de politique et
+    /// non de performance : **sous pression de calcul, un bot doit-il rendre sa
+    /// réponse à l'heure en cherchant moins, ou chercher autant en rendant sa
+    /// réponse plus tard ?** Sans plancher c'est la première option, et la
+    /// dégradation est invisible — le joueur voit un coup arriver au même rythme,
+    /// simplement moins bon. Avec un plancher c'est la seconde : la charge se
+    /// paie en latence, qui se voit, au lieu de se payer en force, qui ne se voit
+    /// pas. Le GPU de la prod étant partagé (sidecar, llama-server, et toute
+    /// génération de données qui passe), le cas n'est pas théorique.
+    ///
+    /// `None` par défaut : aucun appelant existant ne change de comportement.
+    /// `min_worlds == max_worlds` dégénère en mode compte, l'échéance ne servant
+    /// alors plus à rien.
+    ///
+    /// **« Lent » n'est pas « bloqué ».** Le plancher suspend l'échéance, mais
+    /// pas le garde-fou de progression : si aucun monde n'est produit pendant
+    /// `STUCK_ROUNDS` tours consécutifs *après* l'échéance, la recherche rend ce
+    /// qu'elle a. Sans ça, une position dont la déterminisation échoue toujours
+    /// — le `continue` de la boucle est explicitement conçu pour réessayer
+    /// jusqu'à l'échéance — tournerait sans fin.
+    pub min_worlds: Option<u32>,
     /// Credibility importance weighting of worlds in the DD aggregation. Each
     /// world's weight is the product of per-action rank factors — "would the
     /// reference policy replay the observed hidden action holding this world's
@@ -244,6 +267,7 @@ impl Default for IsDdConfig {
             belief_frac: 1.0,
             objective: PlayObjective::DealScore,
             max_worlds: None,
+            min_worlds: None,
             cred_alpha: 0.0,
             parallel: false,
         }
@@ -1178,9 +1202,20 @@ impl IsDdSearch {
         // and one worker-slot's worth in parallel mode.
         let chunk_size = solve_chunk_size(config.parallel);
 
+        // Nombre de tours consécutifs sans aucun monde résolu. Ne sert qu'au
+        // plancher : c'est ce qui sépare « le GPU est lent » de « cette position
+        // ne se déterminise pas », deux situations que l'échéance confondait
+        // parce qu'elle coupait les deux.
+        let mut barren_rounds = 0u32;
+        const STUCK_ROUNDS: u32 = 64;
+
         loop {
+            // Sous le plancher, l'échéance ne coupe pas : la pression de calcul
+            // doit se payer en latence, pas en force de jeu.
+            let below_floor = config.min_worlds.is_some_and(|m| successful_dets < m);
             if let Some(d) = deadline {
-                if Instant::now() >= d {
+                let past_deadline = Instant::now() >= d;
+                if past_deadline && (!below_floor || barren_rounds >= STUCK_ROUNDS) {
                     break;
                 }
                 // Assez de mondes : la réponse a cessé de bouger, le temps qui
@@ -1215,7 +1250,12 @@ impl IsDdSearch {
                     // en fin de donne que playgen sert le plus, en écartant les
                     // mondes quasi impossibles qu'un tirage uniforme traite à
                     // égalité des mondes plausibles.
+                    //
+                    // Sous le plancher ce calcul ne s'applique pas : renoncer à
+                    // l'aller-retour faute de temps, c'est précisément rendre la
+                    // réponse à l'heure en cherchant moins.
                     let no_time_left = match deadline {
+                        _ if below_floor => false,
                         Some(d) if usage.rounds > 0 && self.source_latency_us > 0.0 => {
                             let left = d.saturating_duration_since(Instant::now());
                             (left.as_micros() as f64) < self.source_latency_us
@@ -1322,8 +1362,10 @@ impl IsDdSearch {
                 // Every attempt this round failed to determinize; in count mode
                 // `det_count` still advances so we terminate, in time mode we
                 // retry until the deadline. Avoid touching the accumulators.
+                barren_rounds += 1;
                 continue;
             }
+            barren_rounds = 0;
 
             // --- Credibility weights (sequential: the judge nets are stateful). ---
             let cred_weights: Vec<f64> = if config.cred_alpha > 0.0 {
@@ -1981,6 +2023,189 @@ mod tests {
         );
         assert!(r.worlds.injected > 0, "le premier lot doit avoir servi");
         assert_eq!(r.source.discarded, 0, "rien ne doit être jeté");
+    }
+
+    /// Sous pression de calcul, un plancher fait payer la **latence** et non la
+    /// **force de jeu**.
+    ///
+    /// C'est un choix de politique, et c'est pour ça qu'il se teste : sans
+    /// plancher, une source lente fait rendre à Dédé une réponse à l'heure
+    /// fondée sur une poignée de mondes, et **rien ne le signale** — le joueur
+    /// voit un coup arriver au rythme habituel, simplement moins bon. Avec
+    /// plancher, la même position rend le nombre de mondes demandé et met plus
+    /// longtemps. Le test tourne les deux configurations sur la même position et
+    /// la même graine, donc seul le plancher les sépare.
+    #[test]
+    fn a_floor_buys_worlds_with_latency_instead_of_giving_up_strength() {
+        use rand::SeedableRng;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        struct SlowSource {
+            calls: Arc<AtomicU32>,
+            delay: Duration,
+        }
+        impl crate::worlds::WorldSource for SlowSource {
+            fn name(&self) -> &'static str {
+                "slow-floor-test"
+            }
+            fn init_deal(&mut self, _state: &GameState, _observer: u8) {}
+            fn observe(&mut self, _s: &GameState, _p: u8, _a: u8) {}
+            fn worlds(
+                &mut self,
+                state: &GameState,
+                observer: u8,
+                n: usize,
+                rng: &mut dyn rand::RngCore,
+            ) -> Result<Vec<World>, crate::agent::AgentError> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(self.delay);
+                struct Ad<'a>(&'a mut dyn rand::RngCore);
+                impl rand::RngCore for Ad<'_> {
+                    fn next_u32(&mut self) -> u32 { self.0.next_u32() }
+                    fn next_u64(&mut self) -> u64 { self.0.next_u64() }
+                    fn fill_bytes(&mut self, d: &mut [u8]) { self.0.fill_bytes(d) }
+                    fn try_fill_bytes(&mut self, d: &mut [u8]) -> Result<(), rand::Error> {
+                        self.0.try_fill_bytes(d)
+                    }
+                }
+                let mut r = Ad(rng);
+                Ok((0..n)
+                    .filter_map(|_| determinize_greedy(state, observer, &mut r).map(|s| s.hands))
+                    .collect())
+            }
+        }
+
+        // Fin de donne : les solves y coûtent des microsecondes, donc c'est bien
+        // la source — et elle seule — qui consomme l'échéance.
+        let mut src_rng = rand::rngs::StdRng::seed_from_u64(90210);
+        let state = loop {
+            let Some(mut s) = random_playing_state(&mut src_rng) else { continue };
+            while !s.is_terminal() && card_count(s.hands[s.current_player() as usize]) > 3 {
+                let legal = s.legal_actions();
+                let idx = src_rng.gen_range(0..legal.count_ones());
+                s.step(select_nth_bit(legal, idx));
+            }
+            if !s.is_terminal() && s.legal_actions().count_ones() >= 2 {
+                break s;
+            }
+        };
+        let cards_left = card_count(state.hands[state.current_player() as usize]);
+        const FLOOR: u32 = 24;
+
+        let run = |min_worlds: Option<u32>| {
+            let calls = Arc::new(AtomicU32::new(0));
+            let mut source = SlowSource {
+                calls: Arc::clone(&calls),
+                delay: Duration::from_millis(25),
+            };
+            let cfg = IsDdConfig {
+                // Echeance volontairement plus courte qu'un seul aller-retour.
+                time_limit_ms: Some(10 * 8 / cards_left.max(1)),
+                world_batch: 8,
+                early_termination: false,
+                parallel: false,
+                min_worlds,
+                ..Default::default()
+            };
+            let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+            let mut search = IsDdSearch::new();
+            search.init_deal_with_config(&state, state.current_player(), &cfg);
+            let t0 = Instant::now();
+            let r = search
+                .search_with_source(&state, &cfg, &mut rng, &mut source)
+                .expect("la source ne renvoie pas d'erreur");
+            (r.determinizations, t0.elapsed())
+        };
+
+        let (dets_free, t_free) = run(None);
+        let (dets_floor, t_floor) = run(Some(FLOOR));
+
+        assert!(
+            dets_floor >= FLOOR,
+            "le plancher n'a pas tenu : {dets_floor} mondes resolus pour un plancher de {FLOOR}"
+        );
+        assert!(
+            dets_free < FLOOR,
+            "l'echeance aurait du couper sous le plancher sans lui ({dets_free} mondes) — \
+             sinon ce test ne prouve rien"
+        );
+        assert!(
+            t_floor > t_free,
+            "le plancher doit se payer en temps : {t_floor:?} contre {t_free:?}"
+        );
+    }
+
+    /// Une source morte ne doit pas faire tourner le plancher dans le vide.
+    ///
+    /// `source_dry` (lot vide = le sampler ne *peut* plus produire) garde son
+    /// repli local, donc le plancher reste atteignable en mondes échantillonnés
+    /// sur place. C'est ce qui rend le plancher sûr : il ne peut pas boucler
+    /// indéfiniment tant que la déterminisation locale aboutit — et quand elle
+    /// n'aboutit pas, `STUCK_ROUNDS` coupe.
+    ///
+    /// ⚠️ La contrepartie, et elle compte pour la prod : dans **ce** cas précis
+    /// le plancher est rempli avec des mondes uniformes, pas des mondes playgen.
+    /// Il garantit le *nombre*, pas la *provenance*. Un sidecar simplement lent
+    /// n'est pas concerné (`source_dry` ne se déclenche que sur un lot vide, et
+    /// sous le plancher on ne renonce jamais à l'aller-retour).
+    #[test]
+    fn a_dead_source_still_lets_the_floor_terminate() {
+        use rand::SeedableRng;
+
+        struct DeadSource;
+        impl crate::worlds::WorldSource for DeadSource {
+            fn name(&self) -> &'static str {
+                "dead-test"
+            }
+            fn init_deal(&mut self, _state: &GameState, _observer: u8) {}
+            fn observe(&mut self, _s: &GameState, _p: u8, _a: u8) {}
+            fn worlds(
+                &mut self,
+                _state: &GameState,
+                _observer: u8,
+                _n: usize,
+                _rng: &mut dyn rand::RngCore,
+            ) -> Result<Vec<World>, crate::agent::AgentError> {
+                Ok(Vec::new())
+            }
+        }
+
+        let mut src_rng = rand::rngs::StdRng::seed_from_u64(1234);
+        let state = loop {
+            if let Some(s) = random_playing_state(&mut src_rng) {
+                if !s.is_terminal() && s.legal_actions().count_ones() >= 2 {
+                    break s;
+                }
+            }
+        };
+        const FLOOR: u32 = 24;
+        let cfg = IsDdConfig {
+            time_limit_ms: Some(1), // echeance immediate : seul le plancher decide
+            min_worlds: Some(FLOOR),
+            early_termination: false,
+            parallel: false,
+            ..Default::default()
+        };
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let mut search = IsDdSearch::new();
+        search.init_deal_with_config(&state, state.current_player(), &cfg);
+        let t0 = Instant::now();
+        let mut source = DeadSource;
+        let r = search
+            .search_with_source(&state, &cfg, &mut rng, &mut source)
+            .expect("pas d'erreur");
+        assert!(
+            t0.elapsed() < Duration::from_secs(20),
+            "la recherche ne s'est pas arretee ({:?})",
+            t0.elapsed()
+        );
+        assert!(
+            r.determinizations >= FLOOR,
+            "plancher non tenu par le repli local : {} mondes",
+            r.determinizations
+        );
+        assert!(r.best_action < 32, "une carte doit quand meme sortir");
     }
 
     /// Les poids de croyance sont calculés **paresseusement** — seulement quand

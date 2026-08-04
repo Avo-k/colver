@@ -15,8 +15,10 @@ samplers in sync with the game — so `AgentTable.observe()` must be called
 before `env.step()` for **all** moves, human ones included.
 """
 
+import collections
 import logging
 import os
+import statistics
 import time
 
 import colver
@@ -35,11 +37,26 @@ ISDD_DETS = int(os.environ.get("COLVER_ISDD_DETS", "0"))
 # Worlds requested per sidecar round trip under a time budget.
 ISDD_WORLD_BATCH = int(os.environ.get("COLVER_ISDD_PLAYGEN_WORLDS", "256"))
 
-# Plafond de mondes résolus par coup, sous échéance. 0 = pas de plafond.
-# 256 est ~4× le plateau mesuré à l'entame et ~17× celui de la fin de donne :
-# large exprès, pour que le premier pas soit une réduction du gaspillage mesuré
-# et non un pari sur la marge.
+# Plafond et **plancher** de mondes résolus par coup, sous échéance.
+# 0 = pas de borne.
+#
+# Le plancher est un choix de politique, pas un réglage de performance : sous
+# pression de calcul — le GPU de la prod est partagé — la dégradation doit se
+# payer en **latence**, qui se voit, et non en **force de jeu**, qui ne se voit
+# pas. Sans lui, un GPU chargé faisait rendre à Dédé une réponse à l'heure
+# fondée sur une poignée de mondes, au rythme habituel, simplement moins bonne.
+#
+# Le plancher est posé **au genou mesuré** : le regret contre une référence à
+# 2000 mondes passe sous 0,10 point DD dès 60 mondes (`isdd_dets_by_stage`, 250
+# positions). 64 garantit donc du jeu essentiellement convergé, quoi qu'il
+# arrive au GPU.
+#
+# Le plafond reste large (256, ~4× le genou) : quand la carte est libre, ce
+# temps ne coûte rien à personne. Mais c'est **lui** qui fabrique la contention,
+# pas le plancher — si la latence par coup devient visible pour les joueurs,
+# c'est 256 qu'il faut baisser, pas 64.
 ISDD_MAX_WORLDS = int(os.environ.get("COLVER_ISDD_MAX_WORLDS", "256"))
+ISDD_MIN_WORLDS = int(os.environ.get("COLVER_ISDD_MIN_WORLDS", "64"))
 
 # Playgen GPU sidecar. Empty = no sidecar configured, in which case IS-DD bots
 # sample constraint-uniform worlds and say so in their stats.
@@ -102,6 +119,32 @@ _WORLD_STATS = {
     "worlds_uniform": 0,
 }
 
+# Mondes résolus des 200 dernières décisions échantillonnées, toutes tables
+# confondues. 200 ≈ sept donnes : assez long pour ne pas sauter sur une
+# position atypique, assez court pour qu'une dégradation apparaisse en quelques
+# minutes plutôt que d'être diluée dans l'historique du processus.
+_RECENT_WORLDS = collections.deque(maxlen=200)
+
+
+def recent_worlds_per_decision():
+    """Mondes résolus par décision sur la fenêtre récente, ou `None` si vide.
+
+    C'est **la** jauge de santé d'IS-DD : elle doit se tenir entre le plancher
+    et le plafond de la spec (`min_worlds` / `max_worlds`). En dessous du
+    plancher, quelque chose empêche la recherche d'atteindre son compte ; au
+    plafond en permanence, le budget de temps n'est jamais la contrainte.
+    """
+    if not _RECENT_WORLDS:
+        return None
+    xs = sorted(_RECENT_WORLDS)
+    return {
+        "n": len(xs),
+        "mean": round(statistics.fmean(xs), 1),
+        "min": xs[0],
+        "p50": xs[len(xs) // 2],
+        "max": xs[-1],
+    }
+
 
 def world_stats():
     """Instantané des compteurs d'origine de mondes."""
@@ -113,6 +156,13 @@ def _note_worlds(stats):
     worlds = stats.get("worlds") or {}
     total = sum(int(v) for v in worlds.values())
     _WORLD_STATS["decisions"] += 1
+    # Fenêtre glissante des dernières décisions échantillonnées. Les compteurs
+    # ci-dessous sont **cumulés depuis le démarrage** : parfaits pour un total,
+    # inutilisables pour répondre à « est-ce que ça va *maintenant* ? » — une
+    # heure de bon fonctionnement noie une dégradation en cours. La fenêtre
+    # répond à cette question-là, et c'est elle que /health publie.
+    if total:
+        _RECENT_WORLDS.append(int(stats.get("determinizations") or total))
     for key in ("injected", "playgen", "belief", "uniform"):
         _WORLD_STATS["worlds_" + key] += int(worlds.get(key, 0))
     if total == 0:
@@ -220,6 +270,7 @@ def spec_for(kind, *, bid_model=None, play_model=None, belief_model=None, time_m
         # au-delà n'achète que de la charge GPU — et le joueur ne la voit pas,
         # `pacing.hold` absorbe le temps rendu. Sans effet en mode compte.
         f"max_worlds = {ISDD_MAX_WORLDS}\n"
+        f"min_worlds = {ISDD_MIN_WORLDS}\n"
     )
     belief = f'\n[belief]\nmodel = "{belief_model}"\n' if belief_model else ""
     return bid + play + "\n" + _worlds_section() + belief
@@ -237,6 +288,9 @@ class AgentTable:
         self.kinds = dict(kinds)
         self.agents = {}
         self.errors = {}
+        # Mondes résolus et temps par décision IS-DD de la donne en cours.
+        self._deal_worlds = []
+        self._deal_ms = []
         for seat, kind in self.kinds.items():
             spec = spec_for(
                 kind,
@@ -256,8 +310,36 @@ class AgentTable:
 
     def init_deal(self, env):
         """Start a deal. `env` must be the fresh, pre-auction position."""
+        # Filet : si un pilote oublie `end_deal()`, la donne précédente est tout
+        # de même rapportée ici. Ne couvre pas la dernière donne d'une session,
+        # d'où `end_deal()` sur les deux chemins terminaux.
+        self.end_deal()
         for agent in self.agents.values():
             agent.init_deal(env)
+
+    def end_deal(self):
+        """Journaliser les mondes par décision de la donne écoulée, puis remettre à zéro.
+
+        La jauge que ça produit répond à « DD travaille-t-il normalement ? »
+        **à l'échelle d'une donne**, ce qu'aucun compteur cumulé ne peut dire :
+        une heure de bon fonctionnement noie une donne dégradée. Une ligne par
+        donne (~24 décisions de bot) est un débit de journal négligeable, et
+        c'est la granularité à laquelle on lit ensuite une régression.
+
+        Le `min` compte autant que la moyenne : c'est lui qui dit si le plancher
+        a tenu. Une moyenne confortable peut cacher deux coups à 5 mondes.
+        """
+        if not self._deal_worlds:
+            return
+        xs = sorted(self._deal_worlds)
+        self._deal_worlds = []
+        logger.info(
+            "IS-DD donne terminée : %d décisions échantillonnées, "
+            "%.1f mondes/décision (min %d, médiane %d, max %d), %.0f ms/coup",
+            len(xs), statistics.fmean(xs), xs[0], xs[len(xs) // 2], xs[-1],
+            statistics.fmean(self._deal_ms) if self._deal_ms else 0.0,
+        )
+        self._deal_ms = []
 
     def set_time_ms(self, ms):
         """Retune the per-move budget without rebuilding (the Regarder page)."""
@@ -298,6 +380,15 @@ class AgentTable:
             stats = decision_stats(self.kind(seat), decision)
             _note_worlds(stats)
             _note_degraded(seat, stats)
+            dets = int(decision.get("determinizations") or 0)
+            if dets:
+                # Les décisions sans échantillonnage (coup forcé, position
+                # résolue) sont exclues : les compter tirerait la moyenne vers
+                # le bas sans qu'aucune dégradation n'ait eu lieu.
+                self._deal_worlds.append(dets)
+                self._deal_ms.append(float(decision.get("elapsed_ms") or 0.0))
+                logger.debug("IS-DD siège %s : %d mondes en %.0f ms",
+                             seat, dets, decision.get("elapsed_ms") or 0.0)
         return decision
 
 

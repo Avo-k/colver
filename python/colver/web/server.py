@@ -507,6 +507,10 @@ async def health():
         # compteurs-là disent si la file playgen suffit, ou si les recherches
         # retombent sur le belief net / l'uniforme sans que personne le voie.
         "worlds": _agents.world_stats(),
+        # Jauge de santé d'IS-DD : mondes par décision sur les 200
+        # dernières, donc sensible à une dégradation en cours — ce que les
+        # compteurs cumulés au-dessus ne peuvent pas être.
+        "worlds_per_decision": _agents.recent_worlds_per_decision(),
     }
     # 503 seulement si la base est morte : un sidecar absent dégrade la force de
     # jeu, il n'empêche pas de jouer. Le champ `status` porte l'alerte, le code
@@ -2567,6 +2571,13 @@ def _enrich_terminal_msg(msg, play_session, match=None):
         msg["completed_tricks"] = play_session.completed_tricks
         if match is not None:
             msg["match"] = match.payload()
+        # Une ligne de journal par donne. Idempotent : cette fonction est
+        # appelée plusieurs fois sur un état terminal (coup humain final puis
+        # `_run_ai_turns`), et `end_deal` ne journalise que s'il reste quelque
+        # chose à rapporter — même raison que `Match.record`.
+        bots = getattr(play_session, "bots", None)
+        if bots is not None:
+            bots.end_deal()
     return msg
 
 

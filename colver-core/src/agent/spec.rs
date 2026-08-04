@@ -15,6 +15,7 @@
 //! [play]
 //! method = "isdd"                 # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle|heuristic|rule
 //! max_worlds = 256                # IS-DD sous échéance : plafond de mondes résolus par coup
+//! min_worlds = 60                 # ... et plancher : sous pression, plus lent plutôt que plus faible
 //! objective = "deal_score"        # IS-DD : deal_score (défaut, contrat compris) | card_points
 //! time_ms = 1000                  # time budget; 0 = use `determinizations` instead
 //! determinizations = 240
@@ -132,6 +133,13 @@ pub struct PlaySpec {
     /// Plafond de mondes résolus par décision, sous échéance. `None` = pas de
     /// plafond (le défaut historique : consommer tout le budget).
     pub max_worlds: Option<u32>,
+    /// Plancher de mondes résolus sous échéance (`[play] min_worlds`).
+    ///
+    /// Choix de politique : sous pression de calcul, la dégradation se paie en
+    /// **latence** (visible) plutôt qu'en **force de jeu** (invisible). `None`
+    /// laisse le comportement d'origine — l'échéance coupe, quel que soit le
+    /// nombre de mondes atteint.
+    pub min_worlds: Option<u32>,
     pub cred_alpha: f32,
     pub cred_bid_model: Option<String>,
     pub cred_play_model: Option<String>,
@@ -155,6 +163,7 @@ impl Default for PlaySpec {
             belief_frac: 1.0,
             objective: crate::is_dd::PlayObjective::DealScore,
             max_worlds: None,
+            min_worlds: None,
             cred_alpha: 0.0,
             cred_bid_model: None,
             cred_play_model: None,
@@ -319,6 +328,7 @@ impl AgentSpec {
                 ("play", "dominance_factor") => spec.play.dominance_factor = num(1.0),
                 ("play", "belief_frac") => spec.play.belief_frac = num(1.0),
                 ("play", "max_worlds") => spec.play.max_worlds = Some(int(0) as u32),
+                ("play", "min_worlds") => spec.play.min_worlds = Some(int(0) as u32),
                 ("play", "objective") => {
                     // Pas de repli silencieux : une faute de frappe rendrait
                     // l'objectif le plus faible sans rien dire, et un bot qui
@@ -455,6 +465,7 @@ impl AgentSpec {
             belief_frac: self.play.belief_frac,
             objective: self.play.objective,
             max_worlds: self.play.max_worlds,
+            min_worlds: self.play.min_worlds,
             cred_alpha: self.play.cred_alpha,
             parallel: self.play.parallel,
             world_batch: self.worlds.batch,

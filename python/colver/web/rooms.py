@@ -371,6 +371,9 @@ class Room:
         await self.broadcast_game_state()
 
     async def _close_deal(self):
+        # Une ligne de journal par donne : la seule granularité à laquelle
+        # une dégradation d'IS-DD se lit encore.
+        self.bots.end_deal()
         """Fin de donne : base, Elo, score de la partie.
 
         Appelée avant la diffusion de l'état terminal (donc avant que le client
