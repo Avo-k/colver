@@ -175,6 +175,15 @@ des entrées complètes.
   (3) **96 threads, pas 256** — deux jeux de joueurs par thread font 2 048 clients IS-DD
   contre 64 threads d'accueil du sidecar, et les timeouts en cascade abandonnent des
   donnes qui ne sont pas un tirage au hasard (ce sont celles jouées pendant la saturation).
+- `check_score_layer.py` — vérifie une couche de scores **pendant** sa génération, sur le
+  fichier partiel. Cinq contrôles, dont deux valent d'être réutilisés ailleurs :
+  (1) des **valeurs arithmétiquement impossibles** (163-251 pour des points cartes) sont le
+  genre de résidu qui a trahi le bug `quick_tricks` ; les chercher coûte une ligne ;
+  (2) le taux d'accord sur le **meilleur atout** est publié **avec son plancher simulé** —
+  deux étiquetages du même procédé sont déjà en désaccord ~30 % du temps à σ = 17 par
+  étiquette, donc le taux brut ne veut rien dire seul. Mesuré 69,5 % contre un plancher de
+  70,7 % : **null sans puissance**, et le script le dit en toutes lettres plutôt que de
+  laisser lire « les deux couches sont équivalentes ».
 - `bench_capot_prior` (binaire, mesure C) — `P(capot | mes 8 cartes)` par simulation :
   une main, K complétions des 24 cartes restantes, 4 solves chacune. **Sans GPU** : c'est
   le solveur DD qu'on interroge, pas playgen, donc il tourne sur les cœurs libres pendant

@@ -631,6 +631,44 @@ donnes sont **les mêmes** que celles de l'ancienne couche. L'A/B ancienne étiq
 contre nouvelle est donc direct, à donnes identiques — c'est la mesure qui dira si
 l'échange valait le coup.
 
+### Ce que l'A/B donne aux premières 1 000 donnes (2026-08-05)
+
+*[check_score_layer.py](../../scripts/analysis/check_score_layer.py), lancé sur le
+fichier **partiel** pendant la génération — un défaut systématique découvert à
+100 000 donnes coûte tout ce qui a été calculé.*
+
+| contrôle | résultat |
+|---|---|
+| valeurs arithmétiquement impossibles (163-251) | **0** — le résidu `quick_tricks` a disparu |
+| cases avec un **vrai** préfixe | **2,36 / 4** — la mesure A prédisait 2,37 |
+| contre la valeur DD, orienté preneur | **−8,76 pt** — le bon signe : à information incomplète le preneur rend moins que le double dummy |
+| contre l'ancienne couche, orienté preneur | **+1,66 pt** (σ 30,6 ⇒ z ≈ 3,4) ; **7,6 %** d'étiquettes identiques |
+
+**Et le contrôle qui compte, avec son plancher.** Une couche ne donne pas un niveau, elle
+fait **choisir un atout** : le bidder compare les cases d'une même donne. Les deux couches
+désignent le même meilleur atout dans **69,5 %** des (donne, camp) à ≥ 2 options.
+
+Ce taux ne se lit pas seul. Deux étiquetages **du même procédé** sont déjà en désaccord :
+la mesure B donne σ = 24,4 apparié, soit ~17,2 par étiquette, et re-bruiter la couche
+neuve contre elle-même donne un plancher de **70,7 %**.
+
+> **Mesuré 69,5 %, plancher 70,7 % : le test est au plancher.**
+
+⚠️ **Ce n'est pas « les deux couches sont équivalentes ».** C'est un **null sans
+puissance** : l'argmax d'une case est dominé par le bruit d'étiquetage, pour l'ancienne
+comme pour la nouvelle. Conclure l'équivalence ici serait la même erreur que lire « pas
+d'effet » dans un h2h d'arène trop court.
+
+**Ce qui reste détectable, et qui décide** : le décalage **systématique** de +1,66 pt au
+preneur. Le bruit se moyenne sur 500 000 donnes ; ce décalage-là, non. C'est aussi
+pourquoi l'arbitrage de [bid_v7_plan §2.8](../bid/bid_v7_plan.md) — *« les donnes
+gagnent »* — survit à ce constat : un bruit **non biaisé** ne biaise pas un ajustement,
+donc il vaut mieux 500 000 étiquettes bruitées que 125 000 propres. Le lever du bruit
+(4× les mondes pour le diviser par deux) coûterait 4× les donnes et n'achèterait rien.
+
+**Corollaire méthodologique** : ne pas chercher à valider une couche par l'accord d'argmax.
+Le seul juge qui reste est **en aval** — un bidder entraîné sur chacune, comparé en arène.
+
 ## 12. Ce qu'on ne fait pas, et pourquoi
 
 - **Pas d'IS-DD en direct dans la boucle RL.** La boucle consomme ~11 000 donnes/s
