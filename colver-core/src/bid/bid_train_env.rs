@@ -80,6 +80,130 @@ pub enum RewardMode {
     Blend(f32),
 }
 
+/// Histogramme des contrats réellement atteints pendant l'entraînement.
+///
+/// Sert à dimensionner une couche de scores. La reward ne lit qu'**une** case
+/// `[atout]` par épisode (`compute_scores`), donc étiqueter les quatre atouts au
+/// même prix n'a de sens que si les quatre sont atteints — ce que `dd_pts` seul ne
+/// peut pas dire, l'ε-greedy et un réseau qui débute visitant bien plus large que
+/// l'argmax d'un bidder entraîné.
+///
+/// Le **rang** est celui de l'atout contracté dans le classement de la donne, du
+/// meilleur (0) au pire (3), chaque atout étant noté du côté du camp que `dd_pts`
+/// désigne comme preneur : les points cartes étant à somme constante, un seul camp
+/// peut tenir un contrat à un atout donné.
+#[derive(Default, Clone, Debug)]
+pub struct ContractStats {
+    /// Épisodes par rang de l'atout contracté.
+    pub by_rank: [u64; 4],
+    /// Rang de l'atout contracté **du point de vue du camp qui l'a pris**.
+    ///
+    /// C'est celui qui décide de l'élagage, et il diffère du précédent : `by_rank`
+    /// classe les quatre atouts en mélangeant les deux camps, alors qu'un seul
+    /// annonce. Sur une donne où N-S est fort à ♠ et E-O à ♥, les deux couleurs
+    /// sortent en tête du classement mêlé, mais le camp qui gagne l'enchère n'a le
+    /// choix qu'entre *ses* quatre valeurs.
+    pub by_rank_taker: [u64; 4],
+    /// Points du camp preneur à l'atout contracté, par tranches de 20 :
+    /// `<80, 80-99, 100-119, 120-139, 140-159, 160-179, 180-199, 200-251, 252`.
+    pub taker_pts_bucket: [u64; 9],
+    /// Idem, restreint aux épisodes où le preneur **est** le camp désigné par `dd_pts`.
+    /// L'écart avec `by_rank` mesure les sur-annonces — un contrat pris par le camp
+    /// minoritaire, donc joué sous des croyances que l'étiquetage n'aurait pas.
+    pub by_rank_matched: [u64; 4],
+    /// Valeur du contrat : indices 0..=8 pour 80..160, 9 pour le capot.
+    pub by_value: [u64; 10],
+    /// Donnes passées (4 passes) : aucun contrat, aucune case consultée.
+    pub voids: u64,
+    /// Contrats à capot, et parmi eux ceux où le camp preneur avait réellement un
+    /// capot en DD à cet atout.
+    ///
+    /// C'est le croisement qui distingue deux diagnostics opposés de §1.4. « Le
+    /// capot n'est jamais exploré » appellerait plus d'exploration ; « il est
+    /// exploré, mais presque jamais là où il est juste » appelle une exploration
+    /// *ciblée* — et seul le second est réfutable par ce compteur.
+    pub capot_bids: u64,
+    pub capot_bids_sound: u64,
+}
+
+impl ContractStats {
+    /// Points du camp que le DD désigne comme preneur à l'atout `s`.
+    fn taker_pts(dd_pts: &[u8; 4], s: usize) -> i16 {
+        let ns = dd_pts[s] as i16;
+        if ns > 81 {
+            ns
+        } else if ns == 0 {
+            252 // capot E-O
+        } else {
+            162 - ns
+        }
+    }
+
+    /// Points du camp `team` à l'atout `s`.
+    fn side_pts(dd_pts: &[u8; 4], s: usize, team: u8) -> i16 {
+        let ns = dd_pts[s] as i16;
+        let ew = if ns == 252 {
+            0
+        } else if ns == 0 {
+            252
+        } else {
+            162 - ns
+        };
+        if team == 0 { ns } else { ew }
+    }
+
+    fn record(&mut self, trump: u8, value: u8, team: u8, dd_pts: &[u8; 4]) {
+        if value == 0 {
+            self.voids += 1;
+            return;
+        }
+        let t = trump as usize;
+        let mine = Self::taker_pts(dd_pts, t);
+        let rank = (0..4)
+            .filter(|&s| s != t && Self::taker_pts(dd_pts, s) > mine)
+            .count()
+            .min(3);
+        self.by_rank[rank] += 1;
+
+        let mine_taker = Self::side_pts(dd_pts, t, team);
+        let rank_taker = (0..4)
+            .filter(|&s| s != t && Self::side_pts(dd_pts, s, team) > mine_taker)
+            .count()
+            .min(3);
+        self.by_rank_taker[rank_taker] += 1;
+
+        let b = match mine_taker {
+            i16::MIN..=79 => 0,
+            80..=99 => 1,
+            100..=119 => 2,
+            120..=139 => 3,
+            140..=159 => 4,
+            160..=179 => 5,
+            180..=199 => 6,
+            200..=251 => 7,
+            _ => 8,
+        };
+        self.taker_pts_bucket[b] += 1;
+
+        let dd_side = if dd_pts[t] > 81 { 0u8 } else { 1u8 };
+        if team == dd_side {
+            self.by_rank_matched[rank] += 1;
+        }
+
+        // `value` est en dizaines (8..=16 = 80..160), 25 = capot.
+        let v = value as usize;
+        let idx = if v >= 25 { 9 } else { v.saturating_sub(8).min(8) };
+        self.by_value[idx] += 1;
+
+        if v >= 25 {
+            self.capot_bids += 1;
+            if mine_taker == 252 {
+                self.capot_bids_sound += 1;
+            }
+        }
+    }
+}
+
 /// A pre-solved deal: hands + DD results for all 4 trump suits.
 #[derive(Clone)]
 pub struct PresolvedDeal {
@@ -1009,6 +1133,9 @@ pub struct VecBidEnv {
     /// when `canonical` is off. Refreshed by `refresh_env_inner` alongside the obs,
     /// so it always describes the observation currently in `obs_buf`.
     pub orders: Vec<[u8; 4]>,
+    /// Quand `Some`, chaque épisode terminé est compté dans cet histogramme.
+    /// Purement diagnostique : rien dans la boucle d'entraînement ne le lit.
+    pub contract_stats: Option<ContractStats>,
 }
 
 impl VecBidEnv {
@@ -1022,6 +1149,7 @@ impl VecBidEnv {
         let orders = vec![[0u8, 1, 2, 3]; n_envs];
         let mut vec_env = VecBidEnv {
             envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false, canonical: false, orders,
+            contract_stats: None,
         };
         vec_env.refresh_observations();
         vec_env
@@ -1050,6 +1178,7 @@ impl VecBidEnv {
         let orders = vec![[0u8, 1, 2, 3]; n_envs];
         let mut vec_env = VecBidEnv {
             envs, obs_buf, mask_buf, rng, obs_dim, match_sim: false, canonical: false, orders,
+            contract_stats: None,
         };
         vec_env.refresh_observations();
         vec_env
@@ -1198,6 +1327,12 @@ impl VecBidEnv {
     ) -> Option<Vec<(Vec<f32>, [f32; BID_MASK_DIM], u8, f32, u8)>> {
         let done = self.envs[i].step(action);
         if done {
+            // Diagnostic : compter le contrat atteint *avant* le reset, qui écrase
+            // `state.contract` et `dd_pts` d'un coup.
+            if let Some(ref mut st) = self.contract_stats {
+                let c = self.envs[i].state.contract;
+                st.record(c.trump, c.value, c.team, &self.envs[i].dd_pts);
+            }
             // In match-sim mode we need pre-flush deal scores for cumulative update.
             let deal_scores = if self.match_sim {
                 Some(self.envs[i].compute_scores())

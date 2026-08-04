@@ -362,6 +362,39 @@ struct Args {
     /// Baseline bid hidden size (default 512).
     #[arg(long, default_value_t = 512)]
     eval_baseline_hidden: usize,
+    /// Diagnostic : journaliser dans ce fichier JSON l'histogramme des contrats
+    /// atteints — rang DD de l'atout contracté, camp preneur, valeur.
+    ///
+    /// Sert à dimensionner une couche de scores : la reward ne lit qu'une case
+    /// `[atout]` par épisode, donc ce que la boucle *consulte* décide de ce qu'il
+    /// faut étiqueter. N'affecte en rien l'entraînement.
+    #[arg(long)]
+    log_contract_ranks: Option<String>,
+}
+
+/// Écrire l'histogramme des contrats atteints. Réécrit à chaque intervalle de log,
+/// pour qu'une interruption laisse un fichier exploitable.
+fn write_contract_stats(path: &str, st: &colver_core::bid_train_env::ContractStats, step: usize) {
+    let total: u64 = st.by_rank.iter().sum();
+    let json = format!(
+        "{{\n  \"steps\": {},\n  \"contracts\": {},\n  \"voids\": {},\n  \
+         \"by_rank\": [{}],\n  \"by_rank_taker\": [{}],\n  \"by_rank_matched\": [{}],\n  \
+         \"taker_pts_bucket\": [{}],\n  \"by_value_80_to_160_then_capot\": [{}],\n  \
+         \"capot_bids\": {},\n  \"capot_bids_sound\": {}\n}}\n",
+        step,
+        total,
+        st.voids,
+        st.by_rank.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+        st.by_rank_taker.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+        st.by_rank_matched.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+        st.taker_pts_bucket.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+        st.by_value.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "),
+        st.capot_bids,
+        st.capot_bids_sound,
+    );
+    if let Err(e) = std::fs::write(path, json) {
+        eprintln!("write_contract_stats({}): {}", path, e);
+    }
 }
 
 /// Evaluate training model vs baseline in full 2000-point matches.
@@ -723,6 +756,10 @@ fn main() {
                  suit augmentation disabled."
             );
         }
+        if let Some(ref p) = args.log_contract_ranks {
+            vec_env.contract_stats = Some(Default::default());
+            println!("Contract-rank histogram → {}", p);
+        }
         pool_data
     } else {
         Vec::new()
@@ -908,6 +945,9 @@ fn main() {
 
         // --- Logging ---
         if (step + 1) % 1_000 == 0 {
+            if let (Some(p), Some(st)) = (&args.log_contract_ranks, &vec_env.contract_stats) {
+                write_contract_stats(p, st, step + 1);
+            }
             let elapsed = last_log_time.elapsed().as_secs_f64();
             let steps_done = step + 1 - last_log_step;
             let sps = steps_done as f64 / elapsed.max(1e-6);

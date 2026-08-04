@@ -128,10 +128,18 @@ Ce qui est rare, c'est la queue :
 | main contenant les 6 gros atouts d'une couleur | 1,24 × 10⁻⁴ | ~2 470 |
 | main monocolore (8 cartes d'une couleur) | 3,80 × 10⁻⁷ | ~8 |
 
-Donc le signal capot **existe** dans les données — il est simplement à 10⁻⁴, et
-surtout la trajectoire d'enchère ne l'atteint jamais : le modèle joue ses propres
-enchères, il n'annonce jamais capot, donc il n'apprend jamais ce que ça vaut. Boucle
-fermée, que ni plus de données ni plus de pas ne rouvriront.
+Donc le signal capot **existe** dans les données — il est simplement à 10⁻⁴ pour les
+familles *forcées*.
+
+⚠️ **La suite de ce paragraphe disait « la trajectoire d'enchère ne l'atteint jamais :
+le modèle n'annonce jamais capot, donc il n'apprend jamais ce que ça vaut — boucle
+fermée, que ni plus de données ni plus de pas ne rouvriront ». C'est faux, mesuré le
+2026-08-04** : la boucle produit **92 033 contrats à capot par million d'épisodes**
+(§1.11). Le gradient capot est abondant ; ce qui manque est sa *conditionnelle*. Et
+deux chiffres se sont fait confondre ici : le capot **forcé** est à 1,24×10⁻⁴, mais un
+capot **atteignable en DD** existe dans **16,08 %** des donnes de `base_5M.bin` (au
+moins une couleur pour N-S ; 26,31 % pour l'un ou l'autre camp) — trois ordres de
+grandeur d'écart, et c'est le second qui décide de ce qu'on peut explorer.
 
 ### 1.5 Le solve fenêtré ne réduit pas le coût du scoring IS-DD — et pourquoi
 
@@ -469,6 +477,61 @@ une propriété stable du modèle. §1.1 et §1.2 ne sont pas deux constats, c'e
 apprise, elle n'est **jamais fixée** — 75 M de pas plus tard elle vagabonde encore de ±8 pts.
 Ce n'est pas un entraînement trop court.
 
+### 1.11 Ce que la boucle **consulte** dans une couche de scores — et le capot exploré au mauvais endroit
+
+*Mesuré le 2026-08-04, [bid_contract_ranks.py](../../scripts/analysis/bid_contract_ranks.py),
+2 × 30 000 pas × 256 envs, pool + couche IS-DD de production, `--match-sim`.*
+
+La reward ne lit qu'**une** case `[atout]` par épisode (`compute_scores`). Étiqueter
+les quatre atouts au même prix n'a donc de sens que si les quatre sont atteints — et
+`dd_pts` ne peut pas le dire : ce sont l'ε-greedy et un réseau qui débute qui décident.
+
+Rang de l'atout contracté **du point de vue du camp qui l'a pris** :
+
+| régime | rang 0 | rang 1 | rang 2 | rang 3 | top-2 | contrats |
+|---|--:|--:|--:|--:|--:|--:|
+| **tardif** (poids v6, ε = 0,02) | **58,4** | 22,7 | 11,7 | **7,2** | **81,1 %** | 1 002 813 |
+| **début** (init aléatoire, ε = 0,30) | 29,9 | 25,2 | 23,8 | 21,1 | 55,0 % | 1 306 898 |
+
+**Une politique entraînée consulte les rangs 3-4 dans 18,9 % des épisodes ; une
+politique qui débute, dans 44,9 %.** ε décroissant de 0,30 à 0,02 sur les 55 premiers
+M de pas, le mélange réel d'une campagne est entre les deux. **Un élagage sec — ne pas
+étiqueter du tout les mauvais atouts — serait donc consulté à vide près d'une fois sur
+deux au début**, précisément quand le modèle apprend à ne pas annoncer n'importe quoi.
+Un budget *gradué* (plein aux rangs 0-1, moitié au rang 2, quart au rang 3) rend −31 %
+en gardant une seule échelle de label. Mélanger IS-DD et DD dans la même reward serait
+l'erreur : un solve DD est un majorant pour le preneur, donc les cases élaguées
+paraîtraient *meilleures* que les étiquetées — le sens inverse de celui qu'on veut.
+
+⚠️ **Le rang « de la donne » est un piège de mesure.** Classer les quatre atouts en
+mélangeant les deux camps donne 37,8 / 23,3 / 20,6 / 18,4 — presque plat, ce qui se
+lirait « v6 n'ordonne pas ses couleurs ». Artefact : sur une donne où N-S est fort à ♠
+et E-O à ♥, les deux couleurs sortent en tête du classement mêlé, mais le camp qui
+gagne l'enchère n'a le choix qu'entre *ses* quatre valeurs. 20 points d'écart au rang 0
+entre les deux lectures.
+
+**Le capot est exploré ; il l'est au mauvais endroit.**
+
+| | tardif | début |
+|---|--:|--:|
+| contrats à capot | 9,18 % | 22,59 % |
+| …dont le camp preneur a vraiment un capot en DD | **4,86 %** | 3,97 % |
+
+92 000 contrats à capot par million d'épisodes, dont 95 % sur des mains où c'est une
+catastrophe. Le modèle apprend donc « capot = désastre » — juste sur 95 % de ses
+échantillons, faux sur les 5 % qui décident. **Le remède n'est pas plus d'exploration
+mais une exploration *conditionnée*** : forcer le capot quand `dd_pts[t] == 252`, ce
+que le pool permet gratuitement. Cela réécrit la prémisse de §3.3.
+
+**Deux chiffres pour la forme de la couche.** Le preneur est le camp désigné par
+`dd_pts` dans **78,9 %** des contrats (54,6 % en régime début), et il est sous 80
+points DD — donc incapable de tenir le contrat minimum — dans **20,2 %**. Ce
+complément borne la population dont les croyances d'étiquetage seraient décalées si la
+couche reste `[u8;4]` (un label par atout, calculé sous les croyances du camp
+majoritaire) au lieu de `[u8;8]` : **un cinquième des épisodes**.
+
+---
+
 ## 2. Ce qui reste à prouver
 
 Chaque question est formulée pour pouvoir tomber.
@@ -674,12 +737,28 @@ donc les quatre positions n'étaient pas les mêmes. Même piège qu'`apply_prio
 [bid_equivariance.py](../../scripts/analysis/bid_equivariance.py). Le chiffre honnête est
 10-20 pts, et il reste une violation exacte sur le cas le plus trivial du jeu.
 
-### 3.3 Réveiller les actions mortes *(coût moyen)*
-ε-greedy ne suffit pas : à 10⁻⁴ de fréquence et 43 actions, l'action capot ne reçoit
-essentiellement aucun gradient. Options, à tester dans cet ordre :
-- forcer une proportion plancher de transitions capot dans le replay (avec poids) ;
-- bonus d'exploration par compte d'action (UCB-like) sur la politique de collecte ;
-- amorçage supervisé : sur les mains capot forcé du pool, un lot de labels durs.
+### 3.3 Réveiller les actions mortes *(coût faible — la prémisse a changé)*
+
+Ce paragraphe disait : « ε-greedy ne suffit pas : à 10⁻⁴ de fréquence et 43 actions,
+l'action capot ne reçoit essentiellement aucun gradient. » **§1.11 le réfute** : la
+boucle produit 9,18 % de contrats à capot, soit 92 000 par million d'épisodes. Le
+volume n'a jamais été le problème — **4,86 % seulement de ces capots sont annoncés sur
+une main qui en a un**.
+
+Donc les deux premières options ci-dessous visaient la mauvaise grandeur : augmenter le
+volume d'exploration capot n'ajouterait que du gradient négatif. Ce qu'il faut est
+**conditionnel**, et le pool le rend gratuit :
+
+- **forcer le capot quand `dd_pts[t] == 252`**, avec un plancher de proportion. Le pool
+  porte `dd_pts`, donc le filtre ne coûte rien à l'exécution et aucune donnée n'est à
+  regénérer. 16,08 % des donnes ont un capot N-S atteignable en DD (§1.4), donc le
+  filtre a de la matière ;
+- amorçage supervisé sur les mains capot **forcé**, en complément — c'est la seule
+  famille où la réponse est prouvable et où `bid_probes` a une assertion dure.
+
+*Réserve* : un capot atteignable **en DD** n'est pas un capot annonçable — le solveur
+voit les quatre mains, c'est un majorant. La quantité qui dimensionne vraiment ce
+plancher est `P(capot | mes 8 cartes)`, non mesurée à ce jour.
 
 ### 3.4 Les features du probe — **une seule survit à la relecture** *(fait le 2026-08-02)*
 
