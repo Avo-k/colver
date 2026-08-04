@@ -14,7 +14,7 @@ Belote Contrée engine + RL training stack.
 - [engine_todo.md](engine_todo.md) — backlog moteur & modèles (règles, données, entraînement, zoo)
 - [idees/](idees/) — **pistes cadrées mais pas lancées** : ce qu'on ferait, ce que ça coûterait, la mesure qui trancherait. Une fiche d'ici a le droit de ne jamais être faite — c'est ce qui la distingue d'un backlog
 - [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
-- `règles officielles belote contrée.pdf` — official FFB rules
+- [Official FFB rules](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) (ffbelote.org) — the reference text. Third-party rulebooks are **not redistributed here**: the raw corpus lives unversioned in `data/rules-corpus/`, retrievable with `docs/rules-survey/_refetch.py`
 
 ## Subsystems
 

@@ -299,7 +299,7 @@ L'image fait ~257 Mo (pas de dependance PyTorch). Tous les agents tournent en Ru
 
 Implemente la Belote Contree avec 4 couleurs (Pique, Coeur, Carreau, Trefle). Comptage en mode "points faits + points demandes", les multiplicateurs coinche (x2) et surcoinche (x3) ne portant que sur la valeur du contrat. Sur une chute, la defense prend le contrat *et* tous les points cartes, quel que soit le partage reel des plis.
 
-Les scores sont **exacts — rien n'est arrondi**. La FFB arrondit la marque a la dizaine ; ici une chute marque 162 + le contrat, pas 160, de sorte que le moteur et la feuille de score du web affichent toujours le meme chiffre. Voir `REGLES-DE-LA-BELOTE-CONTREE.pdf` pour le reglement complet FFB.
+Les scores sont **exacts — rien n'est arrondi**. La FFB arrondit la marque a la dizaine ; ici une chute marque 162 + le contrat, pas 160, de sorte que le moteur et la feuille de score du web affichent toujours le meme chiffre. Voir le [reglement FFB](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) pour le texte officiel complet, et [docs/rules-survey/](docs/rules-survey/) pour ce que ~594 reglements publies en font reellement.
 
 ## References
 

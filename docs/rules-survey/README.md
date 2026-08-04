@@ -72,7 +72,7 @@ Les quatre rédactions FFB :
 |---|---|---|
 | `ffbelote_REGLES-DE-LA-BELOTE-CONTREE.*` | ~2015 | Arrondi dizaine la plus proche (85→90). Chute = 160 + contrat. Contre = 320 + contrat×2, surcontre ×4 |
 | `ffbelote_regles-officielles-de-la-Belote-Contree-27-01-2016.*` | 27/01/2016 | Idem, plus le tableau complet des 16 cas de score (p. 7) et la règle de fin de partie |
-| `LOCAL_regles_officielles_belote_contree.*` | plus récente, éditée par « Équipe Ludique » (Paris 9e) | **Arrondi inversé : 85→80, 86→90.** Surcontre **×3** et non ×4. Capot = contrat à 250. Pas d'arrondi sur la dernière partie. C'est la version déjà présente dans `docs/` du dépôt et celle dont Colver s'est inspiré |
+| `LOCAL_regles_officielles_belote_contree.*` | plus récente, éditée par « Équipe Ludique » (Paris 9e) | **Arrondi inversé : 85→80, 86→90.** Surcontre **×3** et non ×4. Capot = contrat à 250. Pas d'arrondi sur la dernière partie. C'est celle dont Colver s'est inspiré. **Seule source du corpus sans URL tracée**, donc la seule que `_refetch.py` ne rapatrie pas : le dépôt en portait une copie, retirée de git (document tiers) |
 | `ffbelote_regles-officielles-de-la-Belote-27-01-2016.*` | 27/01/2016 | Belote **classique** : l'arrondi y est **optionnel**, à annoncer avant le tournoi |
 | `ffbelote_org_wp_content_uploads_2015_11_REGLES_DE_LA_BELOTE_COINCHEE_pdf.*` | ~2015 | Coinche (= contrée + annonces) |
 | `ffbelote_org_*.html/.txt` | pages web du site | Reprises HTML, parfois divergentes des PDF qu'elles prétendent refléter |

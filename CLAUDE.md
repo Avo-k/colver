@@ -81,12 +81,12 @@ All modules re-exported at crate root (`use colver_core::card` still works). Bin
 
 Bidding → Playing → Done. Bidding ends on 3 passes after a bid, surcoinche, or 4 passes (void deal). Playing: 8 tricks of 4 cards. Dix de der: +10 (normal) or +100 (capot). Total card points = 152; with dix de der = 162 (normal) or 252 (capot).
 
-### Key Rules (FFB official — see `REGLES-DE-LA-BELOTE-CONTREE.pdf`)
+### Key Rules (FFB official — [texte de référence](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf))
 
 - Coinche **freezes** the contract (no more overbids, only surcoinche or pass)
 - "Ne pisse pas": if can't overtrump opponent's cut, may discard instead of undertrumping
 - **Partenaire maître = aucune obligation, sans exception** — y compris jouer un atout *inférieur* au sien quand il a coupé et qu'il ne nous reste que de l'atout.
-  - **BREAKING (2026-08-01)** : ce cas **forçait la surcoupe** jusqu'ici. Le moteur suivait l'unique rédaction FFB (la réimpression « Équipe Ludique », `docs/règles officielles belote contrée.pdf`) dont l'article 4 **supprime le « n'est pas »** de cette phrase et efface la proposition qui l'expliquait (« le seul cas de figure, plutôt rare, où il est permis de jouer un atout inférieur »). FFB contrée 2015, FFB contrée 2016 et FFB belote 2016 disent toutes l'inverse.
+  - **BREAKING (2026-08-01)** : ce cas **forçait la surcoupe** jusqu'ici. Le moteur suivait l'unique rédaction FFB (la réimpression « Équipe Ludique », `data/rules-corpus/federations/LOCAL_regles_officielles_belote_contree.pdf` — corpus local, non versionné) dont l'article 4 **supprime le « n'est pas »** de cette phrase et efface la proposition qui l'expliquait (« le seul cas de figure, plutôt rare, où il est permis de jouer un atout inférieur »). FFB contrée 2015, FFB contrée 2016 et FFB belote 2016 disent toutes l'inverse.
   - Le correctif **élargit** l'ensemble des coups légaux, donc il change l'arbre de jeu : **toute valeur DD, tout pool pré-résolu et toute couche de scores antérieurs sont périmés** — même classe de rupture que la suppression de `quick_tricks`. Les quatre textes côte à côte : [docs/rules-survey/matrices/jeu-de-la-carte.md](docs/rules-survey/matrices/jeu-de-la-carte.md).
   - **Ampleur mesurée** : sur 20 000 donnes aléatoires (640 000 décisions), le cas se présente 485 fois (0,076 %) et l'ancienne règle ne retirait effectivement une option que **91 fois (0,014 %, ~1 décision sur 7 000, ~1 donne sur 220)**. La péremption est donc réelle mais peu profonde — regénérer les pools DD peut attendre la prochaine rupture de barème au lieu d'être urgent. Mesure faite en jeu aléatoire : ordre de grandeur, pas chiffre exact.
 - Only 4 color suits (no Sans Atout / Tout Atout)

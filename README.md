@@ -306,7 +306,7 @@ The image is ~257 MB (no PyTorch dependency). All agents run in pure Rust and wo
 
 Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scoring mode: "points faits + points demandes", with the coinche (x2) and surcoinche (x3) multipliers applying to the contract value only. On a chute the defense takes the contract *and* every card point, whatever the real split of tricks.
 
-Scores are **exact — nothing is rounded**. The FFB rounds the marque to the nearest 10; here a chute marks 162 + the contract, not 160, so the engine and the web score sheet always show the same number. See `REGLES-DE-LA-BELOTE-CONTREE.pdf` for the full FFB rulebook.
+Scores are **exact — nothing is rounded**. The FFB rounds the marque to the nearest 10; here a chute marks 162 + the contract, not 160, so the engine and the web score sheet always show the same number. See the [FFB rulebook](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) for the full official text, and [docs/rules-survey/](docs/rules-survey/) for how ~594 published rulebooks actually differ from it.
 
 ## References
 

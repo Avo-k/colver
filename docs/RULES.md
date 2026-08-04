@@ -99,7 +99,8 @@ If your partner currently holds the trick, you may play **any card, without exce
 That "without exception" is load-bearing in one specific spot: partner **cut** a non-trump lead, and **trump is all you have left**. You may then play a trump *lower* than theirs. FFB contrée §2.3 spells it out — « n'importe quelle carte sans exception (y compris un atout inférieur au sien) » — and the 2015 edition calls it « le seul cas de figure, plutôt rare, où il est permis de jouer un atout inférieur ».
 
 > **BREAKING (2026-08-01): this case used to force an overtrump.** The engine followed the one
-> FFB edition (the "Équipe Ludique" reprint, `docs/règles officielles belote contrée.pdf`) whose
+> FFB edition (the "Équipe Ludique" reprint, `LOCAL_regles_officielles_belote_contree.pdf` in the
+> unversioned local corpus) whose
 > article 4 drops the `n'est pas` from that sentence and deletes the clause explaining it. FFB
 > contrée 2015, FFB contrée 2016 and FFB belote 2016 all say the opposite.
 >

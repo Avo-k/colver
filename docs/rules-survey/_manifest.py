@@ -35,8 +35,12 @@ BACKFILL = {
         "https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf",
     "belotecontree_free_reglement":
         "http://belotecontree.free.fr/article.php3?id_article=22",
-    # Non téléchargé : copie du PDF déjà présent dans docs/ du dépôt (édition « Équipe Ludique »).
-    "LOCAL_regles_officielles_belote_contree": "LOCAL — copie de docs/règles officielles belote contrée.pdf",
+    # Non téléchargé, et **la seule source du corpus que `_refetch.py` ne sait pas retrouver** :
+    # l'édition « Équipe Ludique » n'a pas d'URL tracée. Le dépôt en portait une copie
+    # (docs/règles officielles belote contrée.pdf), retirée de git — document tiers sous droit
+    # d'auteur dans un dépôt MIT. Ce qu'elle a de singulier est distillé dans les matrices, qui
+    # sont versionnées ; le PDF lui-même n'existe plus que dans le corpus local.
+    "LOCAL_regles_officielles_belote_contree": "LOCAL — édition « Équipe Ludique », sans URL tracée, non redistribuée",
 }
 
 

@@ -19,7 +19,7 @@ Cherchez le nom dans le tableau du dossier correspondant ci-dessous pour retrouv
 
 | Nom | Original | Source |
 |---|---|---|
-| `LOCAL_regles_officielles_belote_contree` | .pdf · 432 Ko | *LOCAL — copie de docs/règles officielles belote contrée.pdf* |
+| `LOCAL_regles_officielles_belote_contree` | .pdf · 432 Ko | *LOCAL — édition « Équipe Ludique », sans URL tracée, non redistribuée* |
 | `badje42_free_fr_index_htm_files_Reglement_20de_20la_20Coinche_doc` | .html · 29 Ko | [http://badje42.free.fr/index_htm_files/Reglement%20de%20la%20Coinche.doc](http://badje42.free.fr/index_htm_files/Reglement%20de%20la%20Coinche.doc) |
 | `coinche_en_ligne_com_federation_francaise_de_coinche` | .html · 30 Ko | [http://www.coinche-en-ligne.com/federation-francaise-de-coinche/](http://www.coinche-en-ligne.com/federation-francaise-de-coinche/) |
 | `ffbelote_REGLES-DE-LA-BELOTE-CONTREE` | .pdf · 212 Ko | [https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) |
