@@ -133,6 +133,45 @@ def main():
 
     dd = read_pool_dd(args.pool, off, n)
 
+    # 3bis. La mesure B sur données de production. Deux cases de rangs différents sont
+    # des ATOUTS différents, donc leurs étiquettes ne se comparent pas entre elles ; ce
+    # qui se compare, c'est leur écart à une référence par case — la valeur DD. Si le
+    # préfixe fait bien jouer le preneur ~4 pt mieux, les cases « or » doivent montrer un
+    # déficit plus petit que les « fer ».
+    #
+    # ⚠️ Les dd_pts du pool sont périmées. Le NIVEAU de ces écarts n'a donc pas de sens
+    # absolu ; leur ORDRE entre rangs en a un, la péremption frappant les quatre pareil.
+    if ranks:
+        import statistics as st
+        by_rank = {r: [] for r in range(4)}
+        for k in range(min(n, len(ranks))):
+            for t in range(4):
+                r = ranks[k][t]
+                if r <= 3:
+                    side = taker_side(dd[k][t])
+                    by_rank[r].append(as_taker(rows[k][t], side) - as_taker(dd[k][t], side))
+        print("\n3bis. écart à la valeur DD (orienté preneur), PAR RANG DE PRÉFIXE —")
+        print("      la mesure B prédit or > argent ≈ or > bronze > fer")
+        for r in range(4):
+            xs = by_rank[r]
+            if len(xs) < 30:
+                continue
+            m = sum(xs) / len(xs)
+            se = st.stdev(xs) / len(xs) ** 0.5
+            print(f"   {RANK_NAMES[r]:<7} n={len(xs):>7}  {m:+7.2f} ±{se:.2f}")
+        if len(by_rank[0]) > 30 and len(by_rank[3]) > 30:
+            g = sum(by_rank[0]) / len(by_rank[0]) - sum(by_rank[3]) / len(by_rank[3])
+            gse = (st.stdev(by_rank[0]) ** 2 / len(by_rank[0])
+                   + st.stdev(by_rank[3]) ** 2 / len(by_rank[3])) ** 0.5
+            print(f"   or − fer : {g:+.2f} ±{2 * gse:.2f} (2σ)   "
+                  f"[mesure B, en appairé : +4,36 ±1,30]")
+            print("   ⚠️ CONFONDU, et il ne faut pas citer cet écart comme l'effet du")
+            print("      préfixe : les cases « or » sont les atouts que v6 annonce, donc")
+            print("      des donnes où le contrat est net — elles seraient peut-être plus")
+            print("      faciles à jouer quel que soit le préfixe. Seule la mesure B, qui")
+            print("      compare la MÊME case sous deux préfixes, sépare les deux. Ce qui")
+            print("      vaut ici est l'ORDRE des quatre rangs, qui se reproduit.")
+
     # 5. contre la valeur DD, orienté preneur
     diffs = [as_taker(rows[k][t], taker_side(dd[k][t])) - as_taker(dd[k][t], taker_side(dd[k][t]))
              for k in range(n) for t in range(4)]
