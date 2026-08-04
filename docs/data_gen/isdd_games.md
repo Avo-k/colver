@@ -29,10 +29,18 @@ cargo run --release --features parallel --bin gen_games_isdd -- \
 # Relire un corpus et le rejouer intégralement
 cargo run --release --bin gen_games_isdd -- --check data/training/isdd_games.bin
 
-# Rassembler les éclats d'un run interrompu
+# Rassembler les éclats d'un run INTERROMPU (et seulement interrompu :
+# un run terminé a déjà fusionné puis effacé les siens)
 cargo run --release --bin gen_games_isdd -- --merge data/training/isdd_games.bin \
   --out data/training/isdd_games.bin
 ```
+
+⚠️ Cette commande a `--out` égal au préfixe, donc elle **écrit par-dessus le
+corpus**. Lancée après un run *terminé* — qui a supprimé ses éclats — elle
+rassemblait zéro donne et écrasait le corpus par un fichier vide de 16 octets,
+en sortant 0. Elle refuse désormais d'écrire quoi que ce soit sans éclat, mais
+le piège valait d'être nommé : « aucun éclat » est exactement l'état que laisse
+un run **réussi**, pas seulement une faute de frappe.
 
 Un run de plusieurs heures écrit des **éclats** (`--shard`, 5000 donnes par
 défaut) au fil de l'eau, les fusionne à la fin et les efface alors seulement.
