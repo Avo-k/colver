@@ -50,6 +50,7 @@ Belote Contrée engine + RL training stack.
 | Auction-conditioned bid labels (**negative** — read before retrying) | [bid/experiments/auction_conditioned_labels.md](bid/experiments/auction_conditioned_labels.md) |
 | Un pool DD périmé : ce que ça coûte (**ne pas regénérer pour ça**) | [data_gen/pool_staleness.md](data_gen/pool_staleness.md) |
 | Générer des donnes **complètes** jouées par IS-DD (enchère réelle + 32 cartes) | [data_gen/isdd_games.md](data_gen/isdd_games.md) |
+| Regénérer la **couche de scores** du bidder avec des mondes playgen | [data_gen/isdd_score_layer_v2.md](data_gen/isdd_score_layer_v2.md) |
 | Registre des mesures (provenance + agrégats, versionné) | [measurements/README.md](measurements/README.md) |
 | Un corpus de jeu fort pour playgen v3 (**idée cadrée, pas lancée**) | [idees/corpus_isdd_playgen_v3.md](idees/corpus_isdd_playgen_v3.md) |
 | Le coût d'un pas de décodage playgen, et le décodage spéculatif (**cadré ; le levier a été pris, le spéculatif reste en attente d'une mesure**) | [idees/decodage_speculatif_playgen.md](idees/decodage_speculatif_playgen.md) |

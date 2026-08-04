@@ -9,6 +9,18 @@ A "pool" is a pre-computed set of deals + DD points (and optionally "real" play 
 - pools.md — list of all pools, formats, sources
 - [pool_staleness.md](pool_staleness.md) — **quand un pool est-il assez périmé pour justifier une regénération ?** Mesuré : la dérive d'IS-DD ne suffit pas (87 % de l'écart est du bruit d'échantillonnage). Contient la règle « un label DD symétrique ne peut pas voir la force de jeu ».
 
+## Couches de scores
+
+Une *couche* (`COLVSC01`) est un `[u8; 4]` par donne — les points cartes N-S sous
+chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder.
+
+- [isdd_score_layer_v2.md](isdd_score_layer_v2.md) — **plan de regénération** avec des
+  mondes playgen au lieu d'uniformes. Contient les deux arguments qui portent la forme
+  du fichier (`CardPoints` rend la factorisation par l'atout exacte ; `dd_pts` détermine
+  le camp preneur, donc `[u8;8]` au prix de `[u8;4]`), le budget gradué par rang
+  d'atout (−31 %, dérivé de ce que la boucle consulte réellement), les quatre
+  invariants sur le donneur, et les trois mesures à faire avant d'engager les heures.
+
 ## Donnes complètes
 
 Une *donne complète* garde la trajectoire — l'enchère telle qu'elle s'est jouée
