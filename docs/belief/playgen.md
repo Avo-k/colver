@@ -527,6 +527,48 @@ départager en milieu de donne, là où IS-DD en dépend le plus. En revanche la
 d'enchère n'a pas besoin de cette capacité — et comme elle est aussi saturée en
 données, seule de l'information nouvelle la fera bouger (le score de partie).
 
+### Ce que coûte de ne pas connaître le score de partie (2026-08-04)
+
+Le feu vert de v3-B, mesuré. `generate_game_data --score-ns/--score-ew` fabrique
+un corpus où v6 annonce à un score de partie donné ; la perplexité de la tête
+d'enchère de `playgen_v2_final` y répond à « sait-il encore lire ces enchères ? ».
+20 000 donnes par corpus, **mêmes donnes** (même seed — les annonces seules
+changent), tour 1 seulement, qui est le seul apparié : aux tours suivants la
+population de positions diffère puisque les enchères ne durent pas pareil.
+
+| score de partie | nll tour 1 | écart vs 0-0 |
+|---|---|---|
+| 0-0 (ce que playgen a vu) | 1,7160 | — |
+| 600-400 (milieu de partie) | 1,7221 | +0,0061 |
+| 1500-300 (fin de partie) | 1,7967 | **+0,0807** |
+| 300-1500 (miroir) | 1,7939 | +0,0779 |
+
+**À comparer à l'effet de capacité sur la même tête** : v3-small (3,22M) contre v2
+(10,74M) à budget égal donne 1,7370 contre 1,7342, soit **+0,0028**. L'information
+manquante coûte donc **29× ce que vaut le triplement des paramètres**, et encore
+le double à un score de milieu de partie.
+
+Ce que ça établit et ce que ça n'établit pas : c'est le **coût de l'ignorance**,
+donc une borne supérieure sur ce qu'un score en entrée peut récupérer — pas une
+preuve que le modèle saura s'en servir. Mais c'était la question ouverte, et elle
+est tranchée dans le bon sens : la tête d'enchère étant saturée en capacité *et*
+en données, il ne restait que de l'information nouvelle, et on sait maintenant
+combien elle vaut.
+
+Le régime compte : à 600-400 l'effet est dix fois moindre qu'à 1500-300. C'est en
+fin de partie que v6 change d'annonce, donc le bénéfice de v3-B se concentre sur
+les dernières donnes d'un match — ce qui reste la situation de production (l'arène
+joue en 2000 points, le web en parties).
+
+**Contrôle de symétrie, qui a payé.** `write_bid_observation_score_aware_v3` prend
+`my_score, opp_score` **relatifs à l'annonceur**, pas des scores de camp. Une
+première version passait `(ns, ew)` tel quel : les quatre sièges se croyaient dans
+le même camp, et 1500-300 mesurait « tout le monde devant » contre « tout le monde
+derrière ». Le symptôme : (1500,300) et (300,1500) rendaient 1,7684 et 1,8184,
+alors qu'en moyennant les quatre observateurs ils doivent coïncider. Après
+correction ils rendent 1,7967 et 1,7939 — 0,003 d'écart. **Le contrôle qui a
+attrapé le bug est le même qui valide le correctif.**
+
 ### Correction : v2 n'était pas saturé en jeu, seul le pli 1 l'est
 
 Un premier dépouillement de cette échelle a conclu « v2 était saturé bien avant la

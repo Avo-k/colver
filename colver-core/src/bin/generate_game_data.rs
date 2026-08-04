@@ -34,6 +34,8 @@ fn main() {
     let mut output_path = String::from("data/games.bin");
     let mut seed: u64 = 42;
     let mut num_threads: usize = 0;
+    let mut score_ns: i32 = 0;
+    let mut score_ew: i32 = 0;
 
     let mut i = 1;
     while i < args.len() {
@@ -44,6 +46,8 @@ fn main() {
             "--output" => { output_path = args[i + 1].clone(); i += 2; }
             "--seed" => { seed = args[i + 1].parse().unwrap(); i += 2; }
             "--threads" => { num_threads = args[i + 1].parse().unwrap(); i += 2; }
+            "--score-ns" => { score_ns = args[i + 1].parse().unwrap(); i += 2; }
+            "--score-ew" => { score_ew = args[i + 1].parse().unwrap(); i += 2; }
             other => {
                 eprintln!("Unknown argument: {}", other);
                 std::process::exit(1);
@@ -72,6 +76,7 @@ fn main() {
     println!("Games:      {}", num_games);
     println!("Output:     {}", output_path);
     println!("Seed:       {}", seed);
+    println!("Scores:     {}-{} (obs des encheres score-aware)", score_ns, score_ew);
 
     let start = Instant::now();
 
@@ -112,7 +117,7 @@ fn main() {
             .into_par_iter()
             .enumerate()
             .map(|(thread_id, (count, thread_seed))| {
-                generate_chunk(dmc_path, bid_path, count, thread_seed, thread_id, n_threads)
+                generate_chunk(dmc_path, bid_path, count, thread_seed, thread_id, n_threads, (score_ns, score_ew))
             })
             .collect();
 
@@ -126,7 +131,7 @@ fn main() {
     #[cfg(not(feature = "parallel"))]
     let all_replays = {
         println!("Threads:    1 (enable --features parallel for multi-threaded)");
-        generate_chunk(&dmc_model_path, &bid_model_path, num_games, seed, 0, 1)
+        generate_chunk(&dmc_model_path, &bid_model_path, num_games, seed, 0, 1, (score_ns, score_ew))
     };
 
     let elapsed = start.elapsed().as_secs_f64();
@@ -163,6 +168,7 @@ fn generate_chunk(
     seed: u64,
     thread_id: usize,
     num_threads: usize,
+    scores: (i32, i32),
 ) -> Vec<GameReplay> {
     let mut dmc_net = DmcNet::load(dmc_model_path).unwrap();
     if dmc_net.obs_dim() == OBS_DIM_TR {
@@ -189,7 +195,7 @@ fn generate_chunk(
 
         while !state.is_terminal() {
             let action = if state.phase == Phase::Bidding {
-                bid_action(&state, &tracking, &mut bid_net)
+                bid_action(&state, &tracking, &mut bid_net, scores)
             } else {
                 dmc_action(&state, &tracking, &mut dmc_net, &mut dmc_obs_buf)
             };
@@ -218,25 +224,44 @@ fn generate_chunk(
     replays
 }
 
-fn bid_action(state: &GameState, tracking: &EnvTracking, bid_net: &mut Option<BidNet>) -> u8 {
+fn bid_action(
+    state: &GameState,
+    tracking: &EnvTracking,
+    bid_net: &mut Option<BidNet>,
+    scores: (i32, i32),
+) -> u8 {
     if let Some(ref mut net) = bid_net {
         let legal = state.legal_actions();
         let obs_dim = net.obs_dim();
         if obs_dim > BID_OBS_DIM {
-            // Score-aware model (bid v4/v5/v6): standalone deals → 0-0 scores.
+            // Score-aware model (bid v4/v5/v6). Par défaut 0-0 (donnes isolées) ;
+            // `--score-ns/--score-ew` fabrique un corpus d'enchères de **milieu de
+            // partie**, ce que playgen n'a jamais vu et ne peut pas déduire — le
+            // score n'est pas dans son flux de tokens.
+            //
+            // L'obs prend `my_score, opp_score` **relatifs à l'annonceur**, pas des
+            // scores de camp : passer (ns, ew) tel quel ferait croire aux quatre
+            // sièges qu'ils sont dans le même camp. Épinglé par le contrôle de
+            // symétrie — (1500,300) et (300,1500) doivent donner le même résultat
+            // une fois moyennés sur les quatre observateurs, et ne le donnaient pas.
+            let (s_ns, s_ew) = if GameState::player_team(state.current_player()) == 0 {
+                scores
+            } else {
+                (scores.1, scores.0)
+            };
             let mut buf = [0.0f32; BID_OBS_DIM_SCORE_AWARE_V3];
             if obs_dim == BID_OBS_DIM_SCORE_AWARE_V3 {
                 bid_obs::write_bid_observation_score_aware_v3(
-                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                    &mut buf, 0, state, &tracking.bid_history, s_ns, s_ew,
                 );
             } else if obs_dim == BID_OBS_DIM_SCORE_AWARE_V2 {
                 bid_obs::write_bid_observation_score_aware_v2(
-                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                    &mut buf, 0, state, &tracking.bid_history, s_ns, s_ew,
                 );
             } else {
                 debug_assert_eq!(obs_dim, BID_OBS_DIM_SCORE_AWARE);
                 bid_obs::write_bid_observation_score_aware(
-                    &mut buf, 0, state, &tracking.bid_history, 0, 0,
+                    &mut buf, 0, state, &tracking.bid_history, s_ns, s_ew,
                 );
             }
             net.best_action_fast(&buf[..obs_dim], legal)
