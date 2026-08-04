@@ -12,7 +12,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
-RUNS=${RUNS:-"models/playgen_v3_small:256:4:8:256 models/playgen_v3_large:512:8:8:128"}
+# <dir>:<d>:<L>:<H>:<batch>[:<offset>] — l'offset porte les **reprises**, dont le
+# compteur de steps repart de zéro, souvent avec un autre batch. Sans lui le
+# budget affiché est celui d'un run neuf, donc faux.
+RUNS=${RUNS:-"models/playgen_v3_small:256:4:8:256 models/playgen_v3_large:512:8:8:128 models/playgen_v3_large2:512:8:8:96:3840000 models/playgen_v3_large3:512:8:8:96:11520000"}
 N=${1:-500}
 GAMES=data/training/heldout_20k_s90210.bin
 OUT=data/analysis/playgen_ppl
@@ -36,7 +39,8 @@ emit() {
 }
 
 for run in $RUNS; do
-    IFS=: read -r dir d l h batch <<< "$run"
+    IFS=: read -r dir d l h batch offset <<< "$run"
+    offset=${offset:-0}
     tag=$(basename "$dir" | sed 's/playgen_//')
     for ckpt in "$dir"/playgen_[0-9]*.safetensors; do
         [ -e "$ckpt" ] || continue
@@ -51,7 +55,7 @@ for run in $RUNS; do
         log="$OUT/${tag}_${step}_n${N}.txt"
         [ -f "$log" ] || ./target/release/bench_playgen_ppl \
             --model "$bin" --games "$GAMES" --n "$N" > "$log"
-        emit "$log" "== $tag step $step  ($((step * batch / 1000))k échantillons)"
+        emit "$log" "== $tag step $step  ($(( (offset + step * batch) / 1000 ))k échantillons)"
     done
 done
 
