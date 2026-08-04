@@ -388,6 +388,35 @@ forme, donc l'ordre de réduction flottant), et le retrait de lanes change en
 plus l'ordre de consommation du RNG. Comparer les mondes un à un ne dirait donc
 rien. Les deux passent à **1,001×** et **1,06×** du témoin.
 
+### Ce que la prod y gagne : ~1,9× de latence par coup
+
+Le préfixe groupé n'a pas été fait pour la prod, mais c'est elle qui en profite
+le plus, et pour une raison structurelle : **un joueur seul sur le web envoie
+une requête à la fois**, donc le préfixe n'est amorti sur rien. C'est exactement
+le régime où il pesait 65 à 81 % du coût.
+
+Mesuré en A/B alterné sur la configuration de prod (`--lane-budget 256`), un
+seul thread client, latence vue du client (réseau et HTTP compris) :
+
+| | ms par requête |
+|---|---|
+| ancien binaire | 142 · 123 · 143 |
+| nouveau | 85 · 66 · 75 |
+
+**142 → 75 ms, soit 1,9×.** Dans le budget de 1 200 ms d'un coup de Dédé, ça
+double à peu près le nombre d'allers-retours possibles, donc le nombre de mondes
+réellement cherchés. C'est un gain de *force de jeu* pour les joueurs, pas
+seulement de débit hors-ligne — et il ne coûte rien puisque la distribution des
+mondes est inchangée (`bench_prefill_eq`, 1,001× du témoin).
+
+⚠️ **Le sidecar se déploie à la main, séparément du webhook.** Fait le
+2026-08-04 : sources rsync vers `~/playgen/colver` sur moxxi, `cargo build
+--release --bin playgen_gpu_server --features gpu_server` (avec `nvcc` dans le
+`PATH` et `CUDARC_CUDA_VERSION`), `systemctl restart playgen-gpu`. Contrôle :
+`curl colver.net/health` doit rendre `sidecar.fresh: true` — c'est-à-dire la
+même empreinte de sources des deux côtés. Un `false` signifie que l'un des deux
+est resté en arrière.
+
 ### TF32 : **3 à 5× plus lent**, à ne pas réessayer
 
 L'attention et les FFN sont en f32 sur une carte Ampere, qui sait faire du TF32
