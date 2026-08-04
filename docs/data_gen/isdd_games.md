@@ -299,6 +299,21 @@ différents.
 
 Une 3090, 40 mondes par décision.
 
+**Au débit soutenu, c'est mieux que ça : 2,89 donnes/s.** Mesuré sur un vrai run
+de 38 000 donnes (13 138 s), contre 2,62 sur des bancs de 150. Un run long garde
+le groupeur du sidecar plein, ce qu'une rafale de banc ne fait pas — c'est donc
+2,89 qu'il faut utiliser pour dimensionner un corpus : **100 k donnes en 9,6 h,
+1 M en 4 jours** sur une seule carte.
+
+Et à cette échelle le profil se déplace encore : **96,1 % d'attente sidecar
+contre 3,9 % de solve DD** (256 threads). Le GPU est si saturé que presque tout
+le temps de thread est de la file d'attente. Plus de GPU est le seul levier
+qui reste.
+
+Corpus produit et validé le 2026-08-04 : `data/training/isdd_games_v1.bin`,
+**43 076 donnes**, 1 729 157 actions, 0 irrejouable, **1 408 660 prédictions
+d'enchère**.
+
 Et par nombre de mondes, la question qui décide du budget :
 
 | mondes/décision | donnes/s | 100 k donnes | attente sidecar |
