@@ -167,28 +167,74 @@ de 32. La relation est plate et même en U : dans une enchère contestée à 81 
 est décidée par la **pression de l'enchère**, pas par la main du preneur. Une échelle
 tirée de ce score serait une règle inventée présentée comme mesurée.
 
-### Ce que la mesure A change au plan
+### La suite de A : « v6 masqué sur la couleur » — proposé, puis réfuté
 
-Elle **ne dit pas** que l'étiquette est fausse — seulement que le préfixe est hors
-distribution. Est-ce que ça déplace les points cartes ? C'est la **mesure B**, et elle
-reste à faire : au milieu d'une donne le préfixe porte aussi les cartes jouées, bien plus
-informatives que 8 jetons d'enchère.
+*Même run, `--bid-model`. La variante a été proposée ici même sur un raisonnement, puis
+mesurée avant d'engager la moindre heure de GPU. Elle ne survit pas.*
 
-Ce qu'elle change, c'est la **liste des variantes que B doit départager**. « Minimale »
-et « plausible » étaient deux devinettes ; il y a maintenant cinq chiffres à viser, et
-un candidat qui les atteint tous sans être réglé à la main :
+L'idée était de laisser bid v6 mener l'enchère avec le masque légal réduit à `PASS`,
+`COINCHE`, `SURCOINCHE` et aux paliers de l'atout cible : contestation, coinche, longueur
+et valeur sortiraient de la politique au lieu d'être fabriquées, et l'atout resterait
+celui qu'on veut étiqueter.
 
-> **l'enchère de v6 elle-même, masquée sur la couleur cible** — à chaque tour, le masque
-> légal est réduit à `PASS`, `COINCHE`, `SURCOINCHE` et aux paliers de l'atout `t`, et
-> v6 choisit dedans. La contestation, la coinche, la longueur et la valeur sortent de la
-> politique au lieu d'être fabriquées, et l'atout reste celui qu'on veut étiqueter.
+**Le témoin d'abord — et il est aussi fort qu'on peut l'espérer.** Le même pilote, lancé
+**sans masque** sur les donnes du corpus, doit reproduire l'enchère à l'identique : le
+réseau est déterministe et c'est lui qui a produit ces donnes. Mesuré : **99,99 %**
+(43 028 / 43 031), et les cinq statistiques se reproduisent à la deuxième décimale. Le
+pilote est donc juste, et les chiffres de la variante masquée sont interprétables — sans
+ce contrôle, un historique mal suivi ou un score passé du mauvais côté se lirait comme
+une propriété de la variante.
 
-Le coût est négligeable : ~8 passes avant de 117→512³→43 par enchère, quatre enchères par
-donne, soit **~1,6 ms** contre les ~1,5 s que coûtent les quatre labellisations IS-DD de
-la même donne (§8) — **de l'ordre de 0,1 %**. Ce qui resterait décalé, et qu'il faudra
-mesurer et non supposer : forcer les quatre sièges sur une seule couleur retire aux
-adversaires la possibilité de contester *dans la leur*, donc le taux de contestation
-retombera quelque part entre 0 et 81 %.
+| | corpus | **v6 libre** (témoin) | **v6 masqué** |
+|---|--:|--:|--:|
+| 1re annonce par le premier parleur | 80,06 % | 80,06 % | 29,56 % |
+| une seule annonce | 11,87 % | 11,87 % | 78,58 % |
+| **contestée** | **81,26 %** | 81,25 % | **0,06 %** |
+| coinchée | 25,74 % | 25,74 % | 9,01 % |
+| longueur du préfixe | 8,18 | 8,18 | 5,89 |
+| cases sans aucune enchère | — | — | **12,64 %** |
+
+Elle échoue sur les cinq cibles, et la valeur s'effondre avec : **66,8 %** des contrats
+masqués sont à 80 ou 90, contre 11,1 % en réel.
+
+**La raison est structurelle, et c'est le vrai résultat de la journée :**
+
+> **la contestation *est* le mécanisme qui sélectionne l'atout.** On conteste parce qu'on
+> préfère *sa* couleur. Forcer les quatre sièges sur une seule la supprime — les
+> adversaires n'ont plus rien à dire, donc ils passent (0,06 %), et le preneur sans
+> opposition annonce le minimum. Demander « une enchère par case `(donne, atout)` » et
+> « une enchère réaliste » revient à demander deux valeurs à la même variable.
+
+Aucune construction à atout imposé ne peut donc être dans la distribution — ni celle du
+plan, ni une version plus soignée. Ce n'est pas un défaut de réglage.
+
+### Ce qui reste : une case « or » par donne, trois « argent »
+
+La seule enchère dans la distribution est **l'enchère libre de v6**, et elle n'étiquette
+qu'**une** case. Ce qu'elle couvre est mesuré — rang de l'atout qu'elle choisit, vu du
+camp preneur :
+
+| rang 0 | rang 1 | rang 2 | rang 3 |
+|--:|--:|--:|--:|
+| 70,7 % | 21,2 % | 6,5 % | 1,6 % |
+
+**91,9 % sur les rangs 0-1**, exactement la région où §5 place 81,1 % des consultations
+d'une politique entraînée. D'où la forme que prend le générateur :
+
+- **case « or »** — l'atout que v6 annonce librement, avec sa vraie enchère. Une par
+  donne, prefixe parfait, ~0,4 ms.
+- **trois cases « argent »** — la construction bon marché du début de §4, hors
+  distribution **et assumée comme telle**, avec le budget dégressif de §5.
+
+C'est **la mesure B** qui dira ce que l'argent coûte, en comparant l'étiquette d'une case
+sous les deux préfixes. Et elle garde tout son sens : un préfixe hors distribution n'est
+un défaut que s'il déplace l'étiquette — au milieu d'une donne playgen lit surtout les
+cartes déjà jouées, bien plus informatives que 8 jetons d'enchère.
+
+⚠️ **Le biais de sélection de la case « or » est à nommer** : c'est v6 qui la choisit,
+donc ce sont les atouts que *v6* aime qui reçoivent le bon préfixe. Si v7 s'en écarte —
+ce qui est l'objectif — la couverture se déplace sans que rien ne le signale. C'est un
+argument de plus pour ne pas élaguer les trois autres cases.
 
 ### Le camp preneur est déterminé, donc `[u8;8]` n'est pas nécessaire
 
@@ -349,8 +395,8 @@ Tous déjà écrits ailleurs ; il s'agit de les brancher.
 
 | | quoi | coût | ce qu'elle décide |
 |---|---|---|---|
-| ~~**A**~~ | ✅ **faite le 2026-08-04** (§4) : oui, le préfixe est hors distribution, sur la **forme** (une seule annonce contre 11,9 % de réel, 0 % de contestation contre 81,3 %, 0 % de coinche contre 25,7 %) et non sur l'identité du preneur (camp bon à 89,4 %) | 4 min, 0 GPU | a remplacé les variantes devinées de B par **v6 masqué sur la couleur**, et retiré l'échelle valeur ↔ force, non soutenue |
-| **B** | variantes d'enchère (minimale / v6 masqué sur la couleur) **et camp du preneur**, écart apparié en points cartes | ~2 h GPU | la variante à retenir, et `[u8;4]` contre `[u8;8]` (§4) |
+| ~~**A**~~ | ✅ **faite le 2026-08-04** (§4) : oui, le préfixe est hors distribution, sur la **forme** (une seule annonce contre 11,9 % de réel, 0 % de contestation contre 81,3 %, 0 % de coinche contre 25,7 %) et non sur l'identité du preneur (camp bon à 89,4 %). A aussi **réfuté « v6 masqué sur la couleur »**, la variante qu'elle-même avait suggérée | 7 min, 0 GPU | a **fermé** la famille des enchères à atout imposé, retiré l'échelle valeur ↔ force, et fixé la forme du générateur : une case « or » par donne, trois « argent » |
+| **B** | l'étiquette d'une case sous préfixe « or » contre préfixe « argent », écart apparié en points cartes ; **et** camp du preneur | ~2 h GPU | ce que coûte l'argent, et `[u8;4]` contre `[u8;8]` (§4) |
 | **C** | `P(capot \| mes 8 cartes)` sur les 913 476 cases à `dd_pts == 252` | quelques h GPU | le contenu de `tail_100k` (§6) et le plancher d'exploration conditionnée |
 
 **A ne dispense pas de B, elle la recadre.** Un préfixe hors distribution n'est un défaut
@@ -358,6 +404,14 @@ que s'il déplace l'étiquette ; au milieu d'une donne, playgen lit aussi les ca
 jouées, bien plus informatives que 8 jetons d'enchère. B mesure ce déplacement contre le
 plancher de bruit ci-dessous — et si l'écart est en dessous, la construction bon marché
 suffit et tout le §4 devient une note de bas de page.
+
+**Ce que A aura coûté et rapporté, parce que c'est le patron à réutiliser.** Sept minutes
+de CPU ont produit un résultat, puis tué la solution que ce résultat suggérait, avant
+qu'elle entre dans un générateur ou consomme une heure de GPU. Deux choses l'ont permise
+et aucune n'est optionnelle : la comparaison **appariée** (même donne, pas deux
+marginales) et un **témoin qui doit rendre l'identité** — ici, v6 se rejouant lui-même à
+99,99 %. Un chiffre de variante sans ce témoin ne distingue pas une propriété de
+l'enchère d'un défaut du pilote.
 
 Référence de bruit pour A et B : les **44,7 pts** de dispersion intra-main
 ([bid_v7_plan §2.8](../bid/bid_v7_plan.md)). Un écart nettement en dessous ⇒ prendre la

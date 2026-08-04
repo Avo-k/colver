@@ -36,16 +36,36 @@
 //!   3. **l'échelle valeur ↔ `evaluate_for_trump`** — le plan dit « palier plausible
 //!      dérivé de ce score » sans donner la règle. Elle se lit ici.
 //!
+//! ## Les variantes candidates (`--bid-model`)
+//!
+//! Le même binaire déroule deux enchères pilotées par bid v6 sur les mêmes donnes :
+//!
+//!   * **v6 masqué sur la couleur cible** — le masque légal est réduit à `PASS`,
+//!     `COINCHE`, `SURCOINCHE` et aux paliers de l'atout `t`. Une case `(donne, atout)`
+//!     par appel, donc les 4 cases d'une donne sont couvertes.
+//!   * **v6 libre** — aucun masque. C'est **le témoin**, et c'en est un très fort : le
+//!     réseau est déterministe et les donnes sont celles du corpus, donc le rejeu doit
+//!     rendre l'enchère **à l'identique**. Mesuré à 99,97 %. Sans ce contrôle, un défaut
+//!     du pilote — historique mal suivi, score passé du mauvais côté, pénalité oubliée —
+//!     se lirait comme une propriété de la variante masquée.
+//!
 //! ```bash
 //! cargo build -p colver-core --release --bin bench_taker_position
-//! ./target/release/bench_taker_position --games data/training/isdd_games_v1.bin --json out.json
+//! ./target/release/bench_taker_position --games data/training/isdd_games_v1.bin \
+//!     --bid-model models/bid_v6_isdd_resume/bid_nn_final.bin --json out.json
 //! ```
+//!
+//! ⚠️ **Ne pas rediriger dans `head`** : le SIGPIPE tue le processus avant l'écriture du
+//! JSON, et le run a l'air d'avoir réussi.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use colver_core::bid_eval::evaluate_for_trump;
-use colver_core::bidding::{BID_COINCHE, BID_PASS, BID_SURCOINCHE};
+use colver_core::bid_net::BidNet;
+use colver_core::bid_obs;
+use colver_core::bidding::{self, BID_COINCHE, BID_PASS, BID_SURCOINCHE};
 use colver_core::card::Suit;
+use colver_core::dmc_obs::EnvTracking;
 use colver_core::game_replay::GameReplay;
 use colver_core::solver;
 use colver_core::state::{GameState, Phase};
@@ -159,7 +179,183 @@ fn value_idx(v: u8) -> usize {
     if v == 25 { 9 } else { (v - 8) as usize }
 }
 
-fn process(r: &GameReplay, tt: &mut solver::TtBuf, st: &mut Stats) {
+/// Ce qu'une enchère candidate produit, mesuré aux **mêmes** cinq statistiques de forme
+/// que les enchères réelles. Une case `(donne, atout)` par observation.
+#[derive(Default, Clone)]
+struct VariantStats {
+    cells: u64,
+    /// Cases où tout le monde passe : la variante ne rend **aucune** enchère, donc
+    /// aucune étiquette. C'est le coût propre du masquage, et il n'a pas d'équivalent
+    /// dans la construction du plan, qui annonce toujours.
+    voids: u64,
+    pos: [u64; 4],
+    first_bid_pos: [u64; 4],
+    len: [u64; 25],
+    nbids: [u64; 12],
+    contested: u64,
+    coinched: u64,
+    value: [u64; 10],
+    /// Le camp preneur est-il celui que `dd_pts` désigne à cet atout ?
+    side_is_dd: u64,
+    /// **Témoin, variante non masquée seulement** : l'enchère rejouée est-elle
+    /// *identique* à celle du corpus ? Le modèle est déterministe et les donnes sont
+    /// les mêmes, donc la réponse doit être « toujours ». Tout écart est un défaut du
+    /// pilote (suivi d'historique, score, pénalité), pas une propriété de l'enchère —
+    /// et sans ce contrôle les chiffres de la variante masquée ne valent rien.
+    exact_match: u64,
+    /// Rang de l'atout choisi parmi les 4, **vu du camp preneur** (0 = le meilleur).
+    /// C'est la lecture de `bid_contract_ranks` ; le rang « de la donne » est un piège.
+    rank: [u64; 4],
+}
+
+impl VariantStats {
+    fn merge(&mut self, o: &VariantStats) {
+        self.cells += o.cells;
+        self.voids += o.voids;
+        self.contested += o.contested;
+        self.coinched += o.coinched;
+        self.side_is_dd += o.side_is_dd;
+        self.exact_match += o.exact_match;
+        for i in 0..4 {
+            self.pos[i] += o.pos[i];
+            self.first_bid_pos[i] += o.first_bid_pos[i];
+            self.rank[i] += o.rank[i];
+        }
+        for i in 0..25 { self.len[i] += o.len[i]; }
+        for i in 0..12 { self.nbids[i] += o.nbids[i]; }
+        for i in 0..10 { self.value[i] += o.value[i]; }
+    }
+}
+
+/// Masque légal restreint à la couleur `t` : `PASS`, `COINCHE`, `SURCOINCHE` et les
+/// seuls paliers de cet atout.
+///
+/// C'est le cœur de la variante. Laisser passer les autres couleurs rendrait
+/// simplement v6 à lui-même et l'atout ne serait plus celui qu'on veut étiqueter ;
+/// retirer `PASS` rendrait l'enchère infinie et surtout **fabriquerait** la
+/// contestation qu'on cherche justement à mesurer.
+fn suit_mask(t: u8) -> u64 {
+    let mut m = (1u64 << BID_PASS) | (1u64 << BID_COINCHE) | (1u64 << BID_SURCOINCHE);
+    for v in 0..9u8 {
+        m |= 1u64 << bidding::encode_bid(8 + v, t);
+    }
+    m |= 1u64 << bidding::encode_bid(25, t); // capot
+    m
+}
+
+/// Points cartes du camp `team` sous l'atout dont `dd_pts` vaut `ns`.
+#[inline]
+fn side_pts(ns: u8, team: u8) -> i16 {
+    let ns = ns as i16;
+    let ew = if ns == 252 { 0 } else if ns == 0 { 252 } else { 162 - ns };
+    if team == 0 { ns } else { ew }
+}
+
+/// Déroule une enchère complète pilotée par v6 sous le masque `mask`, et la mesure.
+///
+/// `mask = u64::MAX` rend l'enchère **non masquée**, donc la vraie politique : c'est le
+/// témoin. `reference` est la suite d'actions du corpus quand on veut vérifier qu'on la
+/// reproduit.
+#[allow(clippy::too_many_arguments)]
+fn drive_auction(
+    hands: &[u32; 4],
+    dealer: u8,
+    mask: u64,
+    dd: &[u8; 4],
+    reference: Option<&[u8]>,
+    net: &mut BidNet,
+    obs: &mut Vec<f32>,
+    st: &mut VariantStats,
+) {
+    st.cells += 1;
+    let mut g = GameState::new(dealer, *hands);
+    let mut tr = EnvTracking::new();
+    tr.dealer = dealer;
+    let dim = net.obs_dim();
+    let mut mine: Vec<u8> = Vec::with_capacity(12);
+
+    let mut len = 0usize;
+    let mut nbids = 0usize;
+    let mut first_bid_pos: Option<usize> = None;
+    let mut bid_by_team = [false; 2];
+    let mut coinched = false;
+
+    while g.phase == Phase::Bidding {
+        let seat = g.current_player();
+        let legal = g.legal_actions() & mask;
+        // `PASS` est toujours dans les deux, donc l'intersection n'est jamais vide.
+        debug_assert!(legal & (1 << BID_PASS) != 0);
+
+        // Donnes isolées : 0-0. Même contexte de score que le corpus de référence et
+        // que la génération de la couche.
+        obs.clear();
+        obs.resize(dim, 0.0);
+        bid_obs::write_bid_observation_dim(obs, 0, &g, &tr.bid_history, 0, 0, dim);
+        let action = net.best_action_fast(obs, legal);
+
+        match action {
+            BID_PASS => {}
+            BID_COINCHE | BID_SURCOINCHE => coinched = true,
+            _ => {
+                nbids += 1;
+                bid_by_team[GameState::player_team(seat) as usize] = true;
+                first_bid_pos.get_or_insert_with(|| speak_pos(seat, dealer));
+            }
+        }
+        tr.track_action(&g, action);
+        g.step(action);
+        mine.push(action);
+        len += 1;
+        if len > 40 {
+            break; // garde-fou : une enchère ne peut pas durer, mais ne pas boucler
+        }
+    }
+
+    if let Some(r) = reference {
+        // Le corpus contient l'enchère PUIS les 32 cartes ; on ne compare que le préfixe.
+        if r.len() >= mine.len() && r[..mine.len()] == mine[..] {
+            st.exact_match += 1;
+        }
+    }
+
+    if g.phase != Phase::Playing {
+        st.voids += 1;
+        return;
+    }
+
+    let taker = g.last_bidder;
+    st.pos[speak_pos(taker, dealer)] += 1;
+    if let Some(p) = first_bid_pos {
+        st.first_bid_pos[p] += 1;
+    }
+    st.len[len.min(24)] += 1;
+    st.nbids[nbids.min(11)] += 1;
+    if bid_by_team[0] && bid_by_team[1] {
+        st.contested += 1;
+    }
+    if coinched {
+        st.coinched += 1;
+    }
+    st.value[value_idx(g.contract.value)] += 1;
+    let t = g.contract.trump;
+    if dd_side(dd[t as usize]) == g.contract.team {
+        st.side_is_dd += 1;
+    }
+
+    // Rang de l'atout choisi parmi les 4, du point de vue du camp qui l'a pris.
+    let own = side_pts(dd[t as usize], g.contract.team);
+    let better = (0..4usize)
+        .filter(|&i| i != t as usize && side_pts(dd[i], g.contract.team) > own)
+        .count();
+    st.rank[better.min(3)] += 1;
+}
+
+fn process(
+    r: &GameReplay,
+    tt: &mut solver::TtBuf,
+    st: &mut Stats,
+    v6: Option<(&mut BidNet, &mut Vec<f32>, &mut VariantStats, &mut VariantStats)>,
+) {
     st.deals += 1;
 
     // --- rejouer l'enchère ---
@@ -211,8 +407,12 @@ fn process(r: &GameReplay, tt: &mut solver::TtBuf, st: &mut Stats) {
     }
     st.real_value[value_idx(g.contract.value)] += 1;
 
-    // --- l'atout contracté, résolu en DD ---
-    let ns = solver::solve_for_trump_reuse_tt(r.hands, r.dealer, trump, tt)[0];
+    // --- les 4 atouts, résolus en DD ---
+    let mut dd = [0u8; 4];
+    for (t, slot) in dd.iter_mut().enumerate() {
+        *slot = solver::solve_for_trump_reuse_tt(r.hands, r.dealer, t as u8, tt)[0];
+    }
+    let ns = dd[trump as usize];
     if ns == 81 {
         st.dd_ties += 1;
     }
@@ -236,15 +436,20 @@ fn process(r: &GameReplay, tt: &mut solver::TtBuf, st: &mut Stats) {
     }
 
     // --- ce que la construction produit sur les 4 cases de cette donne ---
+    let mut v6 = v6;
     for t in 0..4u8 {
-        let ns_t = if t == trump {
-            ns
-        } else {
-            solver::solve_for_trump_reuse_tt(r.hands, r.dealer, t, tt)[0]
-        };
-        let s = dd_side(ns_t);
+        let s = dd_side(dd[t as usize]);
         let seat = constructed_seat(&r.hands, r.dealer, t, s);
         st.cons_pos_all[speak_pos(seat, r.dealer)] += 1;
+
+        if let Some((ref mut net, ref mut obs, ref mut vst, _)) = v6 {
+            drive_auction(&r.hands, r.dealer, suit_mask(t), &dd, None, net, obs, vst);
+        }
+    }
+
+    // --- le témoin : la même mécanique sans masque doit reproduire le corpus ---
+    if let Some((ref mut net, ref mut obs, _, ref mut ust)) = v6 {
+        drive_auction(&r.hands, r.dealer, u64::MAX, &dd, Some(&r.actions), net, obs, ust);
     }
 
     // --- échelle valeur ↔ force ---
@@ -273,6 +478,7 @@ fn json_u64(v: &[u64]) -> String {
 fn main() {
     let mut games = String::from("data/training/isdd_games_v1.bin");
     let mut json_out: Option<String> = None;
+    let mut bid_model: Option<String> = None;
     let mut limit = usize::MAX;
     let mut threads = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4);
 
@@ -282,14 +488,18 @@ fn main() {
         match args[i].as_str() {
             "--games" => { i += 1; games = args[i].clone(); }
             "--json" => { i += 1; json_out = Some(args[i].clone()); }
+            "--bid-model" => { i += 1; bid_model = Some(args[i].clone()); }
             "--limit" => { i += 1; limit = args[i].parse().expect("limit"); }
             "--threads" => { i += 1; threads = args[i].parse().expect("threads"); }
             "--help" | "-h" => {
                 eprintln!("bench_taker_position: enchère synthétique vs enchères réelles");
-                eprintln!("  --games <path>   corpus COLVGM01/02 (défaut: data/training/isdd_games_v1.bin)");
-                eprintln!("  --json <path>    écrit les histogrammes");
-                eprintln!("  --limit N        n'examine que les N premières donnes");
+                eprintln!("  --games <path>      corpus COLVGM01/02 (défaut: data/training/isdd_games_v1.bin)");
+                eprintln!("  --json <path>       écrit les histogrammes");
+                eprintln!("  --bid-model <path>  mesure en plus la variante « v6 masqué sur la couleur »");
+                eprintln!("  --limit N           n'examine que les N premières donnes");
                 eprintln!("  --threads N");
+                eprintln!("\n  ⚠️ ne pas rediriger la sortie dans `head` : le SIGPIPE tue le");
+                eprintln!("     processus avant l'écriture du JSON.");
                 std::process::exit(0);
             }
             other => { eprintln!("argument inconnu: {other}"); std::process::exit(1); }
@@ -301,20 +511,36 @@ fn main() {
     let n = replays.len().min(limit);
     eprintln!("bench_taker_position: {n} donnes de {games}, {threads} threads");
 
+    // Un `BidNet` par thread : `evaluate` prend `&mut self` (buffers internes), donc il
+    // n'est pas partageable. Charger le fichier N fois coûte 2,4 Mo × N, négligeable.
+    if let Some(ref p) = bid_model {
+        let net = BidNet::load(p).expect("chargement du modèle d'enchère");
+        eprintln!("  variante masquée : {p} (obs {})", net.obs_dim());
+    }
+
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let start = std::time::Instant::now();
     let mut total = Stats::new();
+    let mut total_masked = VariantStats::default();
+    let mut total_free = VariantStats::default();
 
-    let parts: Vec<Stats> = std::thread::scope(|s| {
+    let parts: Vec<(Stats, VariantStats, VariantStats)> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..threads)
             .map(|_| {
                 let next = &next;
                 let done = &done;
                 let replays = &replays;
+                let bid_model = &bid_model;
                 s.spawn(move || {
                     let mut tt = solver::new_tt_buffer();
                     let mut st = Stats::new();
+                    let mut vst = VariantStats::default();
+                    let mut ust = VariantStats::default();
+                    let mut net = bid_model
+                        .as_ref()
+                        .map(|p| BidNet::load(p).expect("chargement du modèle d'enchère"));
+                    let mut obs: Vec<f32> = Vec::new();
                     loop {
                         // Un lot par prise : une donne coûte 4 solves, la contention
                         // sur le compteur serait visible à l'unité.
@@ -324,7 +550,8 @@ fn main() {
                         }
                         let hi = (lo + 64).min(n);
                         for r in &replays[lo..hi] {
-                            process(r, &mut tt, &mut st);
+                            let m = net.as_mut().map(|nt| (nt, &mut obs, &mut vst, &mut ust));
+                            process(r, &mut tt, &mut st, m);
                         }
                         let d = done.fetch_add(hi - lo, Ordering::Relaxed) + (hi - lo);
                         if d % 5_000 < 64 {
@@ -332,14 +559,16 @@ fn main() {
                             eprintln!("  {d}/{n}  {:.0} donnes/s", d as f64 / el);
                         }
                     }
-                    st
+                    (st, vst, ust)
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
-    for p in &parts {
+    for (p, v, u) in &parts {
         total.merge(p);
+        total_masked.merge(v);
+        total_free.merge(u);
     }
 
     let st = total;
@@ -415,6 +644,92 @@ fn main() {
         println!("  {e:>5} {tot:>8} {mean:>9.1} {bars}");
     }
 
+    // --- la variante candidate, en face des mêmes cibles ---
+    let mut vjson = String::from("null");
+    let mut ujson = String::from("null");
+    if bid_model.is_some() {
+        // Le témoin d'abord : sans lui, rien de ce qui suit n'est interprétable.
+        let u = &total_free;
+        let ua = u.cells - u.voids;
+        let umean: f64 = u.len.iter().enumerate()
+            .map(|(i, &x)| i as f64 * x as f64).sum::<f64>() / ua.max(1) as f64;
+        println!("\n=== TÉMOIN : la même mécanique SANS masque, rejouée sur les mêmes donnes ===");
+        println!("  enchère identique à celle du corpus : {:.2} % ({} / {})",
+                 pct(u.exact_match, u.cells), u.exact_match, u.cells);
+        println!("  {:<44} {:>10} {:>10}", "", "corpus", "rejeu");
+        for (lbl, r, m) in [
+            ("première annonce par le premier parleur",
+             pct(st.real_first_bid_pos[0], c), pct(u.first_bid_pos[0], ua)),
+            ("une seule annonce", pct(st.real_nbids[1], c), pct(u.nbids[1], ua)),
+            ("contestée", pct(st.real_contested, c), pct(u.contested, ua)),
+            ("coinchée", pct(st.real_coinched, c), pct(u.coinched, ua)),
+            ("longueur du préfixe (jetons)", mean_len, umean),
+        ] {
+            println!("  {lbl:<44} {r:>9.2}  {m:>9.2}");
+        }
+        println!("  rang de l'atout choisi, vu du camp preneur : {}",
+                 arr_pct(&u.rank, ua).iter().enumerate()
+                     .map(|(i, p)| format!("rang {i}:{p:.1}%"))
+                     .collect::<Vec<_>>().join("  "));
+        ujson = format!(
+            "{{\"cells\":{},\"exact_match_pct\":{:.3},\"first_bid_pos0_pct\":{:.3},\
+             \"single_bid_pct\":{:.3},\"contested_pct\":{:.3},\"coinched_pct\":{:.3},\
+             \"mean_prefix_len\":{:.3},\"rank_pct\":{}}}",
+            u.cells, pct(u.exact_match, u.cells), pct(u.first_bid_pos[0], ua),
+            pct(u.nbids[1], ua), pct(u.contested, ua), pct(u.coinched, ua), umean,
+            json_nums(&arr_pct(&u.rank, ua)),
+        );
+
+        let v = &total_masked;
+        let a = v.cells - v.voids; // cases où la variante rend bien une enchère
+        println!("\n=== variante « v6 masqué sur la couleur » — {} cases, {} sans enchère ===",
+                 v.cells, v.voids);
+        println!("  ⚠️ {:.2} % des cases n'ont AUCUNE enchère : masqué sur cette couleur, v6",
+                 pct(v.voids, v.cells));
+        println!("     passe aux quatre sièges. Ces cases-là restent à étiqueter autrement.");
+
+        let vmean: f64 = v.len.iter().enumerate()
+            .map(|(i, &x)| i as f64 * x as f64).sum::<f64>() / a.max(1) as f64;
+        println!("\n  {:<44} {:>10} {:>10}", "", "réel", "masqué");
+        let rows: [(&str, f64, f64); 5] = [
+            ("première annonce par le premier parleur",
+             pct(st.real_first_bid_pos[0], c), pct(v.first_bid_pos[0], a)),
+            ("une seule annonce", pct(st.real_nbids[1], c), pct(v.nbids[1], a)),
+            ("contestée", pct(st.real_contested, c), pct(v.contested, a)),
+            ("coinchée", pct(st.real_coinched, c), pct(v.coinched, a)),
+            ("longueur du préfixe (jetons)", mean_len, vmean),
+        ];
+        for (lbl, r, m) in rows {
+            println!("  {lbl:<44} {r:>9.2}  {m:>9.2}");
+        }
+        println!("\n  position du preneur :");
+        let vp = arr_pct(&v.pos, a);
+        println!("    {:<24} {:>7} {:>7} {:>7} {:>7}", "", "pos 0", "pos 1", "pos 2", "pos 3");
+        println!("    {:<24} {:>6.2}% {:>6.2}% {:>6.2}% {:>6.2}%",
+                 "réel", rp[0], rp[1], rp[2], rp[3]);
+        println!("    {:<24} {:>6.2}% {:>6.2}% {:>6.2}% {:>6.2}%",
+                 "masqué", vp[0], vp[1], vp[2], vp[3]);
+        let vtvd: f64 = (0..4).map(|i| (rp[i] - vp[i]).abs()).sum::<f64>() / 2.0;
+        println!("    distance en variation totale : {vtvd:.2} pp  (construction : {tvd:.2} pp)");
+        println!("  camp preneur = celui de dd_pts : {:.2} %", pct(v.side_is_dd, a));
+        print!("  valeur :");
+        for (i, &x) in v.value.iter().enumerate() {
+            if x > 0 { print!("  {}:{:.1}%", labels[i], pct(x, a)); }
+        }
+        println!();
+
+        vjson = format!(
+            "{{\"cells\":{},\"voids\":{},\"void_pct\":{:.3},\"pos_pct\":{},\"tvd_pp\":{:.3},\
+             \"first_bid_pos0_pct\":{:.3},\"single_bid_pct\":{:.3},\"contested_pct\":{:.3},\
+             \"coinched_pct\":{:.3},\"mean_prefix_len\":{:.3},\"side_is_dd_pct\":{:.3},\
+             \"nbids\":{},\"len\":{},\"value\":{}}}",
+            v.cells, v.voids, pct(v.voids, v.cells), json_nums(&vp), vtvd,
+            pct(v.first_bid_pos[0], a), pct(v.nbids[1], a), pct(v.contested, a),
+            pct(v.coinched, a), vmean, pct(v.side_is_dd, a),
+            json_u64(&v.nbids), json_u64(&v.len), json_u64(&v.value),
+        );
+    }
+
     if let Some(path) = json_out {
         let ladder: Vec<String> = st.ladder.iter().enumerate()
             .filter(|(_, r)| r.iter().sum::<u64>() > 0)
@@ -427,7 +742,7 @@ fn main() {
              \"real_seat_is_argmax_pct\":{:.3},\n \"mean_prefix_len\":{:.3},\n \
              \"real_len\":{},\n \"real_nbids\":{},\n \"contested_pct\":{:.3},\n \
              \"coinched_pct\":{:.3},\n \"real_first_bid_pos_pct\":{},\n \
-             \"real_value\":{},\n \"ladder\":[{}]\n}}\n",
+             \"real_value\":{},\n \"free_v6\":{},\n \"masked_v6\":{},\n \"ladder\":[{}]\n}}\n",
             st.deals, c, st.voids, st.dd_ties,
             json_nums(&rp), json_nums(&cp), json_nums(&ca),
             tvd, pct(st.cons_side_agree, c), pct(st.cons_seat_agree, c),
@@ -435,7 +750,7 @@ fn main() {
             json_u64(&st.real_len), json_u64(&st.real_nbids),
             pct(st.real_contested, c), pct(st.real_coinched, c),
             json_nums(&arr_pct(&st.real_first_bid_pos, c)),
-            json_u64(&st.real_value), ladder.join(","),
+            json_u64(&st.real_value), ujson, vjson, ladder.join(","),
         );
         std::fs::write(&path, body).expect("écriture json");
         eprintln!("[json] {path}");

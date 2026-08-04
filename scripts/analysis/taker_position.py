@@ -35,21 +35,32 @@ import runlog  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BIN = os.path.join(ROOT, "target/release/bench_taker_position")
 
+# Le modèle qui a produit `isdd_games_v1.bin`. Il sert à deux choses : dérouler les
+# variantes d'enchère candidates, et **se rejouer lui-même sans masque** sur les donnes
+# du corpus — un témoin qui doit rendre les enchères à l'identique. Sans ce témoin, un
+# défaut du pilote (historique mal suivi, mauvais score, pénalité oubliée) se lirait
+# comme une propriété de la variante.
+BID_MODEL = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+
 CORPORA = {
-    # nom → (chemin, limite)
-    "isdd_v1": ("data/training/isdd_games_v1.bin", None),
-    "playgen_9M": ("data/training/playgen_games_9M.bin", 43076),
+    # nom → (chemin, limite, variantes d'enchère)
+    "isdd_v1": ("data/training/isdd_games_v1.bin", None, True),
+    "playgen_9M": ("data/training/playgen_games_9M.bin", 43076, False),
 }
 
 POS = ["pos 0 (premier)", "pos 1", "pos 2", "pos 3 (donneur)"]
 VALUES = ["80", "90", "100", "110", "120", "130", "140", "150", "160", "capot"]
 
 
-def run(path, limit, out_json):
+def run(path, limit, variants, out_json):
     cmd = [BIN, "--games", path, "--json", out_json]
     if limit:
         cmd += ["--limit", str(limit)]
+    if variants:
+        cmd += ["--bid-model", BID_MODEL]
     print(f"[run] {' '.join(cmd)}", file=sys.stderr)
+    # Surtout pas de `head` ni de pipe tronquant ici : le SIGPIPE tuerait le processus
+    # avant l'écriture du JSON, et le run aurait l'air d'avoir réussi.
     subprocess.run(cmd, cwd=ROOT, check=True, stdout=subprocess.DEVNULL)
     with open(out_json, encoding="utf-8") as fh:
         return json.load(fh)
@@ -79,6 +90,9 @@ def digest(raw):
         "first_bid_pos_pct": raw["real_first_bid_pos_pct"],
         # 4. valeur
         "value_pct": [round(100 * x / c, 2) for x in raw["real_value"]],
+        # 5. les variantes candidates, aux mêmes cibles (absentes sans --bid-model)
+        "free_v6": raw.get("free_v6"),
+        "masked_v6": raw.get("masked_v6"),
     }
 
 
@@ -102,6 +116,22 @@ def show(name, d):
     print("  valeur : "
           + "  ".join(f"{lbl}:{v:.1f}%"
                       for lbl, v in zip(VALUES, d["value_pct"], strict=True) if v >= 0.5))
+    if not d.get("free_v6"):
+        return
+    u, m = d["free_v6"], d["masked_v6"]
+    print(f"  TÉMOIN — v6 rejoué sans masque reproduit le corpus : "
+          f"{u['exact_match_pct']:.2f} % d'enchères identiques")
+    print(f"    {'':<42}{'corpus':>9}{'v6 libre':>11}{'v6 masqué':>11}")
+    for lbl, key, ref in [("1re annonce par le premier parleur", "first_bid_pos0_pct",
+                           d["first_bid_pos_pct"][0]),
+                          ("une seule annonce", "single_bid_pct", d["single_bid_pct"]),
+                          ("contestée", "contested_pct", d["contested_pct"]),
+                          ("coinchée", "coinched_pct", d["coinched_pct"]),
+                          ("longueur du préfixe", "mean_prefix_len", d["mean_prefix_len"])]:
+        print(f"    {lbl:<42}{ref:>9.2f}{u[key]:>11.2f}{m[key]:>11.2f}")
+    print(f"    {'cases sans aucune enchère':<42}{'—':>9}{'—':>11}{m['void_pct']:>10.2f}%")
+    print("  rang de l'atout que v6 choisit librement, vu de son camp : "
+          + "  ".join(f"{i}:{p:.1f}%" for i, p in enumerate(u["rank_pct"])))
 
 
 def main():
@@ -114,12 +144,13 @@ def main():
     raws = {}
     with runlog.Timer() as t:
         with tempfile.TemporaryDirectory() as tmp:
-            for name, (path, limit) in CORPORA.items():
+            for name, (path, limit, variants) in CORPORA.items():
                 if args.reuse:
                     with open(os.path.join(args.reuse, f"{name}.json"), encoding="utf-8") as fh:
                         raws[name] = json.load(fh)
                 else:
-                    raws[name] = run(path, limit, os.path.join(tmp, f"{name}.json"))
+                    raws[name] = run(path, limit, variants,
+                                     os.path.join(tmp, f"{name}.json"))
 
     digests = {k: digest(v) for k, v in raws.items()}
     for name, d in digests.items():
@@ -129,14 +160,15 @@ def main():
         runlog.save(
             script="taker_position",
             tag=args.tag,
-            params={"corpora": {k: {"path": p, "limit": lim}
-                                for k, (p, lim) in CORPORA.items()},
-                    "reused": bool(args.reuse)},
+            params={"corpora": {k: {"path": p, "limit": lim, "variants": v}
+                                for k, (p, lim, v) in CORPORA.items()},
+                    "bid_model": BID_MODEL, "reused": bool(args.reuse)},
             summary=digests,
             payload=raws,
             # Les corpus jouent ici le rôle des poids : ils portent la politique
             # d'enchère qui sert de référence, et ils ne sont pas dans git.
-            models=[os.path.join(ROOT, p) for p, _ in CORPORA.values()],
+            models=[os.path.join(ROOT, BID_MODEL)]
+                   + [os.path.join(ROOT, p) for p, _, _ in CORPORA.values()],
             took_s=t.s,
         )
 

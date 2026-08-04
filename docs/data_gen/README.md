@@ -23,7 +23,11 @@ chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder.
   La **mesure A est faite** (§4) : l'enchère synthétique est hors distribution sur la
   **forme** du préfixe — une seule annonce là où le réel en compte 2 à 4 dans 69 % des
   cas, jamais contestée là où le réel l'est à 81 %, jamais coinchée là où le réel l'est
-  à 26 % — et non sur l'identité du preneur, dont le camp est bon à 89,4 %.
+  à 26 % — et non sur l'identité du preneur, dont le camp est bon à 89,4 %. Elle a
+  ensuite **fermé toute la famille** : la contestation *est* le mécanisme qui sélectionne
+  l'atout, donc aucune enchère à atout imposé ne peut être réaliste (v6 masqué sur la
+  couleur : 0,06 % de contestation). D'où la forme retenue — une case « or » par donne,
+  avec l'enchère libre de v6, et trois cases « argent » hors distribution assumées.
 
 ## Donnes complètes
 

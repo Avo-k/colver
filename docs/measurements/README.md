@@ -151,6 +151,13 @@ des entrées complètes.
   « dans la distribution » se dit par rapport à celui sur lequel playgen a appris. Leur
   accord à 0,5 pp près est le résultat qui rend la référence utilisable — l'enchère est une
   propriété de bid v6, pas du joueur de cartes derrière lui.
+  `--bid-model` ajoute les variantes d'enchère candidates et, avec elles, **le témoin le
+  plus fort qu'on puisse construire ici** : le même pilote lancé *sans* masque doit
+  reproduire les enchères du corpus **à l'identique**, le réseau étant déterministe et
+  ayant produit ces donnes. Mesuré à 99,99 %. Sans lui, un historique mal suivi ou un
+  score passé du mauvais côté se lirait comme une propriété de la variante — et c'est
+  ainsi qu'une variante a été proposée puis réfutée en 7 min de CPU, avant de coûter des
+  heures de GPU.
   ⚠️ Ne pas rediriger sa sortie dans `head` : le SIGPIPE tue le processus **avant**
   l'écriture du JSON, et la mesure a l'air d'avoir réussi.
 
