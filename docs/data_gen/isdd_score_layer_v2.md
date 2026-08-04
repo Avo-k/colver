@@ -570,6 +570,20 @@ IS-DD contre 64 threads d'accueil du sidecar, ce qui produit 1 050 lanes par lot
 timeouts en cascade. Et les donnes perdues ainsi ne sont pas un tirage au hasard — ce
 sont celles jouées pendant la saturation.
 
+**Reprise, et la variante qui laisse la prod tranquille.** Tuer et relancer repart du
+dernier checkpoint : la même commande, ou celle-ci qui n'utilise que le GPU local et rend
+sa 3090 à colver.net pour la journée.
+
+```bash
+./target/release/gen_score_layer --pool data/deals/base_5M.bin --count 500000 \
+  --threads 96 --out data/deals/scores_isdd_v2.sc --url "http://localhost:8003"
+```
+
+⚠️ **L'URL reste explicite, volontairement.** Un script d'enveloppe avec le sidecar de
+moxxi câblé dedans rendrait trop facile d'envoyer par mégarde de la charge sur la prod ;
+mesuré une nuit à 1/4 de pondération, elle tient (`no_playgen: 0` sous charge, cf. §9),
+mais c'est une décision à reprendre à chaque lancement, pas un défaut.
+
 ### L'estimation d'origine, gardée pour mémoire
 
 Base : `gen_games_isdd` fait **2,62 donnes/s** sur une 3090 à 40 mondes/décision
