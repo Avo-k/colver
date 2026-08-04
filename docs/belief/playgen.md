@@ -546,12 +546,23 @@ d'enchère de `playgen_v2_final` y répond à « sait-il encore lire ces enchèr
 changent), tour 1 seulement, qui est le seul apparié : aux tours suivants la
 population de positions diffère puisque les enchères ne durent pas pareil.
 
-| score de partie | nll tour 1 | écart vs 0-0 |
-|---|---|---|
-| 0-0 (ce que playgen a vu) | 1,7160 | — |
-| 600-400 (milieu de partie) | 1,7221 | +0,0061 |
-| 1500-300 (fin de partie) | 1,7967 | **+0,0807** |
-| 300-1500 (miroir) | 1,7939 | +0,0779 |
+| score de partie | écart | nll tour 1 | vs 0-0 |
+|---|---|---|---|
+| 0-0 (ce que playgen a vu) | 0 | 1,7160 | — |
+| 600-400 | 200 | 1,7221 | +0,006 |
+| 1000-500 | 500 | 1,7151 | −0,001 |
+| 1800-1200 | 600 | 1,7047 | −0,011 |
+| 1200-0 | 1200 | 1,7898 | **+0,074** |
+| 300-1500 | 1200 | 1,7939 | **+0,078** |
+| 1500-300 | 1200 | 1,7967 | **+0,081** |
+| 1800-600 | 1200 | 1,8368 | **+0,121** |
+
+**Ce qui pénalise est l'écart entre les camps, pas la fin de partie ni la distance
+au score nul.** Les quatre corpus à écart 1200 sont pénalisés, les trois à ≤600
+sont dans le bruit (SE ≈ 0,008) — y compris 1800-1200, où un camp est à 200 points
+de gagner. La proximité de la cible s'ajoute par-dessus : 1800-600, qui cumule
+écart et proximité, est le pire des huit. La courbe **n'est pas monotone** : à
+1800-1200 playgen prédit *mieux* qu'à 0-0.
 
 **À comparer à l'effet de capacité sur la même tête** : v3-small (3,22M) contre v2
 (10,74M) à budget égal donne 1,7370 contre 1,7342, soit **+0,0028**. L'information
@@ -565,10 +576,12 @@ est tranchée dans le bon sens : la tête d'enchère étant saturée en capacit�
 en données, il ne restait que de l'information nouvelle, et on sait maintenant
 combien elle vaut.
 
-Le régime compte : à 600-400 l'effet est dix fois moindre qu'à 1500-300. C'est en
-fin de partie que v6 change d'annonce, donc le bénéfice de v3-B se concentre sur
-les dernières donnes d'un match — ce qui reste la situation de production (l'arène
-joue en 2000 points, le web en parties).
+Le régime compte, et il est plus étroit qu'annoncé d'abord : le bénéfice de v3-B
+se concentre sur les **matchs déséquilibrés**, pas sur les fins de partie en
+général. Une partie serrée jusqu'au bout ne gagne rien à ce que playgen connaisse
+le score. Reste à savoir quelle fraction des donnes de production se joue à plus
+de 1000 points d'écart — non mesuré, et c'est ce qui manque pour convertir ces
+0,074-0,121 en un gain attendu.
 
 **Et grossir n'aide pas — ça nuit légèrement.** Même sonde sur les deux tailles :
 
