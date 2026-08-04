@@ -99,6 +99,41 @@ table humaine, un playgen entraîné là-dessus apprendra une distribution
 d'enchères biaisée — mais c'est une question sur le *bidder*, pas sur le
 générateur, et elle n'est pas tranchée ici.
 
+## Survivre à une nuit
+
+Un run de plusieurs heures rencontre des pannes passagères, et le comportement
+par défaut était de mourir dessus. **Mesuré à mes dépens** : un run de 28 000
+donnes s'est arrêté à 5 076 parce qu'un second sidecar s'est mis à partager le
+GPU. Les lectures ont expiré (6 s), et sous `fallback = "strict"` — le seul
+réglage honnête pour un corpus — chaque expiration rendait une erreur qui
+faisait sortir *tous* les threads.
+
+Trois règles en découlent, et elles se tiennent ensemble :
+
+1. **Une erreur de source jette la donne, pas le run.** La donne en cours n'est
+   jamais enregistrée à moitié, son jeton est rendu (`--deals N` reste un compte
+   de donnes *complètes*), et le run continue.
+2. **Le budget d'erreurs se lit en secondes de panne, pas en nombre
+   d'erreurs.** Sous une coupure totale, chaque thread produit une erreur par
+   expiration de lecture : elles s'accumulent à `threads / 6` par seconde, soit
+   43/s à 256 threads. Un budget fixe à 50 abandonnerait après **une seconde**
+   de coupure. D'où `threads × 4`, qui vaut ~25 s quel que soit le parallélisme.
+3. **Un run incomplet sort 1**, avec le compte demandé et le compte obtenu, et
+   ses éclats sont conservés. `--deals N` est une commande, pas un souhait.
+
+Et la leçon d'exploitation qui va avec : **ne pas partager le GPU d'un run en
+cours**. Le sidecar n'a pas planté, il a ralenti — assez pour que les lectures
+expirent. C'est la même famille que les sidecars oisifs qui mangent la VRAM,
+plus bas.
+
+### Plusieurs sidecars : le contrôle de santé ferme la porte
+
+`--url a,b` vérifie **les deux** au démarrage. Vérifié de bout en bout : avec
+`b` éteint, les 256 threads échouent à la construction en nommant l'URL morte,
+et rien n'est écrit — au lieu d'envoyer silencieusement la moitié des mondes
+dans un trou et de produire un corpus à moitié dégradé. Avec les deux vivants,
+les deux servent (175 lots contre 57 sur un test court).
+
 ## Où passe le temps
 
 Profil mesuré le 2026-08-04 (sidecar playgen v2_final sur une 3090, client sur
