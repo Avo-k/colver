@@ -9,6 +9,18 @@ A "pool" is a pre-computed set of deals + DD points (and optionally "real" play 
 - pools.md — list of all pools, formats, sources
 - [pool_staleness.md](pool_staleness.md) — **quand un pool est-il assez périmé pour justifier une regénération ?** Mesuré : la dérive d'IS-DD ne suffit pas (87 % de l'écart est du bruit d'échantillonnage). Contient la règle « un label DD symétrique ne peut pas voir la force de jeu ».
 
+## Donnes complètes
+
+Une *donne complète* garde la trajectoire — l'enchère telle qu'elle s'est jouée
+et les 32 cartes dans l'ordre — là où un pool ne garde qu'une étiquette par
+donne. C'est ce qu'il faut pour entraîner un playgen sur du jeu fort.
+
+- [isdd_games.md](isdd_games.md) — `gen_games_isdd` → `COLVGM01`. Contient le
+  profil (**93 % du temps est de l'attente du sidecar playgen, 7 % du solve
+  DD**), les optimisations qui valent 2,5×, et trois impasses mesurées : TF32
+  (3-5× plus lent), la fenêtre d'attention rétrécie (candle refuse les matmuls
+  non contigus), et le calendrier de mondes **montant** (plus lent à total égal).
+
 ## Enrichment Methods
 
 Adding "real play" points to a DD pool by simulating the game with a play model.
