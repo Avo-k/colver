@@ -170,3 +170,41 @@ class TestSeuilDAffichage:
         board = await elo.leaderboard()
         dede = next(r for r in board if r["kind"] == "bot" and r["ref"] == "dede")
         assert dede["elo"] == 1000.0
+
+
+class TestListeDesDonnes:
+    """« Mes donnes » ne doit rien devoir à `elo_history`.
+
+    Le passage à la partie (v14) a reconstruit `elo_history` sur `match_id`,
+    mais `list_games` a gardé un sous-select sur `elo_history.game_id` pour
+    afficher une variation d'Elo par donne. Résultat : `no such column` dès
+    qu'un joueur connecté ouvrait `/compte`, et une liste vide.
+
+    Ce qui a laissé passer le bug est ici l'essentiel : le sous-select n'était
+    assemblé **que** dans la branche `user_id is not None`, et aucun test
+    n'appelait `list_games` avec un joueur. D'où ces deux-là, qui parcourent les
+    deux chemins — le solo (`games.user_id`) et le salon (`game_players`).
+    """
+
+    async def test_les_donnes_d_un_joueur_se_listent(self, clean_db):
+        await _match(deals=3)
+        rows = await db.list_games(user_id=1)
+        assert len(rows) == 3
+        assert all(r["user_seat"] == 2 for r in rows)
+
+    async def test_le_chemin_salon_aussi(self, clean_db):
+        """Une donne de salon ne porte pas `human_seat` : le siège se lit sur
+        `game_players`, l'autre moitié du `COALESCE`."""
+        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+        gid = await db.create_game("multi", 0, hands, {str(s): "dede" for s in range(4)})
+        await db.add_game_player(gid, 1, 7)
+        await db.complete_game(gid, 80, 82, {"value": 80})
+        rows = await db.list_games(user_id=7)
+        assert [r["id"] for r in rows] == [gid]
+        assert rows[0]["user_seat"] == 1
+
+    async def test_une_donne_ne_porte_plus_de_variation_d_elo(self, clean_db):
+        """L'unité notée est la partie : un `elo_delta` par donne serait dix fois
+        le même chiffre, et laisserait croire que chaque donne l'a gagné."""
+        await _match(deals=2)
+        assert all("elo_delta" not in r for r in await db.list_games(user_id=1))

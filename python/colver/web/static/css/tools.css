@@ -3824,15 +3824,8 @@
 
 .compte-elo { color: var(--c-accent); }
 
-.history-elo-delta {
-    font-family: monospace;
-    font-size: var(--fs-2xs);
-    font-weight: 700;
-    min-width: 2.6em;
-    text-align: right;
-}
-.history-elo-delta.delta-up { color: #81c784; }
-.history-elo-delta.delta-down { color: var(--c-danger-txt); }
+/* `.history-elo-delta` a vécu ici : une donne ne porte plus de variation d'Elo
+   depuis que l'unité notée est la partie (migration v14). */
 
 /* ===== REPLAY — navigable moves list ===== */
 

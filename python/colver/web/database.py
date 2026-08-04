@@ -953,18 +953,33 @@ async def random_user_game(user_id, exclude=()):
 
 
 async def list_games(limit=50, offset=0, user_id=None):
+    """Les donnes terminées, éventuellement filtrées sur un joueur.
+
+    **Une donne ne porte plus de variation d'Elo.** Cette liste en rendait une
+    (`elo_delta`), lue sur `elo_history.game_id` — colonne que la migration v14
+    a supprimée en reconstruisant la table sur `match_id`, l'unité notée étant
+    devenue la partie en 2000 points. La requête levait donc `no such column`
+    dès qu'un `user_id` était passé, et « Mes donnes » ne s'affichait plus pour
+    personne de connecté. Le chemin anonyme, lui, n'assemblait pas ce
+    sous-select : les tests, qui appellent `list_games()` sans joueur, sont
+    restés verts pendant tout ce temps — d'où le test de non-régression qui
+    passe explicitement un `user_id` (`tests/test_elo.py`).
+
+    La réparation est de **retirer** la colonne, pas de la rebrancher sur
+    `match_id` : la variation appartient à la partie. La reporter sur chacune de
+    ses ~10 donnes afficherait dix fois le même chiffre en laissant croire que
+    chaque donne l'a gagné.
+    """
     db = await get_db()
     where = "WHERE mode IN ('play', 'multi') AND is_complete = 1 AND invalid = 0"
-    seat_col = "human_seat AS user_seat, NULL AS elo_delta"
+    seat_col = "human_seat AS user_seat"
     params = []
     if user_id is not None:
         # Solo games carry user_id directly; multiplayer games via game_players.
         # user_seat = the requesting user's seat (their team's perspective).
         seat_col = ("COALESCE(human_seat, (SELECT seat FROM game_players gp"
-                    " WHERE gp.game_id = games.id AND gp.user_id = ?)) AS user_seat, "
-                    "(SELECT delta FROM elo_history eh WHERE eh.game_id = games.id"
-                    " AND eh.kind = 'user' AND eh.ref = CAST(? AS TEXT)) AS elo_delta")
-        params += [user_id, user_id]
+                    " WHERE gp.game_id = games.id AND gp.user_id = ?)) AS user_seat")
+        params += [user_id]
         where += (" AND (user_id = ? OR id IN"
                   " (SELECT game_id FROM game_players WHERE user_id = ?))")
         params += [user_id, user_id]
@@ -988,7 +1003,6 @@ async def list_games(limit=50, offset=0, user_id=None):
             "points_ew": row[8],
             "contract": json.loads(row[9]) if row[9] else None,
             "user_seat": row[10],
-            "elo_delta": row[11],
         }
         result.append(d)
     return result

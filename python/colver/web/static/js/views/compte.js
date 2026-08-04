@@ -412,16 +412,12 @@ function renderGames(list, games) {
         date.textContent = d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
         date.title = d.toLocaleString();
 
+        // Pas de variation d'Elo sur une ligne de donne : depuis la migration
+        // v14 l'unité notée est la partie en 2000 points. Le delta appartient à
+        // la partie, et le reporter sur chacune de ses donnes afficherait dix
+        // fois le même chiffre.
         row.appendChild(id);
         row.appendChild(info);
-        if (g.elo_delta !== null && g.elo_delta !== undefined) {
-            const delta = document.createElement('span');
-            const v = Math.round(g.elo_delta);
-            delta.className = 'history-elo-delta ' + (v >= 0 ? 'delta-up' : 'delta-down');
-            delta.textContent = (v >= 0 ? '+' : '') + v;
-            delta.title = 'Variation Elo';
-            row.appendChild(delta);
-        }
         row.appendChild(date);
         list.appendChild(row);
     }
