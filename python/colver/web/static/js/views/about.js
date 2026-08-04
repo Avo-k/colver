@@ -342,13 +342,28 @@ const TEMPLATE = `
         </p>
     </div>
 
-    <div class="docs-section">
+    <div class="docs-section" id="doc-classement">
         <h4>Classement</h4>
         <p>
-            Un Elo par joueur class\u00e9 \u2014 compte humain ou type de bot \u2014 mis \u00e0 jour <em>donne par donne</em>
-            d\u00e8s que les quatre si\u00e8ges sont identifiables (des bots, ou des humains connect\u00e9s). Les donnes
-            pass\u00e9es ne comptent pas. Les bots bougent avec un coefficient plus faible&nbsp;: ce sont des
-            points de rep\u00e8re, et ils occupent souvent trois si\u00e8ges sur quatre.
+            Deux onglets, qui ne mesurent pas la m\u00eame chose.
+        </p>
+        <p>
+            L'onglet <strong>Elo</strong> est le classement officiel. L'unit\u00e9 not\u00e9e est la
+            <strong>partie en 2000&nbsp;points</strong> et rien d'autre&nbsp;: c'est le format des tournois,
+            et c'est aussi celui sur lequel les bots sont \u00e9talonn\u00e9s. Une donne isol\u00e9e ou une partie
+            en 1000 reste jouable, analysable et partageable \u2014 elle n'est simplement pas class\u00e9e.
+            Il faut cinq parties pour appara\u00eetre, et abandonner vaut d\u00e9faite. L'Elo des bots est
+            <em>fig\u00e9</em>&nbsp;: ils sont l'\u00e9chelle, pas des joueurs du classement. S'ils d\u00e9rivaient avec
+            la population, l'arriv\u00e9e de joueurs plus faibles d\u00e9valuerait en silence tous les inscrits.
+        </p>
+        <p>
+            L'onglet <strong>Vie du site</strong> ne contient que des <strong>comptes exacts</strong>&nbsp;:
+            donnes jou\u00e9es, jours de jeu, s\u00e9ries, capots, coinches, contrats pris. Aucun taux n'y est
+            class\u00e9, et c'est d\u00e9lib\u00e9r\u00e9. Sur quelques centaines de donnes, un taux de victoire porte une
+            marge d'erreur d'une dizaine de points&nbsp;: ordonner des joueurs dessus publierait un
+            classement de hasard. Les taux vivent sur votre page de compte, sous
+            <strong>Mes statistiques</strong>, chacun accompagn\u00e9 du nombre d'observations et de son
+            intervalle de confiance.
         </p>
     </div>
 

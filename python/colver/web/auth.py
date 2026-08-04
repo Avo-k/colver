@@ -34,6 +34,7 @@ from fastapi.responses import JSONResponse
 
 import colver.web.database as db
 import colver.web.elo as elo
+import colver.web.stats as stats
 import colver.web.mail as mail
 from colver.web.ratelimit import RateLimiter
 
@@ -443,6 +444,21 @@ async def my_games(request: Request, limit: int = 50, offset: int = 0):
         return JSONResponse({"error": "Non connecté"}, status_code=401)
     games = await db.list_games(limit=min(limit, 200), offset=offset, user_id=user["id"])
     return JSONResponse(games)
+
+
+@router.get("/me/stats")
+async def my_stats(request: Request):
+    """Le portrait chiffré du joueur connecté — taux, moyennes, intervalles.
+
+    Séparé de `/me`, que toutes les pages appellent au chargement : ces
+    agrégats parcourent toutes les donnes du joueur et n'ont d'utilité que sur
+    /compte. Les faire payer à chaque navigation serait une taxe permanente
+    pour un affichage occasionnel.
+    """
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"error": "Non connecté"}, status_code=401)
+    return JSONResponse(await stats.my_stats(user["id"]))
 
 
 @router.get("/me/matches")

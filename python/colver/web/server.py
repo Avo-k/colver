@@ -21,6 +21,7 @@ import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.integrity as integrity
+import colver.web.stats as stats
 # Alias `_agents` et pas `agents` : plusieurs gestionnaires WS utilisent
 # déjà `agents` comme variable locale (la table des bots d'une donne).
 from colver.web import agents as _agents
@@ -534,6 +535,13 @@ async def _check_then_rate():
         await integrity.scan()
     except Exception:
         logger.exception("scan d'intégrité interrompu")
+    # Puis les points marqués manquants (migration v16), dans le même ordre et
+    # pour la même raison : une donne écartée n'a pas de score qui veuille dire
+    # quelque chose. Un échec ici ne doit pas emporter la notation.
+    try:
+        await integrity.backfill_scores()
+    except Exception:
+        logger.exception("rattrapage des scores interrompu")
     await elo.backfill()
 
 
@@ -627,6 +635,17 @@ async def _db_backup():
 @app.get("/api/leaderboard")
 async def api_leaderboard():
     return JSONResponse(await elo.leaderboard())
+
+
+@app.get("/api/leaderboard/vie")
+async def api_leaderboard_vie():
+    """Les tableaux « vie du site » : des comptes exacts, jamais des taux.
+
+    Séparé de `/api/leaderboard` et non fusionné : l'Elo est la mesure de force
+    du site, et le mélanger à des compteurs d'assiduité dans une même charge
+    utile inviterait à les afficher côte à côte comme s'ils se comparaient.
+    """
+    return JSONResponse(await stats.leaderboard())
 
 
 @app.get("/api/games/{game_id}/analysis")
@@ -2581,10 +2600,18 @@ async def _complete_game(game_id, session):
     Plus de notation ici : depuis le 2026-08-03 l'unité classée est la **partie
     en 2000 points**, donc c'est la clôture de la partie qui appelle
     `elo.rate_match`, pas celle d'une donne.
+
+    Les **deux** échelles partent en base : les points cartes
+    (`get_points()`) et les points marqués (`rewards()`). Ces derniers ne se
+    déduisent pas des premiers — c'est le contrat, la contre, la belote et le
+    dix de der qui les séparent — et rien ne les enregistrait par donne avant
+    la migration v16.
     """
     points = list(session.env.get_points())
+    scores = list(session.env.rewards())
     contract = session.env.get_contract()
-    await db.complete_game(game_id, points[0], points[1], contract)
+    await db.complete_game(game_id, points[0], points[1], contract,
+                           score_ns=scores[0], score_ew=scores[1])
 
 
 async def _run_ai_turns(ws, session, human_seat, game_id=None, mode=pacing.DEFAULT_MODE,

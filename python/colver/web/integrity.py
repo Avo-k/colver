@@ -100,3 +100,59 @@ async def scan(limit=None):
         logger.info("intégrité : %d donne(s) vérifiée(s), %d écartée(s)",
                     seen, len(bad))
     return seen, bad
+
+
+def deal_scores(game):
+    """Les points **marqués** d'une donne enregistrée, ou None si elle ne se
+    rejoue pas.
+
+    C'est `env.rewards()`, pas `env.get_points()` : le contrat, la contre, la
+    belote et le dix de der séparent les deux, et aucune arithmétique ne passe
+    de l'un à l'autre sans rejouer.
+
+    Aucune vérification de légalité ici, contrairement à `check_deal` :
+    `backfill_scores` ne travaille que sur des donnes déjà déclarées saines. Un
+    échec est donc une surprise, et il se traduit par None plutôt que par une
+    valeur approchée.
+    """
+    try:
+        env = colver.Env.deal_with_hands(
+            int(game["dealer"]) % 4, [list(h) for h in game["hands"]])
+        for entry in game["actions"]:
+            env.step(int(entry["action"] if isinstance(entry, dict) else entry))
+        if not env.is_terminal():
+            return None
+        return [int(x) for x in env.rewards()]
+    except Exception:  # noqa: BLE001 — une donne irrejouable n'a pas de score
+        logger.warning("scores irrécupérables sur la donne %s", game["id"])
+        return None
+
+
+async def backfill_scores(limit=None):
+    """Poser les points marqués sur les donnes closes avant la migration v16.
+
+    À lancer **après** `scan` : une donne écartée n'a pas de score qui veuille
+    dire quelque chose, et le SELECT l'exclut sur `invalid = 0` — encore
+    faut-il que l'examen ait eu lieu.
+
+    Borné par ce qui manque, pas par la taille de la base : une fois la passe
+    de rattrapage faite, les clôtures écrivent les scores elles-mêmes et cette
+    fonction ne trouve plus rien. ~0,3 ms par donne, soit une demi-seconde
+    pour un corpus de mille.
+    """
+    ids = await db.games_missing_scores(limit or 100_000)
+    done = 0
+    for game_id in ids:
+        game = await db.get_game(game_id)
+        if game is None:
+            continue
+        scores = deal_scores(game)
+        if scores is None:
+            continue
+        await db.set_deal_scores(game_id, scores[0], scores[1])
+        done += 1
+        if done % _YIELD_EVERY == 0:
+            await asyncio.sleep(0)
+    if done:
+        logger.info("scores : %d donne(s) rattrapée(s)", done)
+    return done

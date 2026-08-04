@@ -310,8 +310,15 @@ class Room:
     async def start(self):
         self.match = match_state.Match(self.target)
         if self.match.is_match:
+            # `pacing` manquait : la colonne existe depuis la migration v8 et la
+            # signature l'accepte, mais le salon ne la passait pas. Sans elle on
+            # ne sait pas, après coup, si la partie a été jouée au tempo
+            # standard (~42 s la donne, derrière Dédé) ou rapide (~16 s, derrière
+            # DouDou50) — donc ni le tempo ni l'adversaire ne sont comparables
+            # d'une partie à l'autre.
             self.match.id = await db.create_match(
-                mode="multi", target=self.target, user_id=self.host_id)
+                mode="multi", target=self.target, user_id=self.host_id,
+                pacing=self.mode)
         self.status = "playing"
         self.awaiting_next_deal = False
         self.next_deal_requested.clear()
@@ -372,10 +379,14 @@ class Room:
         """
         session = self.session
         points = list(session.env.get_points())
+        # Les points marqués partent en base avec les points cartes : les deux
+        # échelles sont distinctes, et `Match.record` consomme déjà celle-ci.
+        scores = list(session.env.rewards())
         await db.complete_game(
-            self.game_id, points[0], points[1], session.env.get_contract())
+            self.game_id, points[0], points[1], session.env.get_contract(),
+            score_ns=scores[0], score_ew=scores[1])
         import colver.web.elo as elo
-        if self.match.record(self.game_id, session.env.rewards()) and self.match.id:
+        if self.match.record(self.game_id, scores) and self.match.id:
             await db.update_match(
                 self.match.id, self.match.totals[0], self.match.totals[1],
                 len(self.match.deals), self.match.finished, self.match.winner)

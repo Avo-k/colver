@@ -48,6 +48,16 @@ const PROFILE_TEMPLATE = `
         <h3 class="compte-subtitle">Parties en cours</h3>
         <div id="compte-open" class="history-list"></div>
     </div>
+    <!-- Mes stats : tout ce qui est un *taux* vit ici et pas au classement.
+         Sur quelques centaines de donnes un taux porte un intervalle de ±10
+         points : il décrit honnêtement un joueur, il n'en ordonne pas deux.
+         Chaque ligne affiche donc son n et son intervalle. -->
+    <details class="compte-card compte-settings" id="compte-stats-card">
+        <summary class="compte-subtitle compte-summary">Mes statistiques</summary>
+        <div id="compte-stats-body">
+            <div class="history-empty">Chargement…</div>
+        </div>
+    </details>
     <div class="compte-card">
         <h3 class="compte-subtitle">Mes donnes</h3>
         <div id="compte-games" class="history-list compte-games">
@@ -236,7 +246,114 @@ async function mountProfile(container, me) {
         renderOpenMatches(matches);
     } catch { /* la carte reste masquée */ }
 
+    mountStats();
     mountSettings(me.user);
+}
+
+// ---- Mes statistiques ------------------------------------------------------
+
+/** Une ligne « libellé — valeur — précision ». `hint` porte le n et l'intervalle. */
+function statRow(label, value, hint) {
+    if (value === null || value === undefined) return '';
+    return '<div class="cs-row">' +
+        `<span class="cs-label">${label}</span>` +
+        `<span class="cs-val">${value}</span>` +
+        `<span class="cs-hint">${hint || ''}</span></div>`;
+}
+
+/** Un pourcentage avec son intervalle de confiance, ou un tiret sous 5 obs.
+ *
+ *  Le seuil n'est pas cosmétique : à n = 3 l'intervalle de Wilson couvre à peu
+ *  près tout [0, 100], donc le chiffre n'informe sur rien et sa seule fonction
+ *  serait de se faire lire comme une mesure.
+ */
+function pctRow(label, blob, suffix = '') {
+    if (!blob || !blob.n) return '';
+    if (blob.n < 5) {
+        return statRow(label, '—', `seulement ${blob.n} obs.`);
+    }
+    const span = `${blob.lo}–${blob.hi} %`;
+    return statRow(label, `${blob.pct} %`,
+        `n = ${blob.n}${suffix} · IC95 ${span}`);
+}
+
+function renderStats(st) {
+    if (!st || !st.deals) {
+        return '<div class="history-empty">Aucune donne terminée pour l\'instant.</div>';
+    }
+    const parts = [];
+
+    parts.push('<h4 class="compte-section-title">Résultats</h4>');
+    parts.push(pctRow('Donnes gagnées', st.won));
+    const m = st.margin || {};
+    if (m.n >= 5) {
+        parts.push(statRow('Écart moyen par donne',
+            `${m.mean > 0 ? '+' : ''}${m.mean}`,
+            `n = ${m.n} · ±${m.ci} · médiane ${m.median}`));
+    }
+    if (st.deals !== st.scored) {
+        parts.push(`<p class="compte-hint">${st.deals - st.scored} donne(s) ` +
+            'en attente de calcul — exclues des taux ci-dessus.</p>');
+    }
+
+    parts.push('<h4 class="compte-section-title">Enchère</h4>');
+    const b = st.bidding || {};
+    const t = st.takes || {};
+    if (t.n) {
+        parts.push(statRow('Contrats pris', t.n,
+            `${t.per_100} pour 100 donnes · hauteur moyenne ${t.avg_value ?? '—'}`));
+    }
+    parts.push(pctRow('Contrats tenus',
+        { n: t.n, pct: t.held_pct, lo: t.held_lo, hi: t.held_hi }, ' prises'));
+    if (b.decisions >= 5) {
+        parts.push(statRow('Passes', `${b.pass_pct} %`,
+            `sur ${b.decisions} décisions d'enchère`));
+    }
+    if (b.height_n >= 5) {
+        parts.push(statRow('Hauteur annoncée', b.avg_height,
+            `moyenne sur ${b.height_n} annonces`));
+    }
+    // Le trio prises / hauteur / tenus se lit ensemble, et jamais trié : un
+    // taux de contrats tenus se maximise en n'annonçant plus que 80.
+    parts.push('<p class="compte-hint">Ces trois lignes se lisent ensemble : ' +
+        'un taux de contrats tenus très haut accompagné d\'une hauteur basse ' +
+        'décrit surtout de la prudence.</p>');
+
+    parts.push('<h4 class="compte-section-title">Défense et faits d\'armes</h4>');
+    parts.push(pctRow('Chutes infligées', st.defense, ' défenses'));
+    parts.push(statRow('Capots réalisés', st.capots_for, ''));
+    parts.push(statRow('Capots subis', st.capots_against, ''));
+    if (st.coinches) parts.push(statRow('Coinches annoncées', st.coinches, ''));
+    if (st.surcoinches) parts.push(statRow('Surcoinches', st.surcoinches, ''));
+
+    parts.push('<h4 class="compte-section-title">Assiduité</h4>');
+    parts.push(statRow('Donnes jouées', st.deals, ''));
+    parts.push(statRow('Jours de jeu', st.days,
+        st.density ? `${st.density} donnes par jour joué` : ''));
+    const tempo = st.tempo || {};
+    if (tempo.n >= 5) {
+        // Les écarts écartés (interruptions de plus de 15 min) sont dits, pas
+        // tus : une troncature silencieuse se lirait comme une mesure complète.
+        const dropped = tempo.dropped
+            ? ` · ${tempo.dropped} interruption${tempo.dropped > 1 ? 's' : ''} exclue${tempo.dropped > 1 ? 's' : ''}`
+            : '';
+        parts.push(statRow('Temps par donne', `${tempo.median} s`,
+            `médiane sur ${tempo.n} donnes en partie · ${tempo.p25}–${tempo.p75} s${dropped}`));
+    }
+
+    return `<div class="compte-stats-list">${parts.filter(Boolean).join('')}</div>`;
+}
+
+async function mountStats() {
+    const body = document.getElementById('compte-stats-body');
+    if (!body) return;
+    try {
+        const resp = await fetch(`${base()}api/me/stats`);
+        body.innerHTML = resp.ok ? renderStats(await resp.json())
+            : '<div class="history-empty">Statistiques indisponibles</div>';
+    } catch {
+        body.innerHTML = '<div class="history-empty">Erreur de chargement</div>';
+    }
 }
 
 // ---- Réglages du compte ----------------------------------------------------

@@ -272,6 +272,54 @@ MIGRATIONS = [
     );
     DELETE FROM elo_ratings;
     """,
+    # v15 — la version d'une analyse devient une colonne.
+    #
+    # `analysis.data` est un blob JSON de ~5 ko qui porte son `version` à
+    # l'intérieur. Savoir « combien de donnes sont analysées à la version
+    # courante » demandait donc de désérialiser **toutes** les lignes : 25 ms
+    # sur les 1 200 donnes d'aujourd'hui, ~1,1 s et ~250 Mo lus à 50 000. Une
+    # requête de page qui grossit avec le corpus n'a rien à faire sur une base
+    # à connexion unique, où elle met en file d'attente les coups de toutes les
+    # parties en cours.
+    #
+    # La colonne est **dérivée** du blob, jamais saisie : `save_analysis`
+    # l'extrait à l'écriture. Le remplissage rétroactif passe par JSON1 plutôt
+    # que par du Python — une seule passe, pas de va-et-vient.
+    """
+    ALTER TABLE analysis ADD COLUMN version INTEGER;
+    UPDATE analysis SET version = json_extract(data, '$.version');
+    CREATE INDEX idx_analysis_version ON analysis(version);
+    """,
+    # v16 — la donne enregistre enfin ce qu'elle a **marqué**.
+    #
+    # `games.points_ns/ew` sont les points **cartes** (`env.get_points()`,
+    # 0-252), pas les points marqués (`env.rewards()`, contrat compris). Les
+    # deux ne se déduisent pas l'un de l'autre : le second dépend du contrat, de
+    # la contre, de la belote et du dix de der. Jusqu'ici le score marqué d'une
+    # donne n'était enregistré **nulle part** — seul son cumul vivait dans
+    # `matches.points_ns/ew`.
+    #
+    # Ce trou n'est pas théorique, il produisait un chiffre faux à l'écran :
+    # `user_game_stats` décidait « victoire » sur `points_ns > points_ew`, donc
+    # sur les cartes. Une chute où le preneur garde la majorité des cartes —
+    # 110♠ annoncé, 90 points faits, 0 marqué contre 272 — était comptée comme
+    # une **victoire** du preneur, et s'affichait telle quelle sur /compte.
+    #
+    # Deux colonnes plutôt qu'un rejeu à la lecture : rejouer une donne coûte
+    # ~0,3 ms, donc rien pour une donne et tout pour un classement (O(corpus),
+    # ~54 000 donnes/an au rythme actuel, sur la connexion qui sérialise les
+    # écritures de jeu). Elles rendent en prime le **contrat tenu** lisible en
+    # SQL : sous ce barème un preneur qui chute marque exactement 0, donc
+    # « réussi » ⟺ `score[camp du preneur] > 0`.
+    #
+    # Remplissage rétroactif par rejeu au démarrage (`_backfill_scores`), pas
+    # ici : SQLite ne connaît pas le barème.
+    """
+    ALTER TABLE games ADD COLUMN score_ns INTEGER;
+    ALTER TABLE games ADD COLUMN score_ew INTEGER;
+    CREATE INDEX idx_games_unscored ON games(is_complete, score_ns)
+        WHERE score_ns IS NULL;
+    """,
 ]
 
 
@@ -596,14 +644,50 @@ async def append_action(game_id, action_entry):
     await db.commit()
 
 
-async def complete_game(game_id, points_ns, points_ew, contract):
+async def complete_game(game_id, points_ns, points_ew, contract,
+                        score_ns=None, score_ew=None):
+    """Clore une donne. **Deux échelles, et il faut les deux.**
+
+    `points_*` sont les points **cartes** (`env.get_points()`, 0-252) : ce que
+    les plis ont rapporté. `score_*` sont les points **marqués**
+    (`env.rewards()`) : ce que la donne inscrit au tableau, contrat, contre,
+    belote et dix de der compris. Les seconds ne se déduisent pas des premiers.
+
+    `score_*` reste facultatif pour que les appelants historiques et les tests
+    ne se cassent pas, mais les deux chemins de production le passent — sans
+    quoi la donne repartirait dans la file du rattrapage au démarrage suivant.
+    """
     db = await get_db()
     await db.execute(
-        "UPDATE games SET is_complete = 1, points_ns = ?, points_ew = ?, contract = ? "
-        "WHERE id = ?",
-        (points_ns, points_ew, json.dumps(contract) if contract else None, game_id),
+        "UPDATE games SET is_complete = 1, points_ns = ?, points_ew = ?, contract = ?, "
+        "score_ns = ?, score_ew = ? WHERE id = ?",
+        (points_ns, points_ew, json.dumps(contract) if contract else None,
+         None if score_ns is None else int(score_ns),
+         None if score_ew is None else int(score_ew),
+         game_id),
     )
     await db.commit()
+
+
+async def set_deal_scores(game_id, score_ns, score_ew):
+    """Poser les points marqués d'une donne déjà close (rattrapage)."""
+    db = await get_db()
+    await db.execute(
+        "UPDATE games SET score_ns = ?, score_ew = ? WHERE id = ?",
+        (int(score_ns), int(score_ew), game_id),
+    )
+    await db.commit()
+
+
+async def games_missing_scores(limit=5000):
+    """Les donnes closes et saines dont les points marqués manquent encore."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT id FROM games WHERE is_complete = 1 AND invalid = 0 "
+        "AND score_ns IS NULL ORDER BY created_at LIMIT ?",
+        (limit,),
+    )
+    return [r[0] for r in rows]
 
 
 # ===== Parties (plusieurs donnes) =====
@@ -773,11 +857,19 @@ async def abandon_match(match_id, user_id):
     Une partie jouée jusqu'au bout a toujours un `winner` (`Match.finished`
     exige un écart), donc `is_complete = 1` + `winner IS NULL` ne peut désigner
     qu'un abandon ; `abandoned` le dit quand même explicitement.
+
+    **`mode = 'play'` est une garde, pas un filtre de confort.** Un salon écrit
+    `matches.user_id = host_id` : sans elle, l'hôte pouvait concéder sa partie
+    de *salon* par le chemin solo, et le pilote du salon remettait ensuite
+    `is_complete = 0` au `update_match` suivant — sans toucher `abandoned`,
+    donc dans un état qu'aucun code ne prévoit. L'UI ne l'offrait pas
+    (`list_open_matches` filtre déjà le mode), mais le message WebSocket, lui,
+    est accessible : la garde tenait par coïncidence.
     """
     db = await get_db()
     cur = await db.execute(
         "UPDATE matches SET is_complete = 1, abandoned = 1, winner = NULL "
-        "WHERE id = ? AND user_id = ? AND is_complete = 0",
+        "WHERE id = ? AND user_id = ? AND is_complete = 0 AND mode = 'play'",
         (match_id, user_id),
     )
     await db.commit()
@@ -1009,27 +1101,39 @@ async def list_games(limit=50, offset=0, user_id=None):
 
 
 async def user_game_stats(user_id):
-    """Aggregate win/loss stats for a user's completed play games.
+    """Donnes jouées et gagnées par un joueur, **au score marqué**.
 
-    The user sits at human_seat: even seats are team NS, odd seats team EW.
+    Le siège se lit sur `human_seat` en solo et sur `game_players` en salon ;
+    les sièges pairs sont N-S, les impairs E-O.
+
+    ⚠️ **Cette fonction comparait les points *cartes*** (`points_ns/ew`) jusqu'à
+    la migration v16, ce qui inversait le résultat de toute chute où le preneur
+    gardait la majorité des cartes : 110♠ annoncé, 90 points faits, 0 marqué
+    contre 272 — et l'humain était crédité d'une victoire, affichée sur
+    /compte. Le sens de « gagner une donne » est le score marqué, et il n'était
+    enregistré nulle part avant v16.
+
+    Une donne dont le score n'est pas encore rattrapé est **exclue du
+    dénominateur** plutôt que comptée perdue : mieux vaut un compte qui
+    grandit au fil du rattrapage qu'un taux faux servi tout de suite.
     """
     db = await get_db()
     rows = await db.execute_fetchall(
         """
         SELECT COUNT(*) AS games, SUM(win) AS wins FROM (
-            SELECT CASE WHEN (human_seat % 2 = 0 AND points_ns > points_ew)
-                          OR (human_seat % 2 = 1 AND points_ew > points_ns)
+            SELECT CASE WHEN (human_seat % 2 = 0 AND score_ns > score_ew)
+                          OR (human_seat % 2 = 1 AND score_ew > score_ns)
                    THEN 1 ELSE 0 END AS win
             FROM games
             WHERE mode = 'play' AND is_complete = 1 AND invalid = 0 AND user_id = ?
-                  AND human_seat IS NOT NULL
+                  AND human_seat IS NOT NULL AND score_ns IS NOT NULL
             UNION ALL
-            SELECT CASE WHEN (gp.seat % 2 = 0 AND g.points_ns > g.points_ew)
-                          OR (gp.seat % 2 = 1 AND g.points_ew > g.points_ns)
+            SELECT CASE WHEN (gp.seat % 2 = 0 AND g.score_ns > g.score_ew)
+                          OR (gp.seat % 2 = 1 AND g.score_ew > g.score_ns)
                    THEN 1 ELSE 0 END
             FROM games g JOIN game_players gp ON gp.game_id = g.id
             WHERE g.mode = 'multi' AND g.is_complete = 1 AND g.invalid = 0
-                  AND gp.user_id = ?
+                  AND gp.user_id = ? AND g.score_ns IS NOT NULL
         )
         """,
         (user_id, user_id),
@@ -1046,10 +1150,18 @@ async def get_analysis(game_id):
 
 
 async def save_analysis(game_id, data_json):
+    """Écrire une analyse en cache, avec sa version **extraite du blob**.
+
+    La colonne `version` (v15) est dérivée, jamais fournie par l'appelant : une
+    seule source de vérité, celle qui voyage avec les données. `json_extract`
+    la relit dans la même instruction que l'insertion, donc les deux ne peuvent
+    pas diverger.
+    """
     db = await get_db()
     await db.execute(
-        "INSERT OR REPLACE INTO analysis (game_id, created_at, data) VALUES (?, ?, ?)",
-        (game_id, _now(), data_json),
+        "INSERT OR REPLACE INTO analysis (game_id, created_at, data, version) "
+        "VALUES (?, ?, ?, json_extract(?, '$.version'))",
+        (game_id, _now(), data_json, data_json),
     )
     await db.commit()
 

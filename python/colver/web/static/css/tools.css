@@ -3301,6 +3301,13 @@
 /* ===== COMPTE (login / register / profile) ===== */
 
 .compte-page {
+    /* `width: 100%` en plus de `max-width` : sans lui, un enfant plus large que
+       la page (une table à sept colonnes) fait remonter sa largeur intrinsèque
+       jusqu'ici, parce que `margin: 0 auto` sur l'axe secondaire d'un flex en
+       colonne empêche l'étirement — et `overflow-x` ne coupe pas cette
+       propagation, seule une largeur *définie* le fait. Même piège que
+       `#aj-wrap` (cf. plus bas) et `.pc-page`. */
+    width: 100%;
     max-width: 480px;
     margin: 0 auto;
     padding: 2rem 1rem;
@@ -3790,7 +3797,59 @@
 
 /* ===== CLASSEMENT (Elo leaderboard) ===== */
 
-.classement-page { max-width: 560px; }
+/* Plus large que `.compte-page` : « Vie du site » a des tables à sept colonnes.
+   `width: 100%` est hérité de `.compte-page`, qui l'a maintenant. */
+.classement-page { max-width: 720px; }
+
+/* Toute table large vit dans son propre défilement horizontal, sinon c'est la
+   page entière qui déborde sur un téléphone. */
+.cl-scroll { overflow-x: auto; margin-bottom: var(--sp-3); }
+.cl-scroll .classement-table { width: 100%; min-width: 22rem; }
+
+#cl-tabs { margin-bottom: var(--sp-4); }
+
+/* ===== MES STATS (page /compte) ===== */
+
+/* Trois colonnes : libellé, valeur, précision. La troisième porte le n et
+   l'intervalle — c'est elle qui empêche « 62 % » de se lire comme une mesure
+   quand il repose sur seize observations. Elle passe sous les deux autres au
+   téléphone plutôt que de disparaître. */
+.compte-stats-list { display: flex; flex-direction: column; }
+
+.cs-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "label val" "hint hint";
+    gap: 0 var(--sp-3);
+    padding: var(--sp-2) 0;
+    border-bottom: 1px solid var(--c-border);
+    align-items: baseline;
+}
+.cs-row:last-child { border-bottom: none; }
+.cs-label { grid-area: label; color: var(--c-text-muted); font-size: var(--fs-sm); }
+.cs-val {
+    grid-area: val;
+    color: var(--c-text);
+    font-weight: var(--fw-semi);
+    font-variant-numeric: tabular-nums;
+}
+.cs-hint {
+    grid-area: hint;
+    color: var(--c-text-dim);
+    font-size: var(--fs-2xs);
+    font-variant-numeric: tabular-nums;
+}
+.cs-hint:empty { display: none; }
+
+@media (min-width: 560px) {
+    /* Assez large pour tout tenir sur une ligne : la précision cesse d'être
+       reléguée sous la valeur qu'elle qualifie. */
+    .cs-row {
+        grid-template-columns: 1fr auto minmax(11rem, auto);
+        grid-template-areas: "label val hint";
+    }
+    .cs-hint { text-align: right; }
+}
 
 .classement-table {
     width: 100%;
