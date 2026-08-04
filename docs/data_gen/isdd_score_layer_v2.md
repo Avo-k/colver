@@ -3,6 +3,14 @@
 *Ouvert le 2026-08-04. Plan d'exécution : ce qui est décidé, ce qui reste à mesurer,
 et les pièges qui produiraient des chiffres plausibles et faux.*
 
+> **État au 2026-08-05.** Les **trois mesures sont faites** (A §4, B §4, C §6) et la
+> génération **tourne** — `gen_score_layer` sur `base_5M[0..500k]`, deux GPU,
+> 1,3 donnes/s, sortie `data/deals/scores_isdd_v2.sc` + `.ranks`, reprise à chaque
+> checkpoint. Compter **~111 h** pour les 500 k. `tail_100k` n'est **pas** commencé et
+> a perdu deux de ses trois justifications (§6, §11). Avant tout entraînement sur cette
+> couche, lire **§9 — `--pool-size` est obligatoire**, sinon le trainer regénère un
+> million de donnes en silence.
+
 Une **couche de scores** (`COLVSC01`) est un tableau `[u8; 4]` par donne : les points
 cartes N-S sous chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder —
 `train_bid_nn --reward real --scores <fichier>`. La couche courante,
@@ -32,11 +40,12 @@ mondes** — playgen au lieu d'uniforme — pas la fraîcheur des chiffres.
 
 ## 2. Ce qu'on génère
 
-| | contenu | format |
-|---|---|---|
-| *(rien à générer)* | les **500 k premières donnes de `base_5M.bin`** | `COLVDD01` |
-| `tail_100k.bin` | strates **construites** via `hand_from_class_id` | `COLVDD01` |
-| `scores_isdd_v2.sc` | points cartes N-S par atout, IS-DD fort | `COLVSC01`, `[u8;4]` |
+| | contenu | format | état |
+|---|---|---|---|
+| *(rien à générer)* | les **500 k premières donnes de `base_5M.bin`** | `COLVDD01` | — |
+| `scores_isdd_v2.sc` | points cartes N-S par atout, IS-DD fort | `COLVSC01`, `[u8;4]` | **en cours** |
+| `scores_isdd_v2.sc.ranks` | rang de préfixe de chaque case (§4) | `COLVRK01`, `[u8;4]` | **en cours** |
+| `tail_100k.bin` | strates **construites** via `hand_from_class_id` | `COLVDD01` | pas commencé, et à re-justifier (§6, §11) |
 
 **Réutiliser les donnes existantes plutôt que d'en tirer de neuves**, pour trois
 raisons : une donne (32 cartes + donneur) est indépendante des règles, donc seules ses
@@ -670,14 +679,15 @@ flottants faits main ont été retirés, donc **v6 lui-même est le témoin à b
 | | quoi | coût | ce qu'elle décide |
 |---|---|---|---|
 | ~~**A**~~ | ✅ **faite le 2026-08-04** (§4) : oui, le préfixe est hors distribution, sur la **forme** (une seule annonce contre 11,9 % de réel, 0 % de contestation contre 81,3 %, 0 % de coinche contre 25,7 %) et non sur l'identité du preneur (camp bon à 89,4 %). A aussi **réfuté « v6 masqué sur la couleur »**, la variante qu'elle-même avait suggérée | 7 min, 0 GPU | a **fermé** la famille des enchères à atout imposé, retiré l'échelle valeur ↔ force, et fixé la forme du générateur : une case « or » par donne, trois « argent » |
-| **B** | l'étiquette d'une case sous préfixe « or » contre préfixe « argent », écart apparié en points cartes ; **et** camp du preneur | ~2 h GPU | ce que coûte l'argent, et `[u8;4]` contre `[u8;8]` (§4) |
+| ~~**B**~~ | ✅ **faite le 2026-08-05** (§4) : le préfixe déplace l'étiquette de **+4,36 pt pour le preneur** (or contre fer, z = +6,7), et l'ordre des quatre rangs est celui que A prédisait | 33 min, 2 GPU | la hiérarchie de préfixes est **gardée**, et le fichier `.ranks` enregistre de quoi corriger l'écart entre cases plus tard |
 | ~~**C**~~ | ✅ **faite le 2026-08-04** (§6) : `P(capot \| main)` à l'atout annoncé vaut **8,68 %**, pas 16,08 % ; **aucune** main ne dépasse 75 % et deux sur 1 200 dépassent 50 % | 9 min, **0 GPU** | `tail_100k` se filtre sur `eval_max` (facteur 18 entre tranches), et il enseigne à **ne pas** annoncer capot plutôt qu'à l'annoncer |
 
-**A ne dispense pas de B, elle la recadre.** Un préfixe hors distribution n'est un défaut
-que s'il déplace l'étiquette ; au milieu d'une donne, playgen lit aussi les cartes déjà
-jouées, bien plus informatives que 8 jetons d'enchère. B mesure ce déplacement contre le
-plancher de bruit ci-dessous — et si l'écart est en dessous, la construction bon marché
-suffit et tout le §4 devient une note de bas de page.
+**A ne dispensait pas de B, et B a contredit ce que A laissait espérer.** A pariait que
+si l'écart tombait sous le plancher de bruit, « la construction bon marché suffit et tout
+le §4 devient une note de bas de page ». L'écart *est* petit devant le bruit par étiquette
+(0,18×) — et la conclusion est pourtant l'inverse, parce que **le bruit se moyenne et le
+décalage non**. Garder la prédiction ratée ici plutôt que la réécrire : c'est elle qui
+montre où le raisonnement était faux.
 
 **Ce que A aura coûté et rapporté, parce que c'est le patron à réutiliser.** Sept minutes
 de CPU ont produit un résultat, puis tué la solution que ce résultat suggérait, avant
@@ -687,9 +697,12 @@ marginales) et un **témoin qui doit rendre l'identité** — ici, v6 se rejouan
 99,99 %. Un chiffre de variante sans ce témoin ne distingue pas une propriété de
 l'enchère d'un défaut du pilote.
 
-Référence de bruit pour A et B : les **44,7 pts** de dispersion intra-main
-([bid_v7_plan §2.8](../bid/bid_v7_plan.md)). Un écart nettement en dessous ⇒ prendre la
-variante la moins chère et passer à la suite.
+⚠️ **La référence de bruit annoncée ici était la mauvaise.** Le plan visait les
+**44,7 pts** de dispersion intra-main ([bid_v7_plan §2.8](../bid/bid_v7_plan.md)) — une
+dispersion *entre donnes*, qui ne dit rien de la reproductibilité d'une étiquette. Le bon
+plancher est celui que B a **mesuré avec son bras témoin** : **24,37 pts** entre deux
+étiquetages de la même case. Une référence empruntée à une autre population n'est pas un
+plancher ; il faut le mesurer dans l'expérience qui s'en sert.
 
 ## 11. Le risque principal, nommé
 
