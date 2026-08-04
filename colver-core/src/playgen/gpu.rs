@@ -743,6 +743,60 @@ impl GpuPlaygen {
             .map(|v| v != "0")
             .unwrap_or(false);
 
+        // ── Fusion ACT+CARD : un lancement par coup au lieu de deux ──
+        //
+        // Un coup coûtait **deux** forwards : le jeton ACT, dont on lit les
+        // logits, puis le jeton CARD, **dont la sortie était jetée** — il ne
+        // servait qu'à écrire son k/v dans le cache. Or l'ACT du coup suivant
+        // est déterministe depuis la machine à états publique : à l'instant où
+        // la carte `i` est tirée, `CARD_i` *et* `ACT_{i+1}` sont tous les deux
+        // connus. Ils partent donc dans **un** appel à 2 jetons, exactement
+        // comme `forward_prefill` le fait pour le préfixe, avec la causalité
+        // intra-bloc. Même argument que le préfixe groupé : un pas est borné
+        // par le lancement de noyaux (~2,1 ms, 1 lane ou 40), donc ce qui
+        // compte est le **nombre** de forwards, pas leur largeur.
+        //
+        // Le découpage est donc décalé d'un demi-coup :
+        //
+        // ```
+        //   pas 0 : [ACT_0]                  → logits, tire carte 0
+        //   pas i : [CARD_{i-1}, ACT_i]      → logits en 2e position, tire carte i
+        //   fin   : CARD_{n-1} n'est jamais poussé
+        // ```
+        //
+        // **La dernière carte d'une lane n'a pas besoin d'être poussée** : un
+        // k/v n'est lu que par les positions *ultérieures de la même lane*
+        // (le cache est `[lanes, …]`, chaque lane n'attend qu'elle-même), et
+        // il n'y en a plus. C'est ce qui rend la fusion compatible avec le
+        // retrait de lanes : une lane retirée entre `i-1` et `i` voit
+        // simplement son dernier CARD jamais poussé, ce qui est correct **et**
+        // économise le travail. Les lanes actives restant un préfixe de la
+        // table, `narrow(0, 0, n_act)` continue d'aligner les indices.
+        //
+        // Mathématiquement identique à la boucle qu'elle remplace — le CARD
+        // voit le même ensemble de clés qu'avant (la colonne de l'ACT qui
+        // l'accompagne reste à -1e9 pour lui) — mais **pas bit-à-bit** : les
+        // matmuls passent de M=1 à M=2, donc l'ordre de réduction flottant
+        // change. C'est `bench_prefill_eq`, et son témoin, qui valide.
+        //
+        // Ablation dans le **même binaire** : `COLVER_PLAYGEN_NO_FUSE=1`
+        // repousse le CARD tout seul en fin de pas, comme avant.
+        let no_fuse = std::env::var("COLVER_PLAYGEN_NO_FUSE")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+
+        // Jeton CARD du pas précédent, en attente d'être poussé avec l'ACT du
+        // pas courant. `card_on[m]` dit s'il est réel : un dummy reste
+        // invisible pour toujours, comme dans la boucle d'origine.
+        let mut card_on = vec![false; m_lanes];
+        let mut card_pos = vec![0u32; m_lanes];
+        // Masque du bloc, `[n_act, 1, tb, cap]` à plat, et sa validité par
+        // jeton. Alloués une fois : `tb <= 2`.
+        let mut mblk = vec![neg; m_lanes * 2 * cap];
+        let mut blk_toks = vec![dummy; m_lanes * 2];
+        let mut blk_pos = vec![0u32; m_lanes * 2];
+        let mut blk_col = vec![neg; m_lanes * 2];
+
         for step_i in 0..steps_max {
             // Les lanes encore dues à cette étape sont le préfixe `[0, n_act)`
             // (cf. Phase 2). Tout ce qui suit ne travaille que sur lui.
@@ -778,20 +832,61 @@ impl GpuPlaygen {
                 }
                 mcol[m] = if on { 0.0 } else { neg };
             }
-            prof.steps += 1;
-            let t_slot = lmax + 2 * step_i;
+            // Bloc à pousser : `[CARD_{i-1}, ACT_i]`, ou `[ACT_0]` seul au
+            // premier pas — et toujours seul sous l'ablation.
+            let lead = !no_fuse && step_i > 0;
+            let tb = if lead { 2 } else { 1 };
+            let t0 = lmax + 2 * step_i - usize::from(lead);
             for m in 0..n_act {
-                mh_dec[m * cap + t_slot] = 0.0;
+                let b = m * tb;
+                if lead {
+                    blk_toks[b] = card_toks[m];
+                    blk_pos[b] = card_pos[m];
+                    blk_col[b] = if card_on[m] { 0.0 } else { neg };
+                }
+                blk_toks[b + tb - 1] = act_toks[m];
+                blk_pos[b + tb - 1] = mpos[m];
+                blk_col[b + tb - 1] = mcol[m];
+                // Une ligne du masque = l'état persistant, plus les colonnes du
+                // bloc jusqu'à la sienne. Sa propre colonne est **toujours**
+                // visible : une ligne entièrement à -1e9 fait rendre NaN au
+                // softmax. Les colonnes au-delà sont encore à `neg` dans
+                // `mh_dec` (jamais écrites), donc la causalité intra-bloc est
+                // gratuite — et le CARD voit exactement les mêmes clés qu'au
+                // pas précédent, ce qui est ce qui rend la fusion neutre.
+                for r in 0..tb {
+                    let row = (b + r) * cap;
+                    mblk[row..row + cap].copy_from_slice(&mh_dec[m * cap..m * cap + cap]);
+                    for r2 in 0..r {
+                        mblk[row + t0 + r2] = blk_col[b + r2];
+                    }
+                    mblk[row + t0 + r] = 0.0;
+                }
             }
+            prof.steps += 1;
+            let n_slots = n_act * tb;
             let mask = prof.lap(&self.device, 4, || {
-                Tensor::from_slice(&mh_dec[..n_act * cap], (n_act, 1, 1, cap), &self.device)
+                Tensor::from_slice(&mblk[..n_slots * cap], (n_act, 1, tb, cap), &self.device)
             })?;
-            let x = prof.lap(&self.device, 0, || self.embed(&act_toks[..n_act], &mpos[..n_act]))?;
-            let hidden = prof.lap(&self.device, 1, || {
-                self.forward_step(&x, &mut view, t_slot, &mask)
+            let xe =
+                prof.lap(&self.device, 0, || self.embed(&blk_toks[..n_slots], &blk_pos[..n_slots]))?;
+            // `tb == 1` reste sur `forward_step`, à l'identique de la boucle
+            // d'origine : l'ablation ne doit pas payer les quelques noyaux de
+            // plus du chemin bloc, sinon elle gonflerait le gain qu'elle sert
+            // à mesurer.
+            let hidden = prof.lap(&self.device, 1, || -> Result<Tensor> {
+                if tb == 1 {
+                    self.forward_step(&xe, &mut view, t0, &mask)
+                } else {
+                    let x = xe.reshape((n_act, tb, self.d))?;
+                    let h = self.forward_prefill(&x, &mut view, t0, &mask)?;
+                    h.narrow(1, tb - 1, 1)?.contiguous()?.reshape((n_act, self.d))
+                }
             })?;
             for m in 0..n_act {
-                mh_dec[m * cap + t_slot] = mcol[m];
+                for r in 0..tb {
+                    mh_dec[m * cap + t0 + r] = blk_col[m * tb + r];
+                }
             }
             let card_lg = prof.lap(&self.device, 2, || self.card_logits(&hidden))?;
             let t_sample = std::time::Instant::now();
@@ -862,29 +957,39 @@ impl GpuPlaygen {
                 prof.sample += t_sample.elapsed().as_secs_f64() * 1e3;
             }
 
-            // --- card token ---
+            // --- jeton CARD : mis en attente, il part avec l'ACT du pas suivant ---
+            //
+            // Une lane retirée ou morte ici ne verra donc jamais son dernier
+            // CARD poussé, et c'est correct : plus aucune position de cette
+            // lane n'attendra dessus.
             for m in 0..n_act {
                 let on = active_at(step_i, m, &alive, &lane_of, &act);
                 if on {
-                    mpos[m] = pos[m] + 1;
+                    card_pos[m] = pos[m] + 1;
                     pos[m] += 2;
                 } else {
-                    mpos[m] = 0;
+                    card_pos[m] = 0;
                 }
-                mcol[m] = if on { 0.0 } else { neg };
+                card_on[m] = on;
             }
-            prof.steps += 1;
-            let t_slot = lmax + 2 * step_i + 1;
-            for m in 0..n_act {
-                mh_dec[m * cap + t_slot] = 0.0;
-            }
-            let mask = prof.lap(&self.device, 4, || {
-                Tensor::from_slice(&mh_dec[..n_act * cap], (n_act, 1, 1, cap), &self.device)
-            })?;
-            let x = prof.lap(&self.device, 0, || self.embed(&card_toks[..n_act], &mpos[..n_act]))?;
-            prof.lap(&self.device, 1, || self.forward_step(&x, &mut view, t_slot, &mask))?;
-            for m in 0..n_act {
-                mh_dec[m * cap + t_slot] = mcol[m];
+            if no_fuse {
+                // Ablation : le CARD repart seul, en fin de pas, comme avant.
+                prof.steps += 1;
+                let t_slot = lmax + 2 * step_i + 1;
+                for m in 0..n_act {
+                    mpos[m] = card_pos[m];
+                    mcol[m] = if card_on[m] { 0.0 } else { neg };
+                    mh_dec[m * cap + t_slot] = 0.0;
+                }
+                let mask = prof.lap(&self.device, 4, || {
+                    Tensor::from_slice(&mh_dec[..n_act * cap], (n_act, 1, 1, cap), &self.device)
+                })?;
+                let x =
+                    prof.lap(&self.device, 0, || self.embed(&card_toks[..n_act], &mpos[..n_act]))?;
+                prof.lap(&self.device, 1, || self.forward_step(&x, &mut view, t_slot, &mask))?;
+                for m in 0..n_act {
+                    mh_dec[m * cap + t_slot] = mcol[m];
+                }
             }
         }
         prof.report(m_lanes, prefill_ms);

@@ -280,7 +280,77 @@ sur-commande donc, sur une moyenne mobile du taux de rendu observé.
 décisions terminent en repli local (mondes uniformes), donc un peu moins de
 dilution de l'agrégat.
 
-### 4. Plusieurs sidecars
+### 4. Fusion ACT+CARD au décodage — **1,62× de latence** (2026-08-04)
+
+Un coup coûtait **deux** forwards : le jeton `ACT`, dont on lit les logits de
+carte, puis le jeton `CARD` — **dont la sortie était jetée**. Il ne servait qu'à
+écrire son k/v dans le cache pour que les positions suivantes l'attendent.
+
+Or l'`ACT` du coup suivant est **déterministe** depuis la machine à états
+publique : à l'instant où la carte `i` est tirée, `CARD_i` *et* `ACT_{i+1}` sont
+tous les deux connus. Rien n'oblige à les séparer. Ils partent donc dans **un**
+appel à 2 jetons, avec la causalité intra-bloc — exactement ce que
+`forward_prefill` fait déjà pour le préfixe. Le décodage passe de `2·steps`
+lancements à `steps`.
+
+C'est le même argument que le préfixe groupé, appliqué au dernier endroit où on
+payait un lancement séquentiel pour un jeton qui ne porte aucune décision : un
+pas est borné par le **lancement de noyaux** (~2,1 ms, 1 lane ou 40), donc ce
+qui compte est le *nombre* de forwards, pas leur largeur.
+
+**La dernière carte d'une lane n'est jamais poussée**, et c'est ce qui rend la
+fusion compatible avec le retrait de lanes (§2) : un k/v n'est lu que par les
+positions *ultérieures de la même lane* — le cache est `[lanes, …]`, chaque lane
+n'attend qu'elle-même — et il n'y en a plus. Une lane retirée entre `i-1` et `i`
+voit donc son dernier `CARD` disparaître, ce qui est correct **et** économise un
+lancement de plus. Les lanes actives restant un préfixe de la table,
+`narrow(0, 0, n_act)` continue d'aligner les indices sans rien changer.
+
+A/B alterné à la requête (`bench_sidecar_ab`, un thread client, latence vue du
+client, réseau et HTTP compris), ablation `COLVER_PLAYGEN_NO_FUSE=1` **dans le
+même binaire** :
+
+| cartes restantes | 8 | 7 | 6 | 5 | 4 | 3 | 2 |
+|---|---|---|---|---|---|---|---|
+| ratio fusion / ablation | 0,613 | 0,613 | 0,615 | 0,617 | 0,623 | 0,631 | 0,646 |
+
+**1,62× à 40 mondes par requête** (médiane appariée, 84 requêtes, 45,4 contre
+73,3 ms), monotone dans le bon sens — le gain suit le nombre de pas, donc il est
+le plus grand à l'entame — et **aucune régression à aucun stade**.
+
+**Le gain dépend de la largeur du lot, un seul chiffre serait faux.** À 256
+mondes par requête il tombe à **1,33×** (125 contre 169 ms) : à cette largeur le
+forward fait de l'arithmétique réelle et n'est plus purement borné par le
+lancement, donc diviser le compte de lancements par deux achète moins. Les deux
+régimes existent : un joueur seul sur le web envoie une requête étroite (~40
+mondes, `dets_schedule`), la génération de masse sature les 256 lanes. Confirmé
+hors réseau par `bench_playgen_batch --positions 12 --worlds 20` : 15,8 → 11,6
+ms/position, soit 1,36× à 240 lanes.
+
+**Ce que ça ne touche pas.** Seul `generate_worlds_multi` (route
+`/play_worlds`, le chemin d'IS-DD) est fusionné. `generate_worlds_scored` et
+`auction_round` sont inchangés — visible dans le même bench : le chemin « une
+par une » mesure 116,2 contre 116,5 ms, c'est-à-dire rien.
+
+**Validation.** Comme le préfixe groupé, la fusion est mathématiquement
+identique mais les matmuls passent de M=1 à M=2, donc l'ordre de réduction
+flottant change et l'égalité bit-à-bit n'est pas la bonne attente. Deux
+mesures :
+
+- `bench_prefill_eq --positions 40 --worlds 256` entre un sidecar fusionné et un
+  sidecar sous ablation : **A↔B / témoin = 1,007**, et A↔A' = 1,02 du témoin
+  (le sampler n'a pas non plus *réduit* sa variabilité) ;
+- `bench_playgen_batch` à graine fixe : les trois empreintes sont **identiques
+  au bit près** entre fusion et ablation, y compris celle du chemin groupé
+  (`0x01e73b5169574643`), et les mondes de la vérification K=1 aussi. Sur cette
+  charge, le changement d'ordre de réduction n'a fait basculer **aucun** tirage.
+
+⚠️ Ce changement modifie `playgen::SURFACE` (`build.rs` hache `src/playgen/`),
+donc `/health` passera à `fresh: false` dès que le web sera déployé, jusqu'à ce
+que le sidecar soit **reconstruit et redémarré à la main**. C'est l'alarme qui
+fonctionne, pas un incident.
+
+### 5. Plusieurs sidecars
 
 `worlds.url` accepte une **liste séparée par des virgules**, répartie en
 tourniquet sur un compteur *global au processus* — par instance, tous les
