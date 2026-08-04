@@ -272,6 +272,16 @@ model as a **sidecar**: a small HTTP server on a machine with CUDA, which the
 agents call over the LAN. That is what makes 100%-playgen worlds affordable
 inside a per-move budget.
 
+> **Le chemin GPU a été optimisé le 2026-08-04 (~1,5× par requête servie).** Le
+> préfixe se déroulait un jeton à la fois par le même `forward_step` que le
+> décodage — 65 à 81 % du coût d'une requête pour la seule phase du modèle qui
+> n'a *aucune* dépendance séquentielle ; et le décodage tournait `steps_max` pas
+> pour toutes les lanes, `steps_max` étant un maximum sur le lot. Détail,
+> mesures et impasses (TF32 : 3-5× plus lent ; fenêtre d'attention rétrécie :
+> refusée par candle) : [../data_gen/isdd_games.md](../data_gen/isdd_games.md).
+> Ce binaire se déploie **à la main**, séparément du webhook — la prod ne
+> bénéficiera de rien tant qu'il n'aura pas été rebâti et redéployé.
+
 ```bash
 CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --features gpu_server
 ./target/release/playgen_gpu_server --playgen models/playgen/playgen_v2_final.bin --port 8003
