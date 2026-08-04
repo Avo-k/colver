@@ -51,6 +51,26 @@ use colver_core::playgen::tokens::{identity_perm, tokenize_replay_v2, tokenize_r
 use colver_core::state::{GameState, Phase};
 
 const TRICKS: usize = 8;
+/// Bornes des bandes d'écart de score de partie, en points.
+///
+/// Mêmes bornes que l'histogramme de `gen_games_isdd --check`, pour que « quelle
+/// fraction du corpus est dans cette bande » et « combien y coûte l'ignorance du
+/// score » se lisent sur le même découpage.
+///
+/// **Pourquoi une bande et pas un agrégat.** La pénalité mesurée est nulle sous
+/// 600 d'écart et franche à 1200, et un corpus de parties réelles ne met que
+/// **4 %** de ses donnes au-delà de 1200. Un écart global dilue donc un effet de
+/// 0,1 nat sur 4 % des donnes en 0,004 — sous le bruit, alors que l'effet est
+/// bien là où on l'attendait. Même piège que la belote : mesurer là où la chose
+/// s'applique, pas en moyenne sur tout.
+const GAP_EDGES: [u32; 4] = [300, 600, 900, 1200];
+const GAP_LABELS: [&str; 5] = ["<300", "300-599", "600-899", "900-1199", "≥1200"];
+
+/// Bande d'écart d'une donne, depuis le score de partie **d'avant la donne**.
+fn gap_band(replay: &GameReplay) -> usize {
+    let gap = (replay.score_ns as i32 - replay.score_ew as i32).unsigned_abs();
+    GAP_EDGES.iter().filter(|&&e| gap >= e).count()
+}
 /// Tours d'enchère suivis. Un tour = les quatre sièges parlent une fois
 /// (`MAX_BID_ENTRIES_V2` = 24 places, soit 6 tours), mais la longueur réelle est
 /// **variable** : la plupart des enchères meurent au 1er ou 2e tour, donc les
@@ -413,10 +433,18 @@ fn main() {
             per_deal.len()
         );
         println!("  catégorie          |  écart  | IC95");
-        let cats: [(&str, fn(&Acc) -> (f64, u64)); 3] = [
+        let cats: [(&str, fn(&Acc) -> (f64, u64)); 5] = [
             ("global", |a| (a.nll.iter().sum::<f64>(), a.n.iter().sum::<u64>())),
             ("belote disponible", |a| (a.bel_nll, a.bel_n)),
             ("aucune belote", |a| (a.nobel_nll, a.nobel_n)),
+            // La tête d'enchère est la seule que le score de partie touche : v6
+            // annonce autrement à 1500-300, et DouDou50 joue la carte sans
+            // jamais le lire. La séparer du jeu n'est donc pas du détail, c'est
+            // isoler le canal par lequel un v3 peut gagner quoi que ce soit.
+            ("enchères (tous tours)", |a| {
+                (a.bnll.iter().sum::<f64>(), a.bn.iter().sum::<u64>())
+            }),
+            ("enchères tour 1", |a| (a.bnll[0], a.bn[0])),
         ];
         for (label, f) in cats {
             let rows: Vec<(f64, u64, f64, u64)> = per_deal
@@ -429,6 +457,45 @@ fn main() {
                 .collect();
             let (pt, lo, hi) = boot_ci(&rows, 12345);
             println!("  {:<18} | {:+.4} | [{:+.4}, {:+.4}]", label, pt, lo, hi);
+        }
+
+        // Le même écart, mais par bande d'écart de score — la lecture qui décide
+        // si un v3 sert. Bootstrap **à l'intérieur de la bande** : rééchantillonner
+        // toutes les donnes puis filtrer ferait varier la taille de la bande d'un
+        // tirage à l'autre, ce qui gonfle l'intervalle sans rapport avec l'effet.
+        let bands: Vec<usize> = games.iter().map(|g| gap_band(g)).collect();
+        if bands.iter().any(|&b| b > 0) {
+            println!("\n  Écart B − A sur la tête d'enchère, par bande d'écart de score :");
+            println!("  bande     | donnes |  écart  | IC95");
+            for band in 0..GAP_LABELS.len() {
+                let rows: Vec<(f64, u64, f64, u64)> = per_deal
+                    .iter()
+                    .zip(&bands)
+                    .filter(|(_, &b)| b == band)
+                    .map(|(d, _)| {
+                        (
+                            d[0].bnll.iter().sum::<f64>(),
+                            d[0].bn.iter().sum::<u64>(),
+                            d[1].bnll.iter().sum::<f64>(),
+                            d[1].bn.iter().sum::<u64>(),
+                        )
+                    })
+                    .collect();
+                if rows.len() < 30 {
+                    println!("  {:<9} | {:>6} | (trop peu de donnes)", GAP_LABELS[band], rows.len());
+                    continue;
+                }
+                let (pt, lo, hi) = boot_ci(&rows, 12345);
+                println!(
+                    "  {:<9} | {:>6} | {:+.4} | [{:+.4}, {:+.4}]",
+                    GAP_LABELS[band],
+                    rows.len(),
+                    pt,
+                    lo,
+                    hi
+                );
+            }
+            println!("  (négatif = B prédit mieux ; c'est dans les bandes larges qu'un v3 doit gagner)");
         }
         // Différence des différences : l'écart B−A est-il **plus petit** là où la
         // belote s'applique ? C'est ça, « l'entraînement avec la belote sert ».
@@ -451,6 +518,56 @@ fn main() {
             did.0, did.1, did.2
         );
         println!("  (négatif = B tire un bénéfice propre aux positions belote)\n");
+    }
+
+    // Un seul modèle, mais découpé par bande : dit où *ce* modèle est faible,
+    // sans témoin. C'est cette table qui a chiffré le coût de l'ignorance du
+    // score sur des corpus à score forcé ; sur un corpus de parties réelles elle
+    // le fait en une passe, avec les effectifs réels de chaque bande.
+    {
+        let bands: Vec<usize> = games.iter().map(|g| gap_band(g)).collect();
+        if bands.iter().any(|&b| b > 0) {
+            // Deux colonnes de nll, et l'écart entre elles n'est pas du zèle :
+            // **le tour 1 est le seul comparable d'une bande à l'autre**. La
+            // longueur d'une enchère dépend de ce qui s'y dit, donc le mélange
+            // de tours change avec la bande, et les tours ≥ 2 ont une nll bien
+            // plus basse (0,63 contre 1,73) — un agrégat « tous tours » mesure
+            // donc en partie la composition, pas la difficulté. C'est aussi la
+            // tranche sur laquelle la mesure à score forcé a été publiée.
+            let mut by_band = vec![(0.0f64, 0.0f64, 0u64, 0.0f64, 0u64, 0usize); GAP_LABELS.len()];
+            for (d, &b) in per_deal.iter().zip(&bands) {
+                let e = &mut by_band[b];
+                e.0 += d[0].bnll.iter().sum::<f64>();
+                e.1 += d[0].bunif.iter().sum::<f64>();
+                e.2 += d[0].bn.iter().sum::<u64>();
+                e.3 += d[0].bnll[0];
+                e.4 += d[0].bn[0];
+                e.5 += 1;
+            }
+            println!("Enchères par bande d'écart de score de partie (sièges cachés) :");
+            println!("  bande     | donnes |  part  | nll tour 1 | branch. | nll tous tours");
+            let total = games.len() as f64;
+            for (i, &(s, _u, n, s1, n1, d)) in by_band.iter().enumerate() {
+                if n == 0 {
+                    continue;
+                }
+                let m1 = s1 / n1.max(1) as f64;
+                println!(
+                    "  {:<9} | {:>6} | {:>5.1} % |     {:.4} | {:>7.2} |         {:.4}",
+                    GAP_LABELS[i],
+                    d,
+                    100.0 * d as f64 / total,
+                    m1,
+                    m1.exp(),
+                    s / n as f64,
+                );
+            }
+            println!(
+                "  ⚠ bandes = donnes **différentes**, pas les mêmes donnes à des scores forcés :\n\
+                 \x20   la difficulté de donne n'est pas contrôlée. Ce tableau donne les *poids*\n\
+                 \x20   de production ; la pénalité par bande se lit sur les corpus à score forcé.\n"
+            );
+        }
     }
 
     if acc.bel_n > 0 {

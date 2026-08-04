@@ -1,0 +1,25 @@
+# Le joueur qui produit le corpus de **parties** (`gen_games_isdd --match-mode`).
+#
+# Même bidder que `gen_isdd.toml` — c'est lui qui lit le score, donc c'est lui
+# qui met de l'information dans les jetons de score d'un playgen v3 — mais la
+# carte est jouée par DouDou50 au lieu d'IS-DD.
+#
+# **C'est un arbitrage assumé, pas une négligence.** Le corpus v3 doit couvrir
+# l'espace des scores, ce qui demande des parties entières : à ~10 donnes par
+# partie, un million de donnes ne fait que cent mille parties. IS-DD tourne à
+# ~2,6 donnes/s (limité par le sidecar) là où DouDou50 est trois ordres de
+# grandeur plus rapide et n'occupe pas le GPU — que l'entraînement veut.
+#
+# Ce qu'on perd : le jeu de la carte est celui de DouDou50, comme dans
+# `playgen_games_9M.bin`. Ce qu'on garde : l'enchère est celle de la référence,
+# et c'est la tête d'enchère que le score doit servir.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "dmc"
+model = "models/dmc_50.bin"
+residual = true
