@@ -39,6 +39,13 @@ défaut) au fil de l'eau, les fusionne à la fin et les efface alors seulement.
 `GameReplay::write_all` n'écrivant qu'en une fois, sans ça une interruption à
 95 % ne laisserait rien.
 
+`--merge` diffère de [`scripts/training/merge_colvgm.py`](../../scripts/training/merge_colvgm.py)
+sur un point : le script vérifie la structure (magie, parcours des
+enregistrements de longueur variable), `--merge` **rejoue** en plus chaque
+donne. Pour recoller deux corpus déjà validés, le script suffit et va plus
+vite ; pour rattraper des éclats d'un run qui s'est mal terminé, on veut le
+rejeu.
+
 `--match-mode` enchaîne les donnes en parties de 2000 points au lieu de les
 tirer indépendantes. Ce n'est pas cosmétique : bid v6 lit une observation
 *score-aware*, donc il annonce autrement à 900-200 qu'à 0-0, et le corpus

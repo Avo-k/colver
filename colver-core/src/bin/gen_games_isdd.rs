@@ -151,6 +151,7 @@ fn parse_args() -> Args {
                     acts,
                     acts as f64 / r.len().max(1) as f64
                 );
+                describe(&r);
                 std::process::exit(if bad == 0 { 0 } else { 1 });
             }
             other => { eprintln!("argument inconnu : {other}"); std::process::exit(2) }
@@ -449,6 +450,80 @@ fn verify(replays: &[GameReplay]) -> usize {
         }
     }
     bad
+}
+
+/// Ce qu'il y a *dans* le corpus, pas seulement qu'il se relit.
+///
+/// Un corpus peut être parfaitement rejouable et pourtant inutilisable : rien
+/// n'interdit à un joueur mal configuré de passer neuf donnes sur dix, et une
+/// donne passée ne contient aucune carte. La vérification de format ne le
+/// verrait pas — d'où ce résumé, qui décrit la *distribution* et pas la
+/// structure.
+fn describe(r: &[GameReplay]) {
+    if r.is_empty() {
+        return;
+    }
+    let mut passed = 0usize;
+    let mut by_value: std::collections::BTreeMap<u8, usize> = Default::default();
+    let mut by_suit = [0usize; 4];
+    let mut coinched = 0usize;
+    let mut belote = 0usize;
+    let mut taker_ns = 0usize;
+    let mut made = 0usize;
+    let mut bid_actions = 0usize;
+
+    for g in r {
+        let mut s = GameState::new(g.dealer, g.hands);
+        for &a in &g.actions {
+            if s.phase == Phase::Bidding {
+                bid_actions += 1;
+            }
+            s.step(a);
+        }
+        if s.contract.value == 0 {
+            passed += 1;
+            continue;
+        }
+        *by_value.entry(s.contract.value).or_default() += 1;
+        by_suit[s.contract.trump as usize] += 1;
+        if s.contract.coinche > 0 {
+            coinched += 1;
+        }
+        if s.belote != [0, 0] {
+            belote += 1;
+        }
+        let taker = s.contract.team;
+        if taker == 0 {
+            taker_ns += 1;
+        }
+        let sc = s.deal_score();
+        if sc.scores[taker as usize] > 0 {
+            made += 1;
+        }
+    }
+    let played = r.len() - passed;
+    println!(
+        "  {} donnes jouées, {passed} passées ({:.1} %) — {:.1} annonces par donne",
+        played,
+        100.0 * passed as f64 / r.len() as f64,
+        bid_actions as f64 / r.len() as f64,
+    );
+    if played == 0 {
+        return;
+    }
+    let pct = |n: usize| 100.0 * n as f64 / played as f64;
+    println!(
+        "  preneur N-S {:.1} %  ·  contrat réussi {:.1} %  ·  contré {:.1} %  ·  belote {:.1} %",
+        pct(taker_ns), pct(made), pct(coinched), pct(belote),
+    );
+    let suits = ["♠", "♥", "♦", "♣"];
+    let s: Vec<String> = (0..4).map(|i| format!("{} {:.0} %", suits[i], pct(by_suit[i]))).collect();
+    println!("  couleurs : {}", s.join("  "));
+    let v: Vec<String> = by_value
+        .iter()
+        .map(|(val, n)| format!("{val} : {:.0} %", pct(*n)))
+        .collect();
+    println!("  contrats : {}", v.join("  "));
 }
 
 /// Où passe le temps, par nombre de cartes restantes.
