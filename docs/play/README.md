@@ -15,6 +15,10 @@ How a player plays cards once bidding ends. Implementations live in [colver-core
 - [../agents.md](../agents.md) — how a card player is built, configured and driven
 - [smart_ismcts.md](smart_ismcts.md) — Belief-weighted IS-MCTS
 - [dmc.md](dmc.md) — DouZero-style Q-network (DouDou35, DouDou50)
+- [doudou_next.md](doudou_next.md) — **ce qui doit monter à bord de la prochaine
+  itération de DouDou**, à fermer avant de lancer : une modification d'obs
+  invalide les poids. Première entrée, la **belote annoncée** — publique, lue par
+  IS-DD et par l'obs d'enchère v6, absente de l'obs de jeu.
 
 ## World sampling
 

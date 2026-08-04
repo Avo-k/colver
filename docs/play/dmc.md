@@ -42,6 +42,10 @@ cargo run -p colver-core --bin train_dmc --features dmc_train --release -- \
     --bid-model models/bid_v2/bid_nn_final.bin
 ```
 
+## Prochaine itération
+
+Une modification de l'observation invalide les poids (la première couche change de forme : pas de reprise depuis DouDou50). Ce qui doit monter à bord se note **avant** de lancer, dans [doudou_next.md](doudou_next.md) — première entrée : **la belote annoncée**, absente des deux layouts alors qu'elle est publique.
+
 ## Comparison with IS-DD
 
 DMC and IS-DD have very similar mean MAE vs DD (~19) but make **different errors** — see [bid/reward_studies/v3_reward_study.md](../bid/reward_studies/v3_reward_study.md). Hamming distance between their plays on the same deal is **29/32 cards**: they are stylistically opposed (DMC plays Aces immediately, IS-DD pulls trumps).
