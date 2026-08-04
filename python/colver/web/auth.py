@@ -32,6 +32,7 @@ import bcrypt
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+import colver.web.analysis as analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.stats as stats
@@ -452,13 +453,62 @@ async def my_stats(request: Request):
 
     Séparé de `/me`, que toutes les pages appellent au chargement : ces
     agrégats parcourent toutes les donnes du joueur et n'ont d'utilité que sur
-    /compte. Les faire payer à chaque navigation serait une taxe permanente
+    /stats. Les faire payer à chaque navigation serait une taxe permanente
     pour un affichage occasionnel.
+
+    Ne calcule **rien** de coûteux : que du SQL sur des colonnes déjà écrites.
+    Le jeu comparé à l'oracle est ailleurs, derrière un bouton.
     """
     user = await current_user(request)
     if user is None:
         return JSONResponse({"error": "Non connecté"}, status_code=401)
     return JSONResponse(await stats.my_stats(user["id"]))
+
+
+@router.get("/me/oracle")
+async def my_oracle(request: Request):
+    """Ce que le solveur dit du jeu du joueur, **d'après ce qui est en cache**.
+
+    Ne lance aucun calcul : un GET qui déclencherait des recherches DD serait
+    déclenché par un préchargeur de navigateur ou un robot. Le POST le fait,
+    lui, et seulement sur demande explicite.
+    """
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"error": "Non connecté"}, status_code=401)
+    blob = await stats.oracle_stats(user["id"])
+    blob["job"] = _job_view(analysis.bulk_status(user["id"]))
+    return JSONResponse(blob)
+
+
+@router.post("/me/oracle")
+async def start_my_oracle(request: Request):
+    """Lancer l'analyse des donnes du joueur qui n'en ont pas encore.
+
+    Idempotent tant qu'un balayage tourne : rappeler rend l'état courant au
+    lieu d'en démarrer un second. Un seul balayage tourne sur tout le serveur
+    (`analysis._bulk_gate`) — ce sont les recherches les plus chères du site,
+    et elles ne doivent pas prendre les cœurs des gens qui jouent.
+    """
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"error": "Non connecté"}, status_code=401)
+    pending = await stats.unanalysed_games(user["id"])
+    # Les chemins de modèles vivent dans `server`, qui importe `auth` : on les
+    # lit tardivement pour ne pas créer de cycle à l'import.
+    from colver.web import server as _server
+    job = await analysis.bulk(
+        user["id"], pending,
+        bid_model_path=_server.BID_MODEL_PATH,
+        playgen_model_path=_server.PLAYGEN_MODEL_PATH)
+    return JSONResponse(_job_view(job))
+
+
+def _job_view(job):
+    """L'état d'un balayage, sans la tâche asyncio (non sérialisable)."""
+    if not job:
+        return None
+    return {k: v for k, v in job.items() if k != "task"}
 
 
 @router.get("/me/matches")

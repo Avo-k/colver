@@ -345,25 +345,55 @@ const TEMPLATE = `
     <div class="docs-section" id="doc-classement">
         <h4>Classement</h4>
         <p>
-            Deux onglets, qui ne mesurent pas la m\u00eame chose.
+            L'unit\u00e9 not\u00e9e est la <strong>partie en 2000&nbsp;points</strong> et rien d'autre&nbsp;:
+            c'est le format des tournois, et c'est aussi celui sur lequel les bots sont \u00e9talonn\u00e9s.
+            Une donne isol\u00e9e ou une partie en 1000 reste jouable, analysable et partageable \u2014 elle
+            n'est simplement pas class\u00e9e. Il faut cinq parties pour appara\u00eetre, et abandonner vaut
+            d\u00e9faite.
         </p>
         <p>
-            L'onglet <strong>Elo</strong> est le classement officiel. L'unit\u00e9 not\u00e9e est la
-            <strong>partie en 2000&nbsp;points</strong> et rien d'autre&nbsp;: c'est le format des tournois,
-            et c'est aussi celui sur lequel les bots sont \u00e9talonn\u00e9s. Une donne isol\u00e9e ou une partie
-            en 1000 reste jouable, analysable et partageable \u2014 elle n'est simplement pas class\u00e9e.
-            Il faut cinq parties pour appara\u00eetre, et abandonner vaut d\u00e9faite. L'Elo des bots est
-            <em>fig\u00e9</em>&nbsp;: ils sont l'\u00e9chelle, pas des joueurs du classement. S'ils d\u00e9rivaient avec
-            la population, l'arriv\u00e9e de joueurs plus faibles d\u00e9valuerait en silence tous les inscrits.
+            L'Elo des bots est <em>fig\u00e9</em>&nbsp;: ils sont l'\u00e9chelle, pas des joueurs du
+            classement. S'ils d\u00e9rivaient avec la population, l'arriv\u00e9e de joueurs plus faibles
+            d\u00e9valuerait en silence tous les inscrits.
         </p>
         <p>
-            L'onglet <strong>Vie du site</strong> ne contient que des <strong>comptes exacts</strong>&nbsp;:
-            donnes jou\u00e9es, jours de jeu, s\u00e9ries, capots, coinches, contrats pris. Aucun taux n'y est
-            class\u00e9, et c'est d\u00e9lib\u00e9r\u00e9. Sur quelques centaines de donnes, un taux de victoire porte une
-            marge d'erreur d'une dizaine de points&nbsp;: ordonner des joueurs dessus publierait un
-            classement de hasard. Les taux vivent sur votre page de compte, sous
-            <strong>Mes statistiques</strong>, chacun accompagn\u00e9 du nombre d'observations et de son
-            intervalle de confiance.
+            Il n'y a <strong>qu'un</strong> classement, et c'est d\u00e9lib\u00e9r\u00e9. Sur quelques centaines de
+            donnes, un taux de victoire porte une marge d'erreur d'une dizaine de points&nbsp;:
+            ordonner des joueurs dessus publierait un classement de hasard. Ces chiffres-l\u00e0 d\u00e9crivent
+            tr\u00e8s bien un joueur, mais un par un \u2014 ils sont donc sur <strong>Mes stats</strong>.
+        </p>
+    </div>
+
+    <div class="docs-section" id="doc-stats">
+        <h4>Mes stats</h4>
+        <p>
+            Votre portrait chiffr\u00e9, en deux moiti\u00e9s.
+        </p>
+        <p>
+            Le haut est <strong>gratuit</strong> et s'affiche toujours&nbsp;: combien de donnes vous
+            avez jou\u00e9es, votre s\u00e9rie de jours, \u00e0 quelle fr\u00e9quence vous prenez \u2014 et si c'est plut\u00f4t
+            vous ou plut\u00f4t votre partenaire \u2014, votre couleur d'atout de pr\u00e9dilection, votre hauteur
+            d'annonce moyenne, les belotes tomb\u00e9es dans votre main, les gens avec qui vous jouez le
+            plus. Tout se d\u00e9duit de ce qui est d\u00e9j\u00e0 enregistr\u00e9&nbsp;: aucun calcul, aucune attente.
+        </p>
+        <p>
+            Le bas est <strong>pay\u00e9</strong>, et ne se d\u00e9clenche qu'en appuyant sur le bouton. Chaque
+            donne passe alors au solveur double-mort, qui rejoue chaque d\u00e9cision en voyant les quatre
+            mains et dit ce que le meilleur coup rapportait. On en tire les points perdus par
+            d\u00e9cision et la part de coups <em>sans perte</em>. Comptez environ un quart de seconde par
+            donne&nbsp;; le r\u00e9sultat sert aussi \u00e0 Rejouer, qui devient instantan\u00e9.
+        </p>
+        <p>
+            Deux pr\u00e9cautions valent d'\u00eatre connues. \u00ab Sans perte \u00bb veut dire que le solveur ne
+            valorise aucune autre carte plus haut, <em>pas</em> que vous avez jou\u00e9 sa carte
+            pr\u00e9f\u00e9r\u00e9e&nbsp;: plus d'une position sur deux a plusieurs cartes \u00e9galement bonnes.
+            Et les coups o\u00f9 une seule carte \u00e9tait jouable sont exclus du calcul \u2014 ce ne sont pas des
+            d\u00e9cisions, et les compter gonflerait le score d'un tiers sans rien dire de vous.
+        </p>
+        <p>
+            La <strong>couverture</strong> est affich\u00e9e en t\u00eate&nbsp;: c'est vous qui choisissez
+            quand analyser, donc une moyenne calcul\u00e9e sur un dixi\u00e8me de vos donnes doit se lire comme
+            telle.
         </p>
     </div>
 

@@ -3806,7 +3806,6 @@
 .cl-scroll { overflow-x: auto; margin-bottom: var(--sp-3); }
 .cl-scroll .classement-table { width: 100%; min-width: 22rem; }
 
-#cl-tabs { margin-bottom: var(--sp-4); }
 
 /* ===== MES STATS (page /compte) ===== */
 
@@ -3849,6 +3848,75 @@
         grid-template-areas: "label val hint";
     }
     .cs-hint { text-align: right; }
+}
+
+.stats-page { max-width: 640px; }
+.compte-stats-list + .compte-section-title,
+.cs-legends + .compte-section-title { margin-top: var(--sp-4); }
+
+/* --- Barres de répartition ---
+   Une proportion se lit mieux en longueur qu'en colonne de pourcentages ;
+   `flex: n` fait toute la mise à l'échelle, sans calcul en JS. */
+.cs-bar {
+    display: flex;
+    height: 0.75rem;
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    margin: var(--sp-2) 0;
+    background: var(--c-surface-2);
+}
+.cs-bar-seg { display: block; min-width: 2px; }
+
+.cs-legends {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-3);
+    font-size: var(--fs-2xs);
+    color: var(--c-text-muted);
+    margin-bottom: var(--sp-3);
+}
+.cs-legend { display: inline-flex; align-items: center; gap: 0.35em; }
+.cs-legend b { color: var(--c-text); font-variant-numeric: tabular-nums; }
+.cs-legend i {
+    width: 0.6em; height: 0.6em; border-radius: 2px; display: inline-block;
+}
+
+/* Qui prend : vous / partenaire / adversaires. L'accent est sur « vous »,
+   c'est la part que le joueur vient lire. */
+.cs-bar-me, .cs-legend i.cs-bar-me { background: var(--c-accent); }
+.cs-bar-partner, .cs-legend i.cs-bar-partner { background: #6aa9d8; }
+.cs-bar-opp, .cs-legend i.cs-bar-opp { background: var(--c-surface-3); }
+
+/* Qualité des coups : un dégradé du vert au rouge, dans l'ordre de gravité.
+   Mêmes teintes que les catégories de Rejouer, pour qu'un joueur qui passe de
+   l'une à l'autre reconnaisse la même échelle. */
+.cs-bar-parfait, .cs-legend i.cs-bar-parfait { background: #81c784; }
+.cs-bar-bon, .cs-legend i.cs-bar-bon { background: #aed581; }
+.cs-bar-imprecision, .cs-legend i.cs-bar-imprecision { background: #ffd54f; }
+.cs-bar-erreur, .cs-legend i.cs-bar-erreur { background: #ff8a65; }
+.cs-bar-faute, .cs-legend i.cs-bar-faute { background: var(--c-danger-txt); }
+
+/* --- Couverture d'analyse ---
+   Toujours en tête du bloc oracle : sans elle, une moyenne calculée sur un
+   dixième des donnes se lit comme une mesure de tout le jeu. */
+.cs-cover { margin-bottom: var(--sp-3); }
+.cs-cover-bar {
+    height: 0.4rem;
+    background: var(--c-surface-2);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+}
+.cs-cover-bar span {
+    display: block;
+    height: 100%;
+    background: var(--c-accent);
+}
+.cs-cover-txt {
+    display: block;
+    font-size: var(--fs-2xs);
+    color: var(--c-text-muted);
+    margin-top: var(--sp-1);
+    font-variant-numeric: tabular-nums;
 }
 
 .classement-table {

@@ -21,7 +21,6 @@ import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.integrity as integrity
-import colver.web.stats as stats
 # Alias `_agents` et pas `agents` : plusieurs gestionnaires WS utilisent
 # déjà `agents` comme variable locale (la table des bots d'une donne).
 from colver.web import agents as _agents
@@ -259,8 +258,16 @@ _ROUTE_META = {
     },
     "/classement": {
         "title": "Classement — Colver",
-        "description": "Le classement Elo des joueurs et des IA de Colver, mis à "
-                       "jour à chaque donne.",
+        "description": "Le classement Elo des joueurs et des IA de Colver, sur "
+                       "les parties en 2000 points.",
+    },
+    # Page personnelle : `noindex`, comme /compte. Elle est vide sans session,
+    # donc un moteur n'y verrait qu'une invitation à se connecter.
+    "/stats": {
+        "title": "Mes statistiques — Colver",
+        "description": "Comment vous annoncez, à quelle fréquence vous prenez, "
+                       "et à quel point vous jouez près de l'oracle.",
+        "noindex": True,
     },
 }
 
@@ -636,16 +643,6 @@ async def _db_backup():
 async def api_leaderboard():
     return JSONResponse(await elo.leaderboard())
 
-
-@app.get("/api/leaderboard/vie")
-async def api_leaderboard_vie():
-    """Les tableaux « vie du site » : des comptes exacts, jamais des taux.
-
-    Séparé de `/api/leaderboard` et non fusionné : l'Elo est la mesure de force
-    du site, et le mélanger à des compteurs d'assiduité dans une même charge
-    utile inviterait à les afficher côte à côte comme s'ils se comparaient.
-    """
-    return JSONResponse(await stats.leaderboard())
 
 
 @app.get("/api/games/{game_id}/analysis")

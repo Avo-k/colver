@@ -19,9 +19,12 @@ solves, ~70 ms); the per-card solves run 34.6 ms at trick 1 down to 1.5 µs at t
 
 import asyncio
 import json
+import logging
 
 import colver
 import colver.web.database as db
+
+logger = logging.getLogger(__name__)
 
 # v5 : invalide tout cache antérieur au filtre `get_game` (2026-08-01) — une
 # analyse calculée en pleine donne sur une donne terminée depuis est partielle,
@@ -310,3 +313,81 @@ async def get_or_compute(game_id, bid_model_path=None, playgen_model_path=None):
         await db.save_analysis(game_id, json.dumps(analysis))
     _locks.pop(game_id, None)
     return analysis, None
+
+
+# ===== Analyse en masse, à la demande du joueur =====
+#
+# Le pendant du « demander une analyse » de lichess : le joueur appuie sur un
+# bouton, le serveur passe ses donnes au solveur, et la page suit l'avancement.
+#
+# **Pourquoi à la demande et pas en tâche de fond.** Un balayage automatique
+# ferait le travail pour des donnes que personne ne regardera jamais, et il
+# faudrait l'ordonnancer contre les parties en cours. À la demande, le coût est
+# payé par qui en tire la valeur, et le joueur sait ce qu'il attend.
+#
+# **Pourquoi l'analyse complète et non un mode « DD seul ».** Les têtes
+# d'enchère playgen sont l'essentiel du coût (~185 ms sur ~230) et les
+# statistiques de jeu n'en ont pas besoin. Mais les sauter écrirait un blob que
+# `_is_fresh` déclare périmé dès que le modèle est là — donc recalculé à la
+# première ouverture de Rejouer, et le travail serait fait deux fois. On calcule
+# donc exactement ce que Rejouer affiche : la page du joueur devient instantanée
+# par la même occasion.
+
+# Un seul balayage à la fois pour tout le serveur. Ce sont des recherches DD
+# pleine donne, les plus chères du site : deux en parallèle prendraient les
+# cœurs des gens qui jouent. La file est implicite — un second appel se voit
+# refuser et réessaiera.
+_bulk_gate = asyncio.Semaphore(1)
+
+# État par joueur, en mémoire. Perdu au redémarrage, et c'est sans conséquence :
+# le travail déjà fait est en base, donc relancer reprend où ça s'est arrêté.
+_bulk_jobs = {}
+
+
+def bulk_status(user_id):
+    """Où en est le balayage de ce joueur, ou None s'il n'y en a jamais eu."""
+    return _bulk_jobs.get(user_id)
+
+
+async def bulk(user_id, game_ids, *, bid_model_path=None, playgen_model_path=None):
+    """Analyser les donnes d'un joueur, une par une, en publiant l'avancement.
+
+    Rend immédiatement si un balayage tourne déjà pour ce joueur. Chaque donne
+    passe par `get_or_compute`, donc le verrou par donne et le cache sont ceux
+    du reste du site : une donne analysée entre-temps par Rejouer n'est pas
+    refaite.
+
+    Une donne qui échoue est comptée et sautée. Le balayage ne doit pas mourir
+    sur une donne : `errors` le dit à l'arrivée plutôt que de laisser le joueur
+    devant un compteur bloqué.
+    """
+    running = _bulk_jobs.get(user_id)
+    if running and running.get("running"):
+        return running
+
+    job = {"running": True, "done": 0, "total": len(game_ids), "errors": 0}
+    _bulk_jobs[user_id] = job
+    if not game_ids:
+        job["running"] = False
+        return job
+
+    async def run():
+        try:
+            async with _bulk_gate:
+                for game_id in game_ids:
+                    try:
+                        _, err = await get_or_compute(
+                            game_id,
+                            bid_model_path=bid_model_path,
+                            playgen_model_path=playgen_model_path)
+                        if err:
+                            job["errors"] += 1
+                    except Exception:  # noqa: BLE001 — une donne ne tue pas le lot
+                        logger.exception("analyse en masse : donne %s", game_id)
+                        job["errors"] += 1
+                    job["done"] += 1
+        finally:
+            job["running"] = False
+
+    job["task"] = asyncio.create_task(run())
+    return job

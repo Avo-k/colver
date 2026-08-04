@@ -20,6 +20,7 @@ const routes = {
     '/about':             () => import('./views/about.js'),
     '/compte':            () => import('./views/compte.js'),
     '/classement':        () => import('./views/classement.js'),
+    '/stats':             () => import('./views/stats.js'),
     // Récupération de compte : deux écrans, un module, qui se distinguent sur
     // `location.pathname`.
     '/mot-de-passe/oublie':  () => import('./views/motdepasse.js'),

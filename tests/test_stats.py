@@ -1,4 +1,4 @@
-"""Les chiffres « vie du site », et l'invariant de barème sur lequel ils reposent.
+"""Le portrait chiffré d'un joueur, et l'invariant de barème qui le rend gratuit.
 
 Trois familles, et la deuxième est la plus importante :
 
@@ -210,71 +210,8 @@ class TestLectureDuJournal:
         mine = [a for a in actions if a["phase"] == 0 and a["player"] == 2]
         st = await stats.my_stats(uid)
         assert st["bidding"]["decisions"] == len(mine)
-        assert st["bidding"]["pass_pct"] == round(
-            100 * sum(1 for a in mine if a["action"] == 0) / len(mine), 1)
-
-
-class TestClassementVieDuSite:
-    async def test_les_comptes_par_joueur(self, clean_db, played_deal):
-        alice = await db.create_user("alice", "x")
-        bob = await db.create_user("bob", "x")
-        for seed in range(5):
-            hands, actions = played_deal(seed=seed)
-            await _store_played(hands, actions, user_id=alice, seat=2,
-                                created_at=f"2026-08-0{seed + 1}T12:00:00+00:00")
-        hands, actions = played_deal(seed=9)
-        await _store_played(hands, actions, user_id=bob, seat=1, mode="multi",
-                            created_at="2026-08-01T12:00:00+00:00")
-
-        board = await stats.leaderboard()
-        by_name = {r["name"]: r for r in board}
-        assert by_name["alice"]["deals"] == 5
-        assert by_name["alice"]["days"] == 5
-        assert by_name["bob"]["deals"] == 1
-        # Trié sur les donnes : le plus assidu d'abord.
-        assert [r["name"] for r in board] == ["alice", "bob"]
-
-    async def test_un_bot_n_apparait_jamais(self, clean_db, played_deal):
-        """Ces tableaux disent qui fait vivre le site. Un bot tient trois sièges
-        sur quatre et jouerait tous les jours."""
-        alice = await db.create_user("alice", "x")
-        hands, actions = played_deal(seed=1)
-        await _store_played(hands, actions, user_id=alice, seat=2)
-        assert all(r["name"] == "alice" for r in await stats.leaderboard())
-
-    async def test_la_serie_compte_les_jours_consecutifs(self, clean_db,
-                                                         played_deal):
-        """Et elle n'est « en cours » que si elle touche aujourd'hui ou hier."""
-        from datetime import datetime, timedelta, timezone
-        alice = await db.create_user("alice", "x")
-        today = datetime.now(timezone.utc).date()
-        for back in (2, 1, 0):
-            hands, actions = played_deal(seed=back)
-            day = (today - timedelta(days=back)).isoformat()
-            await _store_played(hands, actions, user_id=alice, seat=2,
-                                created_at=f"{day}T12:00:00+00:00")
-        board = await stats.leaderboard()
-        assert board[0]["streak"] == 3
-
-        bob = await db.create_user("bob", "x")
-        hands, actions = played_deal(seed=7)
-        await _store_played(hands, actions, user_id=bob, seat=2,
-                            created_at="2020-01-01T12:00:00+00:00")
-        board = {r["name"]: r for r in await stats.leaderboard()}
-        assert board["bob"]["streak"] == 0, "une série ancienne n'est pas en cours"
-        assert board["bob"]["days"] == 1
-
-    async def test_les_capots_sont_comptes_des_deux_cotes(self, clean_db):
-        alice = await db.create_user("alice", "x")
-        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
-        for pts, seat in (((252, 0), 2), ((0, 252), 2)):
-            gid = await db.create_game("play", 0, hands, {"2": "human"},
-                                       human_seat=seat, user_id=alice)
-            await db.complete_game(gid, pts[0], pts[1], {"value": 250, "team": 0},
-                                   score_ns=1, score_ew=0)
-        row = (await stats.leaderboard())[0]
-        assert row["capots_for"] == 1
-        assert row["capots_against"] == 1
+        assert st["bidding"]["pass"]["k"] == sum(1 for a in mine if a["action"] == 0)
+        assert st["bidding"]["pass"]["n"] == len(mine)
 
 
 class TestMesStats:
@@ -342,3 +279,181 @@ class TestTempo:
         hands, actions = played_deal(seed=1)
         await _store_played(hands, actions, user_id=alice, seat=2)
         assert (await stats.my_stats(alice))["tempo"]["n"] == 0
+
+
+class TestQuiPrend:
+    """« C'est plutôt vous ou plutôt votre partenaire ? » — la dynamique que la
+    page existe pour montrer, et celle que `contract.team` ne peut pas donner.
+
+    En solo trois sièges sur quatre sont des bots : savoir que « mon camp a
+    pris » ne dit pas si c'est moi. Seul le siège preneur répond.
+    """
+
+    async def _deal_taken_by(self, uid, taker_seat, my_seat=2):
+        """Une donne fabriquée dont l'enchère désigne un preneur précis."""
+        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+        gid = await db.create_game("play", 0, hands, {str(my_seat): "human"},
+                                   human_seat=my_seat, user_id=uid)
+        # 100♠ = valeur_idx 2 × 4 + suit 0 + 1 = 9.
+        await db.append_action(gid, {"player": taker_seat, "action": 9, "phase": 0})
+        for s in range(3):
+            await db.append_action(
+                gid, {"player": (taker_seat + 1 + s) % 4, "action": 0, "phase": 0})
+        team = taker_seat % 2
+        await db.complete_game(gid, 100, 62, {"value": 100, "team": team, "trump": 0},
+                               score_ns=200 if team == 0 else 0,
+                               score_ew=0 if team == 0 else 200)
+        return gid
+
+    async def test_moi_partenaire_adversaires(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        for _ in range(3):
+            await self._deal_taken_by(uid, 2)   # moi
+        await self._deal_taken_by(uid, 0)       # mon partenaire (siège 2 ^ 2)
+        for _ in range(2):
+            await self._deal_taken_by(uid, 1)   # un adversaire
+
+        w = (await stats.my_stats(uid))["who_takes"]
+        assert (w["me"], w["partner"], w["opponents"]) == (3, 1, 2)
+        assert w["n"] == 6
+        assert w["me_pct"] == 50.0
+
+    async def test_l_atout_pris_est_compte_par_couleur(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        await self._deal_taken_by(uid, 2)
+        trumps = (await stats.my_stats(uid))["takes"]["trumps"]
+        assert trumps[0]["n"] == 1 and trumps[0]["suit"] == "♠"
+        assert sum(t["n"] for t in trumps) == 1
+
+    async def test_une_donne_passee_ne_compte_pour_personne(self, clean_db):
+        """Quatre passes : ni preneur, ni défense. Elle sort du dénominateur."""
+        uid = await db.create_user("alice", "x")
+        hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+        gid = await db.create_game("play", 0, hands, {"2": "human"},
+                                   human_seat=2, user_id=uid)
+        for s in range(4):
+            await db.append_action(gid, {"player": s, "action": 0, "phase": 0})
+        await db.complete_game(gid, 0, 0, None, score_ns=0, score_ew=0)
+        w = (await stats.my_stats(uid))["who_takes"]
+        assert w["n"] == 0 and w["passed"] == 1
+
+
+class TestBelote:
+    """La belote se déduit de la main initiale et de l'atout, sans rejeu.
+
+    `state.belote` ne compte que ce qui a déjà été *joué* : il sous-estime en
+    cours de donne et ne sert à rien ici. Dame = rang 4, Roi = rang 5.
+    """
+
+    async def _deal_with_hand(self, uid, my_cards, trump):
+        rest = [c for c in range(32) if c not in my_cards]
+        hands = [rest[0:8], rest[8:16], list(my_cards), rest[16:24]]
+        gid = await db.create_game("play", 0, hands, {"2": "human"},
+                                   human_seat=2, user_id=uid)
+        await db.append_action(gid, {"player": 2, "action": 9, "phase": 0})
+        await db.complete_game(gid, 100, 62,
+                               {"value": 100, "team": 0, "trump": trump},
+                               score_ns=200, score_ew=0)
+
+    async def test_dame_et_roi_d_atout(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        # Atout ♥ (couleur 1) : Dame = 8+4 = 12, Roi = 8+5 = 13.
+        await self._deal_with_hand(uid, [12, 13, 0, 1, 2, 3, 16, 17], trump=1)
+        assert (await stats.my_stats(uid))["belotes"] == 1
+
+    async def test_la_dame_seule_ne_suffit_pas(self, clean_db):
+        uid = await db.create_user("alice", "x")
+        await self._deal_with_hand(uid, [12, 14, 0, 1, 2, 3, 16, 17], trump=1)
+        assert (await stats.my_stats(uid))["belotes"] == 0
+
+    async def test_dame_et_roi_d_une_autre_couleur_ne_comptent_pas(self, clean_db):
+        """Le couple n'est une belote que dans la couleur d'atout."""
+        uid = await db.create_user("alice", "x")
+        await self._deal_with_hand(uid, [12, 13, 0, 1, 2, 3, 16, 17], trump=0)
+        assert (await stats.my_stats(uid))["belotes"] == 0
+
+
+class TestPartenaires:
+    async def test_le_partenaire_de_salon_est_celui_d_en_face(self, clean_db,
+                                                              played_deal):
+        alice = await db.create_user("alice", "x")
+        bob = await db.create_user("bob", "x")
+        carol = await db.create_user("carol", "x")
+        hands, actions = played_deal(seed=1)
+        for _ in range(3):
+            gid, _ = await _store_played(hands, actions, user_id=alice, seat=2,
+                                         mode="multi")
+            await db.add_game_player(gid, 0, bob)     # en face d'Alice
+            await db.add_game_player(gid, 1, carol)   # adversaire
+        partners = (await stats.my_stats(alice))["partners"]
+        assert [p["name"] for p in partners] == ["bob"]
+        assert partners[0]["deals"] == 3
+
+    async def test_le_solo_ne_produit_aucun_partenaire(self, clean_db, played_deal):
+        """En solo le partenaire est un bot : la ligne dirait « Dédé » pour tout
+        le monde et n'apprendrait rien."""
+        alice = await db.create_user("alice", "x")
+        hands, actions = played_deal(seed=1)
+        await _store_played(hands, actions, user_id=alice, seat=2)
+        assert (await stats.my_stats(alice))["partners"] == []
+
+
+class TestOracle:
+    """La moitié payée : elle ne calcule rien, elle relit un cache."""
+
+    async def _cache(self, game_id, moves, version=None):
+        import json
+        from colver.web.analysis import ANALYSIS_VERSION
+        blob = {"version": version or ANALYSIS_VERSION, "moves": moves}
+        await db.save_analysis(game_id, json.dumps(blob))
+
+    async def test_sans_analyse_la_couverture_est_nulle(self, clean_db,
+                                                        played_deal):
+        uid = await db.create_user("alice", "x")
+        hands, actions = played_deal(seed=1)
+        await _store_played(hands, actions, user_id=uid, seat=2)
+        o = await stats.oracle_stats(uid)
+        assert o == {"analysed": 0, "total": 1, "pending": 1,
+                     "decisions": 0, "forced": 0, "counts": {}}
+
+    async def test_seules_les_decisions_du_joueur_comptent(self, clean_db,
+                                                           played_deal):
+        """Le blob porte les quatre sièges ; on ne lit que le sien."""
+        uid = await db.create_user("alice", "x")
+        hands, actions = played_deal(seed=1)
+        gid, _ = await _store_played(hands, actions, user_id=uid, seat=2)
+        await self._cache(gid, [
+            {"player": 2, "cost": 0, "category": "parfait"},
+            {"player": 2, "cost": 12, "category": "imprecision"},
+            {"player": 2, "action": 5, "best": 5, "cost": 0, "forced": True},
+            {"player": 0, "cost": 40, "category": "faute"},   # un bot : ignoré
+        ])
+        o = await stats.oracle_stats(uid)
+        assert o["decisions"] == 2
+        assert o["forced"] == 1, "un coup forcé n'est pas une décision"
+        assert o["avg_cost"] == 6.0
+        assert o["counts"] == {"parfait": 1, "imprecision": 1}
+        assert o["clean"]["k"] == 1 and o["clean"]["n"] == 2
+        assert o["analysed"] == 1 and o["pending"] == 0
+
+    async def test_une_analyse_d_une_autre_version_ne_compte_pas(self, clean_db,
+                                                                 played_deal):
+        """Un barème ou un coup légal qui change périme les valeurs DD."""
+        uid = await db.create_user("alice", "x")
+        hands, actions = played_deal(seed=1)
+        gid, _ = await _store_played(hands, actions, user_id=uid, seat=2)
+        await self._cache(gid, [{"player": 2, "cost": 0, "category": "parfait"}],
+                          version=1)
+        o = await stats.oracle_stats(uid)
+        assert o["analysed"] == 0 and o["pending"] == 1
+        assert await stats.unanalysed_games(uid) == [gid]
+
+    async def test_ce_qui_reste_a_analyser(self, clean_db, played_deal):
+        uid = await db.create_user("alice", "x")
+        ids = []
+        for seed in range(3):
+            hands, actions = played_deal(seed=seed)
+            gid, _ = await _store_played(hands, actions, user_id=uid, seat=2)
+            ids.append(gid)
+        await self._cache(ids[0], [{"player": 2, "cost": 0, "category": "parfait"}])
+        assert set(await stats.unanalysed_games(uid)) == set(ids[1:])
