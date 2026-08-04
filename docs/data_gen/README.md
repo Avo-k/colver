@@ -20,6 +20,10 @@ chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder.
   le camp preneur, donc `[u8;8]` au prix de `[u8;4]`), le budget gradué par rang
   d'atout (−31 %, dérivé de ce que la boucle consulte réellement), les quatre
   invariants sur le donneur, et les trois mesures à faire avant d'engager les heures.
+  La **mesure A est faite** (§4) : l'enchère synthétique est hors distribution sur la
+  **forme** du préfixe — une seule annonce là où le réel en compte 2 à 4 dans 69 % des
+  cas, jamais contestée là où le réel l'est à 81 %, jamais coinchée là où le réel l'est
+  à 26 % — et non sur l'identité du preneur, dont le camp est bon à 89,4 %.
 
 ## Donnes complètes
 

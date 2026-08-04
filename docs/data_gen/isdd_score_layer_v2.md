@@ -117,6 +117,79 @@ dans cette construction.
 à deux moments : celle-ci, hors ligne, ne juge aucune politique — elle produit un
 nombre. Celle du modèle, en ligne, produit le contrat que `compute_scores` applique.
 
+### Ce que cette construction rate — mesure A, 2026-08-04
+
+*[bench_taker_position.rs](../../colver-core/src/bin/bench_taker_position.rs) +
+[taker_position.py](../../scripts/analysis/taker_position.py). 43 076 donnes, enchère
+rejouée puis les 4 atouts résolus en DD, donc **comparaison appariée** sur la même donne
+et non deux marginales.*
+
+**Le témoin d'abord, parce que c'est lui qui rend le reste lisible.** « Dans la
+distribution » se dit par rapport au corpus sur lequel playgen a *appris*
+(`playgen_games_9M.bin`, joué par DouDou50), pas par rapport à n'importe quelle vraie
+enchère. Les deux corpus — celui-là et `isdd_games_v1.bin`, joué par IS-DD — s'accordent
+**à 0,5 pp près sur chacune des statistiques ci-dessous**. L'enchère est donc une
+propriété de **bid v6** et pas du joueur de cartes derrière lui, et la référence tient.
+
+**Le décalage est sur la *forme* du préfixe, pas sur l'identité du preneur :**
+
+| | enchères réelles | la construction |
+|---|--:|--:|
+| première annonce par le siège qui parle en premier | **80,1 %** | ≈ 25 % (= la position du preneur) |
+| une seule annonce dans toute l'enchère | **11,9 %** | 100 % |
+| enchère contestée (les deux camps annoncent) | **81,3 %** | 0 % |
+| coinchée | **25,7 %** | 0 % |
+| longueur du préfixe | 8,18 jetons en moyenne | 4 à 7 (47,8 % du réel) |
+
+La position, elle, décale bien moins — mais dans un sens qu'il faut nommer : **parler
+tard fait prendre**. Le donneur, qui parle en dernier, emporte 31,3 % des contrats
+contre 18,2 % au premier parleur, alors que c'est ce dernier qui ouvre 80 % du temps.
+La construction, qui choisit le siège sur la seule force de main, sort presque plate.
+
+| | pos 0 (premier) | pos 1 | pos 2 | pos 3 (donneur) |
+|---|--:|--:|--:|--:|
+| enchères réelles | 18,2 % | 21,8 % | 28,8 % | 31,3 % |
+| construction, atout réel | 25,2 % | 25,6 % | 25,6 % | 23,6 % |
+| construction, les 4 atouts | 28,3 % | 22,9 % | 27,2 % | 21,7 % |
+
+soit **10,9 pp** de distance en variation totale.
+
+**L'accord apparié dit d'où vient l'erreur.** Le camp est bon **89,4 %** du temps — la
+construction se trompe rarement de côté. Le siège ne l'est que **61,8 %**, et même en
+lui donnant le bon camp, `argmax evaluate_for_trump` désigne le vrai preneur **71,4 %**
+du temps. Le choix du siège est donc le maillon faible, mais il pèse peu à côté de la
+forme.
+
+⚠️ **Et « valeur = palier plausible dérivé de ce score » n'est pas soutenu par les
+données.** Sur les vraies enchères, la valeur annoncée reste entre **112 et 124** pour
+tous les scores `evaluate_for_trump` de 1 à 31 (n ≥ 30 par ligne), et ne monte qu'au-delà
+de 32. La relation est plate et même en U : dans une enchère contestée à 81 %, la valeur
+est décidée par la **pression de l'enchère**, pas par la main du preneur. Une échelle
+tirée de ce score serait une règle inventée présentée comme mesurée.
+
+### Ce que la mesure A change au plan
+
+Elle **ne dit pas** que l'étiquette est fausse — seulement que le préfixe est hors
+distribution. Est-ce que ça déplace les points cartes ? C'est la **mesure B**, et elle
+reste à faire : au milieu d'une donne le préfixe porte aussi les cartes jouées, bien plus
+informatives que 8 jetons d'enchère.
+
+Ce qu'elle change, c'est la **liste des variantes que B doit départager**. « Minimale »
+et « plausible » étaient deux devinettes ; il y a maintenant cinq chiffres à viser, et
+un candidat qui les atteint tous sans être réglé à la main :
+
+> **l'enchère de v6 elle-même, masquée sur la couleur cible** — à chaque tour, le masque
+> légal est réduit à `PASS`, `COINCHE`, `SURCOINCHE` et aux paliers de l'atout `t`, et
+> v6 choisit dedans. La contestation, la coinche, la longueur et la valeur sortent de la
+> politique au lieu d'être fabriquées, et l'atout reste celui qu'on veut étiqueter.
+
+Le coût est négligeable : ~8 passes avant de 117→512³→43 par enchère, quatre enchères par
+donne, soit **~1,6 ms** contre les ~1,5 s que coûtent les quatre labellisations IS-DD de
+la même donne (§8) — **de l'ordre de 0,1 %**. Ce qui resterait décalé, et qu'il faudra
+mesurer et non supposer : forcer les quatre sièges sur une seule couleur retire aux
+adversaires la possibilité de contester *dans la leur*, donc le taux de contestation
+retombera quelque part entre 0 et 81 %.
+
 ### Le camp preneur est déterminé, donc `[u8;8]` n'est pas nécessaire
 
 Les points cartes sont à somme constante, donc pour un atout donné **un seul camp peut
@@ -132,6 +205,15 @@ une politique entraînée, et il est sous 80 points DD — incapable de tenir le
 minimum — dans **20,2 %**. Ce cinquième d'épisodes est joué, à l'étiquetage, sous des
 croyances qui ne correspondent pas. C'est la borne de l'arbitrage `[u8;4]` / `[u8;8]`,
 et c'est ce que la **mesure B** doit trancher.
+
+**Deux chiffres pour la même chose, et ils ne portent pas sur la même population.** La
+mesure A donne **89,4 %** là où §1.11 donne 78,9 %. Ce n'est pas une contradiction :
+89,4 % porte sur les contrats que v6 atteint **en jeu**, donc sur des atouts qu'il a
+choisis parce que le camp y était net ; 78,9 % porte sur ceux que la **boucle
+d'entraînement** atteint, ε-greedy comprise, donc sur des cases bien plus douteuses.
+C'est la seconde qui dimensionne le risque, puisque c'est elle qui consulte la couche.
+Les citer ensemble sans dire ça ferait croire que le problème est deux fois plus petit
+qu'il n'est.
 
 ## 5. Le budget par atout : gradué, jamais élagué
 
@@ -267,9 +349,15 @@ Tous déjà écrits ailleurs ; il s'agit de les brancher.
 
 | | quoi | coût | ce qu'elle décide |
 |---|---|---|---|
-| **A** | distribution de la position du preneur : construction vs enchères réelles de `isdd_games_v1.bin` | minutes, **0 GPU** | si le préfixe synthétique est hors distribution pour playgen |
-| **B** | variantes d'enchère (minimale / plausible / v6 masqué sur la couleur) **et camp du preneur**, écart apparié en points cartes | ~2 h GPU | la variante à retenir, et `[u8;4]` contre `[u8;8]` (§4) |
+| ~~**A**~~ | ✅ **faite le 2026-08-04** (§4) : oui, le préfixe est hors distribution, sur la **forme** (une seule annonce contre 11,9 % de réel, 0 % de contestation contre 81,3 %, 0 % de coinche contre 25,7 %) et non sur l'identité du preneur (camp bon à 89,4 %) | 4 min, 0 GPU | a remplacé les variantes devinées de B par **v6 masqué sur la couleur**, et retiré l'échelle valeur ↔ force, non soutenue |
+| **B** | variantes d'enchère (minimale / v6 masqué sur la couleur) **et camp du preneur**, écart apparié en points cartes | ~2 h GPU | la variante à retenir, et `[u8;4]` contre `[u8;8]` (§4) |
 | **C** | `P(capot \| mes 8 cartes)` sur les 913 476 cases à `dd_pts == 252` | quelques h GPU | le contenu de `tail_100k` (§6) et le plancher d'exploration conditionnée |
+
+**A ne dispense pas de B, elle la recadre.** Un préfixe hors distribution n'est un défaut
+que s'il déplace l'étiquette ; au milieu d'une donne, playgen lit aussi les cartes déjà
+jouées, bien plus informatives que 8 jetons d'enchère. B mesure ce déplacement contre le
+plancher de bruit ci-dessous — et si l'écart est en dessous, la construction bon marché
+suffit et tout le §4 devient une note de bas de page.
 
 Référence de bruit pour A et B : les **44,7 pts** de dispersion intra-main
 ([bid_v7_plan §2.8](../bid/bid_v7_plan.md)). Un écart nettement en dessous ⇒ prendre la

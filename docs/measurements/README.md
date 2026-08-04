@@ -134,6 +134,26 @@ des entrées complètes.
   contraintes par donne, il faudrait des dizaines de milliers de donnes pour voir ce que le
   précédent borne en 2 000 décisions.
 
+- `bid_contract_ranks.py` — ce que la **boucle d'entraînement du bidder** consulte
+  réellement dans la couche de scores : le rang de l'atout contracté, du point de vue du
+  camp qui l'a pris. Deux régimes (poids de v6 à ε = 0,02, init aléatoire à ε = 0,30),
+  ~5 min chacun. Point de méthode qui coûte cher à re-découvrir : le rang « de la donne »,
+  les quatre atouts classés en mélangeant les deux camps, est un **piège** — il rend
+  presque uniforme (37,8/23,3/20,6/18,4) là où la bonne lecture donne 58,4/22,7/11,7/7,2.
+  Vingt points d'écart au rang 0, et la mauvaise version se lit comme « le bidder
+  n'ordonne pas ses couleurs ».
+- `taker_position.py` — enveloppe de `bench_taker_position`. L'enchère **synthétique** du
+  générateur de couche de scores est-elle dans la distribution des vraies ? Rejoue l'enchère
+  de 43 076 donnes, résout les 4 atouts en DD et applique la construction sur la **même**
+  donne, donc l'accord se lit apparié. ~2 min sur `isdd_games_v1.bin`, ~6 min sur
+  `playgen_games_9M.bin` (dont 4 de lecture : `GameReplay::load_all` charge les 9 M de
+  donnes avant d'en examiner 43 000). Deux corpus **par nécessité, pas par prudence** :
+  « dans la distribution » se dit par rapport à celui sur lequel playgen a appris. Leur
+  accord à 0,5 pp près est le résultat qui rend la référence utilisable — l'enchère est une
+  propriété de bid v6, pas du joueur de cartes derrière lui.
+  ⚠️ Ne pas rediriger sa sortie dans `head` : le SIGPIPE tue le processus **avant**
+  l'écriture du JSON, et la mesure a l'air d'avoir réussi.
+
 - `dd_ab_revs.sh` / `dd_ab_flags.sh` / `dd_ablation.sh` — les harnais A/B du solveur : le
   premier alterne deux **révisions git**, le deuxième trois **cibles de compilation** bâties de
   la même source, le troisième cinq **configurations d'heuristiques** dans un seul binaire.
