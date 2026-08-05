@@ -294,8 +294,109 @@ class TestVariantes:
                 assert m["best"] in m["best_class"], m["idx"]
 
 
-@pytest.mark.parametrize("version", [4, 5, 6, 7, 8])
+class TestOracleIndifferent:
+    """`cost_score == 0` ne dit **pas** que l'Oracle approuve cette carte-là.
+
+    Le score de donne est en escalier, donc toutes les cartes jouables tombent
+    souvent dans la même case et l'Oracle n'a alors aucun avis à donner. Sans
+    `n_legal`, le client ne pouvait pas distinguer les deux, et lisait « ça
+    paraissait mauvais, ça ne l'était pas » là où rien n'était mauvais.
+
+    Mesuré sur 1190 décisions de donnes jouées : **59,7 %** des décisions n'ont
+    qu'une seule valeur de score de donne, **88,3 % sous contré**, où le barème
+    n'en a que deux.
+    """
+
+    def test_chaque_decision_dit_combien_de_cartes_etaient_jouables(self):
+        blob = TestVariantes._analyse(7)
+        seen = False
+        for m in blob["moves"]:
+            if m.get("forced"):
+                assert "n_legal" not in m  # une seule carte, rien à départager
+                continue
+            assert m["n_legal"] >= 2, m["idx"]
+            assert len(m["best_class"]) <= m["n_legal"], m["idx"]
+            seen = True
+        assert seen, "aucune décision non forcée — test sans objet"
+
+    def test_l_indifference_se_lit_et_elle_arrive(self):
+        """La classe optimale couvre parfois **toutes** les cartes jouables.
+        C'est le prédicat que le client appelle `oracleIsIndifferent`, et il
+        doit être atteignable — sinon le correctif ne mord sur rien."""
+        flat = 0
+        total = 0
+        for seed in range(7, 15):
+            for m in TestVariantes._analyse(seed)["moves"]:
+                if m.get("forced"):
+                    continue
+                total += 1
+                if len(m["best_class"]) >= m["n_legal"]:
+                    flat += 1
+                    # Là où l'Oracle est indifférent, la carte jouée est dans la
+                    # classe par construction : son coût est nul.
+                    assert m["cost_score"] == 0, m["idx"]
+        assert flat, "l'Oracle n'est indifférent nulle part — prédicat mort"
+        # Pas un seuil de qualité, un garde-fou : si ce cas devenait marginal,
+        # la catégorie « sans conséquence » ne mériterait plus d'exister.
+        assert flat / total > 0.2, f"{flat}/{total}"
+
+
+class TestMarcheDuBareme:
+    """La marche est publiée, et c'est l'unité des deux coûts.
+
+    Un seuil absolu sur `cost_score` / `isdd_cost` n'a pas de sens : la marche
+    vaut `4V` sur un contrat normal et `2(162 + V·mult)` sous coinche, soit du
+    simple au triple. C'est ce qui rendait le seuil de Dédé (1,0 point) trois à
+    neuf fois plus fin qu'un seul monde échantillonné.
+    """
+
+    def test_le_blob_porte_la_marche(self):
+        blob = TestVariantes._analyse(7)
+        assert blob["score_step"] > 0
+
+    def test_elle_vaut_4v_sur_un_contrat_normal(self):
+        env = TestSolveScoresRendLesDeuxEchelles._position()
+        contract = env.get_contract()
+        if int(contract["coinche"]) == 0 and int(contract["value"]) != 250:
+            assert env.deal_score_step() == 4 * int(contract["value"])
+
+    @staticmethod
+    def _at(hands, coinche):
+        env = colver.Env.deal_with_hands(0, hands)
+        env.set_contract(1, 120, 1, coinche)  # 120♥ par E-O
+        env.set_phase_playing()
+        return env
+
+    # Dame et Roi d'atout dans deux camps : pas de belote, donc la marche se lit
+    # sur la formule nue. (Une main par couleur les mettrait tous les deux chez
+    # le même joueur — c'est ce qui a fait échouer la première rédaction.)
+    _SPLIT = [[0, 1, 2, 3, 4, 5, 6, 12],       # 7 piques + D♥
+              [7, 8, 9, 10, 11, 13, 14, 15],   # A♠ + le reste des cœurs, R♥ compris
+              list(range(16, 24)),             # carreaux
+              list(range(24, 32))]             # trèfles
+
+    def test_le_contre_double_la_marche(self):
+        """Le même contrat, contré : la marche passe de `4V` à `2(162 + 2V)`.
+        Deux régimes qu'aucun seuil en points ne peut servir ensemble."""
+        assert self._at(self._SPLIT, 0).deal_score_step() == 4 * 120
+        assert self._at(self._SPLIT, 1).deal_score_step() == 2 * (162 + 2 * 120)
+        assert self._at(self._SPLIT, 2).deal_score_step() == 2 * (162 + 3 * 120)
+
+    def test_une_belote_elargit_la_marche_sous_contre(self):
+        """Sous contré toute la belote va au camp gagnant, donc elle s'ajoute des
+        deux côtés de la bascule et **élargit la marche de 2×20**. C'est la
+        raison pour laquelle la marche se demande au moteur au lieu de se
+        recalculer depuis la valeur du contrat."""
+        groupee = [[0, 1, 2, 3, 4, 5, 6, 7],   # tous les piques
+                   list(range(8, 16)),         # tous les cœurs : D♥ et R♥ ensemble
+                   list(range(16, 24)),
+                   list(range(24, 32))]
+        assert (self._at(groupee, 1).deal_score_step()
+                == self._at(self._SPLIT, 1).deal_score_step() + 2 * 20)
+
+
+@pytest.mark.parametrize("version", [4, 5, 6, 7, 8, 9])
 def test_toute_analyse_anterieure_est_perimee(version):
-    """v7 écrit `cost_score`, v8 la courbe, v9 les variantes : rien
-    d'antérieur n'est complet."""
+    """v7 écrit `cost_score`, v8 la courbe, v9 les variantes, v10 `n_legal` et
+    la marche du barème : rien d'antérieur n'est complet."""
     assert not analysis._is_fresh({"version": version, "playgen": True}, None, [0, 0])

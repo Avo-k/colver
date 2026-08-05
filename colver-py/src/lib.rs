@@ -1095,6 +1095,22 @@ impl Env {
         Ok(dict)
     }
 
+    /// La **marche** du barème : le plus grand saut d'un écart de score de donne
+    /// entre deux totaux de points cartes voisins.
+    ///
+    /// `4V` sur un contrat normal, `2(162 + V·mult)` sous coinche — donc 320 à
+    /// 640 d'un côté, 804 à 1044 de l'autre. C'est l'unité dans laquelle un
+    /// écart rendu par `deal_scores` se lit : **un seuil absolu ne peut pas
+    /// servir les deux régimes**, il s'exprime en fraction de cette marche.
+    ///
+    /// Vaut 0 hors contrat, et sur un capot déjà chuté où le barème est
+    /// effectivement constant. Le saut à la frontière du capot dépendant des
+    /// plis déjà ramassés, un appelant qui veut une constante de donne
+    /// l'évalue à la première décision — cf. `scoring::deal_score_step`.
+    fn deal_score_step(&self) -> i32 {
+        colver_core::scoring::deal_score_step(&self.state, &self.played_by) as i32
+    }
+
     /// Solve all 4 trump suits with the DD solver.
     /// Returns dict: {suits: [[ns_pts, ew_pts], ...4], elapsed_ms: f64}
     fn solve_all_suits<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {

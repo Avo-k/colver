@@ -3732,6 +3732,10 @@
    atténuée alors que le coup était bon. */
 .an-unlucky { color: #64b5f6; }
 .an-lucky { color: #ba9ae0; }
+/* « Sans conséquence » n'est ni un compliment ni un reproche : aucune carte
+   jouable ne changeait le score de la donne. Gris, donc — le vert de
+   « Meilleur coup » féliciterait un choix qui n'en était pas un. */
+.an-flat { color: #9e9e9e; }
 .an-forced { color: #888; font-style: italic; }
 .an-cost { font-family: monospace; font-weight: 700; }
 .an-alt { color: #bbb; margin-left: auto; }
@@ -3963,12 +3967,24 @@
 /* The card is drawn as a card (`.card-chip`, cards.css) — pale face, black
    rank, red/black suit glyph — so agreement with what was actually played is
    carried by the chip frame and the two signals never fight over the same ink. */
-.an-bot-card { font-size: var(--fs-sm); }
+/* La pastille de l'Oracle peut porter **plusieurs** cartes (sa classe à
+   égalité) ou aucune (indifférent), là où les deux autres bots en désignent
+   toujours une : d'où le flex, que le cas à une carte ne remarque pas. */
+.an-bot-card {
+    font-size: var(--fs-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    flex-wrap: wrap;
+}
 .an-bot-same {
     border-color: color-mix(in srgb, #81c784 45%, transparent);
     background: color-mix(in srgb, #81c784 12%, rgba(0, 0, 0, 0.25));
 }
 .an-bot-same .an-bot-name { color: #81c784; }
+.an-bot-more { font-size: var(--fs-2xs); color: #999; }
+.an-bot-flat-note { font-size: var(--fs-2xs); color: #9e9e9e; font-style: italic; }
 
 /* Bid move annotations (model annonce) */
 .an-bid-q { color: #999; font-family: monospace; font-size: var(--fs-2xs); margin-left: auto; }

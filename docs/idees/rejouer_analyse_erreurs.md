@@ -206,6 +206,11 @@ IS-DD (ce que le siège au trait pouvait anticiper).
 | > 0 | 0 | malchance — la carte était juste, la donne ne l'était pas | montrer, ne pas compter |
 | 0 | > 0 | coup heureux — ça paraissait mauvais et ça ne l'était pas | montrer, ne pas compter |
 
+⚠️ **Cette grille, écrite telle quelle, est fausse sur ses deux colonnes** — les
+« 0 » n'en sont pas et le « > 0 » se lisait contre un seuil qui n'avait pas
+d'unité. Corrigée au §3.1 ter, à lire avant de s'appuyer sur ce tableau ou sur
+les chiffres du §3.1 bis.
+
 C'est la réponse à « parfois alignées, parfois pas ». Et c'est plus fin que
 comparer les *cartes choisies* : on a une amplitude, donc on peut dire « tu as
 perdu 400 points et tu ne pouvais pas le savoir » — une information, pas un
@@ -249,6 +254,84 @@ Conséquence d'interface, tirée de ce chiffre : **les coups heureux ne vont pas
 dans la liste des moments**. Les y mettre noierait les 52 coups qui ont coûté
 quelque chose sous 76 coups qui n'ont rien coûté. Ils restent annotés sur le
 coup lui-même et dans la couleur de la liste.
+
+### 3.1 ter Les deux colonnes n'étaient pas sur la même échelle (2026-08-06)
+
+Signalé par un joueur : sur un `120♥` **contré**, l'écran affiche « Coup
+heureux — ça paraissait mauvais, ça ne l'était pas » sur un As de carreau posé
+sur la coupe d'un adversaire, tout en montrant une **autre** carte dans la
+pastille de l'Oracle. Deux affirmations contradictoires sur un même coup, et
+aucune des deux n'était fondée. Trois défauts, tous d'échelle.
+
+**1. « coût DD = 0 » n'a jamais voulu dire « l'Oracle approuve cette carte ».**
+Le plus souvent il veut dire que l'Oracle n'a **aucun** avis : le score de donne
+est en escalier, donc toutes les cartes jouables tombent dans la même case.
+Mesuré sur 1190 décisions de donnes jouées (`bid v6` + DouDou50) :
+
+| | part des décisions |
+|---|---|
+| toutes contrées confondues | **59,7 %** |
+| **sous contré** | **88,3 %** |
+| au pli 7 | 81,1 % |
+
+Sous contré le barème n'a que **deux** valeurs (tenu / chuté), donc rien de ce
+qui ne renverse pas le contrat n'est visible de l'Oracle. Sur la position
+signalée, il n'y avait que **deux cartes légales et elles étaient à égalité** :
+`cost_score == 0` y est une tautologie.
+
+Sur 396 décisions croisées avec Dédé : **72,7 % des « coups heureux » sont à une
+position où l'Oracle est indifférent**, et **51,5 % à une position où *rien* ne
+distingue la carte jouée, dans aucune des deux échelles**.
+
+D'où `n_legal` dans le blob (v10) et une cinquième catégorie, `indifferent`
+(« Sans conséquence »). Elle remplace aussi « Meilleur coup » quand l'Oracle est
+indifférent : féliciter un choix qui n'en était pas un est le même défaut vu de
+l'autre bout.
+
+**2. Le seuil de Dédé était trois à neuf fois plus fin qu'un seul monde.**
+`ISDD_NOISE = 1.0` était un nombre de points absolu, or la marche du barème vaut
+`4V` sur un contrat normal (320 à 640) et `2(162 + V·mult)` sous coinche (804 à
+1044). Dédé moyenne des écarts de score sur ses mondes : sous un `120` contré,
+les coûts observés sont **3,0 / 6,1 / 9,0 / 9,0 / 9,0 / 12,2 …**, des multiples
+d'un monde. « Dédé désapprouve » se déclenchait donc sur le bruit
+d'échantillonnage. Le seuil est désormais **2,5 % de la marche**, soit six
+quanta, et la marche vient du moteur (`scoring::deal_score_step`, binding
+`Env.deal_score_step`) plutôt que d'une quatrième copie du barème.
+
+Sur les mêmes 396 décisions :
+
+| seuil | erreur | malchance | coup heureux |
+|---|---|---|---|
+| 1,0 point (l'ancien) | 21 | 9 | 66 |
+| **2,5 % de la marche** | **12** | **18** | **31** |
+| 5 % | 7 | 23 | 18 |
+
+**Le compteur de fautes baisse, et c'est le correctif, pas un dégât** : un seuil
+sous le quantum faisait « voir » à Dédé des écarts qu'il ne mesure pas, donc le
+faisait tomber d'accord avec l'Oracle par accident. Le « 23,1 % des écarts DD
+sont de la malchance » du §3.1 bis **sous-estimait** donc la malchance ; au
+seuil courant c'est 60 %.
+
+**Ce que ça ne corrige pas** : il reste ~2,5× plus de coups heureux que
+d'erreurs à *tous* les seuils. La cause n'est pas Dédé, elle est structurelle —
+l'Oracle ne blâme que 7,6 % des décisions alors que Dédé peut être en désaccord
+partout, donc la quasi-totalité de ses désaccords tombe dans la case « coût
+DD = 0 ». C'est ce déséquilibre qui a motivé `indifferent`, pas le seuil.
+
+**Ce qui reste ouvert** : le 2,5 % est calé sur la **quantification** de
+l'estimateur (marche / nombre de mondes), pas sur sa **dispersion réelle d'une
+exécution à l'autre**. La mesure qui trancherait est `replay_error_grid.py` lancé
+deux fois sur les mêmes positions, comparant les `isdd_cost` appariés. Non faite.
+
+**3. La pastille de l'Oracle désignait une carte là où il y avait une classe.**
+`action_oracle_dd` doit rendre *une* carte, donc elle départage les ex æquo par
+la moins chère — une décision de jeu qui vaut +147 points de marge en arène,
+mais **pas un conseil d'analyse**. Sur les décisions à `cost_score == 0`, cette
+carte diffère de celle jouée **43,8 %** du temps, et **39,3 %** du temps alors
+que les deux sont identiques dans les deux échelles DD. La pastille rend
+désormais `best_class`, ou « indifférent » quand la classe couvre tout ce qui
+était jouable — ce que faisait déjà la ligne « Oracle, au choix : », qui n'était
+affichée que sur une erreur.
 
 ### 3.2 Le piège : IS-DD est seat-bound
 
@@ -401,12 +484,16 @@ pour aller d'une erreur à l'autre — est la bonne forme. Quatre précisions.
 | `imprecision` | Imprécision | `?!` | des points perdus, le contrat tient |
 | `decisive` | Faute décisive | `??` | le contrat bascule |
 | `malchance` | Malchance | `≈` | l'Oracle seul désapprouve |
-| `aubaine` | Coup heureux | `!` | Dédé seul désapprouve |
+| `aubaine` | Coup heureux | `!` | Dédé seul désapprouve, **au-delà de 2,5 % de la marche** |
+| `indifferent` | Sans conséquence | `=` | l'Oracle n'a pas d'avis : `best_class` couvre les `n_legal` cartes |
 
 Deux familles qui ne se mélangent pas, et **c'est la palette qui doit le dire** :
-les trois premières sont des jugements (jaune → rouge), les deux dernières des
+les trois premières sont des jugements (jaune → rouge), les deux suivantes des
 explications (bleu, violet — délibérément hors de la gamme du blâme). Sans ça,
 « Malchance » se lit comme un cran de faute alors que le coup était bon.
+`indifferent` est **gris** : ni compliment ni reproche, il n'y avait pas de coup
+à choisir. Il l'emporte sur `parfait` (§3.1 ter), et couvre **59,7 %** des
+décisions — 88,3 % sous contré.
 
 **Par siège, regroupé par camp.** Le résumé actuel est déjà par siège, et en solo
 trois sièges sur quatre sont des bots : un total par camp cache le seul chiffre
@@ -570,12 +657,14 @@ affichée en permanence. Un commutateur de bot aurait ajouté une troisième
 
 1. ✅ **Que le filtre IS-DD retire une part utile des écarts DD.** **Mesuré**
    (§3.1 bis) : 23,1 % des écarts DD sont de la malchance, et le coût DD ne
-   permet pas de les distinguer. Le filtre sert. En revanche la mesure a ouvert
-   une question que la fiche n'avait pas prévue — 76 « coups heureux » contre 40
-   erreurs, sans qu'on sache départager la chance de la faiblesse de Dédé.
-   La mesure qui trancherait : refaire la grille à un budget IS-DD nettement
-   plus élevé (2000 ms) et regarder si cette case se vide. Si elle se vide,
-   c'était Dédé ; sinon, c'est le jeu.
+   permet pas de les distinguer. Le filtre sert — et il en retire **davantage**
+   qu'annoncé une fois le seuil remis à l'échelle : 60 % au §3.1 ter.
+   La question ouverte par cette mesure — 76 « coups heureux » contre
+   40 erreurs — était mal posée : ce n'était **ni** la chance **ni** la
+   faiblesse de Dédé, mais deux défauts d'échelle et une asymétrie structurelle
+   (§3.1 ter). Refaire la grille à 2000 ms ne l'aurait pas montré : l'écart
+   persiste à tous les seuils, parce que l'Oracle ne blâme que 7,6 % des
+   décisions.
 2. **Que les joueurs humains font plus d'erreurs que 2,3 par donne.** Plausible,
    mais la seule dégradation testée (un siège à l'heuristique) n'a rendu que
    +0,3. La base de prod permettrait de le mesurer pour de vrai.

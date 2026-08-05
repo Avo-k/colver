@@ -277,6 +277,44 @@ pub fn contract_made(
     card[taker] + belote[taker] >= state.contract.point_value() as i16
 }
 
+/// La **marche** du barème : le plus grand saut de [`deal_score_delta`] entre
+/// deux totaux de points cartes voisins.
+///
+/// [`deal_score_delta`] est une fonction en escalier des points cartes — plate
+/// sous le seuil du contrat, de pente 2 au-dessus dans un contrat normal tenu,
+/// et **plate des deux côtés sous contré**, où seul compte tenu/chuté. Sa marche
+/// est donc l'unité dans laquelle un écart de score de donne se lit : `4V` sur
+/// un contrat normal, `2(162 + V·mult)` sous coinche. Un écart bien plus petit
+/// qu'elle ne dit rien de l'issue de la donne.
+///
+/// **À quoi ça sert** : comparer un écart de score de donne à un seuil absolu
+/// n'a pas de sens, la même valeur ne pesant pas pareil selon le contrat. Un
+/// seuil s'exprime en fraction de cette marche. C'est ce que fait la grille
+/// erreur / malchance / coup heureux de Rejouer, dont le seuil valait 1,0 point
+/// pour tous les contrats — trois à neuf fois plus fin que ce qu'un seul monde
+/// IS-DD peut déplacer sous contré.
+///
+/// **Deux réserves.** (1) Le saut à la frontière du capot (`ns == 0`) dépend de
+/// `state.tricks_won[0]`, seule ambiguïté que [`total_card_points`] documente :
+/// la valeur rendue peut donc changer en cours de donne pour un capot annoncé
+/// par E-O. L'appelant qui veut une constante de donne l'évalue à la première
+/// décision, avant qu'aucun pli ne soit ramassé. (2) Elle vaut 0 sur un capot
+/// déjà chuté, où le barème est effectivement constant : plus aucune carte ne
+/// change le score, ce qui est une réponse et pas une panne.
+pub fn deal_score_step(state: &GameState, played_by: &[crate::card::CardSet; 4]) -> i16 {
+    if state.contract.value == 0 {
+        return 0;
+    }
+    let mut step = 0i16;
+    let mut prev = deal_score_delta(state, played_by, 0);
+    for ns in 1..=CAPOT_PTS {
+        let cur = deal_score_delta(state, played_by, ns);
+        step = step.max((cur - prev).abs());
+        prev = cur;
+    }
+    step
+}
+
 /// Convert deal score to rewards for RL: team 0 gets positive/negative based on comparison.
 pub fn deal_rewards(state: &GameState) -> [f32; 2] {
     if state.contract.value == 0 {
@@ -369,6 +407,45 @@ mod tests {
                 4 * contract,
                 "la marche d'un contrat à {contract} devrait valoir 4V"
             );
+        }
+    }
+
+    #[test]
+    fn deal_score_step_is_the_largest_jump_of_the_scale() {
+        // La marche doit valoir `4V` sur un contrat normal et `2(162 + V·mult)`
+        // sous coinche — c'est-à-dire beaucoup plus, ce qui est tout l'intérêt :
+        // un seuil absolu ne peut pas servir les deux régimes. Écrit ici en
+        // formule fermée, alors que `deal_score_step` scanne le barème : si les
+        // deux divergent, c'est le barème qui a bougé et le seuil de Rejouer
+        // avec lui.
+        let played = [0u32; 4];
+        for contract in [80i16, 100, 120, 160] {
+            let value = (contract / 10) as u8;
+            for taker_team in 0..2u8 {
+                for (coinche, mult) in [(0u8, 0i16), (1, 2), (2, 3)] {
+                    let state = make_playing_state(taker_team, value, 1, coinche);
+                    let expect = if coinche == 0 {
+                        4 * contract
+                    } else {
+                        2 * (TOTAL_PTS + contract * mult)
+                    };
+                    assert_eq!(
+                        deal_score_step(&state, &played),
+                        expect,
+                        "contrat {contract}, preneur {taker_team}, coinche {coinche}"
+                    );
+                }
+            }
+        }
+        // Et elle est bien le plus grand saut : aucune paire de points cartes
+        // voisins ne la dépasse.
+        let state = make_playing_state(1, 12, 1, 1);
+        let step = deal_score_step(&state, &played);
+        for ns in 1..=CAPOT_PTS {
+            let jump =
+                (deal_score_delta(&state, &played, ns) - deal_score_delta(&state, &played, ns - 1))
+                    .abs();
+            assert!(jump <= step, "saut de {jump} à {ns} points, marche annoncée {step}");
         }
     }
 

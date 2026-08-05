@@ -12,6 +12,15 @@ Rejouer classe un coup en croisant deux avis qui ne voient pas la même chose :
     coût DD > 0, coût IS-DD = 0  →  malchance
     coût DD = 0, coût IS-DD > 0  →  coup heureux
 
+**Deux pièges d'échelle, corrigés le 2026-08-06.** (1) « coût DD = 0 » ne veut
+pas dire que l'Oracle approuve la carte jouée : le score de donne est en
+escalier, donc **59,7 % des décisions** — 88,3 % sous contré — ont *toutes*
+leurs cartes jouables dans la même case, et l'Oracle n'a alors aucun avis.
+C'est la colonne « sans conséquence ». (2) « coût IS-DD > 0 » se lisait contre
+un seuil absolu de 1,0 point, trois à neuf fois plus fin que ce qu'**un seul
+monde** peut déplacer sous contré : le seuil est désormais une fraction de la
+marche du barème.
+
 **Ce que ce script décide** : si presque tous les écarts DD sont aussi des
 écarts IS-DD, le filtre ne sert à rien et le compteur peut rester sur DD seul.
 C'était la croyance n°1 de `docs/idees/rejouer_analyse_erreurs.md`.
@@ -36,11 +45,15 @@ import colver  # noqa: E402
 import runlog  # noqa: E402
 from replay_error_scale import _models, med, play_one_deal  # noqa: E402
 
-# Le seuil sous lequel on considère que Dédé approuve. IS-DD est une moyenne sur
-# des mondes échantillonnés : il ne rend presque jamais exactement 0, même quand
-# il tient deux cartes pour équivalentes. Doit rester aligné sur `ISDD_NOISE`
-# dans `replay.js`.
-NOISE = 1.0
+# Le seuil sous lequel on considère que Dédé approuve, en **fraction de la
+# marche du barème** (`score_step` : `4V`, ou `2(162 + V·mult)` sous coinche).
+# IS-DD est une moyenne sur des mondes échantillonnés, donc il ne rend presque
+# jamais exactement 0 ; et son quantum — ce qu'un seul monde qui bascule déplace
+# — vaut `marche / mondes`, soit ~0,4 %. Un seuil absolu ne peut pas servir les
+# deux régimes : sous contré la marche vaut plus du double de celle d'un contrat
+# normal. Doit rester aligné sur `ISDD_NOISE_FRAC` dans `replay.js`.
+NOISE_FRAC = 0.025
+NOISE_FLOOR = 1.0
 
 
 def main():
@@ -62,9 +75,9 @@ def main():
     belief_path = str(colver.belief_model_path() or "") or None
     rng = random.Random(args.seed)
 
-    grid = {"erreur": 0, "malchance": 0, "aubaine": 0, "rien": 0}
+    grid = {"erreur": 0, "malchance": 0, "aubaine": 0, "indifferent": 0, "rien": 0}
     swing_split = {"imprecision": 0, "decisive": 0}
-    dd_costs, isdd_costs = [], []
+    dd_costs, isdd_costs, steps = [], [], []
     unlucky_dd, error_dd = [], []
     no_isdd = 0
 
@@ -76,6 +89,9 @@ def main():
 
             an = analysis._analyze_sync(game, bid_model_path=bid_path)
             by_idx = {m["idx"]: m for m in an["moves"]}
+            # La marche du barème de CETTE donne : le seuil s'y exprime.
+            noise = max(NOISE_FLOOR, NOISE_FRAC * (an.get("score_step") or 0))
+            steps.append(an.get("score_step"))
 
             runner = agent_review._Runner(
                 game, play_model=dmc_path, belief_model=belief_path)
@@ -96,7 +112,11 @@ def main():
                 dd_costs.append(dd)
                 isdd_costs.append(isdd)
                 oracle = dd > 0
-                dede = isdd > NOISE
+                dede = isdd > noise
+                # `cost_score == 0` ne veut pas dire que l'Oracle approuve cette
+                # carte-là : le plus souvent il n'a **aucun** avis, toutes les
+                # cartes jouables tombant dans la même case du barème.
+                flat = len(m.get("best_class") or ()) >= m.get("n_legal", 1)
                 if oracle and dede:
                     grid["erreur"] += 1
                     error_dd.append(dd)
@@ -106,6 +126,8 @@ def main():
                     unlucky_dd.append(dd)
                 elif dede:
                     grid["aubaine"] += 1
+                elif flat:
+                    grid["indifferent"] += 1
                 else:
                     grid["rien"] += 1
             print(f"\rdonne {d + 1}/{args.deals} — {sum(grid.values())} décisions",
@@ -119,10 +141,17 @@ def main():
           + (f"  ({no_isdd} sans avis de Dédé)" if no_isdd else ""))
     print(f"budget IS-DD : {agent_review.ISDD_MS} ms/carte\n")
 
+    ok_steps = [s for s in steps if s]
+    if ok_steps:
+        print(f"marche du barème : {min(ok_steps)} à {max(ok_steps)}, "
+              f"seuil de {NOISE_FRAC * 100:g} % soit "
+              f"{NOISE_FRAC * min(ok_steps):.0f} à {NOISE_FRAC * max(ok_steps):.0f} points\n")
+
     blamed = grid["erreur"] + grid["malchance"]
     print(f"{'erreur (les deux désapprouvent)':<34} {grid['erreur']:>5}")
     print(f"{'malchance (Oracle seul)':<34} {grid['malchance']:>5}")
     print(f"{'coup heureux (Dédé seul)':<34} {grid['aubaine']:>5}")
+    print(f"{'sans conséquence (Oracle sans avis)':<34} {grid['indifferent']:>5}")
     print(f"{'rien à signaler':<34} {grid['rien']:>5}")
     if blamed:
         share = 100 * grid["malchance"] / blamed
@@ -141,14 +170,16 @@ def main():
         runlog.save(
             "replay_error_grid", args.tag or "grille",
             {"deals": args.deals, "seed": args.seed,
-             "isdd_ms": agent_review.ISDD_MS, "noise": NOISE},
+             "isdd_ms": agent_review.ISDD_MS,
+             "noise_frac": NOISE_FRAC, "noise_floor": NOISE_FLOOR},
             {"grid": grid, "swing_split": swing_split, "decisions": n,
              "no_isdd": no_isdd,
              "unlucky_share_of_blamed": (round(100 * grid["malchance"] / blamed, 1)
                                          if blamed else None),
              "median_dd_cost_error": med(error_dd) if error_dd else None,
              "median_dd_cost_unlucky": med(unlucky_dd) if unlucky_dd else None},
-            payload={"dd_costs": dd_costs, "isdd_costs": isdd_costs},
+            payload={"dd_costs": dd_costs, "isdd_costs": isdd_costs,
+                     "score_steps": steps},
             models=[bid_path, dmc_path, belief_path], took_s=t.s)
 
 

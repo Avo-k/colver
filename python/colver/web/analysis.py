@@ -37,14 +37,18 @@ logger = logging.getLogger(__name__)
 #      tracer la donne du premier coup au dernier (2026-08-05).
 # v9 : chaque erreur porte ses **deux** variantes déroulées en jeu parfait — la
 #      suite du coup joué et celle du coup de l'Oracle (2026-08-06).
-ANALYSIS_VERSION = 9
+# v10 : chaque coup porte `n_legal`, et le blob la **marche du barème**. Sans
+#      les deux, `cost_score == 0` se lisait « l'Oracle approuve cette carte »
+#      alors qu'il veut dire, 59,7 % du temps, « aucune carte légale ne change
+#      le score de donne » — 88,3 % sous contré (2026-08-06).
+ANALYSIS_VERSION = 10
 
 # Versions dont les valeurs DD restent bonnes. Ni v7, ni v8, ni v9 ne touchent au
 # barème ou aux coups légaux — elles relisent le même solve, ou en gardent une
 # valeur qui était jetée — donc `oracle_bids` d'une analyse antérieure reste
 # exact. À vider au prochain bump qui touche vraiment aux règles : là, tout ce
 # qui précède est périmé.
-_DD_COMPATIBLE_VERSIONS = (5, 6, 7, 8, 9)
+_DD_COMPATIBLE_VERSIONS = (5, 6, 7, 8, 9, 10)
 
 # ── Ce qu'est une erreur ──
 #
@@ -184,6 +188,9 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
 
     moves = []
     bids = []
+    # La marche de l'escalier, renseignée à la première décision de jeu. Reste
+    # `None` sur une donne passée : sans contrat il n'y a pas d'échelle.
+    score_step = None
     # Le journal en entiers nus : c'est le préfixe que le moteur de variantes
     # rejoue pour se construire sa propre partie (il n'emprunte jamais `env` —
     # cf. l'en-tête de `variation`).
@@ -242,6 +249,12 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
             legals = list(env.legal_actions())
             if action not in legals:
                 break  # corrupt record — stop rather than emit nonsense
+            if score_step is None:
+                # La marche du barème, prise à la **première** décision de jeu :
+                # c'est une constante du contrat, sauf à la frontière du capot,
+                # que `total_card_points` ne sait lever qu'avant le premier pli
+                # ramassé (cf. `scoring::deal_score_step`).
+                score_step = int(env.deal_score_step())
             if len(legals) == 1:
                 moves.append({
                     "idx": idx, "player": player, "action": action,
@@ -288,6 +301,11 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                     "idx": idx, "player": player, "action": action,
                     "best": int(result["best_card"]),
                     "best_class": best_class,
+                    # Combien de cartes il y avait à départager. Sans ce
+                    # nombre, `len(best_class)` ne dit pas si l'Oracle a
+                    # *choisi* ou s'il est **indifférent** — et `cost_score`
+                    # vaut 0 dans les deux cas. Cf. `_categorize`.
+                    "n_legal": len(legals),
                     "cost": int(cost),
                     "cost_score": int(cost_score),
                     "swing": swing,
@@ -324,6 +342,11 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
         "bids": bids,
         "oracle_bids": oracle_bids,
         "curve": curve,
+        # L'unité de `cost_score` et d'`isdd_cost` : `4V` sur un contrat normal,
+        # `2(162 + V·mult)` sous coinche. Les deux régimes sont dans un rapport
+        # de plus de deux, donc **aucun seuil absolu ne peut servir les deux** —
+        # tout seuil sur ces échelles s'exprime en fraction de ce nombre.
+        "score_step": score_step,
         "summary": summary,
     }
 

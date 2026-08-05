@@ -110,6 +110,7 @@ let _analysisSummary = null;
 let _bidsByIdx = null;       // action_idx -> bid analysis (model annonce)
 let _oracleBids = null;      // deal-level DD contracts {suits, best}
 let _curve = null;           // séries de la courbe (points, projection, seuil)
+let _scoreStep = null;       // marche du barème — l'unité de cost_score / isdd_cost
 let _initialHands = null;    // all 4 hands at deal start (replay = full info)
 let _gameCfn = null;         // full-game CFN (auction + play) — porte le lien vers /analyse/jeu
 let _agentsByIdx = null;     // action_idx -> {doudou, oracle, isdd} card choices
@@ -152,7 +153,9 @@ const CATEGORY_UI = {
     malchance: { tag: '≈',  cls: 'an-unlucky', label: 'Malchance',
                  hint: 'bon choix vu de ce siège — la donne était contre vous' },
     aubaine:   { tag: '!',  cls: 'an-lucky',  label: 'Coup heureux',
-                 hint: 'ça paraissait mauvais, ça ne l’était pas' },
+                 hint: 'risqué vu de ce siège, sans conséquence sur la donne' },
+    indifferent: { tag: '=', cls: 'an-flat',  label: 'Sans conséquence',
+                   hint: 'aucune carte jouable ici ne changeait le score de la donne' },
     // Catégories des analyses d'avant la v7 (échelle en points cartes). Une
     // ligne périmée est recalculée, mais elle peut être servie le temps que
     // `get_or_compute` rende la main.
@@ -169,25 +172,86 @@ const CATEGORY_UI = {
 // siège. D'où la grille : les deux d'accord = vraie erreur ; l'Oracle seul =
 // malchance ; Dédé seul = coup heureux.
 //
-// `isdd_cost` est en écart de score de donne, la même échelle que `cost_score`.
-// Le seuil n'est pas zéro : IS-DD est une moyenne sur des mondes échantillonnés,
-// donc il rend rarement exactement 0 même quand il approuve.
-const ISDD_NOISE = 1.0;
+// **`cost_score == 0` ne veut pas dire « l'Oracle approuve cette carte ».** La
+// plupart du temps il veut dire que l'Oracle n'a **aucun** avis : le score de
+// donne est en escalier, donc toutes les cartes jouables tombent souvent dans
+// la même case. Mesuré sur 1190 décisions de donnes jouées : **59,7 %** des
+// décisions, et **88,3 % sous contré**, où le barème n'a que deux valeurs.
+// D'où `n_legal`, et la catégorie `indifferent` — sans elle la page dit
+// « meilleur coup » là où il n'y avait pas de coup à choisir, et « ça paraissait
+// mauvais, ça ne l'était pas » là où rien n'était mauvais.
+function oracleIsIndifferent(an) {
+    return an.n_legal !== undefined && an.best_class !== undefined
+        && an.best_class.length >= an.n_legal;
+}
+
+// Le seuil au-delà duquel on considère que Dédé désapprouve, en **fraction de
+// la marche du barème**.
+//
+// Il valait 1,0 point pour tous les contrats. C'est un non-sens d'échelle :
+// `isdd_cost` est une moyenne d'écarts de score de donne sur des mondes
+// échantillonnés, or cette échelle est en escalier et sa marche vaut `4V` sur
+// un contrat normal (320 à 640) mais `2(162 + V·mult)` sous coinche (804 à
+// 1044). Sous un 120 contré, Dédé résout ~100 à 270 mondes : **un seul monde
+// qui bascule déplace la moyenne de 3 à 9 points**, soit trois à neuf fois le
+// seuil. « Dédé désapprouve » se déclenchait donc sur le bruit
+// d'échantillonnage, ce qui explique le déséquilibre relevé à la conception —
+// deux fois plus de « coups heureux » que d'erreurs.
+//
+// **2,5 %**, soit « Dédé donne à ce coup moins de 2,5 % de chance en moins
+// d'aboutir à la bonne issue » — un énoncé qui a le même sens sur tous les
+// contrats, ce qu'un nombre de points n'a pas. Les quanta observés sous contré
+// valent 0,39 % de la marche, donc le seuil est à **six quanta**, et les coups
+// heureux qui survivent coûtent de 11 à 158 points (3 % à 23 % de la marche).
+//
+// Effet mesuré sur 396 décisions de donnes jouées, budget de production :
+//
+//     seuil     erreur  malchance  coup heureux
+//     1,0 pt        21          9            66      ← l'ancien
+//     2,5 %         12         18            31
+//     5 %            7         23            18
+//
+// **Le compteur de fautes baisse, et c'est le correctif, pas un dégât.** Un
+// seuil sous le quantum faisait « voir » à Dédé des écarts qu'il ne mesure pas,
+// donc le faisait tomber d'accord avec l'Oracle par accident : ça gonflait
+// « erreur » aux dépens de « malchance ». **Ce qui n'est pas corrigé ici** :
+// il y aura toujours ~2,5× plus de coups heureux que d'erreurs à tous les
+// seuils, parce que l'Oracle ne blâme que 7,6 % des décisions alors que Dédé
+// peut être en désaccord partout. C'est ce déséquilibre qui a motivé
+// `indifferent`, pas le seuil.
+//
+// **Ce qui reste à faire** : caler ce chiffre sur la dispersion réelle de Dédé
+// d'une exécution à l'autre (`replay_error_grid.py` deux fois sur les mêmes
+// positions) plutôt que sur la quantification. Non fait.
+//
+// Le plancher absolu couvre le capot déjà chuté, où la marche vaut 0 parce que
+// plus rien ne peut changer le score.
+const ISDD_NOISE_FRAC = 0.025;
+const ISDD_NOISE_FLOOR = 1.0;
+
+function isddNoise() {
+    return Math.max(ISDD_NOISE_FLOOR, ISDD_NOISE_FRAC * (_scoreStep || 0));
+}
 
 function moveCategory(an, idx) {
     if (!an || an.forced) return null;
     const base = an.category || 'parfait';
+    const flat = oracleIsIndifferent(an);
     const review = _agentsByIdx && _agentsByIdx[idx];
     const isdd = review && review.isdd_cost;
     // Pas encore de revue, ou une revue v2 sans le coût : on s'en tient à
     // l'Oracle plutôt que d'inventer un verdict.
-    if (isdd === null || isdd === undefined) return base;
+    if (isdd === null || isdd === undefined) return flat ? 'indifferent' : base;
 
     const oracleBlames = (an.cost_score || 0) > 0;
-    const isddBlames = isdd > ISDD_NOISE;
+    const isddBlames = isdd > isddNoise();
     if (oracleBlames && !isddBlames) return 'malchance';
+    // Un coup heureux reste un coup heureux quand l'Oracle est indifférent —
+    // c'est même le cas typique : le risque était réel depuis ce siège et la
+    // donne n'en dépendait pas. Ce qui a changé, c'est qu'il faut désormais un
+    // écart que Dédé peut réellement mesurer pour le dire.
     if (!oracleBlames && isddBlames) return 'aubaine';
-    return base;
+    return flat ? 'indifferent' : base;
 }
 
 function pct(p) {
@@ -259,6 +323,7 @@ function botsHtml(idx, played) {
     if (entry.forced) return '';
 
     const chips = REVIEW_BOTS.map(bot => {
+        if (bot.key === 'oracle') return oracleChipHtml(idx, played, entry.oracle, bot);
         const card = entry[bot.key];
         if (card === null || card === undefined) return '';
         const same = card === played;
@@ -269,6 +334,46 @@ function botsHtml(idx, played) {
     }).filter(Boolean).join('');
 
     return chips ? `<div class="an-bots">${chips}</div>` : '';
+}
+
+// La pastille de l'Oracle, seule des trois à ne pas désigner une carte.
+//
+// `action_oracle_dd` **doit** en rendre une, donc elle départage les ex æquo par
+// la moins chère (`solve_best_card`). C'est une décision de jeu — elle vaut
+// +147 points de marge en arène — mais ce n'est **pas un conseil d'analyse** :
+// sur les décisions à `cost_score == 0`, cette carte diffère de celle jouée
+// **43,8 %** du temps, et 39,3 % du temps alors que les deux sont identiques
+// dans les deux échelles DD. L'écran montrait donc un désaccord là où il n'y en
+// avait aucun — c'est ce qui rendait « Coup heureux » incompréhensible.
+//
+// Trois états, dans cet ordre : l'Oracle n'a pas d'avis, il en a un qui inclut
+// la carte jouée, il en a un qui l'exclut. La classe vient de l'analyse, qui
+// arrive par une requête distincte de la revue — d'où le repli sur la carte de
+// la revue tant qu'elle n'est pas là.
+function oracleChipHtml(idx, played, fallback, bot) {
+    const an = _analysisByIdx && _analysisByIdx[idx];
+    const klass = an && an.best_class && an.best_class.length ? an.best_class : null;
+    if (!klass) {
+        if (fallback === null || fallback === undefined) return '';
+        return `<span class="an-bot ${fallback === played ? 'an-bot-same' : 'an-bot-diff'}" ` +
+            `title="${bot.title}"><span class="an-bot-name">${bot.label}</span>` +
+            `<span class="an-bot-card">${cardChipHtml(fallback)}</span></span>`;
+    }
+    if (oracleIsIndifferent(an)) {
+        return `<span class="an-bot an-bot-flat" ` +
+            `title="Les ${an.n_legal} cartes jouables mènent au même score de donne"` +
+            `><span class="an-bot-name">${bot.label}</span>` +
+            `<span class="an-bot-flat-note">indifférent</span></span>`;
+    }
+    const same = klass.includes(played);
+    const shown = klass.slice(0, 3).map(cardChipHtml).join('');
+    const more = klass.length > 3 ? `<span class="an-bot-more">+${klass.length - 3}</span>` : '';
+    const title = klass.length > 1
+        ? `${bot.title} — ${klass.length} cartes à égalité`
+        : bot.title;
+    return `<span class="an-bot ${same ? 'an-bot-same' : 'an-bot-diff'}" title="${title}">` +
+        `<span class="an-bot-name">${bot.label}</span>` +
+        `<span class="an-bot-card">${shown}${more}</span></span>`;
 }
 
 // Ce que l'Oracle aurait joué. **La classe, pas son représentant** : en score de
@@ -912,11 +1017,12 @@ function renderCurve() {
 //
 // Le critère d'entrée est **le coût pour l'Oracle**, pas la catégorie affichée :
 // une malchance a sa place ici (elle explique un écart réel au score), mais un
-// coup heureux n'en a pas. Mesuré sur 485 décisions
-// (`scripts/analysis/replay_error_grid.py`) : 40 erreurs, 12 malchances, et
-// **76 coups heureux** — les lister noierait les moments qui comptent sous
-// deux fois leur nombre de coups qui n'ont rien coûté. Ils restent visibles là
-// où ils ont du sens : sur le coup lui-même, et dans la couleur de la liste.
+// coup heureux n'en a pas — et un coup sans conséquence encore moins. Mesuré
+// sur 396 décisions (`scripts/analysis/replay_error_grid.py`) au seuil courant :
+// 12 erreurs, 18 malchances, 31 coups heureux, et **267 coups sans conséquence**
+// sur 396. Les lister noierait les moments qui comptent sous vingt fois leur
+// nombre de coups qui n'ont rien coûté. Ils restent visibles là où ils ont du
+// sens : sur le coup lui-même, et dans la couleur de la liste.
 function keyMoments() {
     if (!_analysisByIdx) return [];
     const out = [];
@@ -1009,6 +1115,7 @@ async function loadAnalysis(gameId) {
     _bidsByIdx = null;
     _oracleBids = null;
     _curve = null;
+    _scoreStep = null;
     renderAnalysisSummary();
     renderCurve();
     try {
@@ -1026,6 +1133,10 @@ async function loadAnalysis(gameId) {
         for (const b of data.bids || []) _bidsByIdx[b.idx] = b;
         _oracleBids = data.oracle_bids || null;
         _curve = data.curve || null;
+        // Absent d'un blob antérieur à la v10 : `isddNoise()` retombe alors sur
+        // son plancher, c'est-à-dire l'ancien comportement, plutôt que sur un
+        // seuil calculé à partir de rien.
+        _scoreStep = data.score_step ?? null;
         _analysisSummary = data.summary;
         renderAnalysisSummary();
         renderErrors();
