@@ -3739,6 +3739,56 @@
    les rend rouges OU noirs (tokens.css). Un rouge local n'avait de contrepartie
    noire nulle part, d'où des ♠ et ♣ couleur du texte ambiant. */
 
+/* ===== La courbe de la donne =====
+   Sous le tapis, pleine largeur : l'axe des x est un index de coup, pas une
+   grandeur physique, donc `preserveAspectRatio="none"` l'étire sans mentir —
+   et `vector-effect: non-scaling-stroke` (posé dans le SVG) empêche les traits
+   de s'épaissir avec lui. */
+#replay-curve {
+    margin: 6px 0 2px;
+    padding: 4px 6px 2px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.22);
+}
+#replay-curve svg {
+    display: block;
+    width: 100%;
+    height: 116px;
+    cursor: pointer;
+}
+
+/* Le réalisé : discret, c'est le décor. */
+.cv-taken { fill: rgba(230, 190, 90, 0.20); stroke: none; }
+/* La projection : c'est elle qu'on lit, donc le seul trait épais. Sa couleur
+   dit tout — au-dessus du seuil le contrat passe, en dessous il chute. */
+.cv-dd { stroke-width: 2.2; }
+.cv-made { stroke: var(--c-success, #66bb6a); }
+.cv-down { stroke: var(--c-danger, #ef5350); }
+/* Le seuil : une consigne, pas une mesure — d'où les pointillés. */
+.cv-threshold { stroke: rgba(255, 255, 255, 0.55); stroke-width: 1.2; stroke-dasharray: 4 3; }
+.cv-cursor { stroke: var(--c-accent); stroke-width: 1; opacity: 0.8; }
+
+.cv-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 2px;
+    font-size: var(--fs-xs, 0.72rem);
+    opacity: 0.75;
+}
+.cv-key::before {
+    content: '';
+    display: inline-block;
+    width: 10px; height: 3px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.cv-k-taken::before { background: rgba(230, 190, 90, 0.6); height: 8px; }
+.cv-k-dd::before { background: var(--c-success, #66bb6a); }
+.cv-k-thr::before { background: rgba(255, 255, 255, 0.55); }
+.cv-taker { margin-left: auto; font-weight: 600; opacity: 0.9; }
+
 /* ===== « Analyse rapide » d'une annonce =====
    Deux chiffres en place, sans quitter Rejouer. Le bouton vit au-dessus du lien
    « Analyser cette annonce → » : l'un répond « est-ce que ça passe ? », l'autre

@@ -32,13 +32,16 @@ logger = logging.getLogger(__name__)
 # v6 : l'avis de bid v6 est calculé au score de partie de la donne, plus à 0-0.
 # v7 : le coût d'une carte se lit en **score de donne** et non plus en points
 #      cartes, et la catégorie avec lui (2026-08-05).
-ANALYSIS_VERSION = 7
+# v8 : le blob porte `curve` — points ramassés, projection DD et seuil, de quoi
+#      tracer la donne du premier coup au dernier (2026-08-05).
+ANALYSIS_VERSION = 8
 
-# Versions dont les valeurs DD restent bonnes. v7 ne touche ni au barème ni aux
-# coups légaux — il lit autrement le même solve — donc `oracle_bids` d'une
-# analyse v5/v6 reste exact. À vider au prochain bump qui touche vraiment aux
-# règles : là, tout ce qui précède est périmé.
-_DD_COMPATIBLE_VERSIONS = (5, 6, 7)
+# Versions dont les valeurs DD restent bonnes. Ni v7 ni v8 ne touchent au barème
+# ou aux coups légaux — elles relisent le même solve, ou en gardent une valeur
+# qui était jetée — donc `oracle_bids` d'une analyse antérieure reste exact. À
+# vider au prochain bump qui touche vraiment aux règles : là, tout ce qui
+# précède est périmé.
+_DD_COMPATIBLE_VERSIONS = (5, 6, 7, 8)
 
 # ── Ce qu'est une erreur ──
 #
@@ -157,6 +160,25 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
     analysts = _playgen_analysts(env, playgen_model_path)
     had_playgen = analysts is not None
 
+    # ── La courbe de la donne ──
+    #
+    # Un seul axe, en points cartes du **preneur**, et trois tracés qui s'y
+    # lisent ensemble : ce qu'il a déjà ramassé, ce qu'il fera en jeu parfait
+    # depuis chaque position, et le seuil à atteindre.
+    #
+    # **Orientée preneur, jamais N-S.** Les points cartes sont à somme
+    # constante (162), donc tracer les deux camps dessinerait deux courbes
+    # miroir : la seconde n'ajoute pas un bit d'information.
+    #
+    # La projection est plate tant que personne ne se trompe — jouer le meilleur
+    # coup ne change pas la valeur du nœud — et décroche exactement à une erreur,
+    # de sa hauteur. Son passage sous le seuil **est** une « faute décisive » :
+    # la courbe et le panneau des moments racontent donc la même chose par
+    # construction.
+    curve_bids = []   # montée du seuil pendant l'enchère
+    curve_pts = []    # points ramassés par le preneur, après chaque pli
+    curve_dd = []     # projection en jeu parfait, à chaque décision
+
     moves = []
     bids = []
     for idx, entry in enumerate(game["actions"]):
@@ -195,6 +217,14 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                     })
             if len(bid) > 3:
                 bids.append(bid)
+        if phase == 0 and action != 0 and action < 41:
+            # Le seuil monte par paliers pendant l'enchère, puis se fige au
+            # contrat. C'est la même horizontale que pendant le jeu, donc
+            # l'enchère est la première moitié du même graphe — pas un second
+            # tracé. Coinche et surcoinche (41, 42) multiplient l'enjeu sans
+            # déplacer le seuil : elles sortent d'ici.
+            value = 250 if 37 <= action <= 40 else 80 + (action - 1) // 4 * 10
+            curve_bids.append([idx, value, player % 2])
         if analysts:
             if phase == 0:
                 for a in analysts:
@@ -224,6 +254,13 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                 cost = ((best_ns - scores[action]) if team == 0
                         else (scores[action] - best_ns))
 
+                # `best_ns` **est** la valeur DD du nœud : ce que N-S fera si les
+                # quatre joueurs jouent parfaitement à partir d'ici. Elle était
+                # jetée après le calcul du coût ; c'est la ligne de projection.
+                taker = env.get_contract()["team"]
+                total = 252 if best_ns in (0, 252) else 162
+                curve_dd.append([idx, best_ns if taker == 0 else total - best_ns])
+
                 best_deal = max(deal.values()) if team == 0 else min(deal.values())
                 cost_score = ((best_deal - deal[action]) if team == 0
                               else (deal[action] - best_deal))
@@ -245,7 +282,15 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                     "category": _categorize(cost_score, swing),
                 })
         env.step(action)
+        if phase == 1:
+            # Après le `step` : `get_points` ne compte un pli qu'une fois
+            # résolu. Le dix de der (10, ou 100 sur capot) y est déjà, donc la
+            # dernière marche est plus haute que les autres — c'est le jeu, pas
+            # un artefact.
+            taker = env.get_contract()["team"]
+            curve_pts.append([idx, int(env.get_points()[taker])])
 
+    curve = _curve(env, curve_bids, curve_pts, curve_dd)
     summary = _summarize(moves)
     return {
         "version": ANALYSIS_VERSION,
@@ -254,7 +299,45 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
         "moves": moves,
         "bids": bids,
         "oracle_bids": oracle_bids,
+        "curve": curve,
         "summary": summary,
+    }
+
+
+def _curve(env, bids, points, dd):
+    """Les trois séries de la courbe, plus le seuil à atteindre.
+
+    `threshold` est en points **cartes** : `scoring` ajoute la belote au total du
+    preneur pour décider de la réussite, donc une belote de 20 **abaisse la barre
+    de 20** au lieu d'ajouter 20 points au bout. Tracer l'horizontale à la valeur
+    nue du contrat ferait mentir la courbe sur les donnes à belote.
+
+    Rend `None` sur une donne passée : sans contrat il n'y a ni preneur, ni
+    seuil, ni rien à projeter.
+    """
+    contract = env.get_contract()
+    if not contract or not contract.get("value"):
+        return None
+    taker = int(contract["team"])
+    # `get_contract()["value"]` est **déjà** en points (80-160, 250) — c'est
+    # `Contract::point_value()` côté Rust, pas le `value` brut du contrat, qui
+    # lui vaut 8-16 et 25. Le multiplier par 10 donnait un seuil à 1200.
+    value = int(contract["value"])
+    try:
+        belote = [int(b) for b in env.belote_final()]
+    except Exception:  # noqa: BLE001 — un binding manquant ne perd pas la courbe
+        belote = [0, 0]
+    return {
+        "taker": taker,
+        "trump": int(contract["trump"]),
+        "value": value,
+        "coinche": int(contract.get("coinche", 0)),
+        "belote": belote,
+        "threshold": value - belote[taker],
+        "capot": value == 250,
+        "bids": bids,
+        "points": points,
+        "dd": dd,
     }
 
 

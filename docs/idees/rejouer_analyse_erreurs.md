@@ -7,9 +7,9 @@ commandes sont données à chaque section et les runs sont dans
 `docs/measurements/index.jsonl`.*
 
 **État** : la bascule d'échelle, la classification à cinq catégories, le panneau
-« Moments de la donne », le coût IS-DD par coup et l'« Analyse rapide » d'une
-annonce (§7 bis) sont **faits**. Restent les variantes déroulées (§10.5) et
-l'exploration libre (§10.6).
+« Moments de la donne », le coût IS-DD par coup, l'« Analyse rapide » d'une
+annonce (§7 bis) et la **courbe de la donne** (§7) sont **faits**. Restent les
+variantes déroulées (§10.5) et l'exploration libre (§10.6).
 
 **L'idée de départ** (utilisateur, 2026-08-05), en trois demandes successives :
 
@@ -418,14 +418,39 @@ Donc afficher « 3 écarts », puis raffiner en « 3 écarts, dont 2 évitables 
 Annoncer un compteur définitif puis le voir baisser tout seul serait pire que
 d'attendre.
 
-**Pour la position, une bande plutôt qu'une courbe.** Le score de donne est en
-escalier : une courbe numérique montrerait une ligne plate avec deux falaises. Ce
-qui se lit, c'est une bande le long des 8 plis, verte quand le contrat passe et
-rouge quand il chute, avec la marge (`points du preneur − seuil`) écrite dedans.
-Deux bandes superposées, DD au-dessus et IS-DD en dessous : **les endroits où les
-deux couleurs diffèrent sont exactement les moments intéressants**, et ça se voit
-sans lire un chiffre. Un win% lissé mentirait sur la nature de la donne, qui ne
-bascule qu'à deux ou trois moments.
+**Pour la position, une courbe en points cartes du preneur** (livré 2026-08-05,
+après une discussion sur trois formes possibles). Un seul axe, trois tracés :
+
+- **l'aire** — ce que le preneur a déjà ramassé, huit marches ;
+- **la ligne** — ce qu'il fera en jeu parfait depuis chaque position, **verte
+  au-dessus du seuil, rouge en dessous** ;
+- **l'horizontale** — le seuil, qui monte par paliers pendant l'enchère puis se
+  fige. L'enchère est ainsi la première moitié du même graphe, dans la même
+  unité, sans second tracé.
+
+Les deux premiers convergent forcément au 8ᵉ pli — vérifié sur 6 donnes, et à
+l'écran : ramassé 111, projection finale 111. Le passage de la ligne sous le
+seuil **est** une faute décisive, donc la courbe et le panneau des moments
+racontent la même histoire par construction. Sur la donne regardée, la
+projection fait 124 → 107 → 121 → 103 → 111 : le contrat bascule quatre fois, et
+ça se voit d'un coup d'œil.
+
+**Un seul camp.** Les points cartes sont à somme constante (162) : la courbe de
+l'autre camp en est le miroir exact, elle doublerait l'encre sans ajouter un
+bit. Même raison que le « orienter par le preneur, jamais par N-S ».
+
+Deux formes ont été écartées. Le **regret cumulé** (zéro = jeu parfait) : la
+somme des regrets n'est pas un total — chacun est mesuré indépendamment à sa
+position, donc deux coups peuvent perdre la même donne et leurs coûts
+s'additionner au-delà de ce que la donne vaut (vu : 904 sur une donne à ~460).
+Un tableau peut le dire en note ; une courbe cumulative le raconterait comme une
+accumulation réelle, à chaque pixel. Et **la valeur DD en écart de score signé** :
+correcte, mais elle demande d'expliquer le double-mort, là où « voilà où on en
+est, voilà où on va, voilà où il faut arriver » se lit sans glossaire.
+
+**Pas d'IS-DD sur ce graphe** : sa valeur est seat-bound, donc deux points
+consécutifs ne sont pas dans le même repère informationnel et la pente entre eux
+ne veut rien dire. Il reste en marqueur sur le coup.
 
 **Le clic amène sur la position *avant* le coup** — c'est la décision qu'on veut
 revoir, pas son résultat. Là, tout est déjà en place : `best` donne la carte de

@@ -62,6 +62,7 @@ const TEMPLATE = `
             </div>
         </div>
 
+        <div id="replay-curve" class="hidden"></div>
         <div id="replay-last-trick" class="hidden"></div>
     </div>
 
@@ -108,6 +109,7 @@ let _analysisByIdx = null;   // action_idx -> move analysis
 let _analysisSummary = null;
 let _bidsByIdx = null;       // action_idx -> bid analysis (model annonce)
 let _oracleBids = null;      // deal-level DD contracts {suits, best}
+let _curve = null;           // séries de la courbe (points, projection, seuil)
 let _initialHands = null;    // all 4 hands at deal start (replay = full info)
 let _gameCfn = null;         // full-game CFN (auction + play) — porte le lien vers /analyse/jeu
 let _agentsByIdx = null;     // action_idx -> {doudou, oracle, isdd} card choices
@@ -405,7 +407,9 @@ function replayRenderMoveStats(move, state) {
 
     header.innerHTML = `<span class="stats-replay-tag">REPLAY</span> ` +
         `<span class="stats-player ${teamClass}">${seatName}</span>` +
-        `<span class="stats-action">${move.phase === 0 ? bidChipHtml(move.action) : move.name}</span>`;
+        // `move.name` rend la carte en ASCII (« 8S ») là où toute la page passe
+        // par `cardChipHtml` (« 8♠ », rouge ou noir selon la couleur).
+        `<span class="stats-action">${move.phase === 0 ? bidChipHtml(move.action) : cardChipHtml(move.action)}</span>`;
     body.innerHTML = '';
 
     // Bid move: model annonce + oracle annonce + link to the annonces page
@@ -537,6 +541,7 @@ function updateMovesHighlight() {
         if (isCurrent) current = el;
     });
     if (current) scrollIntoList(list, current);
+    renderCurve();
 }
 
 function buildMovesList() {
@@ -688,6 +693,138 @@ function renderAnalysisSummary() {
     el.innerHTML = html;
 }
 
+// ===== La courbe de la donne =====
+//
+// Un seul axe, en points cartes du **preneur**, et trois tracés qui s'y lisent
+// ensemble :
+//
+//   - l'**aire** : ce qu'il a déjà ramassé, huit marches ;
+//   - la **ligne** : ce qu'il fera en jeu parfait depuis chaque position —
+//     plate tant que personne ne se trompe, elle décroche d'un coup à une
+//     erreur ;
+//   - l'**horizontale** : le seuil à atteindre, qui monte par paliers pendant
+//     l'enchère puis se fige.
+//
+// Les deux premiers convergent forcément au 8e pli : quand il ne reste rien à
+// jouer, la projection *est* le réalisé. Et le passage de la ligne sous le seuil
+// est exactement une « faute décisive » — la courbe et le panneau des moments
+// racontent donc la même histoire, par construction.
+//
+// **Un seul camp tracé.** Les points cartes sont à somme constante (162), donc
+// la courbe de l'autre camp en est le miroir exact : elle doublerait l'encre
+// sans ajouter un bit. C'est aussi pour ça que tout est orienté preneur et
+// jamais Nord-Sud.
+//
+// La ligne suppose un **jeu parfait des quatre joueurs**, défense comprise :
+// elle peut donc plonger sous le seuil sur une donne finalement gagnée, si
+// l'adversaire a rendu l'erreur au coup suivant. C'est correct, et c'est dit
+// dans la légende — sans quoi la courbe a l'air de contredire le score affiché.
+const CURVE_W = 320;
+const CURVE_H = 116;
+const CURVE_PAD = { l: 4, r: 4, t: 8, b: 12 };
+
+function curveSvg(curve, total) {
+    const innerW = CURVE_W - CURVE_PAD.l - CURVE_PAD.r;
+    const innerH = CURVE_H - CURVE_PAD.t - CURVE_PAD.b;
+    const nAct = Math.max(1, total - 1);
+    const x = (i) => CURVE_PAD.l + (i / nAct) * innerW;
+    const yMax = curve.capot || curve.points.some(p => p[1] > 162) ? 252 : 162;
+    const y = (v) => CURVE_PAD.t + innerH * (1 - Math.min(v, yMax) / yMax);
+
+    const parts = [];
+
+    // Le seuil : paliers pendant l'enchère, horizontale ensuite. Tracé en
+    // premier pour passer sous les autres.
+    const steps = [];
+    let prev = 0;
+    for (const [idx, value] of curve.bids) {
+        steps.push(`${steps.length ? 'L' : 'M'}${x(idx)} ${y(prev)}`,
+                   `L${x(idx)} ${y(value)}`);
+        prev = value;
+    }
+    // Le seuil du jeu tient compte de la belote — elle abaisse la barre au lieu
+    // d'ajouter 20 points au bout.
+    const firstPlay = curve.points.length ? curve.points[0][0] : nAct;
+    steps.push(`${steps.length ? 'L' : 'M'}${x(firstPlay)} ${y(curve.threshold)}`,
+               `L${x(nAct)} ${y(curve.threshold)}`);
+    parts.push(`<path class="cv-threshold" d="${steps.join(' ')}"
+        fill="none" vector-effect="non-scaling-stroke"/>`);
+
+    // L'aire des points ramassés : un escalier, une marche par pli.
+    if (curve.points.length) {
+        const d = [`M${x(curve.points[0][0])} ${y(0)}`];
+        let last = 0;
+        for (const [idx, pts] of curve.points) {
+            d.push(`L${x(idx)} ${y(last)}`, `L${x(idx)} ${y(pts)}`);
+            last = pts;
+        }
+        d.push(`L${x(nAct)} ${y(last)}`, `L${x(nAct)} ${y(0)}`, 'Z');
+        parts.push(`<path class="cv-taken" d="${d.join(' ')}"/>`);
+    }
+
+    // La projection, segment par segment : verte au-dessus du seuil, rouge en
+    // dessous. Ce changement de couleur **est** le message de la courbe.
+    const dd = curve.dd;
+    for (let k = 0; k < dd.length; k++) {
+        const [idx, v] = dd[k];
+        const nextX = k + 1 < dd.length ? x(dd[k + 1][0]) : x(nAct);
+        const cls = v >= curve.threshold ? 'cv-made' : 'cv-down';
+        parts.push(`<path class="cv-dd ${cls}" d="M${x(idx)} ${y(v)} L${nextX} ${y(v)}"
+            fill="none" vector-effect="non-scaling-stroke"/>`);
+        if (k + 1 < dd.length && dd[k + 1][1] !== v) {
+            const nv = dd[k + 1][1];
+            const jcls = nv >= curve.threshold ? 'cv-made' : 'cv-down';
+            parts.push(`<path class="cv-dd ${jcls}" d="M${nextX} ${y(v)} L${nextX} ${y(nv)}"
+                fill="none" vector-effect="non-scaling-stroke"/>`);
+        }
+    }
+
+    // Où on en est dans la lecture.
+    const cur = replayBoard ? replayBoard.historyIndex : -1;
+    if (cur >= 0) {
+        parts.push(`<line class="cv-cursor" x1="${x(cur)}" y1="${CURVE_PAD.t}"
+            x2="${x(cur)}" y2="${CURVE_H - CURVE_PAD.b}"
+            vector-effect="non-scaling-stroke"/>`);
+    }
+
+    return `<svg viewBox="0 0 ${CURVE_W} ${CURVE_H}" preserveAspectRatio="none"
+        role="img" aria-label="Progression de la donne">${parts.join('')}</svg>`;
+}
+
+function renderCurve() {
+    const el = document.getElementById('replay-curve');
+    if (!el || !replayBoard) return;
+    const curve = _curve;
+    if (!curve || !curve.dd || !curve.dd.length) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    const total = replayBoard.moveHistory.length;
+    const taker = SEAT_NAMES_FR[0] && (curve.taker === 0 ? 'Nord-Sud' : 'Est-Ouest');
+    const mult = curve.coinche === 2 ? ' ×3' : curve.coinche === 1 ? ' ×2' : '';
+    const bel = curve.belote[curve.taker]
+        ? ` − ${curve.belote[curve.taker]} de belote` : '';
+    el.innerHTML = curveSvg(curve, total) +
+        `<div class="cv-legend">` +
+        `<span class="cv-key cv-k-taken">ramassé</span>` +
+        `<span class="cv-key cv-k-dd" title="Ce que le preneur ferait si les quatre joueurs jouaient parfaitement à partir de là — un plafond, pas une prédiction">jeu parfait</span>` +
+        `<span class="cv-key cv-k-thr">seuil ${curve.threshold}${bel}</span>` +
+        `<span class="cv-taker">${curve.value}${suitHtml(curve.trump)}${mult} · ${taker}</span>` +
+        `</div>`;
+    el.classList.remove('hidden');
+
+    // Cliquer dans la courbe amène au coup correspondant.
+    const svg = el.querySelector('svg');
+    svg.addEventListener('click', (e) => {
+        const r = svg.getBoundingClientRect();
+        const frac = (e.clientX - r.left) / r.width;
+        const inner = (CURVE_W - CURVE_PAD.l - CURVE_PAD.r) / CURVE_W;
+        const i = Math.round(((frac - CURVE_PAD.l / CURVE_W) / inner) * (total - 1));
+        jumpTo(Math.max(0, Math.min(total - 1, i)));
+    });
+}
+
 // ===== Moments de la donne =====
 //
 // Le panneau qui répond à « où faut-il regarder ». Il est court par
@@ -781,10 +918,17 @@ function renderErrors() {
     }
     body.innerHTML = html;
 
-    // Le clic amène **avant** le coup : c'est la décision qu'on veut revoir,
-    // pas son résultat. `historyIndex = idx - 1` laisse la carte encore en main.
+    // Le clic amène **sur** le coup, pas avant.
+    //
+    // Une première version visait `idx - 1`, pour montrer la position avec la
+    // carte encore en main. Ça cassait la correspondance : le panneau de stats
+    // affiche l'annotation de `historyIndex`, donc on cliquait sur « Faute
+    // décisive −462 » et on atterrissait sur le coup d'avant, dont l'annotation
+    // n'a rien à voir — la faute restait invisible jusqu'à ce qu'on avance d'un
+    // cran. Et l'information « qu'aurait-il fallu jouer » ne se perd pas en
+    // arrivant ici : l'annotation porte déjà la classe de cartes de l'Oracle.
     body.querySelectorAll('.err-row').forEach(el => {
-        el.addEventListener('click', () => jumpTo(Math.max(0, parseInt(el.dataset.idx) - 1)));
+        el.addEventListener('click', () => jumpTo(parseInt(el.dataset.idx)));
     });
 }
 
@@ -793,7 +937,9 @@ async function loadAnalysis(gameId) {
     _analysisSummary = null;
     _bidsByIdx = null;
     _oracleBids = null;
+    _curve = null;
     renderAnalysisSummary();
+    renderCurve();
     try {
         const base = document.querySelector('base')?.getAttribute('href') || '/';
         const resp = await fetch(`${base}api/games/${gameId}/analysis`);
@@ -808,9 +954,11 @@ async function loadAnalysis(gameId) {
         _bidsByIdx = {};
         for (const b of data.bids || []) _bidsByIdx[b.idx] = b;
         _oracleBids = data.oracle_bids || null;
+        _curve = data.curve || null;
         _analysisSummary = data.summary;
         renderAnalysisSummary();
         renderErrors();
+        renderCurve();
         // Recolor the moves list and refresh the current annotation
         if (replayBoard) {
             buildMovesList();
@@ -1224,6 +1372,7 @@ export function unmount() {
     _analysisSummary = null;
     _bidsByIdx = null;
     _oracleBids = null;
+    _curve = null;
     _initialHands = null;
     _agentsByIdx = null;
     _agentsPending = false;
