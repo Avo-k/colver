@@ -11,6 +11,14 @@ L'appelant ne voit pas la différence : `send` rend toujours quelque chose, et l
 réponse HTTP est de toute façon la même dans tous les cas (cf. `auth.forgot` —
 elle ne doit pas révéler si une adresse existe).
 
+**Un SMTP configuré et joignable ne veut pas dire qu'un courriel arrive.** Le
+relais peut accepter la transaction (`250`) puis jeter le message — Mailjet le
+fait quand l'expéditeur du `From` n'est pas validé sur le compte, et ne prévient
+que par un courriel à l'administrateur. Ce module ne peut pas voir ça : il
+journalise donc la réponse du relais, identifiant de file compris, seule prise
+pour retrouver le message chez lui ensuite. `/health` publie `mail.configured`,
+qui est tout ce qu'on sache sans envoyer.
+
 Configuration (toutes facultatives) :
   COLVER_SMTP_HOST / _PORT (587) / _USER / _PASSWORD
   COLVER_SMTP_TLS      "starttls" (défaut) | "ssl" | "none"
@@ -38,8 +46,54 @@ MAIL_FROM = os.environ.get("COLVER_MAIL_FROM", "").strip()
 SMTP_TIMEOUT = 10
 
 
+class _Traced:
+    """Retenir la réponse du relais au `DATA` — `sendmail` la jette.
+
+    C'est la **seule** chose que le serveur nous dise du sort du message, et
+    elle porte en général un identifiant de file (Mailjet : « OK queued as
+    <uuid> ») avec lequel on peut ensuite retrouver ce qu'il en a fait. Sans
+    elle, un message accepté puis jeté par le relais est indiscernable d'un
+    message remis — c'est exactement ce qui a masqué trois jours de panne le
+    2026-08-05, l'expéditeur `no-reply@colver.net` n'étant pas encore validé
+    côté Mailjet : `250 OK queued`, journal rassurant, aucune remise.
+    """
+
+    data_reply = None
+
+    def data(self, msg):
+        code, resp = super().data(msg)
+        if isinstance(resp, bytes):
+            resp_text = resp.decode("utf-8", "replace")
+        else:
+            resp_text = str(resp)
+        self.data_reply = resp_text
+        return code, resp
+
+
+class _SMTP(_Traced, smtplib.SMTP):
+    pass
+
+
+class _SMTP_SSL(_Traced, smtplib.SMTP_SSL):
+    pass
+
+
 def enabled() -> bool:
     return bool(SMTP_HOST)
+
+
+def status():
+    """Ce que `/health` publie du courriel. **Ni identifiant ni mot de passe.**
+
+    `configured` est la seule chose qu'on sache sans envoyer : le reste — le
+    relais accepte-t-il notre expéditeur, remet-il vraiment — ne se découvre
+    qu'à l'envoi, et se lit dans le journal (cf. `send`) ou chez le relais.
+    """
+    return {
+        "configured": enabled(),
+        "host": SMTP_HOST or None,
+        "sender": _sender() if enabled() else None,
+    }
 
 
 def _sender() -> str:
@@ -50,12 +104,18 @@ def _sender() -> str:
 
 
 def send(to, subject, body):
-    """Envoyer un message. Synchrone — à appeler via `asyncio.to_thread`.
+    """Confier un message au relais. Synchrone — à appeler via `asyncio.to_thread`.
 
-    Rend True si le message est parti, False s'il a échoué ou si aucun SMTP
+    Rend True si le relais l'a **accepté**, False s'il a refusé ou si aucun SMTP
     n'est configuré. **Ne lève jamais** : l'appelant répond la même chose dans
     tous les cas, et une panne d'envoi ne doit pas devenir une 500 qui, elle,
     dirait au visiteur que son adresse existe bien.
+
+    **Accepté n'est pas remis, et ce True ne prétend pas le contraire.** Le
+    protocole s'arrête au relais : la suite (expéditeur autorisé, DMARC, boîte
+    du destinataire) se joue après, sans nous. D'où la réponse du serveur dans
+    le journal — elle porte de quoi retrouver le message chez le relais quand
+    quelqu'un dit ne rien avoir reçu.
     """
     if not enabled():
         logger.warning(
@@ -71,17 +131,19 @@ def send(to, subject, body):
 
     try:
         if SMTP_TLS == "ssl":
-            client = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT,
-                                      context=ssl.create_default_context())
+            client = _SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT,
+                               context=ssl.create_default_context())
         else:
-            client = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT)
+            client = _SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT)
         with client:
             if SMTP_TLS == "starttls":
                 client.starttls(context=ssl.create_default_context())
             if SMTP_USER:
                 client.login(SMTP_USER, SMTP_PASSWORD)
             client.send_message(msg)
-        logger.info("courriel envoyé à %s (%s)", to, subject)
+            reply = client.data_reply
+        logger.info("courriel accepté par le relais pour %s (%s) — %s",
+                    to, subject, reply or "sans réponse")
         return True
     except Exception:
         logger.exception("envoi du courriel à %s en échec", to)

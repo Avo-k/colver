@@ -21,6 +21,7 @@ import colver.web.card_analysis as _card_analysis
 import colver.web.database as db
 import colver.web.elo as elo
 import colver.web.integrity as integrity
+import colver.web.mail as mail
 # Alias `_agents` et pas `agents` : plusieurs gestionnaires WS utilisent
 # déjà `agents` comme variable locale (la table des bots d'une donne).
 from colver.web import agents as _agents
@@ -462,12 +463,19 @@ async def health():
     # construction — elles sont retirées de tous les listings), donc si le
     # compteur remonte, c'est ici qu'on le verra.
     invalid_deals = None
+    # Comptes ayant renseigné une adresse. C'est ce qui rend `mail.configured`
+    # lisible : sans SMTP, ce nombre est exactement le nombre de joueurs à qui
+    # l'interface promet un recours qui n'existe pas.
+    accounts_with_email = None
     try:
         conn = await db.get_db()
         cur = await conn.execute("SELECT 1")
         await cur.fetchone()
         cur = await conn.execute("SELECT COUNT(*) FROM games WHERE invalid = 1")
         invalid_deals = (await cur.fetchone())[0]
+        cur = await conn.execute(
+            "SELECT COUNT(*) FROM users WHERE email IS NOT NULL AND email != ''")
+        accounts_with_email = (await cur.fetchone())[0]
     except Exception:
         logger.exception("health : SELECT 1 en échec")
         db_ok = False
@@ -511,6 +519,17 @@ async def health():
             "sidecar_configured": sidecar["configured"],
         },
         "sidecar": {**sidecar, "required": _agents.sidecar_expected()},
+        # Le courriel n'était visible **nulle part** jusqu'au 2026-08-05, et la
+        # réinitialisation de mot de passe est restée muette trois jours sans
+        # que rien ne l'indique. On publie donc ce qu'on sait sans envoyer.
+        #
+        # Ça ne fait pas basculer `status`, et c'est délibéré : pas de SMTP est
+        # un choix légitime (machine de dev, déploiement sans compte), donc
+        # dégrader ici apprendrait à ignorer le champ — même raisonnement que
+        # pour `sidecar.fresh is None`. `accounts_with_email` est ce qui permet
+        # à une supervision extérieure de trancher, elle, sans ambiguïté :
+        # `configured: false` avec un compteur non nul est une vraie panne.
+        "mail": {**mail.status(), "accounts_with_email": accounts_with_email},
         # D'où viennent réellement les mondes que Dédé résout, depuis le
         # démarrage. `sidecar.reachable` dit que le serveur répond ; ces
         # compteurs-là disent si la file playgen suffit, ou si les recherches
