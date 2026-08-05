@@ -359,6 +359,72 @@ MIGRATIONS = [
     ALTER TABLE elo_ratings ADD COLUMN sigma REAL;
     DELETE FROM elo_ratings;
     """,
+    # v18 — les deux simulations d'analyse cessent d'être jetées.
+    #
+    # `annonces_sim` (200 solves DD sur donne complète + 1 000 déroulements
+    # DouDou50) et `card_analysis` (200-500 solves + 600 déroulements + une
+    # recherche IS-DD) sont les deux calculs les plus chers du site, et le seul
+    # à ne rien laisser derrière lui. La barre « Mains analysées » de la page
+    # annonces le montre bien : elle enregistre l'**entrée** (main, enchères,
+    # score) et pas le résultat, donc rouvrir une main enregistrée relançait
+    # tout — et rendait au passage des chiffres différents, les mondes venant
+    # de playgen.
+    #
+    # Table à part de `analysis` / `agent_review`, pour une raison de forme :
+    # celles-ci sont clés sur `game_id`, donc bornées par le corpus de donnes.
+    # Ici la clé est un hachage d'entrées **non bornées** (un CFN se tape à la
+    # main, une main aussi), d'où `used_at` et l'éviction LRU — sans quoi la
+    # table grossirait sans plafond.
+    #
+    # `version` sort du blob plutôt que d'y vivre (leçon de v15) : c'est le
+    # prédicat de fraîcheur, il est lu à chaque requête, et le désérialiser
+    # coûterait un blob entier pour un entier.
+    """
+    CREATE TABLE analysis_cache (
+        kind       TEXT NOT NULL,
+        cache_key  TEXT NOT NULL,
+        version    INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        used_at    TEXT NOT NULL,
+        hits       INTEGER NOT NULL DEFAULT 0,
+        data       TEXT NOT NULL,
+        PRIMARY KEY (kind, cache_key)
+    );
+    CREATE INDEX idx_analysis_cache_lru ON analysis_cache(used_at);
+    """,
+    # v19 — le progrès sur « Compter les points » suit le compte, plus le
+    # navigateur.
+    #
+    # Série, record, taux de justesse et écart moyen vivaient en localStorage
+    # (`colver:compter:stats`). C'est la seule chose de tout le site qu'un
+    # changement d'appareil ou un vidage de cache **détruit sans recours** : une
+    # analyse se recalcule, une donne est en base, un record d'exercice n'existe
+    # nulle part ailleurs.
+    #
+    # Les compteurs s'incrémentent par **delta** et non par totaux poussés
+    # depuis le client. Deux raisons : un total envoyé écrase le travail d'un
+    # second onglet ou d'un second appareil, et il fait du client l'autorité sur
+    # son propre record. `streak` fait exception — ce n'est pas une somme mais
+    # un état courant, donc dernière valeur écrite ; `best` en dérive par un max
+    # côté serveur, pour qu'un client ne puisse pas s'en déclarer un.
+    #
+    # Le local reste : il porte le jeu **anonyme**, qui n'a pas de ligne ici. On
+    # ne fusionne pas les deux — additionner des essais anonymes à la connexion
+    # les compterait deux fois sur l'appareil qui les a déjà envoyés.
+    """
+    CREATE TABLE exercise_stats (
+        user_id       INTEGER NOT NULL REFERENCES users(id),
+        exercise      TEXT NOT NULL,
+        variant       TEXT NOT NULL,
+        plays         INTEGER NOT NULL DEFAULT 0,
+        exact         INTEGER NOT NULL DEFAULT 0,
+        sum_abs_delta INTEGER NOT NULL DEFAULT 0,
+        streak        INTEGER NOT NULL DEFAULT 0,
+        best          INTEGER NOT NULL DEFAULT 0,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (user_id, exercise, variant)
+    );
+    """,
 ]
 
 
@@ -629,6 +695,9 @@ async def delete_account(user_id):
                      (str(user_id),))
     await db.execute("DELETE FROM elo_history WHERE kind = 'user' AND ref = ?",
                      (str(user_id),))
+    # Le progrès sur les exercices n'appartient qu'à cette personne — rien ne
+    # s'y rattache, contrairement à une donne de salon : il part entièrement.
+    await db.execute("DELETE FROM exercise_stats WHERE user_id = ?", (user_id,))
     cur = await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await db.commit()
     return cur.rowcount > 0
@@ -1445,6 +1514,129 @@ async def save_agent_review(game_id, data_json):
     await db.execute(
         "INSERT OR REPLACE INTO agent_review (game_id, created_at, data) VALUES (?, ?, ?)",
         (game_id, _now(), data_json),
+    )
+    await db.commit()
+
+
+# ===== Cache des simulations d'analyse (v18) =====
+#
+# Contrairement à `analysis` / `agent_review`, la clé n'est pas un `game_id`
+# mais un hachage d'entrées non bornées : la table a donc besoin d'un plafond.
+# Voir `sim_cache.py` pour la dérivation des clés et les règles de fraîcheur.
+
+# Au-delà, `put_sim_cache` évince les entrées les moins récemment servies. À
+# ~5 ko l'entrée, 20 000 tiennent dans ~100 Mo — l'ordre de grandeur de la base
+# de donnes elle-même, pas de quoi surprendre une sauvegarde `VACUUM INTO`.
+SIM_CACHE_MAX_ROWS = int(os.environ.get("COLVER_SIM_CACHE_MAX", "20000"))
+
+
+async def get_sim_cache(kind, cache_key, version):
+    """L'entrée en cache pour cette clé **à cette version**, ou None.
+
+    Marque le service à chaque fois : `used_at` alimente l'éviction LRU, `hits`
+    est publié sur /health. Oui, c'est une écriture par lecture sur une base à
+    connexion unique — mais elle vaut une ligne, contre les 11 s de CPU que la
+    lecture vient d'économiser, et un compteur amorti à la journée compterait
+    des *jours* et non des services : une métrique qui ment coûte plus cher que
+    l'UPDATE qu'elle évite.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT data FROM analysis_cache "
+        "WHERE kind = ? AND cache_key = ? AND version = ?",
+        (kind, cache_key, version),
+    )
+    if not rows:
+        return None
+    try:
+        blob = json.loads(rows[0][0])
+    except json.JSONDecodeError:
+        logger.warning("cache d'analyse illisible : %s/%s", kind, cache_key)
+        return None
+    await db.execute(
+        "UPDATE analysis_cache SET used_at = ?, hits = hits + 1 "
+        "WHERE kind = ? AND cache_key = ?",
+        (_now(), kind, cache_key),
+    )
+    await db.commit()
+    return blob
+
+
+async def put_sim_cache(kind, cache_key, version, data_json):
+    """Écrire une entrée, puis rendre la table à son plafond.
+
+    L'éviction est faite ici plutôt que par une tâche de fond : elle ne touche
+    que les lignes en trop, donc elle ne coûte rien tant que le plafond n'est
+    pas atteint, et elle ne peut pas être oubliée au démarrage.
+    """
+    db = await get_db()
+    now = _now()
+    await db.execute(
+        "INSERT OR REPLACE INTO analysis_cache "
+        "(kind, cache_key, version, created_at, used_at, hits, data) "
+        "VALUES (?, ?, ?, ?, ?, 0, ?)",
+        (kind, cache_key, version, now, now, data_json),
+    )
+    await db.execute(
+        "DELETE FROM analysis_cache WHERE rowid IN ("
+        "  SELECT rowid FROM analysis_cache ORDER BY used_at DESC LIMIT -1 OFFSET ?"
+        ")",
+        (SIM_CACHE_MAX_ROWS,),
+    )
+    await db.commit()
+
+
+async def sim_cache_stats():
+    """`{kind: {rows, hits}}` — de quoi publier le cache sur /health."""
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT kind, COUNT(*), COALESCE(SUM(hits), 0) FROM analysis_cache GROUP BY kind")
+    return {r[0]: {"rows": r[1], "hits": r[2]} for r in rows}
+
+
+# ===== Progrès sur les exercices (v19) =====
+
+async def exercise_stats(user_id, exercise):
+    """`{variant: {plays, exact, sumAbsDelta, streak, best}}` pour ce joueur.
+
+    Les clés sortent en camelCase parce que c'est la forme que le client avait
+    déjà en localStorage : le rendu doit pouvoir lire l'une ou l'autre sans
+    savoir laquelle il tient.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT variant, plays, exact, sum_abs_delta, streak, best "
+        "FROM exercise_stats WHERE user_id = ? AND exercise = ?",
+        (user_id, exercise),
+    )
+    return {r[0]: {"plays": r[1], "exact": r[2], "sumAbsDelta": r[3],
+                   "streak": r[4], "best": r[5]} for r in rows}
+
+
+async def record_exercise_attempt(user_id, exercise, variant, *, delta, exact, streak):
+    """Enregistrer **un** essai. Incrémental, jamais un total reçu du client.
+
+    `best` est recalculé ici par un max plutôt que fourni : un record est la
+    seule valeur de cette table qu'un client aurait intérêt à s'attribuer, et
+    c'est aussi celle qu'un second onglet écraserait en poussant la sienne.
+    """
+    db = await get_db()
+    await db.execute(
+        """
+        INSERT INTO exercise_stats
+            (user_id, exercise, variant, plays, exact, sum_abs_delta,
+             streak, best, updated_at)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id, exercise, variant) DO UPDATE SET
+            plays         = plays + 1,
+            exact         = exact + excluded.exact,
+            sum_abs_delta = sum_abs_delta + excluded.sum_abs_delta,
+            streak        = excluded.streak,
+            best          = MAX(best, excluded.streak),
+            updated_at    = excluded.updated_at
+        """,
+        (user_id, exercise, variant, 1 if exact else 0, int(delta),
+         int(streak), int(streak), _now()),
     )
     await db.commit()
 

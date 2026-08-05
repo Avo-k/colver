@@ -631,7 +631,11 @@ function updateProgressBar(id, completed, total, elapsedMs) {
     const text = wrap.querySelector('.sim-progress-text');
     const pct = total > 0 ? Math.round(completed / total * 100) : 0;
     fill.style.width = `${pct}%`;
-    const elapsed = elapsedMs != null ? ` \u2014 ${(elapsedMs / 1000).toFixed(1)}s` : '';
+    // Une dur\u00e9e nulle = r\u00e9sultat servi depuis la base. R\u00e9afficher le chrono du
+    // calcul d'origine ferait mentir la barre sur ce que cette requ\u00eate a co\u00fbt\u00e9.
+    const elapsed = elapsedMs != null
+        ? ` \u2014 ${(elapsedMs / 1000).toFixed(1)}s`
+        : (completed >= total && total > 0 ? ' \u2014 en cache' : '');
     text.textContent = `${completed}/${total}${elapsed}`;
     if (completed >= total) {
         wrap.classList.add('done');

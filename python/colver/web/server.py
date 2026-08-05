@@ -29,6 +29,7 @@ import colver.web.rooms as rooms
 import colver.web.pacing as pacing
 import colver.web.match_state as match_state
 import colver.web.ratelimit as ratelimit
+import colver.web.sim_cache as sim_cache
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -467,6 +468,11 @@ async def health():
     # lisible : sans SMTP, ce nombre est exactement le nombre de joueurs à qui
     # l'interface promet un recours qui n'existe pas.
     accounts_with_email = None
+    # Cache des deux simulations d'analyse. Un `hits` qui reste à zéro alors que
+    # `rows` monte dit que les clés ne se rejoignent jamais — c'est-à-dire que
+    # le cache coûte de la place sans rien rendre, la seule façon dont il peut
+    # échouer en silence.
+    sim_cache_rows = None
     try:
         conn = await db.get_db()
         cur = await conn.execute("SELECT 1")
@@ -476,6 +482,7 @@ async def health():
         cur = await conn.execute(
             "SELECT COUNT(*) FROM users WHERE email IS NOT NULL AND email != ''")
         accounts_with_email = (await cur.fetchone())[0]
+        sim_cache_rows = await db.sim_cache_stats()
     except Exception:
         logger.exception("health : SELECT 1 en échec")
         db_ok = False
@@ -539,6 +546,7 @@ async def health():
         # dernières, donc sensible à une dégradation en cours — ce que les
         # compteurs cumulés au-dessus ne peuvent pas être.
         "worlds_per_decision": _agents.recent_worlds_per_decision(),
+        "sim_cache": sim_cache_rows,
     }
     # 503 seulement si la base est morte : un sidecar absent dégrade la force de
     # jeu, il n'empêche pas de jouer. Le champ `status` porte l'alerte, le code
@@ -939,6 +947,25 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                             "error": "8 cartes requises"})
         return
 
+    # Cache : la simulation la plus chère du site (~200 solves DD sur donne
+    # complète + 1 000 donnes jouées). Servi tel quel, sans rejouer les
+    # messages d'avancement — `handleSimDone` / `handleDoudouDone` reconstruisent
+    # tout l'affichage depuis le seul message final.
+    doudou_expected = bool(BID_MODEL_PATH and DMC_MODEL_PATH)
+    cache_key = sim_cache.bid_key(hand, prior_actions, oracle_sims, doudou_sims)
+    hit = await sim_cache.get(sim_cache.KIND_BID, cache_key,
+                              sim_cache.BID_SIM_VERSION)
+    # `hit.get("oracle")` plutôt qu'un accès direct : une entrée d'une forme
+    # inattendue (blob tronqué, schéma d'une version qu'on croyait périmée) doit
+    # se comporter comme une absence et non renvoyer une erreur au client.
+    if hit and hit.get("oracle") and (not doudou_expected or hit.get("doudou")):
+        await ws.send_json({"type": "annonces_sim_done", "req_id": req_id,
+                            "cached": True, **hit["oracle"]})
+        if hit.get("doudou"):
+            await ws.send_json({"type": "annonces_doudou_done", "req_id": req_id,
+                                "cached": True, **hit["doudou"]})
+        return
+
     gen_task = None  # génération de mondes en cours, à annuler en sortie
     try:
         loop = asyncio.get_event_loop()
@@ -1109,8 +1136,7 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             for fut in pending:
                 fut.cancel()
 
-        await ws.send_json({
-            "type": "annonces_sim_done", "req_id": req_id,
+        oracle_blob = {
             "completed": completed, "total": oracle_sims,
             "elapsed_ms": round((_time.monotonic() - oracle_start) * 1000, 1),
             "success_counts": success_counts,
@@ -1119,9 +1145,12 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
             "sampled_sources": sampled_sources,
             "worlds_source": worlds_source,
             "worlds_counts": worlds_counts,
-        })
+        }
+        await ws.send_json({"type": "annonces_sim_done", "req_id": req_id,
+                            **oracle_blob})
 
         # Phase 2: Dédé (NN bid + DMC play) — slow
+        doudou_blob = None
         if BID_MODEL_PATH and DMC_MODEL_PATH:
             # L'Oracle s'arrête avant la fin de la génération quand il tire
             # moins de donnes ; on draine le reste du pool avant de jouer.
@@ -1159,13 +1188,33 @@ async def _run_annonces_sim(ws: WebSocket, data: dict):
                     "doudou_stats": doudou_stats,
                 })
 
-            await ws.send_json({
-                "type": "annonces_doudou_done", "req_id": req_id,
+            doudou_blob = {
                 "completed": doudou_sims, "total": doudou_sims,
                 "elapsed_ms": round((_time.monotonic() - doudou_start) * 1000, 1),
                 "doudou_cells": doudou_cells,
                 "doudou_stats": doudou_stats,
-            })
+            }
+            await ws.send_json({"type": "annonces_doudou_done", "req_id": req_id,
+                                **doudou_blob})
+
+        # Écriture du cache **après** l'envoi : le joueur n'attend pas la base,
+        # et une simulation annulée en route n'arrive jamais ici — donc rien de
+        # partiel ne peut être figé.
+        #
+        # `elapsed_ms` est remis à None dans ce qu'on garde : c'est le temps de
+        # *ce* calcul-là, et le réafficher au service ferait dire à la barre
+        # d'avancement qu'une réponse instantanée a pris trois secondes.
+        # `updateProgressBar` omet la durée quand elle est nulle.
+        if sim_cache.bid_cacheable({**oracle_blob, "doudou": doudou_blob},
+                                   oracle_sims, doudou_sims,
+                                   doudou_expected=doudou_expected):
+            keep = {"oracle": {**oracle_blob, "elapsed_ms": None,
+                               "sampled_deals": sampled_deals[:sim_cache.SAMPLE_KEEP],
+                               "sampled_sources": sampled_sources[:sim_cache.SAMPLE_KEEP]}}
+            if doudou_blob:
+                keep["doudou"] = {**doudou_blob, "elapsed_ms": None}
+            await sim_cache.put(sim_cache.KIND_BID, cache_key,
+                                sim_cache.BID_SIM_VERSION, keep)
 
     except asyncio.CancelledError:
         return
@@ -1251,6 +1300,33 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
     if pos["forced"]:
         return  # une seule carte jouable : rien à comparer
 
+    # Cache. La position est recalculée à chaque fois (`describe` est du rejeu,
+    # ~0,3 ms) : elle porte la carte réellement jouée, qui dépend du CFN reçu et
+    # non de la position analysée — donc elle n'a rien à faire dans une entrée
+    # partagée. Tout le reste — vrai monde, avis, mondes échantillonnés — en est
+    # une fonction et se sert tel quel.
+    doudou_expected = bool(DMC_MODEL_PATH)
+    cache_key = sim_cache.card_key(dealer, initial_hands, actions, idx)
+    hit = await sim_cache.get(sim_cache.KIND_CARD, cache_key,
+                              sim_cache.CARD_SIM_VERSION)
+    # Une entrée écrite sans DouDou50 (poids absents ce jour-là) ne doit pas
+    # survivre à son retour, sinon la colonne manque pour toujours — c'est le
+    # défaut qu'a eu `agent_review` avec le sidecar éteint (`1669e7c`). Et une
+    # entrée d'une forme inattendue se comporte comme une absence plutôt que de
+    # renvoyer une erreur au client (cf. `_run_annonces_sim`).
+    if hit and not all(hit.get(k) for k in ("truth", "opinions", "result")):
+        hit = None
+    if hit and doudou_expected and "doudou" not in hit["opinions"]:
+        hit = None
+    if hit:
+        await ws.send_json({"type": "card_analysis_truth", "req_id": req_id,
+                            "truth": hit["truth"]})
+        await ws.send_json({"type": "card_analysis_opinions", "req_id": req_id,
+                            "opinions": hit["opinions"]})
+        await ws.send_json({"type": "card_analysis_done", "req_id": req_id,
+                            "cached": True, **hit["result"]})
+        return
+
     try:
         loop = asyncio.get_event_loop()
 
@@ -1317,15 +1393,25 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
             for fut in pending:
                 fut.cancel()
 
-        await ws.send_json({
-            "type": "card_analysis_done", "req_id": req_id,
+        result_blob = {
             "completed": completed, "total": n_worlds,
             "real_total": real_worlds,
             "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
             "rows": _card_analysis.summarize(totals, team),
             "worlds_source": worlds_source,
             "sample_hands": sample_hands,
-        })
+        }
+        await ws.send_json({"type": "card_analysis_done", "req_id": req_id,
+                            **result_blob})
+
+        # Cf. `_run_annonces_sim` : écrit après l'envoi, seulement si complet et
+        # non dégradé, et sans le chrono du calcul d'origine.
+        if sim_cache.card_cacheable({**result_blob, "opinions": avis}, n_worlds,
+                                    doudou_expected=doudou_expected):
+            await sim_cache.put(
+                sim_cache.KIND_CARD, cache_key, sim_cache.CARD_SIM_VERSION,
+                {"truth": truth, "opinions": avis,
+                 "result": {**result_blob, "elapsed_ms": None}})
 
     except asyncio.CancelledError:
         return
@@ -1382,6 +1468,19 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
                                     "error": "Annonce illégale dans cette situation"})
                 return
 
+        # Cache. C'est le chemin le plus chaud de la page : l'Oracle tourne en
+        # WASM côté navigateur (`evalLocal`), donc `annonces_sim` n'est qu'un
+        # repli et le serveur ne voit d'habitude que ces 1 000 donnes-là — 20 s
+        # de CPU. Interrogé **après** le contrôle de légalité, pour qu'une
+        # annonce impossible reste refusée même si une entrée existait.
+        cache_key = sim_cache.doudou_key(hand, prior_actions, forced_action, num_sims)
+        hit = await sim_cache.get(sim_cache.KIND_DOUDOU, cache_key,
+                                  sim_cache.DOUDOU_SIM_VERSION)
+        if hit:
+            await ws.send_json({"type": "annonces_doudou_done", "req_id": req_id,
+                                "cached": True, **hit})
+            return
+
         doudou_cells = _doudou_new_cells()
         doudou_stats = _doudou_new_stats()
 
@@ -1402,13 +1501,23 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
                 "doudou_stats": doudou_stats,
             })
 
-        await ws.send_json({
-            "type": "annonces_doudou_done", "req_id": req_id,
+        blob = {
             "completed": num_sims, "total": num_sims,
             "elapsed_ms": round((_time.monotonic() - start) * 1000, 1),
             "doudou_cells": doudou_cells,
             "doudou_stats": doudou_stats,
-        })
+        }
+        await ws.send_json({"type": "annonces_doudou_done", "req_id": req_id,
+                            **blob})
+
+        # Rien à vérifier de plus : arriver ici veut dire que la boucle est
+        # allée au bout avec les deux modèles (une absence renvoie plus haut) et
+        # qu'aucune annulation ne l'a traversée. Les mondes sont des mélanges
+        # uniformes par construction sur ce chemin — ce n'est pas une
+        # dégradation, c'est ce que fait `_run_single_doudou_sim`.
+        await sim_cache.put(sim_cache.KIND_DOUDOU, cache_key,
+                            sim_cache.DOUDOU_SIM_VERSION,
+                            {**blob, "elapsed_ms": None})
 
     except asyncio.CancelledError:
         return
