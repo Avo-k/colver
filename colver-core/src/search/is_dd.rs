@@ -81,46 +81,12 @@ pub enum PlayObjective {
     DealScore,
 }
 
-/// Total de points cartes de la donne, déduit du total N-S.
-///
-/// 162 normalement, 252 quand un camp fait capot (le dix de der y vaut 100).
-///
-/// **Une seule situation reste ambiguë** : `ns == 0` peut vouloir dire « E-O a
-/// fait capot » (252) ou « N-S n'a ramassé que des plis à zéro point » (162) —
-/// il y a 11 cartes sans valeur dans un jeu, donc le second cas existe. Les
-/// plis déjà joués tranchent la plupart du temps : si N-S en a gagné un, le
-/// capot est impossible. Sinon on retient le capot, de loin le plus fréquent
-/// quand un camp finit à zéro. L'erreur résiduelle vaut 90 points de score sur
-/// un écart qui en fait plusieurs centaines, et seulement dans ce cas-là.
-#[inline]
-fn total_card_points(state: &GameState, ns_card_pts: i16) -> i16 {
-    if ns_card_pts == CAPOT_PTS {
-        return CAPOT_PTS; // N-S a tout pris : sans ambiguïté
-    }
-    if ns_card_pts == 0 && state.tricks_won[0] == 0 {
-        return CAPOT_PTS;
-    }
-    TOTAL_PTS
-}
-
-/// Belote/rebelote d'un monde, par camp.
-///
-/// `state.belote` ne compte que ce qui a **déjà été joué** (`check_belote` dans
-/// `apply_play`), donc il sous-estime en cours de donne. Ici on veut la belote
-/// *finale* : elle est acquise dès qu'un joueur détient Dame **et** Roi d'atout,
-/// puisqu'il finira forcément par jouer les deux.
-#[inline]
-fn world_belote(hands: &[crate::card::CardSet; 4], played_by: &[u32; 4], trump: u8) -> [i16; 2] {
-    // Bits de rang : Dame = 4, Roi = 5 ; indice de carte = couleur × 8 + rang.
-    let mask = (1u32 << (trump * 8 + 4)) | (1u32 << (trump * 8 + 5));
-    let mut bonus = [0i16; 2];
-    for p in 0..4usize {
-        if (hands[p] | played_by[p]) & mask == mask {
-            bonus[p % 2] = 20;
-        }
-    }
-    bonus
-}
+// `total_card_points` et `world_belote` vivaient ici, en privé. Elles sont
+// remontées dans `scoring.rs` le 2026-08-05 sous les noms
+// [`scoring::total_card_points`] et [`scoring::final_belote`] : les pages
+// d'analyse ont le même besoin de convertir une valeur DD en score de donne, et
+// le barème n'a le droit d'exister qu'à un seul endroit.
+use crate::scoring::{final_belote, total_card_points};
 
 /// Configuration for IS-DD search.
 ///
@@ -683,7 +649,7 @@ impl IsDdSearch {
         match objective {
             PlayObjective::CardPoints => [0, 0],
             PlayObjective::DealScore => {
-                world_belote(&world.hands, &self.played_by, world.contract.trump)
+                final_belote(&world.hands, &self.played_by, world.contract.trump)
             }
         }
     }

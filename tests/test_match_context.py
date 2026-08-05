@@ -125,23 +125,40 @@ class TestContexteDeDonne:
 
 
 class TestFraicheurDuCache:
-    """v5 → v6 n'a changé que le score lu par le bidder."""
+    """Le bump v7 a retiré l'exception que v6 s'accordait.
 
-    def test_v5_reste_bonne_a_zero_zero(self):
-        cached = {"version": 5, "playgen": True}
+    v6 acceptait encore une ligne v5 pour une donne jouée à 0-0 : les deux
+    versions y calculaient le même blob, et la garder évitait des milliers de
+    solves inutiles. v7 lit le coût des cartes en score de donne, que ni v5 ni
+    v6 n'ont jamais écrit — **aucune ligne antérieure n'est récupérable**, et
+    c'est ce que ces tests épinglent.
+    """
+
+    def test_v7_est_bonne(self):
+        cached = {"version": analysis.ANALYSIS_VERSION, "playgen": True}
+        assert analysis._is_fresh(cached, None, [940, 620])
         assert analysis._is_fresh(cached, None, [0, 0])
         assert analysis._is_fresh(cached, None, None)
 
-    def test_v5_est_perimee_des_qu_il_y_a_un_score(self):
-        cached = {"version": 5, "playgen": True}
-        assert not analysis._is_fresh(cached, None, [940, 620])
-
-    def test_v6_est_toujours_bonne(self):
-        cached = {"version": 6, "playgen": True}
-        assert analysis._is_fresh(cached, None, [940, 620])
+    def test_v5_et_v6_sont_perimees_meme_a_zero_zero(self):
+        for version in (5, 6):
+            cached = {"version": version, "playgen": True}
+            assert not analysis._is_fresh(cached, None, [0, 0])
+            assert not analysis._is_fresh(cached, None, None)
+            assert not analysis._is_fresh(cached, None, [940, 620])
 
     def test_une_version_anterieure_reste_perimee(self):
         assert not analysis._is_fresh({"version": 4, "playgen": True}, None, [0, 0])
+
+    def test_les_valeurs_dd_de_v5_et_v6_restent_bonnes(self):
+        """Périmé pour le blob n'est pas périmé pour les valeurs DD.
+
+        v7 ne touche ni au barème ni aux coups légaux : il relit autrement le
+        même solve. `true_world` peut donc encore réutiliser l'`oracle_bids`
+        d'une ligne v5 ou v6 au lieu de repayer quatre solves pleine donne.
+        """
+        for version in (5, 6, 7):
+            assert version in analysis._DD_COMPATIBLE_VERSIONS
 
 
 class TestWebSocket:

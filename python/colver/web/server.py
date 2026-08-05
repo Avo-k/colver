@@ -1530,6 +1530,159 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
             pass
 
 
+# ===== Analyse rapide d'une annonce, depuis Rejouer =====
+#
+# Deux chiffres sur l'annonce qu'on regarde, **sans quitter la page** : combien
+# de fois le contrat passe, et l'espérance de points. C'est ce que la page
+# annonces met dans son chiffre-phare, ramené à une ligne.
+#
+# **Pourquoi un bouton et pas un balayage.** Une annonce coûte quelques
+# centaines de donnes jouées, deux ordres de grandeur de plus que le solve d'une
+# carte ; analyser d'office les ~10 annonces de chaque donne ouverte serait
+# hors de prix. À la demande, on paie **une** annonce, celle que le joueur
+# regarde. Même raisonnement que `analysis.bulk`.
+#
+# **Pourquoi ça juge aussi bid v6.** Rejouer note les annonces au Q de v6, donc
+# appelle « erreur » tout désaccord avec lui — ça apprend à imiter un bidder,
+# pas à annoncer. Un taux de réussite simulé ne dépend d'aucun modèle de
+# référence : il note l'humain et v6 au même barème, et v6 se trompe aussi.
+# D'où la seconde ligne quand son avis diffère.
+
+# Assez pour séparer deux annonces qui diffèrent vraiment, assez peu pour que le
+# bouton réponde en quelques secondes. À ~25 ms la donne jouée, 160 sims ≈ 4 s,
+# et l'intervalle à 95 % sur un taux vaut ±8 points — on ne prétend pas trancher
+# à mieux que ça, et l'écran ne doit pas afficher de décimale.
+QUICK_BID_SIMS = int(os.environ.get("COLVER_QUICK_BID_SIMS", "160"))
+
+
+def _quick_bid_readout(stats):
+    """Les deux chiffres, du point de vue du siège analysé (assis en Sud).
+
+    `made` est conditionnel — « quand ce camp tient le contrat, il passe X % » —
+    parce qu'une annonce forcée ne garantit pas de rester preneur : les
+    adversaires peuvent surenchérir. `expected` porte sur **toutes** les sims,
+    surenchères et donnes passées comprises, donc les deux dénominateurs
+    diffèrent et c'est voulu : le premier juge le contrat, le second juge la
+    décision.
+    """
+    contracts = stats.get("ns_contracts", 0)
+    n = stats.get("pts_n", 0)
+    return {
+        "contracts": contracts,
+        "made_pct": (round(100 * stats.get("ns_achieved", 0) / contracts)
+                     if contracts else None),
+        "expected": (round((stats.get("pts_ns_sum", 0.0)
+                            - stats.get("pts_ew_sum", 0.0)) / n)
+                     if n else None),
+        "taker_pct": round(100 * contracts / n) if n else None,
+    }
+
+
+async def _quick_bid_one(ws, req_id, label, action, hand, prior_actions, seat):
+    """Simule une annonce forcée et publie son verdict. Rend le blob ou None."""
+    remaining = list(set(range(32)) - set(hand))
+    # Le simulateur assied toujours le siège analysé en Sud : le donneur se
+    # déduit du nombre d'annonces déjà passées, comme dans `_run_annonces_doudou`.
+    dealer = (2 - 1 - len(prior_actions) + 32) % 4
+
+    cache_key = sim_cache.doudou_key(hand, prior_actions, action, QUICK_BID_SIMS)
+    hit = await sim_cache.get(sim_cache.KIND_DOUDOU, cache_key,
+                              sim_cache.DOUDOU_SIM_VERSION)
+    if hit and hit.get("doudou_stats"):
+        blob = {"label": label, "action": action, "cached": True,
+                **_quick_bid_readout(hit["doudou_stats"])}
+        await ws.send_json({"type": "replay_bid_quick_done", "req_id": req_id, **blob})
+        return blob
+
+    loop = asyncio.get_event_loop()
+    cells = _doudou_new_cells()
+    stats = _doudou_new_stats()
+    for i in range(QUICK_BID_SIMS):
+        result = await loop.run_in_executor(
+            None, _run_single_doudou_sim, hand, list(remaining),
+            BID_MODEL_PATH, DMC_MODEL_PATH, dealer, prior_actions, action)
+        dd = result.get("doudou")
+        if dd:
+            _doudou_accumulate(cells, stats, dd)
+        # Une mise à jour tous les 20 : la page n'affiche qu'une barre, et un
+        # envoi par sim ferait 160 messages pour un bouton.
+        if (i + 1) % 20 == 0 and i + 1 < QUICK_BID_SIMS:
+            await ws.send_json({
+                "type": "replay_bid_quick_update", "req_id": req_id,
+                "label": label, "completed": i + 1, "total": QUICK_BID_SIMS})
+
+    await sim_cache.put(sim_cache.KIND_DOUDOU, cache_key,
+                        sim_cache.DOUDOU_SIM_VERSION,
+                        {"completed": QUICK_BID_SIMS, "total": QUICK_BID_SIMS,
+                         "elapsed_ms": None, "doudou_cells": cells,
+                         "doudou_stats": stats})
+    blob = {"label": label, "action": action, **_quick_bid_readout(stats)}
+    await ws.send_json({"type": "replay_bid_quick_done", "req_id": req_id, **blob})
+    return blob
+
+
+async def _run_replay_bid_quick(ws: WebSocket, data: dict):
+    """« Analyse rapide » d'une annonce de la donne rejouée."""
+    # Importé ici comme partout ailleurs dans ce module : `analysis` tire colver
+    # et ses modèles, et `server` est chargé au démarrage du processus.
+    import colver.web.analysis as analysis
+
+    req_id = data.get("req_id")
+
+    async def fail(msg):
+        await ws.send_json({"type": "replay_bid_quick_error",
+                            "req_id": req_id, "error": msg})
+
+    game_id = str(data.get("game_id") or "").strip().lower()
+    try:
+        idx = int(data.get("idx"))
+    except (TypeError, ValueError):
+        return await fail("Coup invalide")
+    if not BID_MODEL_PATH or not DMC_MODEL_PATH:
+        return await fail("Modèles indisponibles")
+
+    game = await db.get_game(game_id)
+    if game is None:
+        return await fail("Partie introuvable")
+    if not 0 <= idx < len(game["actions"]):
+        return await fail("Index hors de la donne")
+
+    phase, seat = analysis._seat_at(game, idx)
+    if phase != 0:
+        return await fail("Ce coup n'est pas une annonce")
+
+    hand = sorted(int(c) for c in game["hands"][seat])
+    prior = [int(e["action"]) for e in game["actions"][:idx]]
+    played = int(game["actions"][idx]["action"])
+
+    # Quelles annonces valent d'être simulées. Un passe n'a pas de contrat à
+    # faire réussir — mais s'il en a refusé un, c'est **l'annonce refusée**
+    # qu'il faut chiffrer pour savoir si le passe était bon.
+    todo = []
+    if played != 0:
+        todo.append(("joué", played))
+    cached = await db.get_analysis(game_id)
+    for bid in (cached or {}).get("bids", []):
+        if int(bid.get("idx", -1)) == idx:
+            best = bid.get("model_best")
+            if best is not None and int(best) != played and int(best) != 0:
+                todo.append(("Bid V6", int(best)))
+            break
+    if not todo:
+        return await fail("Rien à simuler : passe, et V6 passait aussi")
+
+    await ws.send_json({"type": "replay_bid_quick_start", "req_id": req_id,
+                        "sims": QUICK_BID_SIMS, "lines": len(todo)})
+    try:
+        for label, action in todo:
+            await _quick_bid_one(ws, req_id, label, action, hand, prior, seat)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — un bouton ne doit pas tuer la socket
+        logger.exception("replay_bid_quick : simulation en échec")
+        await fail(str(e))
+
+
 # ===== WebSocket =====
 
 # Plafond de connexions simultanées : chaque socket peut lancer des simulations
@@ -2304,6 +2457,12 @@ async def _websocket_session(ws: WebSocket):
                 if review_id:
                     agent_review_task = asyncio.create_task(
                         _agent_review_loop(review_id))
+
+            elif msg_type == "replay_bid_quick":
+                # Une seule à la fois par socket, comme les simulations de la
+                # page annonces : c'est le même exécuteur et le même coût.
+                await _cancel_sim_task()
+                sim_task = asyncio.create_task(_run_replay_bid_quick(ws, data))
 
             elif msg_type == "replay_step":
                 if replay_session is None:

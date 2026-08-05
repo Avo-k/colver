@@ -29,7 +29,7 @@ dormir se réveille toujours avec ses hypothèses converties en certitudes.
 - [corpus_isdd_playgen_v3.md](corpus_isdd_playgen_v3.md) — **entraîner playgen
   sur du jeu fort** : combien de temps coûte un corpus IS-DD, pourquoi le mode
   partie est bloqué par le format, pourquoi ce corpus n'entraîne pas un bidder,
-  et pourquoi playgen v3-small n'est pas le raccourci qu'il paraît être.
+  et pourquoi playgen v2-belote-small n'est pas le raccourci qu'il paraît être.
   (2026-08-04)
 - [decodage_speculatif_playgen.md](decodage_speculatif_playgen.md) — **un mini
   modèle comme brouillon du gros** : pourquoi ça vise le mauvais poste de coût
@@ -38,3 +38,10 @@ dormir se réveille toujours avec ses hypothèses converties en certitudes.
   ACT+CARD sans second modèle). Le levier qu'elle pointait est **fait et
   mesuré** ; ce qui reste ouvert tient en une mesure de dix minutes.
   (2026-08-04, révisée le même jour)
+- [rejouer_analyse_erreurs.md](rejouer_analyse_erreurs.md) — **compter les
+  erreurs dans Rejouer, montrer l'alternative, croiser DD et IS-DD** : pourquoi
+  l'échelle en points cartes désigne les mauvaises erreurs (32 coups sur 1057
+  affichés « ✓ » coûtent au score, jusqu'à 1264 points), pourquoi les deux
+  évaluations sont déjà calculées et jetées, pourquoi dérouler une variante est
+  gratuit (0,12 s pour toute une donne) et pourquoi DouDou50 n'est pas le
+  raccourci qu'il paraît (2 à 30× plus lent que le solveur). (2026-08-05)

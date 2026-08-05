@@ -30,30 +30,55 @@ logger = logging.getLogger(__name__)
 # analyse calculée en pleine donne sur une donne terminée depuis est partielle,
 # indiscernable d'une complète, et la migration v9 ne peut pas l'identifier.
 # v6 : l'avis de bid v6 est calculé au score de partie de la donne, plus à 0-0.
-ANALYSIS_VERSION = 6
+# v7 : le coût d'une carte se lit en **score de donne** et non plus en points
+#      cartes, et la catégorie avec lui (2026-08-05).
+ANALYSIS_VERSION = 7
 
-# Versions dont les valeurs DD restent bonnes : v5 → v6 n'a changé que le score
-# passé au bidder. À vider au prochain bump qui touche au barème ou aux coups
-# légaux — là, tout ce qui précède est périmé.
-_DD_COMPATIBLE_VERSIONS = (5, 6)
+# Versions dont les valeurs DD restent bonnes. v7 ne touche ni au barème ni aux
+# coups légaux — il lit autrement le même solve — donc `oracle_bids` d'une
+# analyse v5/v6 reste exact. À vider au prochain bump qui touche vraiment aux
+# règles : là, tout ce qui précède est périmé.
+_DD_COMPATIBLE_VERSIONS = (5, 6, 7)
 
-# Cost thresholds (card points) -> category label
-CATEGORIES = [
-    (0, "parfait"),
-    (4, "bon"),
-    (14, "imprecision"),
-    (29, "erreur"),
-    (10_000, "faute"),
-]
+# ── Ce qu'est une erreur ──
+#
+# Jusqu'au 2026-08-05 le coût d'une carte se lisait en **points cartes**, avec
+# des seuils (4 / 14 / 29). C'était faux pour ce que la page affiche, parce que
+# le score de donne est une fonction **en escalier** de ces points : plat sous le
+# seuil du contrat, marche de `4V` au seuil, pente 2 seulement dans un contrat
+# normal tenu. Mesuré sur 1205 décisions
+# (`scripts/analysis/replay_error_scale.py scale`) :
+#
+#   - **32 coups sur 1057 notés « ✓ »** coûtaient au score, jusqu'à 1264 points ;
+#   - **8 « fautes » sur 9** coûtaient bien quelque chose, mais l'échelle notait
+#     −42 un coup qui ne décidait plus rien et −3 celui qui perdait la donne ;
+#   - trier par points cartes met donc en tête de liste des coups qui n'ont rien
+#     coûté, et cache ceux qui ont tout coûté.
+#
+# La catégorie se lit désormais en score de donne, et se scinde selon **le seul
+# prédicat qui compte** : le contrat a-t-il basculé ? Perdre 30 points dans un
+# contrat acquis et faire chuter le contrat ne sont pas le même événement.
+#
+# Ces trois catégories sont ce que le DD seul permet de dire. Le client en
+# dérive deux de plus — `malchance` et `aubaine` — en croisant avec l'avis
+# d'IS-DD, qui arrive plus tard (`agent_review`) : voir `replay.js`.
+CAT_PARFAIT = "parfait"          # rien à gagner à jouer autre chose
+CAT_IMPRECISION = "imprecision"  # coûte des points, le contrat tient quand même
+CAT_DECISIVE = "decisive"        # le contrat bascule
+
+# L'échelle points cartes reste calculée et publiée (`cost`) : c'est la bonne
+# réponse à « quelle carte prend le plus de plis », et `/analyse/jeu` l'affiche.
+# Elle n'est simplement plus ce qui décide du mot « erreur ».
+CATEGORIES = [CAT_PARFAIT, CAT_IMPRECISION, CAT_DECISIVE]
 
 _locks = {}  # game_id -> asyncio.Lock, to avoid duplicate computations
 
 
-def _categorize(cost):
-    for threshold, label in CATEGORIES:
-        if cost <= threshold:
-            return label
-    return "faute"
+def _categorize(cost_score, swing):
+    """La catégorie d'un coup, depuis son coût **en score de donne**."""
+    if cost_score <= 0:
+        return CAT_PARFAIT
+    return CAT_DECISIVE if swing else CAT_IMPRECISION
 
 
 def _best_contract(suits, team):
@@ -183,20 +208,41 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
             if len(legals) == 1:
                 moves.append({
                     "idx": idx, "player": player, "action": action,
-                    "best": action, "cost": 0, "forced": True,
+                    "best": action, "cost": 0, "cost_score": 0, "forced": True,
                 })
             else:
                 result = env.solve_scores()
                 scores = dict(result["scores"])
+                # Le même solve, passé au barème. Deux échelles qui ne se
+                # soustraient pas : points cartes 0-252 d'un côté, écart de
+                # score marqué de l'autre.
+                deal = {int(c): int(v) for c, v in result["deal_scores"]}
+                made = {int(c): bool(v) for c, v in result["contract_made"]}
                 team = player % 2
-                played_ns = scores[action]
+
                 best_ns = max(scores.values()) if team == 0 else min(scores.values())
-                cost = (best_ns - played_ns) if team == 0 else (played_ns - best_ns)
+                cost = ((best_ns - scores[action]) if team == 0
+                        else (scores[action] - best_ns))
+
+                best_deal = max(deal.values()) if team == 0 else min(deal.values())
+                cost_score = ((best_deal - deal[action]) if team == 0
+                              else (deal[action] - best_deal))
+
+                # La classe des cartes optimales, pas son représentant. En score
+                # de donne elle s'élargit — cinq cartes peuvent valoir
+                # exactement pareil — et désigner l'une d'elles comme « la »
+                # carte de l'Oracle promet une précision qui n'existe pas.
+                best_class = sorted(c for c, v in deal.items() if v == best_deal)
+                swing = made[action] != made[best_class[0]]
+
                 moves.append({
                     "idx": idx, "player": player, "action": action,
                     "best": int(result["best_card"]),
+                    "best_class": best_class,
                     "cost": int(cost),
-                    "category": _categorize(cost),
+                    "cost_score": int(cost_score),
+                    "swing": swing,
+                    "category": _categorize(cost_score, swing),
                 })
         env.step(action)
 
@@ -213,14 +259,21 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
 
 
 def _summarize(moves):
+    """Par siège : ce que ses décisions ont coûté, dans les deux échelles.
+
+    `total_cost` reste en points cartes — la page Stats agrège des historiques
+    dessus. `total_cost_score` est ce qui compte : ce que le siège a réellement
+    laissé sur la table, contrat compris.
+    """
     players = []
     for p in range(4):
         pm = [m for m in moves if m["player"] == p]
         decisions = [m for m in pm if not m.get("forced")]
         total_cost = sum(m["cost"] for m in decisions)
-        counts = {label: 0 for _, label in CATEGORIES}
+        total_cost_score = sum(m.get("cost_score", 0) for m in decisions)
+        counts = dict.fromkeys(CATEGORIES, 0)
         for m in decisions:
-            counts[m["category"]] += 1
+            counts[m["category"]] = counts.get(m["category"], 0) + 1
         players.append({
             "player": p,
             "moves": len(pm),
@@ -228,6 +281,7 @@ def _summarize(moves):
             "decisions": len(decisions),
             "total_cost": total_cost,
             "avg_cost": round(total_cost / len(decisions), 1) if decisions else 0.0,
+            "total_cost_score": total_cost_score,
             "counts": counts,
         })
     return {"players": players}
@@ -238,18 +292,15 @@ def _is_fresh(cached, playgen_model_path, match_scores=None):
     without the playgen model while that model is now available — otherwise a
     single failed load would leave the game without a playgen annonce forever.
 
-    **Une ligne v5 reste valable pour une donne jouée à 0-0.** La seule
-    différence entre v5 et v6 est le score de partie passé à bid v6, et 0-0 est
-    exactement ce que v5 supposait — donc les deux calculs rendent le même blob.
-    Ça couvre le cas par défaut du site (`target = 0`, aucune partie) et la
-    première donne de toute partie : sans cette exception, le bump jetterait des
-    milliers de solves DD pleine donne pour les recalculer à l'identique.
-    **À supprimer au prochain bump**, où l'équivalence ne tiendra plus.
+    v6 portait une exception : une ligne v5 restait valable pour une donne jouée
+    à 0-0, les deux versions y calculant le même blob. Elle **a été retirée au
+    bump v7**, comme son commentaire l'annonçait : v7 lit le coût des cartes en
+    score de donne, que ni v5 ni v6 n'ont jamais écrit. Aucune ligne antérieure
+    n'est récupérable, et tout le cache se recalcule — ~1 s par donne.
     """
     if cached is None:
         return False
-    version = cached.get("version")
-    if version != ANALYSIS_VERSION and not (version == 5 and not any(match_scores or ())):
+    if cached.get("version") != ANALYSIS_VERSION:
         return False
     return bool(cached.get("playgen")) or not playgen_model_path
 

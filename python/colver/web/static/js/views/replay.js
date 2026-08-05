@@ -83,6 +83,11 @@ const TEMPLATE = `
             <div id="replay-stats-body"></div>
         </div>
 
+        <div id="replay-errors" class="hidden">
+            <div class="section-title">Moments de la donne</div>
+            <div id="replay-errors-body"></div>
+        </div>
+
         <div id="replay-analysis">
             <div class="section-title">Analyse Oracle</div>
             <div id="replay-analysis-body" class="analysis-body"></div>
@@ -124,13 +129,64 @@ const REVIEW_BOTS = [
     { key: 'isdd',   label: 'Dédé',     title: 'IS-DD : mondes playgen résolus en double-dummy' },
 ];
 
+// Cinq états, deux familles qui ne se mélangent pas.
+//
+// `parfait` / `imprecision` / `decisive` sont des **jugements** : le coup a
+// coûté quelque chose, en score de donne (contrat compris), et `decisive` dit
+// que le contrat a basculé — perdre des points dans un contrat acquis et faire
+// chuter le contrat ne sont pas le même événement.
+//
+// `malchance` / `aubaine` sont des **explications**, pas des reproches : elles
+// naissent du désaccord entre l'Oracle, qui voit les quatre mains, et Dédé, qui
+// ne voit que ce que le siège pouvait savoir. Elles ont donc leur propre palette
+// (froide), délibérément hors de celle du blâme — un joueur ne doit pas lire
+// « malchance » comme un cran de faute.
 const CATEGORY_UI = {
-    parfait:     { tag: '✓',  cls: 'an-best',   label: 'Meilleur coup' },
-    bon:         { tag: '✓',  cls: 'an-good',   label: 'Bon coup' },
-    imprecision: { tag: '?!', cls: 'an-inacc',  label: 'Imprécision' },
-    erreur:      { tag: '?',  cls: 'an-error',  label: 'Erreur' },
-    faute:       { tag: '??', cls: 'an-blund',  label: 'Faute' },
+    parfait:   { tag: '✓',  cls: 'an-best',   label: 'Meilleur coup' },
+    imprecision: { tag: '?!', cls: 'an-inacc', label: 'Imprécision',
+                   hint: 'des points perdus, le contrat tient quand même' },
+    decisive:  { tag: '??', cls: 'an-blund',  label: 'Faute décisive',
+                 hint: 'ce coup fait basculer le contrat' },
+    malchance: { tag: '≈',  cls: 'an-unlucky', label: 'Malchance',
+                 hint: 'bon choix vu de ce siège — la donne était contre vous' },
+    aubaine:   { tag: '!',  cls: 'an-lucky',  label: 'Coup heureux',
+                 hint: 'ça paraissait mauvais, ça ne l’était pas' },
+    // Catégories des analyses d'avant la v7 (échelle en points cartes). Une
+    // ligne périmée est recalculée, mais elle peut être servie le temps que
+    // `get_or_compute` rende la main.
+    bon:       { tag: '✓',  cls: 'an-good',   label: 'Bon coup' },
+    erreur:    { tag: '?',  cls: 'an-error',  label: 'Erreur' },
+    faute:     { tag: '??', cls: 'an-blund',  label: 'Faute' },
 };
+
+// La catégorie affichée pour un coup : celle de l'Oracle, corrigée par l'avis de
+// Dédé dès que la revue est arrivée.
+//
+// L'Oracle voit les quatre mains ; le désigner seul comme juge accuse un joueur
+// d'erreurs qu'il ne pouvait pas voir. Dédé, lui, ne voit que l'information du
+// siège. D'où la grille : les deux d'accord = vraie erreur ; l'Oracle seul =
+// malchance ; Dédé seul = coup heureux.
+//
+// `isdd_cost` est en écart de score de donne, la même échelle que `cost_score`.
+// Le seuil n'est pas zéro : IS-DD est une moyenne sur des mondes échantillonnés,
+// donc il rend rarement exactement 0 même quand il approuve.
+const ISDD_NOISE = 1.0;
+
+function moveCategory(an, idx) {
+    if (!an || an.forced) return null;
+    const base = an.category || 'parfait';
+    const review = _agentsByIdx && _agentsByIdx[idx];
+    const isdd = review && review.isdd_cost;
+    // Pas encore de revue, ou une revue v2 sans le coût : on s'en tient à
+    // l'Oracle plutôt que d'inventer un verdict.
+    if (isdd === null || isdd === undefined) return base;
+
+    const oracleBlames = (an.cost_score || 0) > 0;
+    const isddBlames = isdd > ISDD_NOISE;
+    if (oracleBlames && !isddBlames) return 'malchance';
+    if (!oracleBlames && isddBlames) return 'aubaine';
+    return base;
+}
 
 function pct(p) {
     return `${(p * 100).toFixed(p >= 0.1 ? 0 : 1)} %`;
@@ -213,6 +269,125 @@ function botsHtml(idx, played) {
     return chips ? `<div class="an-bots">${chips}</div>` : '';
 }
 
+// Ce que l'Oracle aurait joué. **La classe, pas son représentant** : en score de
+// donne plusieurs cartes valent exactement pareil (cinq, dans les donnes qu'on a
+// examinées), et n'en désigner qu'une promet une précision qui n'existe pas —
+// le départage de `solve_best_card` est un ordre interne, pas un conseil.
+function oracleAltHtml(an) {
+    const klass = (an.best_class && an.best_class.length) ? an.best_class : [an.best];
+    const shown = klass.slice(0, 3).map(cardChipHtml).join('');
+    const more = klass.length > 3 ? ` +${klass.length - 3}` : '';
+    const lead = klass.length > 1 ? 'Oracle, au choix :' : 'Oracle :';
+    return `<span class="an-alt">${lead} ${shown}${more}</span>`;
+}
+
+// ===== « Analyse rapide » d'une annonce =====
+//
+// Deux chiffres sur l'annonce qu'on regarde, sans quitter la page : combien de
+// fois le contrat passe, et l'espérance de points. C'est le chiffre-phare de la
+// page annonces ramené à une ligne.
+//
+// **Ce que ça juge, et pourquoi ça compte** : Rejouer note les annonces au Q de
+// bid v6, donc appelle « erreur » tout désaccord avec lui. Un taux de réussite
+// simulé ne dépend d'aucun modèle de référence — il note l'humain et v6 au même
+// barème, et v6 se trompe aussi. D'où la seconde ligne quand son avis diffère.
+//
+// Le résultat est gardé par index de coup **et** mis en cache côté serveur
+// (`sim_cache`, clé `(main, enchère précédente, annonce forcée)`), donc revenir
+// sur une annonce déjà chiffrée est instantané, y compris d'une donne à l'autre.
+const _quickBid = new Map();   // idx -> {state, lines:[], progress}
+
+function quickBidHtml(idx, played) {
+    const q = _quickBid.get(idx);
+    if (!q) {
+        // Un passe sans alternative de V6 n'a rien à simuler : pas de contrat
+        // dont on puisse mesurer la réussite.
+        const bid = _bidsByIdx && _bidsByIdx[idx];
+        const v6 = bid && bid.model_best;
+        if (played === 0 && !(v6 !== undefined && v6 !== null && v6 !== 0)) return '';
+        return `<button class="qb-btn" data-qb="${idx}">Analyse rapide</button>`;
+    }
+    if (q.state === 'error') {
+        return `<div class="qb-box qb-err">${q.error}</div>` +
+            `<button class="qb-btn" data-qb="${idx}">Réessayer</button>`;
+    }
+    let html = '<div class="qb-box">';
+    for (const l of q.lines) {
+        // `made_pct` est conditionnel — « quand ce camp tient le contrat » —
+        // parce qu'une annonce n'empêche pas les adversaires de surenchérir.
+        // `taker_pct` dit à quelle fréquence c'est arrivé, donc à quel point le
+        // premier chiffre porte sur un sous-ensemble.
+        const made = l.made_pct === null || l.made_pct === undefined
+            ? '—' : `${l.made_pct} %`;
+        const exp = l.expected === null || l.expected === undefined
+            ? '—' : (l.expected > 0 ? `+${l.expected}` : `${l.expected}`);
+        html += `<div class="qb-line">` +
+            `<span class="qb-label">${l.label}</span>` +
+            `<span class="qb-bid">${bidChipHtml(l.action)}</span>` +
+            `<span class="qb-made" title="Part des simulations où ce camp a tenu le contrat et l'a réussi — ` +
+            `il garde l'enchère ${l.taker_pct ?? '?'} % du temps">passe ${made}</span>` +
+            `<span class="qb-exp" title="Espérance d'écart de points sur toutes les simulations, ` +
+            `surenchères et donnes passées comprises">${exp} pts</span></div>`;
+    }
+    if (q.state === 'running') {
+        html += `<div class="qb-progress">${q.progress || 'simulation…'}</div>`;
+    }
+    html += '</div>';
+    return html;
+}
+
+function bindQuickBid(idx) {
+    const btn = document.querySelector(`[data-qb="${idx}"]`);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+        _quickBid.set(idx, { state: 'running', lines: [], progress: 'simulation…' });
+        refreshMoveStats();
+        send({ type: 'replay_bid_quick', game_id: _currentGameId, idx, req_id: idx });
+    });
+}
+
+// `req_id` est l'index du coup : sans lui, le résultat d'une analyse lancée puis
+// quittée atterrirait sur l'annonce affichée au moment de la réponse. Même
+// raison que les onglets de la page annonces.
+function handleQuickStart(data) {
+    const q = _quickBid.get(data.req_id);
+    if (!q) return;
+    // Combien de lignes attendre : sans ça, la première réponse ferait passer
+    // l'analyse en « terminée » et la progression disparaîtrait pendant que la
+    // seconde annonce tourne encore.
+    q.expected = data.lines || 1;
+    q.progress = `0/${data.sims}`;
+    refreshMoveStats();
+}
+
+function handleQuickUpdate(data) {
+    const q = _quickBid.get(data.req_id);
+    if (!q) return;
+    q.progress = `${data.label} — ${data.completed}/${data.total}`;
+    refreshMoveStats();
+}
+
+function handleQuickDone(data) {
+    const q = _quickBid.get(data.req_id);
+    if (!q) return;
+    q.lines.push(data);
+    if (q.lines.length >= (q.expected || 1)) {
+        q.state = 'done';
+        q.progress = null;
+    } else {
+        q.progress = 'simulation…';
+    }
+    refreshMoveStats();
+}
+
+function handleQuickError(data) {
+    const q = _quickBid.get(data.req_id);
+    if (!q) return;
+    q.state = 'error';
+    q.error = data.error || 'Simulation impossible';
+    refreshMoveStats();
+}
+
 // ===== Move stats (current move annotation) =====
 
 function replayRenderMoveStats(move, state) {
@@ -261,6 +436,10 @@ function replayRenderMoveStats(move, state) {
                     ? ` · joué ${pct(bid.playgen_p_played)}` : '') +
                 `</span></div>`;
         }
+        // Le chiffre, en place. Le lien juste en dessous mène au tableau
+        // complet : le bouton répond « est-ce que ça passe ? », la page répond
+        // « pourquoi ».
+        html += quickBidHtml(idx, move.action);
         // Une vraie ancre, pas un bouton : le routeur laisse passer Ctrl+clic et
         // clic-milieu, donc l'utilisateur choisit onglet courant ou nouvel
         // onglet clic par clic, sans qu'on ait à trancher pour lui.
@@ -269,6 +448,7 @@ function replayRenderMoveStats(move, state) {
             html += `<a class="an-bid-analyse-btn" href="${bidUrl}">Analyser cette annonce →</a>`;
         }
         body.innerHTML = html;
+        bindQuickBid(idx);
         return;
     }
 
@@ -282,13 +462,20 @@ function replayRenderMoveStats(move, state) {
         if (an.forced) {
             html = `<div class="an-move an-forced">Carte forcée</div>`;
         } else {
-            const ui = CATEGORY_UI[an.category] || CATEGORY_UI.bon;
-            html = `<div class="an-move ${ui.cls}">` +
+            const cat = moveCategory(an, idx);
+            const ui = CATEGORY_UI[cat] || CATEGORY_UI.parfait;
+            html = `<div class="an-move ${ui.cls}"` +
+                (ui.hint ? ` title="${ui.hint}"` : '') + '>' +
                 `<span class="an-tag">${ui.tag}</span> ${ui.label}`;
-            if (an.cost > 0) {
-                html += ` <span class="an-cost">−${an.cost} pts</span>` +
-                    `<span class="an-alt">Oracle : ${cardChipHtml(an.best)}</span>`;
+            // Le chiffre est en **score de donne** : ce que ce coup a coûté à
+            // la marque, contrat compris. Les points cartes restent en
+            // infobulle — ils répondent à « quelle carte prend le plus de
+            // plis », pas à « qu'est-ce que ça m'a coûté ».
+            if (an.cost_score > 0) {
+                html += ` <span class="an-cost" title="${an.cost} points cartes">` +
+                    `−${an.cost_score}</span>`;
             }
+            if (an.cost_score > 0 || an.cost > 0) html += oracleAltHtml(an);
             html += '</div>';
         }
     }
@@ -404,10 +591,11 @@ function buildMovesList() {
                     cls += ' mv-forced';
                     tip += ' — carte forcée';
                 } else {
-                    cls += ' mv-' + an.category;
-                    const ui = CATEGORY_UI[an.category];
-                    tip += ` — ${ui ? ui.label : an.category}`;
-                    if (an.cost > 0) tip += ` (−${an.cost} pts)`;
+                    const cat = moveCategory(an, i);
+                    cls += ' mv-' + cat;
+                    const ui = CATEGORY_UI[cat];
+                    tip += ` — ${ui ? ui.label : cat}`;
+                    if (an.cost_score > 0) tip += ` (−${an.cost_score})`;
                 }
             }
             cardEl.className = cls;
@@ -456,20 +644,148 @@ function renderAnalysisSummary() {
         }
         html += '</table>';
     }
-    html += '<table class="an-table"><tr><th></th><th title="Coût total en points">Coût</th>' +
-        '<th title="Coût moyen par décision">Moy.</th><th>?!</th><th>?</th><th>??</th></tr>';
+    // « Regrets » et non « Perdu » : chaque coût est mesuré **indépendamment à
+    // sa position**, en supposant un jeu parfait ensuite. Deux coups peuvent
+    // donc « perdre » la même donne et leurs coûts s'additionner au-delà de ce
+    // que la donne vaut — on a vu 904 sur une donne à ~460. C'est correct comme
+    // somme de regrets, et ce serait faux comme total de points perdus.
+    // « Cartes » garde l'ancienne échelle : elle reste la bonne réponse à
+    // « quelle carte prend le plus de plis », elle n'est simplement plus ce qui
+    // définit une erreur.
+    html += '<table class="an-table"><tr><th></th>' +
+        '<th title="Somme des regrets, chacun mesuré indépendamment à sa position — ' +
+        'deux coups peuvent perdre la même donne, donc ce total peut dépasser ce ' +
+        'que la donne vaut">Regrets</th>' +
+        '<th title="Coût total en points cartes — une autre échelle, à ne pas soustraire">Cartes</th>' +
+        '<th title="Imprécision : des points perdus, le contrat tient">?!</th>' +
+        '<th title="Faute décisive : le contrat bascule">??</th></tr>';
+    // Les deux colonnes de comptes sont **recalculées ici**, pas lues dans
+    // `p.counts`. Le serveur ne connaît que l'avis de l'Oracle ; sans ce
+    // recalcul le tableau annonçait « Sud : 2 fautes décisives » pendant que le
+    // panneau des moments classait les deux mêmes coups en malchance et que le
+    // compteur affichait 0 — trois chiffres contradictoires sur un écran.
+    //
+    // La colonne « Regrets », elle, reste l'avis brut de l'Oracle, et c'est
+    // voulu : un siège peut avoir laissé 900 de regret sans une seule faute
+    // qu'il pouvait voir. C'est même le message que la page doit faire passer.
+    const counts = [0, 1, 2, 3].map(() => ({ imprecision: 0, decisive: 0 }));
+    for (const idx of Object.keys(_analysisByIdx || {})) {
+        const an = _analysisByIdx[idx];
+        if (!an || an.forced) continue;
+        const cat = moveCategory(an, Number(idx));
+        if (cat in counts[an.player]) counts[an.player][cat]++;
+    }
     for (const p of _analysisSummary.players) {
         if (p.moves === 0) continue;
         const team = p.player % 2 === 0 ? 'team-ns' : 'team-ew';
-        const c = p.counts;
+        const c = counts[p.player];
         html += `<tr><td class="${team}">${SEAT_NAMES_FR[p.player]}</td>` +
-            `<td>${p.total_cost}</td><td>${p.avg_cost}</td>` +
-            `<td class="an-inacc">${c.imprecision || 0}</td>` +
-            `<td class="an-error">${c.erreur || 0}</td>` +
-            `<td class="an-blund">${c.faute || 0}</td></tr>`;
+            `<td>${p.total_cost_score ?? 0}</td><td>${p.total_cost}</td>` +
+            `<td class="an-inacc">${c.imprecision}</td>` +
+            `<td class="an-blund">${c.decisive}</td></tr>`;
     }
     html += '</table>';
     el.innerHTML = html;
+}
+
+// ===== Moments de la donne =====
+//
+// Le panneau qui répond à « où faut-il regarder ». Il est court par
+// construction : mesuré à ~2 décisions coûteuses par donne (médiane 2, max 7,
+// et un tiers des donnes n'en ont aucune), donc tout tient déplié et il n'y a
+// jamais de pagination à prévoir.
+//
+// Il se remplit en **deux temps**, et c'est assumé : l'Oracle est là avec
+// l'analyse (~1 s), l'avis de Dédé arrive avec la revue (~9 s) et peut alors
+// reclasser une erreur en malchance. Annoncer un compteur définitif puis le voir
+// baisser tout seul serait pire que de dire qu'il est provisoire.
+
+// Les coups qui ont coûté quelque chose, du plus cher au moins cher.
+//
+// Le critère d'entrée est **le coût pour l'Oracle**, pas la catégorie affichée :
+// une malchance a sa place ici (elle explique un écart réel au score), mais un
+// coup heureux n'en a pas. Mesuré sur 485 décisions
+// (`scripts/analysis/replay_error_grid.py`) : 40 erreurs, 12 malchances, et
+// **76 coups heureux** — les lister noierait les moments qui comptent sous
+// deux fois leur nombre de coups qui n'ont rien coûté. Ils restent visibles là
+// où ils ont du sens : sur le coup lui-même, et dans la couleur de la liste.
+function keyMoments() {
+    if (!_analysisByIdx) return [];
+    const out = [];
+    for (const idx of Object.keys(_analysisByIdx)) {
+        const an = _analysisByIdx[idx];
+        if (!an || an.forced || !(an.cost_score > 0)) continue;
+        out.push({ idx: Number(idx), an, cat: moveCategory(an, Number(idx)) });
+    }
+    out.sort((a, b) => b.an.cost_score - a.an.cost_score || a.idx - b.idx);
+    return out;
+}
+
+function renderErrors() {
+    const wrap = document.getElementById('replay-errors');
+    const body = document.getElementById('replay-errors-body');
+    if (!wrap || !body) return;
+    if (!_analysisByIdx) {
+        wrap.classList.add('hidden');
+        return;
+    }
+    wrap.classList.remove('hidden');
+    const moments = keyMoments();
+
+    // Le compteur par siège, groupé par camp. Ne comptent que les fautes —
+    // malchance et coup heureux sont des explications, pas des reproches, donc
+    // les additionner à un « nombre d'erreurs » serait un contresens.
+    const blamed = moments.filter(m => m.cat === 'imprecision' || m.cat === 'decisive');
+    const perSeat = [0, 0, 0, 0];
+    for (const m of blamed) perSeat[m.an.player]++;
+
+    // « N-S 0 » / « E-O 3 · Est 1, Ouest 2 ». Le détail par siège n'apparaît que
+    // s'il y a quelque chose à détailler, et **les sièges sont nommés en
+    // toutes lettres** : l'initiale d'Ouest est un « O » que la police rend
+    // indistinguable d'un zéro dès qu'un chiffre la suit.
+    let html = '<div class="err-counts">';
+    for (const team of [0, 1]) {
+        const seats = team === 0 ? [0, 2] : [1, 3];
+        const total = seats.reduce((s, p) => s + perSeat[p], 0);
+        const detail = total
+            ? ` <span class="err-seat">${seats.map(p =>
+                `${SEAT_NAMES_FR[p]} ${perSeat[p]}`).join(', ')}</span>`
+            : '';
+        html += `<span class="err-team ${team === 0 ? 'team-ns' : 'team-ew'}">` +
+            `${team === 0 ? 'N-S' : 'E-O'} <b>${total}</b>${detail}</span>`;
+    }
+    html += '</div>';
+
+    if (!moments.length) {
+        html += _agentsPending
+            ? '<div class="err-empty">Aucune faute pour l’instant — Dédé finit de relire.</div>'
+            : '<div class="err-empty">Donne jouée sans faute.</div>';
+    } else {
+        html += '<div class="err-list">';
+        for (const { idx, an, cat } of moments) {
+            const ui = CATEGORY_UI[cat] || CATEGORY_UI.parfait;
+            const cost = an.cost_score > 0 ? `−${an.cost_score}` : '';
+            html += `<button class="err-row ${ui.cls}" data-idx="${idx}"` +
+                (ui.hint ? ` title="${ui.hint}"` : '') + '>' +
+                `<span class="err-tag">${ui.tag}</span>` +
+                `<span class="err-seat-name">${SEAT_NAMES_FR[an.player]}</span>` +
+                `<span class="err-card">${cardChipHtml(an.action)}</span>` +
+                `<span class="err-label">${ui.label}</span>` +
+                `<span class="err-cost">${cost}</span></button>`;
+        }
+        html += '</div>';
+    }
+    if (_agentsPending) {
+        html += '<div class="err-pending">Classement provisoire — ' +
+            'l’avis de Dédé peut encore reclasser une faute en malchance.</div>';
+    }
+    body.innerHTML = html;
+
+    // Le clic amène **avant** le coup : c'est la décision qu'on veut revoir,
+    // pas son résultat. `historyIndex = idx - 1` laisse la carte encore en main.
+    body.querySelectorAll('.err-row').forEach(el => {
+        el.addEventListener('click', () => jumpTo(Math.max(0, parseInt(el.dataset.idx) - 1)));
+    });
 }
 
 async function loadAnalysis(gameId) {
@@ -494,6 +810,7 @@ async function loadAnalysis(gameId) {
         _oracleBids = data.oracle_bids || null;
         _analysisSummary = data.summary;
         renderAnalysisSummary();
+        renderErrors();
         // Recolor the moves list and refresh the current annotation
         if (replayBoard) {
             buildMovesList();
@@ -546,6 +863,13 @@ function handleAgentReviewMove(data) {
     // showing the progress counter for a card that has not landed yet.
     const shown = _agentsByIdx[replayBoard ? replayBoard.historyIndex : -1];
     if (!shown || shown === data.move) refreshMoveStats();
+    // Chaque carte relue peut reclasser une faute en malchance : le panneau des
+    // moments et la coloration de la liste suivent au fil de l'eau.
+    if (data.move.isdd_cost !== undefined) {
+        renderErrors();
+        renderAnalysisSummary();
+        buildMovesList();
+    }
 }
 
 function handleAgentReviewDone(data) {
@@ -555,18 +879,25 @@ function handleAgentReviewDone(data) {
     _agentsByIdx = byIdx;
     _agentsPending = false;
     refreshMoveStats();
+    renderErrors();
+    renderAnalysisSummary();
+    buildMovesList();
 }
 
 function handleAgentReviewError(data) {
     if (data.game_id !== _currentGameId) return;
     _agentsPending = false;
     refreshMoveStats();
+    renderErrors();
 }
 
 // ===== Load / history =====
 
 function handleReplayLoaded(data) {
     replayTotalActions = data.total_actions || 0;
+    // Un index de coup ne veut rien dire d'une donne à l'autre : sans ce vidage,
+    // l'annonce n°3 d'une nouvelle donne afficherait le chiffre de la précédente.
+    _quickBid.clear();
     _currentGameId = data.game_id;
     setActionIdx(0);
     setReplayGameId(data.game_id);
@@ -844,6 +1175,10 @@ export function mount(container) {
     onMessage('agent_review_move', handleAgentReviewMove);
     onMessage('agent_review_done', handleAgentReviewDone);
     onMessage('agent_review_error', handleAgentReviewError);
+    onMessage('replay_bid_quick_start', handleQuickStart);
+    onMessage('replay_bid_quick_update', handleQuickUpdate);
+    onMessage('replay_bid_quick_done', handleQuickDone);
+    onMessage('replay_bid_quick_error', handleQuickError);
 
     // Partie et coup demandés par l'URL — c'est ce que produit un Retour depuis
     // une page d'analyse, ou un lien partagé. Le coup est mis de côté : il ne
@@ -873,6 +1208,11 @@ export function unmount() {
     offMessage('agent_review_move', handleAgentReviewMove);
     offMessage('agent_review_done', handleAgentReviewDone);
     offMessage('agent_review_error', handleAgentReviewError);
+    offMessage('replay_bid_quick_start', handleQuickStart);
+    offMessage('replay_bid_quick_update', handleQuickUpdate);
+    offMessage('replay_bid_quick_done', handleQuickDone);
+    offMessage('replay_bid_quick_error', handleQuickError);
+    _quickBid.clear();
 
     if (replayBoard) {
         replayBoard.stopAutoPlay();

@@ -3725,12 +3725,101 @@
 .an-inacc { color: #ffd54f; }
 .an-error { color: #ffb74d; }
 .an-blund { color: var(--c-danger); }
+/* Malchance et coup heureux ne sont pas des crans de faute : ils expliquent un
+   désaccord entre l'Oracle (qui voit les quatre mains) et Dédé (qui ne voit que
+   ce que le siège savait). D'où une palette **froide**, hors de la gamme
+   jaune→rouge du blâme — sans quoi « Malchance » se lirait comme une faute
+   atténuée alors que le coup était bon. */
+.an-unlucky { color: #64b5f6; }
+.an-lucky { color: #ba9ae0; }
 .an-forced { color: #888; font-style: italic; }
 .an-cost { font-family: monospace; font-weight: 700; }
 .an-alt { color: #bbb; margin-left: auto; }
 /* `.an-red` a disparu : les glyphes ♠♥♦♣ passent tous par `suitHtml()`, qui
    les rend rouges OU noirs (tokens.css). Un rouge local n'avait de contrepartie
    noire nulle part, d'où des ♠ et ♣ couleur du texte ambiant. */
+
+/* ===== « Analyse rapide » d'une annonce =====
+   Deux chiffres en place, sans quitter Rejouer. Le bouton vit au-dessus du lien
+   « Analyser cette annonce → » : l'un répond « est-ce que ça passe ? », l'autre
+   « pourquoi ». */
+.qb-btn {
+    display: block;
+    width: 100%;
+    margin-top: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--c-accent);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--c-accent);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+}
+/* `base.css` repeint tout `<button>:hover` en accent — sans ce fond explicite,
+   le libellé passerait en accent sur fond accent. */
+.qb-btn:hover { background: color-mix(in srgb, var(--c-accent) 20%, transparent); }
+
+.qb-box {
+    margin-top: 4px;
+    padding: 4px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.25);
+    font-size: var(--fs-sm);
+}
+.qb-line { display: flex; align-items: center; gap: 6px; }
+.qb-line + .qb-line { margin-top: 3px; }
+/* Le panneau fait ~300px : sans `nowrap`, « passe 25 % » se coupait entre le
+   nombre et le signe, et l'espérance passait à la ligne suivante. */
+.qb-label { opacity: 0.7; white-space: nowrap; }
+.qb-made { font-weight: 700; white-space: nowrap; }
+.qb-exp { margin-left: auto; font-family: monospace; white-space: nowrap; }
+.qb-progress { margin-top: 3px; opacity: 0.55; font-style: italic; }
+.qb-err { color: var(--c-danger); }
+
+/* ===== Moments de la donne =====
+   Où regarder, en tête du panneau d'analyse. Court par construction : ~2
+   décisions coûteuses par donne (médiane 2, max 7), donc tout tient déplié. */
+#replay-errors { margin-bottom: 8px; }
+
+.err-counts {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    padding: 4px 0 6px;
+    font-size: var(--fs-sm);
+}
+.err-team b { font-size: 1.15rem; margin-right: 3px; }
+.err-seat { opacity: 0.65; margin-right: 4px; font-family: monospace; }
+
+.err-list { display: flex; flex-direction: column; gap: 3px; }
+.err-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 3px 6px;
+    border: none;
+    border-left: 3px solid currentColor;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.25);
+    text-align: left;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+}
+/* `base.css` repeint tout `<button>:hover` en accent — il faut redéclarer le
+   fond, sinon la ligne perd sa couleur de catégorie au survol. */
+.err-row:hover { background: rgba(255, 255, 255, 0.10); }
+.err-tag { font-weight: 800; min-width: 1.2em; }
+.err-seat-name { font-family: monospace; opacity: 0.7; }
+.err-label { color: var(--c-text); opacity: 0.85; }
+.err-cost { margin-left: auto; font-family: monospace; font-weight: 700; }
+.err-empty { padding: 4px 0; font-size: var(--fs-sm); opacity: 0.7; }
+.err-pending {
+    padding: 4px 0 0;
+    font-size: var(--fs-xs, 0.72rem);
+    opacity: 0.55;
+    font-style: italic;
+}
 
 /* "Qui aurait joué quoi" — the three reference bots, under the played card */
 .an-bots {
@@ -4124,6 +4213,10 @@
 .mv-imprecision { border-bottom-color: #ffd54f; background: rgba(255, 213, 79, 0.10); }
 .mv-erreur      { border-bottom-color: #ffb74d; background: rgba(255, 183, 77, 0.14); }
 .mv-faute       { border-bottom-color: var(--c-danger); background: rgba(239, 83, 80, 0.18); }
+.mv-decisive    { border-bottom-color: var(--c-danger); background: rgba(239, 83, 80, 0.18); }
+/* Palette froide : ce sont des explications, pas des reproches (cf. .an-unlucky) */
+.mv-malchance   { border-bottom-color: #64b5f6; background: rgba(100, 181, 246, 0.12); }
+.mv-aubaine     { border-bottom-color: #ba9ae0; background: rgba(186, 154, 224, 0.12); }
 .mv-forced      { opacity: 0.45; }
 
 .mv-current {

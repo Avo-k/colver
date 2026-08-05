@@ -1014,7 +1014,28 @@ impl Env {
     }
 
     /// DD scores for every legal root move of the current player.
-    /// Returns dict: {scores: [[card, ns_points], ...], best_card: u8}.
+    ///
+    /// Returns dict: `{scores, deal_scores, best_card}`.
+    ///
+    /// - `scores` — `[[card, ns_card_points], …]`, l'échelle historique : les
+    ///   points **cartes** N-S en fin de donne, 0-252.
+    /// - `deal_scores` — `[[card, ns_minus_ew], …]`, le même solve passé au
+    ///   barème : l'écart de score **marqué**, contrat compris. C'est en
+    ///   escalier, pas linéaire — plat sous le seuil du contrat, marche de `4V`
+    ///   au seuil — donc **les deux échelles ne se soustraient pas** et un écart
+    ///   en points cartes ne dit pas ce qu'un coup a coûté. Même conversion que
+    ///   `is_dd::world_value` sous `PlayObjective::DealScore`.
+    /// - `contract_made` — `[[card, bool], …]`, le contrat est-il tenu dans
+    ///   cette branche. Ne se déduit **pas** du signe de `deal_scores` (un écart
+    ///   négatif peut être une chute du preneur N-S ou un contrat tenu par E-O),
+    ///   et c'est le seul prédicat qui sépare « ce coup a coûté des points » de
+    ///   « ce coup a renversé la donne ».
+    /// - `best_card` — inchangé. La conversion étant monotone non décroissante,
+    ///   la carte qui maximise les points cartes maximise aussi le score de
+    ///   donne ; en revanche **la classe des cartes optimales s'élargit** dans la
+    ///   seconde échelle, et un appelant qui veut l'afficher doit la relire
+    ///   depuis `deal_scores` plutôt que de désigner ce représentant.
+    ///
     /// Only valid during play phase on a non-terminal state.
     fn solve_scores<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         if self.state.phase != Phase::Playing || self.state.is_terminal() {
@@ -1032,8 +1053,26 @@ impl Env {
             .iter()
             .map(|&(card, ns)| vec![card as i32, ns as i32])
             .collect();
+        // Le barème appliqué au même solve : aucune recherche supplémentaire,
+        // juste de l'arithmétique par carte.
+        let played_by = self.played_by;
+        let deal_scores: Vec<Vec<i32>> = result.scores[..result.count]
+            .iter()
+            .map(|&(card, ns)| {
+                let delta = colver_core::scoring::deal_score_delta(&state, &played_by, ns);
+                vec![card as i32, delta as i32]
+            })
+            .collect();
+        let contract_made: Vec<(i32, bool)> = result.scores[..result.count]
+            .iter()
+            .map(|&(card, ns)| {
+                (card as i32, colver_core::scoring::contract_made(&state, &played_by, ns))
+            })
+            .collect();
         let dict = PyDict::new_bound(py);
         dict.set_item("scores", scores)?;
+        dict.set_item("deal_scores", deal_scores)?;
+        dict.set_item("contract_made", contract_made)?;
         dict.set_item("best_card", result.best_card)?;
         Ok(dict)
     }

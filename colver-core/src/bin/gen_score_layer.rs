@@ -58,6 +58,7 @@ use colver_core::agent::{AgentSpec, MatchContext, Player};
 use colver_core::bid_net::BidNet;
 use colver_core::bid_train_env::DealPool;
 use colver_core::bidding::{self, BID_PASS};
+use colver_core::game_replay::GameReplay;
 use colver_core::solver;
 use colver_core::state::{GameState, Phase};
 
@@ -98,18 +99,22 @@ fn built_auction(hands: &[u32; 4], dealer: u8, trump: u8, ns_pts: u8, key: u64) 
 /// L'enchère n'est pas demandée aux joueurs, elle leur est **montrée** : chaque action
 /// passe par `observe` et `ctx.track` comme si elle avait été choisie. C'est ce qui fait
 /// que playgen voie le bon préfixe — il tokenise les jetons du contexte.
+#[allow(clippy::type_complexity)]
 fn label(
     hands: [u32; 4],
     dealer: u8,
     auction: &[u8],
     players: &mut [Box<dyn Player>; 4],
     ctx: &mut MatchContext,
-) -> Result<Option<u8>, colver_core::agent::AgentError> {
+) -> Result<Option<(u8, Vec<u8>)>, colver_core::agent::AgentError> {
     let mut state = GameState::new(dealer, hands);
     ctx.reset_deal(dealer);
     for p in players.iter_mut() {
         p.init_deal(&state);
     }
+    // La trajectoire complète — enchère puis 32 cartes. On la joue de toute façon ; ne
+    // garder que le total final jetait 4 donnes de jeu IS-DD fort par donne source.
+    let mut trace: Vec<u8> = Vec::with_capacity(48);
     for &a in auction {
         if state.phase != Phase::Bidding {
             break;
@@ -121,6 +126,7 @@ fn label(
         }
         ctx.track(&before, a);
         state.step(a);
+        trace.push(a);
     }
     if state.phase != Phase::Playing {
         return Ok(None);
@@ -134,8 +140,9 @@ fn label(
         }
         ctx.track(&before, action);
         state.step(action);
+        trace.push(action);
     }
-    Ok(Some(state.points[0]))
+    Ok(Some((state.points[0], trace)))
 }
 
 /// Construit les 4 préfixes d'une donne, un par atout, du plus fidèle au moins.
@@ -201,6 +208,7 @@ struct Args {
     out: String,
     url: Option<String>,
     dets: Option<u32>,
+    games: Option<String>,
 }
 
 /// Écrit le rang de préfixe de chaque case, un octet par case, 4 par donne.
@@ -238,6 +246,7 @@ fn parse() -> Args {
         out: "data/deals/scores_isdd_v2.sc".into(),
         url: None,
         dets: None,
+        games: None,
     };
     let v: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -254,6 +263,7 @@ fn parse() -> Args {
             "--out" => { a.out = nx(i); i += 2 }
             "--url" => { a.url = Some(nx(i)); i += 2 }
             "--dets" => { a.dets = Some(nx(i).parse().unwrap()); i += 2 }
+            "--games" => { a.games = Some(nx(i)); i += 2 }
             "--help" | "-h" => {
                 eprintln!("gen_score_layer : couche COLVSC01 en mondes playgen");
                 eprintln!("  --pool/--offset/--count   donnes source");
@@ -261,6 +271,7 @@ fn parse() -> Args {
                 eprintln!("  --threads N               96 mesuré sans erreur ; 256 noie le sidecar");
                 eprintln!("  --checkpoint N            donnes entre deux écritures");
                 eprintln!("  --url <u[,u..]>           sidecar(s), répéter une URL la pondère");
+                eprintln!("  --games <path>            écrit AUSSI les rejeux COLVGM02 de la case « or »");
                 std::process::exit(0)
             }
             o => { eprintln!("argument inconnu : {o}"); std::process::exit(1) }
@@ -344,6 +355,26 @@ fn main() {
             }
         }
     }
+    // Rejeux de la case « or » — un par donne, positionnellement parallèle aux scores
+    // puisqu'on n'écrit que le préfixe dense et que toute donne aboutie a exactement une
+    // case or. Sur une reprise on relit le fichier existant : sans ça un redémarrage
+    // tronquerait le corpus au lieu de le prolonger.
+    let mut games_v: Vec<Option<GameReplay>> = (0..count).map(|_| None).collect();
+    if let Some(ref gp) = args.games {
+        if resume > 0 {
+            match GameReplay::load_all(gp) {
+                Ok(old) => {
+                    let n = old.len().min(resume);
+                    for (k, r) in old.into_iter().take(n).enumerate() {
+                        games_v[k] = Some(r);
+                    }
+                    eprintln!("reprise : {n} rejeux relus de {gp}");
+                }
+                Err(e) => eprintln!("⚠ {gp} illisible ({e}) — les rejeux repartent d'ici"),
+            }
+        }
+    }
+    let games_v = Arc::new(Mutex::new(games_v));
     let ranks_v = Arc::new(Mutex::new(ranks_v));
     let scores = Arc::new(Mutex::new(scores));
     // `done[k]` : la donne `offset+k` est étiquetée. Sert à trouver le préfixe dense.
@@ -366,6 +397,8 @@ fn main() {
         let (scores, done, n_done, stop, ranks) =
             (scores.clone(), done.clone(), n_done.clone(), stop.clone(), ranks.clone());
         let ranks_v = ranks_v.clone();
+        let games_v = games_v.clone();
+        let games_path = args.games.clone();
         let (out, offset, checkpoint) = (args.out.clone(), args.offset, args.checkpoint);
         let resumed = resume;
         std::thread::spawn(move || {
@@ -389,6 +422,18 @@ fn main() {
                 let rk = ranks_v.lock().unwrap()[..dense].to_vec();
                 if let Err(e) = save_ranks(&format!("{out}.ranks"), &rk) {
                     eprintln!("  ⚠ écriture des rangs : {e}");
+                }
+                if let Some(ref gp) = games_path {
+                    let g = games_v.lock().unwrap();
+                    let batch: Vec<&GameReplay> = g[..dense].iter().flatten().collect();
+                    let owned: Vec<GameReplay> = batch.iter().map(|r| GameReplay {
+                        dealer: r.dealer, hands: r.hands,
+                        score_ns: r.score_ns, score_ew: r.score_ew,
+                        actions: r.actions.clone(),
+                    }).collect();
+                    if let Err(e) = GameReplay::write_all(gp, &owned) {
+                        eprintln!("  ⚠ écriture des rejeux : {e}");
+                    }
                 }
                 match DealPool::save_scores("isdd_v2", offset, &sc, &out) {
                     Ok(()) => {
@@ -422,6 +467,8 @@ fn main() {
              errors.clone(), ranks.clone(), stop.clone());
         let (pool, spec, bid_model) = (pool.clone(), spec.clone(), args.bid_model.clone());
         let ranks_v = ranks_v.clone();
+        let games_v = games_v.clone();
+        let keep_games = args.games.is_some();
         let offset = args.offset;
         handles.push(std::thread::spawn(move || {
             let mut players: [Box<dyn Player>; 4] = match (0..4)
@@ -461,13 +508,23 @@ fn main() {
 
                 let mut row = [0u8; 4];
                 let mut rrow = [0u8; 4];
+                let mut gold: Option<Vec<u8>> = None;
                 let mut ok = true;
                 for (t, (auc, rank)) in pfx.iter().enumerate() {
                     match label(hands, dealer, auc, &mut players, &mut ctx) {
-                        Ok(Some(v)) => {
+                        Ok(Some((v, trace))) => {
                             row[t] = v;
                             rrow[t] = *rank;
                             ranks[*rank as usize].fetch_add(1, Ordering::Relaxed);
+                            // Seule la case « or » entre dans le corpus : son enchère est
+                            // celle que v6 a réellement menée. Les préfixes épluchés sont
+                            // contrefactuels, et le fer est hors distribution sur les cinq
+                            // statistiques de forme (mesure A) — en garder 40 % du corpus
+                            // apprendrait à playgen qu'une enchère non contestée est
+                            // normale, alors qu'elle vaut 11,9 % en réel.
+                            if keep_games && *rank == 0 {
+                                gold = Some(trace);
+                            }
                         }
                         _ => { ok = false; break }
                     }
@@ -483,6 +540,12 @@ fn main() {
                 }
                 scores.lock().unwrap()[k] = row;
                 ranks_v.lock().unwrap()[k] = rrow;
+                if let Some(actions) = gold {
+                    // Donnes indépendantes : score de partie 0-0, ce qui est la vérité
+                    // ici et non une valeur de repli.
+                    games_v.lock().unwrap()[k] =
+                        Some(GameReplay::independent(dealer, hands, actions));
+                }
                 done.lock().unwrap()[k] = true;
                 n_done.fetch_add(1, Ordering::Relaxed);
             }
