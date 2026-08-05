@@ -12,6 +12,25 @@
 //
 // L'état de la page est le CFN complet 4 sections + un index d'action, donc
 // l'URL est partageable et le lien depuis Rejouer n'a rien à recalculer.
+//
+// ── L'exploration libre ──
+//
+// Depuis 2026-08-06 la page accepte une **branche** (`?v=`) : les cartes posées
+// à la place de la suite réelle, à partir de `i`. Trois choses en découlent, et
+// elles ne sont pas évidentes.
+//
+// **Le CFN ne bouge pas.** Il porte la vraie donne, donc les 32 cartes, dont la
+// colonne « vrai monde » a besoin. La branche dit seulement par où on est passé.
+// Réécrire le CFN à chaque coup exploré aurait perdu exactement l'information
+// qui distingue cette page de toutes les autres.
+//
+// **On joue les quatre sièges.** Toute la donne est visible ici, il n'y a donc
+// personne à qui déléguer les trois autres mains : à chaque coup poussé c'est
+// le siège suivant qui est au trait, et le tableau se recalcule pour lui.
+//
+// **La suite en jeu parfait est ce qui rend l'exploration lisible.** Sans elle
+// on pousse des cartes sans jamais voir où ça mène. C'est la variante de
+// Rejouer généralisée — même moteur, pile de coups vide.
 
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import {
@@ -51,6 +70,8 @@ const TEMPLATE = `
     </div>
 
     <div id="aj-error" class="annonces-error hidden"></div>
+
+    <div id="aj-branch" class="aj-branch hidden"></div>
 
     <div id="aj-main" class="hidden">
         <div id="aj-position" class="prob-box">
@@ -95,6 +116,14 @@ const TEMPLATE = `
             <div id="aj-table-body"></div>
         </div>
 
+        <div class="annonces-result-panel" id="aj-line-wrap">
+            <div class="section-title">
+                <span>Suite en jeu parfait</span>
+                <span class="aj-line-hint">les quatre sièges voient les 32 cartes</span>
+            </div>
+            <div id="aj-line-body"></div>
+        </div>
+
         <div class="annonces-result-panel hidden" id="aj-samples-wrap">
             <details id="aj-samples">
                 <summary>Voir 10 mondes échantillonnés</summary>
@@ -114,6 +143,13 @@ let opinions = null;   // {doudou, isdd, oracle}
 let rows = null;       // {card: {...}} — agrégats par carte
 let progress = null;   // {completed, total, real_total, elapsed_ms}
 let worldsSource = null;
+let ddLine = null;     // {moves, cards, trick_pos, made, taker_pts, score}
+// La branche explorée : les cartes posées à la place de la suite réelle, à
+// partir de `idx`. Vide = la donne telle qu'elle a été jouée.
+let branch = [];
+// Le CFN et l'index de départ, gardés pour repousser/reculer sans relire l'URL.
+let baseCfn = null;
+let baseIdx = 0;
 // Requête en attente : `send()` jette silencieusement quand le socket n'est pas
 // encore OPEN. Sur une arrivée directe par URL (le cas normal ici, puisqu'on
 // vient d'un lien de Rejouer ou d'un signet) la vue se monte avant l'ouverture,
@@ -157,6 +193,11 @@ function syncUrl(cfn, idx) {
     // l'URL de son chemin de retour au premier changement de coup.
     if (backGame) q.set('from', backGame);
     if (hasMatchScore()) q.set('s', `${matchScores[0]}-${matchScores[1]}`);
+    // La branche explorée. `replaceState` comme le reste : une entrée
+    // d'historique par carte poussée ferait remonter la variante coup par coup
+    // au Retour du navigateur, au lieu de quitter la page — même piège que
+    // l'index de coup de Rejouer.
+    if (branch.length) q.set('v', branch.join(','));
     history.replaceState(null, '', `${window.location.pathname}?${q}`);
 }
 
@@ -166,8 +207,9 @@ function load(cfn, idx) {
     cfn = (cfn || '').trim();
     if (!cfn) return;
     reqId += 1;
+    baseCfn = cfn; baseIdx = idx;
     position = null; truth = null; opinions = null; rows = null;
-    progress = null; worldsSource = null;
+    progress = null; worldsSource = null; ddLine = null;
 
     document.getElementById('aj-empty').classList.add('hidden');
     document.getElementById('aj-error').classList.add('hidden');
@@ -175,10 +217,14 @@ function load(cfn, idx) {
     document.getElementById('aj-samples-wrap').classList.add('hidden');
     document.getElementById('aj-table-body').innerHTML =
         '<div class="dd-loader"><div class="dd-loader-text">Analyse…</div></div>';
+    document.getElementById('aj-line-body').innerHTML =
+        '<div class="aj-line-wait">Déroulement…</div>';
 
     syncUrl(cfn, idx);
-    pending = { cfn, idx, req: currentReq() };
-    send({ type: 'card_analysis', cfn, idx, req_id: currentReq() });
+    renderBranch();
+    const line = branch.slice();
+    pending = { cfn, idx, line, req: currentReq() };
+    send({ type: 'card_analysis', cfn, idx, line, req_id: currentReq() });
 }
 
 // Rejoué à l'ouverture du socket. Si la requête est déjà passée, la position est
@@ -186,7 +232,48 @@ function load(cfn, idx) {
 function flushPending() {
     if (!pending) return;
     send({ type: 'card_analysis', cfn: pending.cfn, idx: pending.idx,
-           req_id: pending.req });
+           line: pending.line, req_id: pending.req });
+}
+
+// ── l'exploration ──
+
+// Pousser une carte, reculer d'un coup, revenir au réel : trois façons de bouger
+// la branche, et une seule façon de la jouer — on relance l'analyse à la
+// position résultante. Rien n'est incrémental, donc reculer est exact par
+// construction (même raisonnement que `renderAt` de « Compter les points »).
+function pushCard(card) {
+    branch = [...branch, Number(card)];
+    load(baseCfn, baseIdx);
+}
+
+function popCard() {
+    if (!branch.length) return;
+    branch = branch.slice(0, -1);
+    load(baseCfn, baseIdx);
+}
+
+function resetBranch() {
+    if (!branch.length) return;
+    branch = [];
+    load(baseCfn, baseIdx);
+}
+
+function renderBranch() {
+    const el = document.getElementById('aj-branch');
+    if (!el) return;
+    if (!branch.length) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    el.classList.remove('hidden');
+    el.innerHTML =
+        `<span class="aj-branch-label">Variante</span>` +
+        `<span class="aj-branch-cards">${branch.map(cardChipHtml).join('')}</span>` +
+        `<button id="aj-branch-back" class="aj-branch-btn">← Reculer</button>` +
+        `<button id="aj-branch-reset" class="aj-branch-btn">Donne réelle</button>`;
+    document.getElementById('aj-branch-back').addEventListener('click', popCard);
+    document.getElementById('aj-branch-reset').addEventListener('click', resetBranch);
 }
 
 // ── rendu de la position ──
@@ -322,7 +409,13 @@ function renderTable() {
         const equiv = p.reduced && !p.reduced.includes(card);
 
         html += `<tr class="${played ? 'aj-played' : ''} ${regretClass(r.regret)}">`;
-        html += `<td class="aj-card-cell">${cardChipHtml(card)}` +
+        html += `<td class="aj-card-cell">` +
+                // Jouer cette carte et rester ici : c'est toute l'exploration.
+                // Le bouton est dans la cellule de la carte parce que c'est la
+                // carte qu'on joue, pas la ligne qu'on ouvre.
+                `<button class="aj-play" data-card="${card}" ` +
+                `title="Jouer cette carte et continuer l'analyse à la position suivante">▸</button>` +
+                cardChipHtml(card) +
                 (played ? '<span class="aj-played-tag">jouée</span>' : '') +
                 (equiv ? '<span class="aj-equiv" title="Équivalente à une autre carte de la même couleur : jouer l\'une ou l\'autre ne change rien pour la suite de la donne">≡</span>' : '') +
                 '</td>';
@@ -390,6 +483,42 @@ function renderProgress() {
     }
 }
 
+// ── la suite en jeu parfait ──
+//
+// Un plafond, pas une prédiction : les quatre sièges y voient les 32 cartes.
+// C'est dit sous le tracé, parce qu'un joueur qui lit « le contrat passe » sans
+// cette réserve entend « j'avais gagné ».
+function renderLine() {
+    const body = document.getElementById('aj-line-body');
+    if (!body) return;
+    if (!ddLine) {
+        body.innerHTML = '<div class="aj-line-wait">Déroulement…</div>';
+        return;
+    }
+    if (!ddLine.complete) {
+        body.innerHTML = '<div class="aj-line-wait">Déroulement interrompu.</div>';
+        return;
+    }
+    const cards = [...(ddLine.moves || []), ...(ddLine.cards || [])];
+    let pos = ddLine.trick_pos || 0;
+    const tricks = [];
+    let cur = [];
+    for (const c of cards) {
+        cur.push(c);
+        if (++pos === 4) { tricks.push(cur); cur = []; pos = 0; }
+    }
+    if (cur.length) tricks.push(cur);
+
+    const takerTeam = ddLine.taker === 0 ? 'Nord-Sud' : 'Est-Ouest';
+    body.innerHTML =
+        `<div class="aj-line-outcome ${ddLine.made ? 'aj-line-made' : 'aj-line-down'}">` +
+        `${ddLine.made ? 'Contrat tenu' : 'Contrat chuté'}` +
+        `<span class="aj-line-detail">${takerTeam} (preneur) ramasse ${ddLine.taker_pts} points cartes` +
+        ` · marque ${ddLine.score >= 0 ? '+' : '−'}${Math.abs(ddLine.score)} pour Nord-Sud</span></div>` +
+        `<div class="aj-line-cards">${tricks.map(t =>
+            `<span class="aj-line-trick">${t.map(cardChipHtml).join('')}</span>`).join('')}</div>`;
+}
+
 function renderSamples(sampleHands) {
     if (!sampleHands || !sampleHands.length) return;
     const wrap = document.getElementById('aj-samples-wrap');
@@ -435,6 +564,11 @@ function onPosition(data) {
     if (stale(data)) return;
     pending = null;
     position = data.position;
+    // Le serveur fait autorité sur la branche : un `v=` bricolé dans l'URL est
+    // validé côté serveur (coup par coup, `env.step()` ne validant rien), et
+    // c'est celle qu'il a acceptée qu'on affiche.
+    branch = (data.line || []).map(Number);
+    renderBranch();
     progress = { completed: 0, total: data.plan.oracle_worlds,
                  real_total: data.plan.real_worlds, elapsed_ms: 0 };
     renderPosition();
@@ -454,6 +588,12 @@ function onTruth(data) {
     if (stale(data)) return;
     truth = data.truth;
     renderTable();
+}
+
+function onLine(data) {
+    if (stale(data)) return;
+    ddLine = data.line;
+    renderLine();
 }
 
 function onOpinions(data) {
@@ -483,9 +623,21 @@ function onError(data) {
     pending = null;
     const el = document.getElementById('aj-error');
     el.classList.remove('hidden');
-    el.innerHTML = data.phase === 0
+    let html = data.phase === 0
         ? `${data.error} — <a href="/analyse/annonces">analyser une annonce</a>`
         : data.error;
+    // Une exploration finit forcément par buter : sur la fin de la donne, ou
+    // sur une branche qu'un lien partagé a rendue caduque. Le message doit donc
+    // porter la sortie, sinon la page est un cul-de-sac.
+    if (data.branch) {
+        html += ` <button id="aj-err-back" class="aj-branch-btn">← Reculer</button>` +
+            ` <button id="aj-err-reset" class="aj-branch-btn">Donne réelle</button>`;
+    }
+    el.innerHTML = html;
+    if (data.branch) {
+        document.getElementById('aj-err-back').addEventListener('click', popCard);
+        document.getElementById('aj-err-reset').addEventListener('click', resetBranch);
+    }
     document.getElementById('aj-main').classList.add('hidden');
     document.getElementById('aj-empty').classList.add('hidden');
 }
@@ -497,19 +649,32 @@ export function mount(container) {
     reqId = 0;
     position = null; truth = null; opinions = null; rows = null;
     progress = null; worldsSource = null; pending = null; backGame = null;
+    ddLine = null; branch = []; baseCfn = null; baseIdx = 0;
     matchScores = [0, 0];
 
     onOpen(flushPending);
     onMessage('card_analysis_position', onPosition);
     onMessage('card_analysis_truth', onTruth);
+    onMessage('card_analysis_line', onLine);
     onMessage('card_analysis_opinions', onOpinions);
     onMessage('card_analysis_update', onUpdate);
     onMessage('card_analysis_done', onDone);
     onMessage('card_analysis_error', onError);
 
+    // Délégation, posée une fois : `renderTable` remplace tout le corps du
+    // tableau à chaque monde résolu, donc un écouteur par bouton serait
+    // reposé des centaines de fois par analyse.
+    document.getElementById('aj-table-body').addEventListener('click', (e) => {
+        const btn = e.target.closest('.aj-play');
+        if (btn) pushCard(btn.dataset.card);
+    });
+
     document.getElementById('aj-load-btn').addEventListener('click', () => {
         const cfn = document.getElementById('aj-cfn').value;
         const idx = parseInt(document.getElementById('aj-idx').value, 10);
+        // Une position saisie à la main repart de la donne réelle : la branche
+        // décrit la position précédente, pas celle-ci.
+        branch = [];
         load(cfn, Number.isFinite(idx) ? idx : 0);
     });
     document.getElementById('aj-cfn').addEventListener('keydown', (e) => {
@@ -524,6 +689,12 @@ export function mount(container) {
     // navigateur, donc marche aussi sur un lien partagé ou un signet — là où le
     // bouton Retour ramènerait ailleurs, voire hors du site.
     backGame = params.get('from');
+    // La branche explorée. Les valeurs invalides sont écartées ici, et le
+    // serveur revérifie la légalité coup par coup : un `v=` bricolé ne doit
+    // jamais produire une position que le moteur aurait acceptée en silence.
+    branch = (params.get('v') || '').split(',')
+        .map(s => parseInt(s, 10))
+        .filter(n => Number.isInteger(n) && n >= 0 && n < 32);
     const sm = /^(\d{1,4})-(\d{1,4})$/.exec((params.get('s') || '').trim());
     matchScores = sm ? [Number(sm[1]), Number(sm[2])] : [0, 0];
     renderBackLink('aj-back', backGame, params.get('i'));
@@ -540,12 +711,13 @@ export function unmount() {
     offOpen(flushPending);
     offMessage('card_analysis_position', onPosition);
     offMessage('card_analysis_truth', onTruth);
+    offMessage('card_analysis_line', onLine);
     offMessage('card_analysis_opinions', onOpinions);
     offMessage('card_analysis_update', onUpdate);
     offMessage('card_analysis_done', onDone);
     offMessage('card_analysis_error', onError);
     reqId += 1;  // les messages en vol deviennent périmés
     position = null; truth = null; opinions = null; rows = null; pending = null;
-    backGame = null;
+    backGame = null; ddLine = null; branch = []; baseCfn = null; baseIdx = 0;
     matchScores = [0, 0];
 }

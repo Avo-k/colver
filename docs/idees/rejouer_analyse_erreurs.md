@@ -1,15 +1,15 @@
 # Rejouer : compter les erreurs, montrer l'alternative, dire qui avait raison
 
-*Écrite le 2026-08-05, **révisée le même jour** : les étapes 10.1 à 10.4 ont été
-écrites dans la foulée et la croyance n°1 est mesurée. Les chiffres viennent de
+*Écrite le 2026-08-05, révisée le même jour (10.1 à 10.4), **terminée le
+2026-08-06** (10.5 et 10.6). Les chiffres viennent de
 `scripts/analysis/replay_error_scale.py` et `replay_error_grid.py` ; les
 commandes sont données à chaque section et les runs sont dans
 `docs/measurements/index.jsonl`.*
 
-**État** : la bascule d'échelle, la classification à cinq catégories, le panneau
-« Moments de la donne », le coût IS-DD par coup, l'« Analyse rapide » d'une
-annonce (§7 bis) et la **courbe de la donne** (§7) sont **faits**. Restent les
-variantes déroulées (§10.5) et l'exploration libre (§10.6).
+**État : tout est fait.** La bascule d'échelle, la classification à cinq
+catégories, le panneau « Moments de la donne », le coût IS-DD par coup,
+l'« Analyse rapide » d'une annonce (§7 bis), la **courbe de la donne** (§7), les
+**variantes déroulées** (§10.5) et l'**exploration libre** (§10.6).
 
 **L'idée de départ** (utilisateur, 2026-08-05), en trois demandes successives :
 
@@ -556,6 +556,14 @@ l'exploration ? DD parfait (cohérent avec les chiffres affichés, instantané),
 DouDou50 (réaliste, ~5 ms/coup), ou Dédé (fort mais ~1 s/coup et il faut le
 sidecar). Probablement DD par défaut avec un commutateur.
 
+✅ **Tranchée à l'implémentation (2026-08-06), et la question était mal posée** :
+**personne** ne joue les trois autres sièges — c'est le joueur, coup par coup.
+Toute la donne est visible sur cette page, donc il n'y a personne à qui
+déléguer ; chaque `▸` pousse une carte et le siège suivant est au trait. Le
+double-dummy n'intervient que pour la **suite** depuis la position courante,
+affichée en permanence. Un commutateur de bot aurait ajouté une troisième
+évaluation à expliquer (§5) pour remplacer un geste que le joueur fait déjà.
+
 ---
 
 ## 9. Ce qu'on croit sans l'avoir mesuré
@@ -622,20 +630,77 @@ serait un contresens.
 `replay.js` croise les deux avis. **La bande tenu/chuté n'est pas faite** — c'est
 ce qui reste de cette étape.
 
-### 10.5 Les variantes déroulées (~1 j, sans GPU)
+### 10.5 ✅ Les variantes déroulées — **fait** (2026-08-06)
 
-Les deux lignes DD par erreur, dans le blob. Puis, séparément, les rejouer sur le
-tapis — là il faut des états complets, donc une requête dédiée.
+`python/colver/web/variation.py` : **un seul moteur**, celui que le §8 réclamait.
+`line(dealer, hands, prefix, moves)` pose des coups sur une position puis
+déroule en double-dummy jusqu'à la fin ; `error_lines` en fait deux et refuse de
+n'en rendre qu'une. `analysis.py` passe en **v9** et pose `var` sur les coups à
+`cost_score > 0` — et seulement sur ceux-là, ailleurs les deux lignes seraient la
+même. **~43 ms par donne** pour toutes les erreurs, contre ~1 s pour l'analyse
+entière : la mesure du §4 (0,12 s) était une borne haute.
 
-### 10.6 L'exploration libre (gros, à cadrer à part)
+Deux invariants sont épinglés (`tests/test_variation.py`), et ce sont eux qui
+font que le chiffre affiché et la ligne affichée racontent la même chose :
 
-Dans `/analyse/jeu`. À ne pas commencer avant que 10.5 ait figé la forme du
-moteur de variantes.
+1. **Le déroulé rend exactement la valeur DD du coup.** Vérifié sur toutes les
+   décisions d'une donne complète — c'est vrai par définition du minimax, donc
+   un écart signalerait un défaut du solveur ou du déroulé, pas du test.
+2. **L'écart de score entre les deux lignes *est* `cost_score`.** C'est ce que
+   le panneau promet au lecteur, et c'est le §4.1 rendu exécutable.
+
+À l'écran : un `<details>` replié dont le résumé porte les **deux issues**
+(« Joué : contrat chuté · 107 pts preneur » / « Avec 9♦ : contrat tenu · 111 »),
+et qui déplie les deux lignes découpées **en plis** — 31 chips à la file se
+lisent comme une liste, pas comme une donne, d'où `trick_pos` dans le blob. La
+réserve du §4.1 est écrite sous les lignes : les quatre joueurs y voient les 32
+cartes, c'est un plafond.
+
+⚠️ **Un `<summary>` en `display: flex` perd son triangle de dépliage** (Chrome).
+Le panneau se lisait comme un encadré mort ; le chevron est redessiné en
+`::before`.
+
+### 10.6 ✅ L'exploration libre — **fait** (2026-08-06)
+
+Dans `/analyse/jeu`, et **sans nouvelle notation** : la page prend une
+**branche** (`?v=`), les cartes posées à la place de la suite réelle à partir de
+`i`. Le serveur analyse `actions[:i] + branche`, tout l'aval (vrai monde, avis,
+mondes, clé de cache) reçoit cette liste-là et ne sait rien de l'exploration.
+
+Quatre décisions qui portent le reste :
+
+- **Le CFN ne bouge pas.** Il porte la vraie donne, donc les 32 cartes, dont la
+  colonne « vrai monde » a besoin. Réécrire le CFN à chaque coup exploré aurait
+  perdu exactement ce qui distingue cette page des autres.
+- **Le joueur joue les quatre sièges.** Toute la donne est visible ici, il n'y a
+  personne à qui déléguer : chaque `▸` pousse une carte, le siège suivant est au
+  trait, le tableau se recalcule pour lui. Pas de commutateur de bot à
+  expliquer — le §8 en envisageait un, il ne sert à rien une fois qu'on tient la
+  pile.
+- **La branche est validée coup par coup, côté serveur.** `env.step()` ne
+  valide rien : un `v=` bricolé produirait une position que le moteur aurait
+  acceptée en silence. `line(..., limit=0)` fait ce contrôle sans dérouler.
+- **La clé de cache porte la position effective.** Une branche qui rejoint la
+  ligne réelle retombe sur l'entrée de la position réelle, et reculer dans une
+  exploration est **instantané** (vérifié à l'écran : « 254/254 — en cache »).
+  `CARD_SIM_VERSION` passe à 2, le blob portant désormais la ligne DD.
+
+Et la **suite en jeu parfait** est ce qui rend l'exploration lisible : sans
+elle on pousse des cartes sans jamais voir où ça mène. C'est la variante du
+§10.5 avec une pile vide — même moteur, donc les deux pages ne peuvent pas se
+contredire (vérifié : Rejouer dit « Avec 9♦ : contrat chuté · 107 pts », la page
+de jeu dit « Contrat chuté · 107 points cartes »).
+
+Le pont entre les deux est un lien « Explorer cette variante → » sous le panneau
+de Rejouer : **repérer** dans Rejouer, **creuser** dans `/analyse/jeu`.
 
 ---
 
 ## Fichiers concernés
 
+- `python/colver/web/variation.py` — **le moteur de variantes**, partagé par
+  §10.5 et §10.6 ; lire son en-tête avant d'y toucher (il n'emprunte jamais
+  l'`Env` de l'appelant, et la raison n'est pas cosmétique)
 - `python/colver/web/analysis.py` — `CATEGORIES`, `_analyze_sync`, `_summarize`,
   `ANALYSIS_VERSION`, `_is_fresh`, `_DD_COMPATIBLE_VERSIONS`
 - `python/colver/web/agent_review.py` — `_ask` (jette `candidates`), `_Runner.step`

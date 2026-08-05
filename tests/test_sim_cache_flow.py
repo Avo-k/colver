@@ -115,7 +115,8 @@ async def test_second_visit_is_served_from_the_database(
     # Un service depuis la base ne repasse par aucun monde.
     assert "card_analysis_update" not in warm.types()
     assert warm.types() == ["card_analysis_position", "card_analysis_truth",
-                            "card_analysis_opinions", "card_analysis_done"]
+                            "card_analysis_line", "card_analysis_opinions",
+                            "card_analysis_done"]
 
     hot, cached = cold.last("card_analysis_done"), warm.last("card_analysis_done")
     assert cached["cached"] is True

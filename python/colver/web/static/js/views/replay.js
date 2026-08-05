@@ -283,6 +283,76 @@ function oracleAltHtml(an) {
     return `<span class="an-alt">${lead} ${shown}${more}</span>`;
 }
 
+// ===== Les deux variantes d'une erreur =====
+//
+// Une erreur, c'est deux donnes qui divergent d'une carte. Le panneau les montre
+// toutes les deux, **jamais une seule** : la suite *réelle* n'est pas comparable
+// — elle contient d'autres erreurs des deux camps, parfois celle qui annule
+// celle-ci — donc opposer une variante parfaite à ce qui s'est passé ferait dire
+// n'importe quoi à l'écart. Ces deux lignes-ci partagent tout sauf le premier
+// coup, donc leur écart de score **est** le chiffre affiché juste au-dessus.
+//
+// Et elles sont un **plafond, pas une prédiction** : les quatre sièges y jouent
+// en voyant les 32 cartes. Le résumé le dit, parce qu'un joueur qui lit « le
+// contrat passait » sans cette réserve entend « j'avais gagné ».
+//
+// Repliées par défaut : le résumé (deux issues) est ce qu'on vient chercher, la
+// suite carte par carte est ce qu'on déplie quand on veut la rejouer des yeux.
+function outcomeLabel(v) {
+    return `${v.made ? 'contrat tenu' : 'contrat chuté'} · ${v.taker_pts} pts preneur`;
+}
+
+// Une ligne de cartes découpée en plis. Sans ce découpage, 31 chips à la file se
+// lisent comme une liste ; avec, on retrouve la donne.
+function lineCardsHtml(v) {
+    const cards = [...v.moves, ...v.cards];
+    let pos = v.trick_pos || 0;
+    const tricks = [];
+    let current = [];
+    for (const c of cards) {
+        current.push(c);
+        pos += 1;
+        if (pos === 4) { tricks.push(current); current = []; pos = 0; }
+    }
+    if (current.length) tricks.push(current);
+    return tricks.map((t, i) =>
+        `<span class="an-var-trick">${t.map((c, j) =>
+            // Le coup qui fait diverger les deux lignes : c'est la seule carte
+            // qu'elles ne partagent pas, elle doit se voir.
+            (i === 0 && j < v.moves.length)
+                ? `<span class="an-var-branch">${cardChipHtml(c)}</span>`
+                : cardChipHtml(c)).join('')}</span>`).join('');
+}
+
+function variantsHtml(an, idx) {
+    const v = an.var;
+    if (!v || !v.played || !v.best) return '';
+    const played = v.played, best = v.best;
+    const branch = best.moves.length ? best.moves[0] : an.best;
+    // Le pont vers l'exploration libre : /analyse/jeu repart de la même donne
+    // avec cette carte poussée, et de là on continue coup par coup. Rejouer
+    // repère, /analyse/jeu creuse.
+    const url = cardAnalysisUrl(idx);
+    const explore = url
+        ? `<a class="an-var-explore" href="${url}&v=${branch}">Explorer cette variante →</a>`
+        : '';
+    return `<details class="an-var">
+        <summary>
+            <span class="an-var-sum">Joué : ${outcomeLabel(played)}</span>
+            <span class="an-var-sum an-var-sum-best">Avec ${cardChipHtml(branch)} : ${outcomeLabel(best)}</span>
+        </summary>
+        <div class="an-var-line">
+            <span class="an-var-tag">joué</span>${lineCardsHtml(played)}
+        </div>
+        <div class="an-var-line an-var-line-best">
+            <span class="an-var-tag">Oracle</span>${lineCardsHtml(best)}
+        </div>
+        <p class="an-var-note">Dans ces deux suites, les quatre joueurs voient les
+        32 cartes. C'est un plafond — pas ce qui se serait passé.</p>
+        ${explore}
+    </details>`;
+}
+
 // ===== « Analyse rapide » d'une annonce =====
 //
 // Deux chiffres sur l'annonce qu'on regarde, sans quitter la page : combien de
@@ -481,6 +551,7 @@ function replayRenderMoveStats(move, state) {
             }
             if (an.cost_score > 0 || an.cost > 0) html += oracleAltHtml(an);
             html += '</div>';
+            html += variantsHtml(an, idx);
         }
     }
     // Le pendant du lien des annonces, pour une carte : la page /analyse/jeu

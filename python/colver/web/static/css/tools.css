@@ -3739,6 +3739,71 @@
    les rend rouges OU noirs (tokens.css). Un rouge local n'avait de contrepartie
    noire nulle part, d'où des ♠ et ♣ couleur du texte ambiant. */
 
+/* ===== Les deux variantes d'une erreur =====
+   Repliées : le résumé (deux issues) est ce qu'on vient chercher ; la suite
+   carte par carte est ce qu'on déplie pour la rejouer des yeux. */
+.an-var { margin-top: 4px; font-size: var(--fs-2xs); }
+.an-var > summary {
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.25);
+    color: #bbb;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+}
+/* `display: flex` sur un `<summary>` **supprime le triangle de dépliage** — le
+   panneau se lisait alors comme un encadré mort, sans rien qui dise qu'il
+   s'ouvre. Le chevron est donc redessiné à la main. */
+.an-var > summary::marker, .an-var > summary::-webkit-details-marker { display: none; }
+.an-var > summary::before {
+    content: '▸';
+    color: #888;
+    transition: transform 0.12s;
+}
+.an-var[open] > summary::before { transform: rotate(90deg); }
+.an-var > summary:hover { background: rgba(255, 255, 255, 0.06); }
+.an-var-sum-best { color: #81c784; }
+.an-var-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 6px 0;
+}
+.an-var-tag {
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 42px;
+}
+.an-var-line-best .an-var-tag { color: #81c784; }
+/* Un pli = un groupe. Sans ce découpage, 31 chips à la file se lisent comme une
+   liste et plus comme une donne. */
+.an-var-trick {
+    display: inline-flex;
+    gap: 1px;
+    padding: 0 3px;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+.an-var-trick:first-child { border-left: none; }
+/* La seule carte que les deux lignes ne partagent pas. */
+.an-var-branch {
+    border-radius: 3px;
+    outline: 1px solid rgba(255, 255, 255, 0.55);
+}
+.an-var-note { color: #777; margin: 4px 6px 0; font-style: italic; }
+/* Une vraie ancre stylée en lien : `display: inline-block` et
+   `text-decoration: none` sont à redéclarer, un `<button>` les donnait. */
+.an-var-explore {
+    display: inline-block;
+    margin: 4px 6px 2px;
+    color: var(--c-accent);
+    text-decoration: none;
+}
+.an-var-explore:hover { text-decoration: underline; }
+
 /* ===== La courbe de la donne =====
    Sous le tapis, pleine largeur : l'axe des x est un index de coup, pas une
    grandeur physique, donc `preserveAspectRatio="none"` l'étire sans mentir —
@@ -4549,7 +4614,16 @@
     display: flex;
     align-items: center;
     gap: var(--sp-2);
+    /* Sans le retour à la ligne, la barre de progression et le badge des
+       mondes se superposent sous ~500px : les deux textes se lisaient l'un
+       par-dessus l'autre (« 254/mondes playgen v2 »). Le `flex-wrap` seul ne
+       suffit pas — `.sim-progress` est en `flex: 1; min-width: 0`, donc elle
+       s'écrase à 12px au lieu de pousser le badge à la ligne, et son compteur,
+       en `nowrap`, déborde. Le plancher est ce qui déclenche vraiment le
+       retour. */
+    flex-wrap: wrap;
 }
+#aj-table-header .sim-progress { min-width: 160px; }
 
 .aj-worlds-badge {
     margin-left: auto;
@@ -4570,6 +4644,94 @@
     line-height: var(--lh-snug);
 }
 .aj-legend p { margin: 0 0 var(--sp-1); }
+
+/* ---------- exploration libre ---------- */
+
+/* Le bandeau de branche : là où on n'est plus dans la donne réelle, et par où
+   on y revient. Il se pose au-dessus de la position, pas dedans — c'est du
+   contexte sur toute la page, pas une propriété du coup. */
+.aj-branch {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-2);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-md);
+    border: 1px solid var(--c-accent-a40);
+    background: var(--c-surface-1);
+}
+.aj-branch-label {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-caps);
+    color: var(--c-accent);
+}
+.aj-branch-cards { display: inline-flex; flex-wrap: wrap; gap: 1px; }
+.aj-branch-btn {
+    margin-left: auto;
+    padding: 2px var(--sp-2);
+    font-size: var(--fs-2xs);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--c-border-strong);
+    background: var(--c-surface-2);
+    color: var(--c-text-muted);
+    cursor: pointer;
+}
+/* Deux boutons à la file : seul le premier pousse la marge automatique. */
+.aj-branch-btn + .aj-branch-btn { margin-left: 0; }
+/* `base.css` repeint tout `<button>:hover` en accent — à redéclarer, sinon un
+   bouton discret devient le point le plus voyant de la page au survol. */
+.aj-branch-btn:hover { background: var(--c-surface-3); color: var(--c-text); }
+
+/* Jouer cette carte. Discret au repos : c'est une action d'exploration, pas la
+   réponse à la question que pose le tableau. */
+.aj-play {
+    margin-right: var(--sp-1);
+    padding: 0 var(--sp-1);
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--c-text-dim);
+    cursor: pointer;
+    font-size: var(--fs-xs);
+    line-height: 1;
+}
+.aj-play:hover { background: var(--c-accent-a40); color: var(--c-text); }
+
+/* La suite en jeu parfait. */
+.aj-line-hint {
+    margin-left: var(--sp-2);
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    text-transform: none;
+    letter-spacing: normal;
+}
+.aj-line-wait { color: var(--c-text-dim); font-style: italic; font-size: var(--fs-xs); }
+.aj-line-outcome { font-weight: var(--fw-semi); }
+.aj-line-made { color: var(--c-success-txt); }
+.aj-line-down { color: var(--c-danger-txt); }
+.aj-line-detail {
+    display: block;
+    font-weight: var(--fw-regular);
+    font-size: var(--fs-xs);
+    color: var(--c-text-dim);
+}
+.aj-line-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-1);
+    margin-top: var(--sp-2);
+}
+/* Un pli = un groupe : 31 chips à la file se lisent comme une liste, pas comme
+   une donne. */
+.aj-line-trick {
+    display: inline-flex;
+    gap: 1px;
+    padding: 0 var(--sp-1);
+    border-left: 1px solid var(--c-border);
+}
+.aj-line-trick:first-child { border-left: none; }
 
 @media (max-width: 800px) {
     #aj-position-grid { grid-template-columns: 1fr; }

@@ -30,6 +30,7 @@ import colver.web.pacing as pacing
 import colver.web.match_state as match_state
 import colver.web.ratelimit as ratelimit
 import colver.web.sim_cache as sim_cache
+import colver.web.variation as _variation
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -1253,6 +1254,15 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
         idx = int(data.get("idx", 0))
     except (TypeError, ValueError):
         idx = 0
+    # L'exploration libre : les cartes que le joueur a posées **à la place** de
+    # la suite réelle, à partir de `idx`. Le CFN reste celui de la vraie donne —
+    # c'est lui qui porte les 32 cartes, dont le « vrai monde » a besoin — et la
+    # branche dit seulement par où on est passé. Une branche vide, c'est la
+    # position telle qu'elle a été jouée.
+    try:
+        branch = [int(c) for c in (data.get("line") or [])][:32]
+    except (TypeError, ValueError):
+        branch = []
 
     try:
         core, bid_actions = game_notation.parse_full_cfn(cfn)
@@ -1281,9 +1291,37 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
         await ws.send_json(_err("Index hors de la partie"))
         return
 
-    pos = _card_analysis.describe(dealer, initial_hands, actions, idx)
+    # ⚠️ La branche se valide **avant** d'être rejouée. `env.step()` ne vérifie
+    # pas la légalité (contrat d'un moteur RL), donc une carte absente de la main
+    # se poserait sans erreur et toute la page décrirait une position qui n'a
+    # jamais pu exister. `limit=0` fait exactement ce contrôle, sans dérouler.
+    if branch and _variation.line(dealer, initial_hands, actions[:idx],
+                                  branch, limit=0) is None:
+        await ws.send_json(_err(
+            "Cette variante n'est plus jouable — retour à la donne réelle.",
+            branch=len(branch)))
+        return
+
+    # La position effective : le préfixe réel jusqu'à `idx`, puis la branche.
+    # Tout l'aval (vrai monde, avis, mondes, clé de cache) prend cette liste-là
+    # et ne sait rien de l'exploration — une branche qui rejoint la ligne réelle
+    # retombe donc exactement sur l'entrée de cache de la position réelle.
+    eff = actions[:idx] + branch
+    eff_idx = idx + len(branch)
+    # « La carte jouée » n'existe que tant qu'on est resté sur la vraie ligne.
+    # `describe` la lit à `actions[upto]`, d'où cet ajout : il ne participe pas
+    # au rejeu (qui s'arrête à `upto`), il ne sert qu'à la nommer.
+    on_real = branch == actions[idx:eff_idx]
+    if on_real and eff_idx < len(actions):
+        eff = eff + [actions[eff_idx]]
+
+    pos = _card_analysis.describe(dealer, initial_hands, eff, eff_idx)
     if "error" in pos:
-        await ws.send_json(_err(pos["error"], phase=pos.get("phase")))
+        # Une branche illégale n'est pas un incident : c'est un lien partagé ou
+        # un retour arrière du navigateur sur une pile qui ne tient plus. On le
+        # dit, et le client sait revenir au réel.
+        await ws.send_json(_err(pos["error"], phase=pos.get("phase"),
+                                branch=len(branch)))
         return
 
     budget = _card_analysis.plan(pos)
@@ -1293,8 +1331,8 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
 
     await ws.send_json({
         "type": "card_analysis_position", "req_id": req_id,
-        "dealer": dealer, "idx": idx, "cfn": cfn,
-        "position": pos, "plan": budget,
+        "dealer": dealer, "idx": idx, "cfn": cfn, "line": branch,
+        "on_real": on_real, "position": pos, "plan": budget,
     })
 
     if pos["forced"]:
@@ -1303,10 +1341,13 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
     # Cache. La position est recalculée à chaque fois (`describe` est du rejeu,
     # ~0,3 ms) : elle porte la carte réellement jouée, qui dépend du CFN reçu et
     # non de la position analysée — donc elle n'a rien à faire dans une entrée
-    # partagée. Tout le reste — vrai monde, avis, mondes échantillonnés — en est
-    # une fonction et se sert tel quel.
+    # partagée. Tout le reste — vrai monde, avis, mondes échantillonnés, suite en
+    # jeu parfait — en est une fonction et se sert tel quel. La clé porte la
+    # position **effective**, donc une branche qui rejoint la ligne réelle
+    # retombe sur l'entrée de la position réelle, et une exploration deux fois
+    # visitée ne se recalcule pas.
     doudou_expected = bool(DMC_MODEL_PATH)
-    cache_key = sim_cache.card_key(dealer, initial_hands, actions, idx)
+    cache_key = sim_cache.card_key(dealer, initial_hands, eff, eff_idx)
     hit = await sim_cache.get(sim_cache.KIND_CARD, cache_key,
                               sim_cache.CARD_SIM_VERSION)
     # Une entrée écrite sans DouDou50 (poids absents ce jour-là) ne doit pas
@@ -1321,6 +1362,10 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
     if hit:
         await ws.send_json({"type": "card_analysis_truth", "req_id": req_id,
                             "truth": hit["truth"]})
+        # Même ordre que le chemin froid : le client s'en moque (chaque message
+        # repeint sa zone), un test d'ordre non.
+        await ws.send_json({"type": "card_analysis_line", "req_id": req_id,
+                            "line": hit.get("dd_line")})
         await ws.send_json({"type": "card_analysis_opinions", "req_id": req_id,
                             "opinions": hit["opinions"]})
         await ws.send_json({"type": "card_analysis_done", "req_id": req_id,
@@ -1334,19 +1379,30 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
         # deux colonnes pendant que les mondes s'échantillonnent.
         truth = await loop.run_in_executor(
             _DD_EXECUTOR, _card_analysis.true_world,
-            dealer, initial_hands, actions, idx, candidates, seat)
+            dealer, initial_hands, eff, eff_idx, candidates, seat)
         await ws.send_json({"type": "card_analysis_truth", "req_id": req_id,
                             "truth": truth})
 
+        # La suite en jeu parfait depuis ici. C'est la variante du §10.5
+        # généralisée : pile de coups vide, complétée par le double-dummy. Elle
+        # coûte un déroulé (≤150 ms à l'entame, des microsecondes en fin de
+        # donne) et c'est elle qui rend l'exploration lisible — sans elle, on
+        # pousse des cartes sans jamais voir où ça mène.
+        dd_line = await loop.run_in_executor(
+            _DD_EXECUTOR, _variation.line, dealer, initial_hands,
+            eff[:eff_idx], ())
+        await ws.send_json({"type": "card_analysis_line", "req_id": req_id,
+                            "line": dd_line})
+
         avis = await asyncio.to_thread(
-            _card_analysis.opinions, dealer, initial_hands, actions, idx, seat,
+            _card_analysis.opinions, dealer, initial_hands, eff, eff_idx, seat,
             play_model=DMC_MODEL_PATH, belief_model=BELIEF_MODEL_PATH)
         await ws.send_json({"type": "card_analysis_opinions", "req_id": req_id,
                             "opinions": avis})
 
         n_worlds = budget["oracle_worlds"]
         worlds, worlds_source = await asyncio.to_thread(
-            _card_analysis.sample_worlds, dealer, initial_hands, actions, idx,
+            _card_analysis.sample_worlds, dealer, initial_hands, eff, eff_idx,
             seat, n_worlds, playgen_model=PLAYGEN_MODEL_PATH)
         n_worlds = min(n_worlds, len(worlds))
         real_worlds = min(budget["real_worlds"], n_worlds)
@@ -1364,7 +1420,7 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
                 while next_i < n_worlds and len(pending) < window:
                     fut = loop.run_in_executor(
                         _DD_EXECUTOR, _card_analysis.world_job,
-                        dealer, actions, idx, pos["played"], worlds[next_i],
+                        dealer, eff, eff_idx, pos["played"], worlds[next_i],
                         candidates, team,
                         DMC_MODEL_PATH, next_i < real_worlds)
                     pending.add(fut)
@@ -1410,7 +1466,7 @@ async def _run_card_analysis(ws: WebSocket, data: dict):
                                     doudou_expected=doudou_expected):
             await sim_cache.put(
                 sim_cache.KIND_CARD, cache_key, sim_cache.CARD_SIM_VERSION,
-                {"truth": truth, "opinions": avis,
+                {"truth": truth, "opinions": avis, "dd_line": dd_line,
                  "result": {**result_blob, "elapsed_ms": None}})
 
     except asyncio.CancelledError:

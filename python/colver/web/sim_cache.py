@@ -61,7 +61,8 @@ logger = logging.getLogger(__name__)
 # rendez-vous une fois ; le seul garde-fou est de le lire ici avant de toucher
 # à l'un de ces quatre.
 BID_SIM_VERSION = 1
-CARD_SIM_VERSION = 1
+# v2 : le blob porte la suite en jeu parfait depuis la position (`line`).
+CARD_SIM_VERSION = 2
 DOUDOU_SIM_VERSION = 1
 
 KIND_BID = "bid_sim"

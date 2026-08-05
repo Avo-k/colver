@@ -192,6 +192,39 @@ plus cher ici qu'aux annonces.
   adverse ») : pas d'analogue. Remplacée le cas échéant par une synthèse de
   pli (qui remporte ce pli, qui prend le dernier).
 
+## 7 bis. L'exploration libre (2026-08-06)
+
+*Livré. §10.6 de [rejouer_analyse_erreurs.md](idees/rejouer_analyse_erreurs.md),
+où vit le raisonnement complet ; ici seulement ce qui touche cette page.*
+
+La page prend une **branche** : `?v=<cartes>`, les cartes posées à la place de la
+suite réelle à partir de `i`. Le serveur analyse `actions[:i] + branche` et tout
+l'aval — vrai monde, avis, mondes échantillonnés, clé de cache — reçoit cette
+liste-là sans rien savoir de l'exploration.
+
+- **Le CFN ne bouge pas.** Il porte la vraie donne, donc les 32 cartes, dont la
+  colonne « vrai monde » a besoin (§2). Réécrire le CFN à chaque coup exploré
+  aurait perdu exactement ce que le §1 s'est donné du mal à obtenir.
+- **Le joueur joue les quatre sièges**, un `▸` par ligne du tableau. Toute la
+  donne est visible ici : il n'y a personne à qui déléguer, et un commutateur de
+  bot aurait ajouté une troisième évaluation à expliquer.
+- **La branche est validée coup par coup, côté serveur** (`variation.line(...,
+  limit=0)`). `env.step()` ne valide rien : un `v=` bricolé produirait une
+  position que le moteur aurait acceptée en silence — même famille que la fuite
+  d'`integrity.py`.
+- **« La carte jouée » n'existe que sur la vraie ligne.** Hors d'elle, le liseré
+  « jouée » désignerait une carte que personne n'a jouée dans cette variante.
+- **La clé de cache porte la position effective**, donc une branche qui rejoint
+  la ligne réelle retombe sur l'entrée de la position réelle, et reculer dans une
+  exploration est instantané.
+
+**La suite en jeu parfait** (`card_analysis_line`) est ce qui rend l'exploration
+lisible : sans elle on pousse des cartes sans jamais voir où ça mène. Elle vient
+du même moteur que les variantes de Rejouer — pile de coups vide — donc les deux
+pages ne peuvent pas se contredire. Un déroulé coûte ≤150 ms à l'entame et des
+microsecondes en fin de donne, et il part **après** la position pour ne pas
+retarder le premier rendu.
+
 ## 8. Cas limites
 
 - **Une seule carte légale** → aucune décision, le dire, comme le passe forcé
@@ -219,7 +252,12 @@ plus cher ici qu'aux annonces.
   socket est déjà ouverte et tout marche.
 - **`.section-title` n'est pas flex** : la barre de progression et le badge de
   mondes tombaient chacun sur leur ligne, et le badge héritait des majuscules du
-  titre, se lisant comme un second titre.
+  titre, se lisant comme un second titre. Corollaire trouvé plus tard (mobile,
+  2026-08-06) : le flex seul les fait alors **se superposer** sous ~500px, et
+  `flex-wrap` ne suffit pas — `.sim-progress` est en `flex: 1; min-width: 0`,
+  donc elle s'écrase à 12px au lieu de pousser le badge à la ligne, et son
+  compteur, en `nowrap`, déborde. C'est le plancher (`min-width: 160px`) qui
+  déclenche le retour, pas le `flex-wrap`.
 - **Deux `.so` peuvent cohabiter dans `python/colver/`.** Un
   `_colver.cpython-312-*.so` périmé masque le `_colver.abi3.so` fraîchement
   construit (CPython préfère le tag spécifique) : `maturin develop` réussit et

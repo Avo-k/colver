@@ -23,6 +23,7 @@ import logging
 
 import colver
 import colver.web.database as db
+import colver.web.variation as variation
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,16 @@ logger = logging.getLogger(__name__)
 #      cartes, et la catégorie avec lui (2026-08-05).
 # v8 : le blob porte `curve` — points ramassés, projection DD et seuil, de quoi
 #      tracer la donne du premier coup au dernier (2026-08-05).
-ANALYSIS_VERSION = 8
+# v9 : chaque erreur porte ses **deux** variantes déroulées en jeu parfait — la
+#      suite du coup joué et celle du coup de l'Oracle (2026-08-06).
+ANALYSIS_VERSION = 9
 
-# Versions dont les valeurs DD restent bonnes. Ni v7 ni v8 ne touchent au barème
-# ou aux coups légaux — elles relisent le même solve, ou en gardent une valeur
-# qui était jetée — donc `oracle_bids` d'une analyse antérieure reste exact. À
-# vider au prochain bump qui touche vraiment aux règles : là, tout ce qui
-# précède est périmé.
-_DD_COMPATIBLE_VERSIONS = (5, 6, 7, 8)
+# Versions dont les valeurs DD restent bonnes. Ni v7, ni v8, ni v9 ne touchent au
+# barème ou aux coups légaux — elles relisent le même solve, ou en gardent une
+# valeur qui était jetée — donc `oracle_bids` d'une analyse antérieure reste
+# exact. À vider au prochain bump qui touche vraiment aux règles : là, tout ce
+# qui précède est périmé.
+_DD_COMPATIBLE_VERSIONS = (5, 6, 7, 8, 9)
 
 # ── Ce qu'est une erreur ──
 #
@@ -181,6 +184,10 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
 
     moves = []
     bids = []
+    # Le journal en entiers nus : c'est le préfixe que le moteur de variantes
+    # rejoue pour se construire sa propre partie (il n'emprunte jamais `env` —
+    # cf. l'en-tête de `variation`).
+    journal = [int(e["action"]) for e in game["actions"]]
     for idx, entry in enumerate(game["actions"]):
         if env.is_terminal():
             break
@@ -242,7 +249,12 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                 })
             else:
                 result = env.solve_scores()
-                scores = dict(result["scores"])
+                # `card_pts`, pas `scores` : ce nom-là est déjà pris par le
+                # score de **partie**, posé en tête de fonction et republié dans
+                # le blob. Le masquer faisait sortir `"match_scores"` avec la
+                # table DD de la dernière décision résolue — un champ qui ment,
+                # invisible tant que personne ne le lit.
+                card_pts = dict(result["scores"])
                 # Le même solve, passé au barème. Deux échelles qui ne se
                 # soustraient pas : points cartes 0-252 d'un côté, écart de
                 # score marqué de l'autre.
@@ -250,9 +262,9 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                 made = {int(c): bool(v) for c, v in result["contract_made"]}
                 team = player % 2
 
-                best_ns = max(scores.values()) if team == 0 else min(scores.values())
-                cost = ((best_ns - scores[action]) if team == 0
-                        else (scores[action] - best_ns))
+                best_ns = max(card_pts.values()) if team == 0 else min(card_pts.values())
+                cost = ((best_ns - card_pts[action]) if team == 0
+                        else (card_pts[action] - best_ns))
 
                 # `best_ns` **est** la valeur DD du nœud : ce que N-S fera si les
                 # quatre joueurs jouent parfaitement à partir d'ici. Elle était
@@ -272,7 +284,7 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                 best_class = sorted(c for c, v in deal.items() if v == best_deal)
                 swing = made[action] != made[best_class[0]]
 
-                moves.append({
+                move = {
                     "idx": idx, "player": player, "action": action,
                     "best": int(result["best_card"]),
                     "best_class": best_class,
@@ -280,7 +292,19 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
                     "cost_score": int(cost_score),
                     "swing": swing,
                     "category": _categorize(cost_score, swing),
-                })
+                }
+                if cost_score > 0:
+                    # Les deux variantes, seulement sur une erreur : ailleurs
+                    # elles seraient identiques, le coup joué *étant* celui de
+                    # l'Oracle. `best_card` est optimal en points cartes et la
+                    # conversion au barème est monotone, donc il appartient
+                    # aussi à `best_class` — la classe optimale en score de
+                    # donne. Coût mesuré : ~43 ms par donne pour toutes les
+                    # erreurs réunies, contre ~1 s pour l'analyse entière.
+                    move["var"] = variation.error_lines(
+                        game["dealer"], game["hands"], journal[:idx],
+                        action, int(result["best_card"]))
+                moves.append(move)
         env.step(action)
         if phase == 1:
             # Après le `step` : `get_points` ne compte un pli qu'une fois
