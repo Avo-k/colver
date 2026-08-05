@@ -279,9 +279,10 @@ qui ne renverse pas le contrat n'est visible de l'Oracle. Sur la position
 signalée, il n'y avait que **deux cartes légales et elles étaient à égalité** :
 `cost_score == 0` y est une tautologie.
 
-Sur 396 décisions croisées avec Dédé : **72,7 % des « coups heureux » sont à une
-position où l'Oracle est indifférent**, et **51,5 % à une position où *rien* ne
-distingue la carte jouée, dans aucune des deux échelles**.
+Sur 396 décisions croisées avec Dédé, à l'ancien seuil : **73,0 % des « coups
+heureux » sont à une position où l'Oracle est indifférent** — l'écran y
+affirmait « ça paraissait mauvais, ça ne l'était pas » à propos d'un avis qui
+n'existait pas.
 
 D'où `n_legal` dans le blob (v10) et une cinquième catégorie, `indifferent`
 (« Sans conséquence »). Elle remplace aussi « Meilleur coup » quand l'Oracle est
@@ -298,13 +299,26 @@ d'échantillonnage. Le seuil est désormais **2,5 % de la marche**, soit six
 quanta, et la marche vient du moteur (`scoring::deal_score_step`, binding
 `Env.deal_score_step`) plutôt que d'une quatrième copie du barème.
 
-Sur les mêmes 396 décisions :
+```
+uv run python scripts/analysis/replay_error_grid.py --deals 20 --seed 42
+```
 
-| seuil | erreur | malchance | coup heureux |
-|---|---|---|---|
-| 1,0 point (l'ancien) | 21 | 9 | 66 |
-| **2,5 % de la marche** | **12** | **18** | **31** |
-| 5 % | 7 | 23 | 18 |
+396 décisions, budget de production (journalisé, `grille_seuil_relatif`) :
+
+| seuil | erreur | malchance | coup heureux | sans conséquence |
+|---|---|---|---|---|
+| 1,0 point (l'ancien) | 21 | 9 | 63 | 235 |
+| **2,5 % de la marche** | **11** | **19** | **34** | **255** |
+| 5 % | 8 | 22 | 19 | 268 |
+
+**Le 2,5 % est calé sur le bruit de Dédé, pas sur une intuition.** Deux
+exécutions du même script sur les **mêmes** 396 décisions (le coût DD et la
+marche coïncident ligne à ligne, ce que le script vérifie) donnent des
+`isdd_cost` qui s'écartent de **0,88 % de la marche au p90 et 2,08 % au p95** —
+médiane **0**, il est déterministe sur la plupart des positions. Le seuil est
+posé **juste au-dessus du p95 du bruit**, ce qui est sa définition. En bonus
+l'étiquette est plus stable : **3,3 %** des décisions changent de catégorie
+d'une exécution à l'autre, contre 3,8 % à l'ancien seuil (1,5 % à 5 %).
 
 **Le compteur de fautes baisse, et c'est le correctif, pas un dégât** : un seuil
 sous le quantum faisait « voir » à Dédé des écarts qu'il ne mesure pas, donc le
@@ -318,10 +332,11 @@ l'Oracle ne blâme que 7,6 % des décisions alors que Dédé peut être en désa
 partout, donc la quasi-totalité de ses désaccords tombe dans la case « coût
 DD = 0 ». C'est ce déséquilibre qui a motivé `indifferent`, pas le seuil.
 
-**Ce qui reste ouvert** : le 2,5 % est calé sur la **quantification** de
-l'estimateur (marche / nombre de mondes), pas sur sa **dispersion réelle d'une
-exécution à l'autre**. La mesure qui trancherait est `replay_error_grid.py` lancé
-deux fois sur les mêmes positions, comparant les `isdd_cost` appariés. Non faite.
+**Ce qui reste ouvert** : rien sur le seuil — la dispersion est mesurée
+ci-dessus. En revanche la **stabilité résiduelle** de l'étiquette (3,3 % de
+décisions qui basculent d'une exécution à l'autre) ne se réduit que par un
+budget IS-DD plus élevé, pas par le seuil : à 5 % elle tombe à 1,5 %, mais au
+prix de sept erreurs reclassées en malchance. Non arbitré.
 
 **3. La pastille de l'Oracle désignait une carte là où il y avait une classe.**
 `action_oracle_dd` doit rendre *une* carte, donc elle départage les ex æquo par

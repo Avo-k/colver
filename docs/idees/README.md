@@ -44,4 +44,8 @@ dormir se réveille toujours avec ses hypothèses converties en certitudes.
   affichés « ✓ » coûtent au score, jusqu'à 1264 points), pourquoi les deux
   évaluations sont déjà calculées et jetées, pourquoi dérouler une variante est
   gratuit (0,12 s pour toute une donne) et pourquoi DouDou50 n'est pas le
-  raccourci qu'il paraît (2 à 30× plus lent que le solveur). (2026-08-05)
+  raccourci qu'il paraît (2 à 30× plus lent que le solveur). **§3.1 ter** :
+  la grille livrée était fausse sur ses deux colonnes — un `cost_score` nul
+  veut dire « l'Oracle n'a pas d'avis » 59,7 % du temps (88,3 % sous contré),
+  et le seuil de Dédé, absolu, valait moins qu'un seul monde. (2026-08-05,
+  corrigée le 2026-08-06)

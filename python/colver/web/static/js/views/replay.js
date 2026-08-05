@@ -198,31 +198,31 @@ function oracleIsIndifferent(an) {
 // d'échantillonnage, ce qui explique le déséquilibre relevé à la conception —
 // deux fois plus de « coups heureux » que d'erreurs.
 //
-// **2,5 %**, soit « Dédé donne à ce coup moins de 2,5 % de chance en moins
-// d'aboutir à la bonne issue » — un énoncé qui a le même sens sur tous les
-// contrats, ce qu'un nombre de points n'a pas. Les quanta observés sous contré
-// valent 0,39 % de la marche, donc le seuil est à **six quanta**, et les coups
-// heureux qui survivent coûtent de 11 à 158 points (3 % à 23 % de la marche).
+// **2,5 %**, et ce chiffre est **calé sur le bruit mesuré de Dédé**, pas sur
+// une intuition : deux exécutions de `replay_error_grid.py` sur les mêmes 396
+// décisions donnent des `isdd_cost` qui s'écartent de **0,88 % de la marche au
+// p90 et 2,08 % au p95** (médiane 0 — il est déterministe sur la plupart des
+// positions). Le seuil est donc posé **juste au-dessus du p95 du bruit**, ce
+// qui est sa définition. En bonus il rend l'étiquette plus stable : 3,3 % des
+// décisions changent de catégorie d'une exécution à l'autre, contre 3,8 % à
+// l'ancien seuil.
 //
-// Effet mesuré sur 396 décisions de donnes jouées, budget de production :
+// Effet mesuré, 396 décisions de donnes jouées, budget de production
+// (`--deals 20 --seed 42`, journalisé sous `grille_seuil_relatif`) :
 //
 //     seuil     erreur  malchance  coup heureux
-//     1,0 pt        21          9            66      ← l'ancien
-//     2,5 %         12         18            31
-//     5 %            7         23            18
+//     1,0 pt        21          9            63      ← l'ancien
+//     2,5 %         11         19            34
+//     5 %            8         22            19
 //
 // **Le compteur de fautes baisse, et c'est le correctif, pas un dégât.** Un
-// seuil sous le quantum faisait « voir » à Dédé des écarts qu'il ne mesure pas,
+// seuil sous le bruit faisait « voir » à Dédé des écarts qu'il ne mesure pas,
 // donc le faisait tomber d'accord avec l'Oracle par accident : ça gonflait
 // « erreur » aux dépens de « malchance ». **Ce qui n'est pas corrigé ici** :
-// il y aura toujours ~2,5× plus de coups heureux que d'erreurs à tous les
+// il y aura toujours ~3× plus de coups heureux que d'erreurs à tous les
 // seuils, parce que l'Oracle ne blâme que 7,6 % des décisions alors que Dédé
 // peut être en désaccord partout. C'est ce déséquilibre qui a motivé
 // `indifferent`, pas le seuil.
-//
-// **Ce qui reste à faire** : caler ce chiffre sur la dispersion réelle de Dédé
-// d'une exécution à l'autre (`replay_error_grid.py` deux fois sur les mêmes
-// positions) plutôt que sur la quantification. Non fait.
 //
 // Le plancher absolu couvre le capot déjà chuté, où la marche vaut 0 parce que
 // plus rien ne peut changer le score.
@@ -1019,7 +1019,7 @@ function renderCurve() {
 // une malchance a sa place ici (elle explique un écart réel au score), mais un
 // coup heureux n'en a pas — et un coup sans conséquence encore moins. Mesuré
 // sur 396 décisions (`scripts/analysis/replay_error_grid.py`) au seuil courant :
-// 12 erreurs, 18 malchances, 31 coups heureux, et **267 coups sans conséquence**
+// 11 erreurs, 19 malchances, 34 coups heureux, et **255 coups sans conséquence**
 // sur 396. Les lister noierait les moments qui comptent sous vingt fois leur
 // nombre de coups qui n'ont rien coûté. Ils restent visibles là où ils ont du
 // sens : sur le coup lui-même, et dans la couleur de la liste.

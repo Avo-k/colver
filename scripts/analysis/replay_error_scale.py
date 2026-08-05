@@ -8,6 +8,9 @@ DouDou50) et non sur des positions tirées au hasard :
             cartes ; le score de donne est une fonction en escalier de ces
             points. Combien de décisions les deux échelles classent-elles
             différemment, et dans quel sens ?
+  flat      la contrepartie : à quelle fréquence l'escalier rend l'Oracle
+            **indifférent** — toutes les cartes jouables dans la même case,
+            donc un `cost_score` nul qui n'approuve rien.
   example   une donne complète portant les deux désaccords, à lire.
   variation ce que coûte de dérouler une ligne DD jusqu'au 8e pli, par stade.
   rollout   un déroulé DouDou50 contre un solve DD à la même position.
@@ -532,11 +535,103 @@ def cmd_errors(args):
             out, models=[bid_path, dmc_path], took_s=t.s)
 
 
+def cmd_flat(args):
+    """À quelle fréquence l'Oracle n'a-t-il **aucun** avis ?
+
+    Le score de donne est en escalier : quand toutes les cartes jouables d'une
+    décision tombent dans la même case, `cost_score` vaut 0 **quoi qu'on joue**.
+    Rejouer lisait ce zéro « l'Oracle approuve ta carte » et en tirait le
+    « coup heureux ». C'est cette mesure qui a fermé la question — le zéro n'est
+    presque jamais une approbation, et sous contré il ne l'est jamais.
+
+    Sortie : la part de décisions indifférentes, globale, par contré et par pli.
+    """
+    import colver as _c
+    bid_path, dmc_path = _models()
+    rng = random.Random(args.seed)
+    tot = flat = cp_blames = cp_blames_flat = 0
+    by_co, by_co_flat = {}, {}
+    by_trick, by_trick_flat = {}, {}
+    distinct = {}
+    steps = []
+    with runlog.Timer() as t:
+        for d in range(args.deals):
+            dealer, hands, actions, _ = play_one_deal(bid_path, dmc_path, rng)
+            env = _c.Env.deal_with_hands(dealer, hands)
+            first = True
+            for a in actions:
+                if env.is_terminal():
+                    break
+                if int(env.phase()) == 1 and len(list(env.legal_actions())) > 1:
+                    if first:
+                        steps.append(int(env.deal_score_step()))
+                        first = False
+                    team = int(env.current_player()) % 2
+                    res = env.solve_scores()
+                    cp = {int(k): int(v) for k, v in res["scores"]}
+                    ds = {int(k): int(v) for k, v in res["deal_scores"]}
+                    nd = len(set(ds.values()))
+                    is_flat = nd == 1
+                    tot += 1
+                    flat += is_flat
+                    distinct[min(nd, 5)] = distinct.get(min(nd, 5), 0) + 1
+                    co = int(env.get_contract().get("coinche", 0))
+                    trick = len(env.get_played_cards()) // 4 + 1
+                    by_co[co] = by_co.get(co, 0) + 1
+                    by_co_flat[co] = by_co_flat.get(co, 0) + is_flat
+                    by_trick[trick] = by_trick.get(trick, 0) + 1
+                    by_trick_flat[trick] = by_trick_flat.get(trick, 0) + is_flat
+                    best_cp = max(cp.values()) if team == 0 else min(cp.values())
+                    cost_cp = ((best_cp - cp[int(a)]) if team == 0
+                               else (cp[int(a)] - best_cp))
+                    if cost_cp > 0:
+                        cp_blames += 1
+                        cp_blames_flat += is_flat
+                env.step(int(a))
+            print(f"\rdonne {d + 1}/{args.deals} — {tot} décisions",
+                  end="", flush=True)
+
+    pc = lambda n, d: round(100 * n / d, 1) if d else None  # noqa: E731
+    out = {
+        "decisions": tot,
+        "flat": flat,
+        "flat_pct": pc(flat, tot),
+        "distinct_deal_scores": {str(k): distinct[k] for k in sorted(distinct)},
+        "flat_pct_by_coinche": {str(k): pc(by_co_flat[k], by_co[k]) for k in sorted(by_co)},
+        "decisions_by_coinche": {str(k): by_co[k] for k in sorted(by_co)},
+        "flat_pct_by_trick": {str(k): pc(by_trick_flat[k], by_trick[k])
+                              for k in sorted(by_trick)},
+        "card_point_blames": cp_blames,
+        "card_point_blames_flat_pct": pc(cp_blames_flat, cp_blames),
+        "score_step_min": min(steps) if steps else None,
+        "score_step_max": max(steps) if steps else None,
+    }
+    print(f"\n\n{tot} décisions non forcées sur {args.deals} donnes")
+    print(f"Oracle indifférent (toutes les cartes au même score de donne) : "
+          f"{flat} = {out['flat_pct']} %")
+    print("  par contré : " + "  ".join(
+        f"coinche={k} {v} % (n={out['decisions_by_coinche'][k]})"
+        for k, v in out["flat_pct_by_coinche"].items()))
+    print("  par pli    : " + "  ".join(
+        f"{k}:{v} %" for k, v in out["flat_pct_by_trick"].items()))
+    print(f"\ncoups que l'Oracle blâme en points cartes : {cp_blames}, "
+          f"dont {out['card_point_blames_flat_pct']} % à une position indifférente "
+          f"— l'écran n'en dit alors rien")
+    print(f"marche du barème : {out['score_step_min']} à {out['score_step_max']}")
+
+    if not args.no_log:
+        runlog.save(
+            "replay_error_scale", args.tag or "flat",
+            {"deals": args.deals, "seed": args.seed},
+            out, models=[bid_path, dmc_path], took_s=t.s)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, fn, default_deals in (("scale", cmd_scale, 60),
+                                    ("flat", cmd_flat, 60),
                                     ("variation", cmd_variation, 12),
                                     ("rollout", cmd_rollout, 8),
                                     ("errors", cmd_errors, 40)):

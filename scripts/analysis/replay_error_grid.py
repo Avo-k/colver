@@ -80,6 +80,11 @@ def main():
     dd_costs, isdd_costs, steps = [], [], []
     unlucky_dd, error_dd = [], []
     no_isdd = 0
+    # (coût DD, coût IS-DD, marche, indifférent) par décision : de quoi rejouer
+    # la grille à n'importe quel seuil sans repayer le GPU. C'est ce balayage
+    # qui a fixé `NOISE_FRAC`, donc il doit sortir de la même exécution que le
+    # chiffre publié.
+    rows = []
 
     with runlog.Timer() as t:
         for d in range(args.deals):
@@ -117,6 +122,7 @@ def main():
                 # carte-là : le plus souvent il n'a **aucun** avis, toutes les
                 # cartes jouables tombant dans la même case du barème.
                 flat = len(m.get("best_class") or ()) >= m.get("n_legal", 1)
+                rows.append([dd, isdd, an.get("score_step"), int(flat)])
                 if oracle and dede:
                     grid["erreur"] += 1
                     error_dd.append(dd)
@@ -166,6 +172,28 @@ def main():
         print(f"\ncoût DD médian — erreurs {med(error_dd)}, "
               f"malchance {med(unlucky_dd)}")
 
+    # Le balayage du seuil. Il tient en une boucle sur `rows` parce que rien
+    # n'est à recalculer : le point de la mesure est justement qu'aucun seuil
+    # absolu ne convient, donc il faut voir la grille bouger avec.
+    sweep = {}
+    print(f"\n{'seuil':>10} {'erreur':>7} {'malchance':>10} {'aubaine':>8} "
+          f"{'sans csq':>9} {'rien':>6}")
+    for frac in (0.0, 0.0125, 0.025, 0.05, 0.10, 0.20):
+        c = {"erreur": 0, "malchance": 0, "aubaine": 0, "indifferent": 0, "rien": 0}
+        for dd, isdd, step, is_flat in rows:
+            dede_b = isdd > max(NOISE_FLOOR, frac * (step or 0))
+            if dd > 0:
+                c["erreur" if dede_b else "malchance"] += 1
+            elif dede_b:
+                c["aubaine"] += 1
+            else:
+                c["indifferent" if is_flat else "rien"] += 1
+        sweep[f"{frac:g}"] = c
+        lab = f"{NOISE_FLOOR:g} pt" if frac == 0 else f"{frac * 100:g} %"
+        print(f"{lab:>10} {c['erreur']:>7} {c['malchance']:>10} {c['aubaine']:>8} "
+              f"{c['indifferent']:>9} {c['rien']:>6}")
+    print(f"\n(seuil en production : {NOISE_FRAC * 100:g} % de la marche)")
+
     if not args.no_log:
         runlog.save(
             "replay_error_grid", args.tag or "grille",
@@ -173,13 +201,15 @@ def main():
              "isdd_ms": agent_review.ISDD_MS,
              "noise_frac": NOISE_FRAC, "noise_floor": NOISE_FLOOR},
             {"grid": grid, "swing_split": swing_split, "decisions": n,
-             "no_isdd": no_isdd,
+             "no_isdd": no_isdd, "sweep": sweep,
+             "score_step_min": min(ok_steps) if ok_steps else None,
+             "score_step_max": max(ok_steps) if ok_steps else None,
              "unlucky_share_of_blamed": (round(100 * grid["malchance"] / blamed, 1)
                                          if blamed else None),
              "median_dd_cost_error": med(error_dd) if error_dd else None,
              "median_dd_cost_unlucky": med(unlucky_dd) if unlucky_dd else None},
             payload={"dd_costs": dd_costs, "isdd_costs": isdd_costs,
-                     "score_steps": steps},
+                     "score_steps": steps, "rows": rows},
             models=[bid_path, dmc_path, belief_path], took_s=t.s)
 
 
