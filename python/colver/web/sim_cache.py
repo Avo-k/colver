@@ -62,7 +62,10 @@ logger = logging.getLogger(__name__)
 # à l'un de ces quatre.
 BID_SIM_VERSION = 1
 # v2 : le blob porte la suite en jeu parfait depuis la position (`line`).
-CARD_SIM_VERSION = 2
+# v3 : IS-DD départage ses ex æquo par les points cartes (2026-08-06). Le blob
+#      porte l'avis de Dédé, qui change donc sur les décisions plates — ~30 %
+#      d'entre elles, sans que la clé bouge d'un bit.
+CARD_SIM_VERSION = 3
 DOUDOU_SIM_VERSION = 1
 
 KIND_BID = "bid_sim"

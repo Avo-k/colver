@@ -643,6 +643,60 @@ impl IsDdSearch {
         }
     }
 
+    /// La pire clé possible, celle contre laquelle la première carte gagne.
+    #[inline]
+    fn worst_key(maximizing: bool) -> (f32, f32) {
+        if maximizing {
+            (f32::NEG_INFINITY, f32::NEG_INFINITY)
+        } else {
+            (f32::INFINITY, f32::INFINITY)
+        }
+    }
+
+    /// Le classement des cartes : **score de donne, puis points cartes**.
+    ///
+    /// # Pourquoi un second critère
+    ///
+    /// Le score de donne est une fonction en escalier des points cartes, et
+    /// **plate sur deux paliers entiers** : toute chute vaut `162 + contrat×mult`
+    /// quel que soit le partage des plis, et tout contrat contré tenu vaut
+    /// `162 + contrat×mult` de même. Dès que tous les mondes tombent du même
+    /// côté du seuil, l'objectif ne distingue plus aucune carte et la décision
+    /// revenait à l'ordre de la boucle — c'est-à-dire à l'indice le plus bas.
+    ///
+    /// Mesuré (2026-08-06, 200 donnes jouées par bid v6 + IS-DD,
+    /// `data/analysis/dealscore_flatness/`) : **30,1 % des décisions sont
+    /// plates** à 64 mondes, 27,0 % à 256. Le plat est presque toujours juste —
+    /// dans 99,4 % des cas le vrai monde est plat lui aussi, donc **le
+    /// départage est gratuit par construction** — mais dans les 0,6 % restants
+    /// Dédé croyait la donne scellée à tort et tranchait au hasard.
+    ///
+    /// Les points cartes sont exactement la bonne couverture de ce cas : c'est
+    /// la quantité qui redevient décisive dès que le contrat n'était pas scellé.
+    /// Le critère est donc lexicographique et non pondéré — un point carte ne
+    /// doit **jamais** payer un point de score de donne, sans quoi on rejoue
+    /// l'erreur que `DealScore` a corrigée le 2026-08-03.
+    ///
+    /// # Ce que ça ne change pas
+    ///
+    /// Sous [`PlayObjective::CardPoints`] les deux critères sont la même
+    /// quantité : une égalité sur le premier en est une sur le second, et le
+    /// départage est inerte. Épinglé par
+    /// `card_points_objective_is_untouched_by_the_tiebreak`.
+    ///
+    /// À égalité sur les deux, l'indice le plus bas l'emporte — le comportement
+    /// d'avant. Un troisième palier « carte la moins chère » se défendrait
+    /// (l'Oracle en tire +147 points de marge de match, cf. CLAUDE.md), mais il
+    /// se mesure à part : ce n'est pas le même critère, il porte sur la valeur
+    /// de la carte qu'on **dépense**, pas sur celle des plis qu'on ramasse.
+    #[inline]
+    fn prefers(maximizing: bool, cand: (f32, f32), best: (f32, f32)) -> bool {
+        if cand.0 != best.0 {
+            return if maximizing { cand.0 > best.0 } else { cand.0 < best.0 };
+        }
+        if maximizing { cand.1 > best.1 } else { cand.1 < best.1 }
+    }
+
     /// Belote finale du monde, ou zéro quand l'objectif ne la regarde pas.
     #[inline]
     fn world_belote_for(&self, world: &GameState, objective: PlayObjective) -> [i16; 2] {
@@ -1089,17 +1143,18 @@ impl IsDdSearch {
                 let belote = self.world_belote_for(&resolved, config.objective);
                 let mut card_scores = Vec::new();
                 let mut best_action = legal.trailing_zeros() as u8;
-                let mut best_avg: f32 =
-                    if maximizing { f32::NEG_INFINITY } else { f32::INFINITY };
+                let mut best_key = Self::worst_key(maximizing);
 
                 for i in 0..scores.count {
                     let (card, ns_pts) = scores.scores[i];
                     let avg =
                         self.world_value(&resolved, ns_pts, belote, config.objective) as f32;
                     card_scores.push((card, avg));
-                    let better = if maximizing { avg > best_avg } else { avg < best_avg };
-                    if better {
-                        best_avg = avg;
+                    // Un seul monde, mais le plat y est **plus** fréquent
+                    // qu'ailleurs : une position résolue est en fin de donne, là
+                    // où le contrat est le plus souvent déjà scellé.
+                    if Self::prefers(maximizing, (avg, ns_pts as f32), best_key) {
+                        best_key = (avg, ns_pts as f32);
                         best_action = card;
                     }
                 }
@@ -1121,7 +1176,13 @@ impl IsDdSearch {
 
         // Score accumulators: weighted sum of NS points per card, weight per card
         // (weights are 1.0 unless credibility weighting is enabled).
+        //
+        // `pts_sum` est le **second** critère, celui qui départage les ex æquo de
+        // `DealScore` — cf. [`Self::prefers`]. Il est accumulé quel que soit
+        // l'objectif : sous `CardPoints` il vaut exactement `score_sum` et le
+        // départage est donc inerte par construction.
         let mut score_sum = [0f64; 32];
+        let mut pts_sum = [0f64; 32];
         let mut weight_sum = [0f64; 32];
 
         // Scale time budget by cards remaining
@@ -1355,6 +1416,7 @@ impl IsDdSearch {
                     let (card, ns_pts) = scores.scores[i];
                     score_sum[card as usize] +=
                         self.world_value(world, ns_pts, belote, config.objective) * cw;
+                    pts_sum[card as usize] += ns_pts as f64 * cw;
                     weight_sum[card as usize] += cw;
                 }
             }
@@ -1372,28 +1434,29 @@ impl IsDdSearch {
         // Build result: pick best card based on aggregated scores
         let legal = state.legal_actions();
         let mut best_action = legal.trailing_zeros() as u8;
-        let mut best_avg: f32 = if maximizing { f32::NEG_INFINITY } else { f32::INFINITY };
+        let mut best_key = Self::worst_key(maximizing);
         let mut card_scores = Vec::new();
 
         let mut mask = legal;
         while mask != 0 {
             let card = mask.trailing_zeros() as u8;
             let wsum = weight_sum[card as usize];
-            let avg = if wsum > 1e-9 {
-                (score_sum[card as usize] / wsum) as f32
+            let (avg, pts) = if wsum > 1e-9 {
+                (
+                    (score_sum[card as usize] / wsum) as f32,
+                    (pts_sum[card as usize] / wsum) as f32,
+                )
             } else {
-                Self::neutral_value(config.objective)
+                (Self::neutral_value(config.objective), (TOTAL_PTS / 2) as f32)
             };
 
+            // `card_scores` ne porte **que** le critère principal : c'est
+            // l'échelle que le web transporte (`score_scale`) et que les pages
+            // d'analyse soustraient. Le départage ne déplace que `best_action`.
             card_scores.push((card, avg));
 
-            let dominated = if maximizing {
-                avg > best_avg
-            } else {
-                avg < best_avg
-            };
-            if dominated {
-                best_avg = avg;
+            if Self::prefers(maximizing, (avg, pts), best_key) {
+                best_key = (avg, pts);
                 best_action = card;
             }
             mask &= mask - 1;
@@ -1885,6 +1948,99 @@ mod tests {
         assert!(differ > 0,
                 "les deux objectifs choisissent toujours la même carte sur {checked} positions : \
                  le drapeau ne change rien");
+    }
+
+    /// Un balayage de positions de milieu/fin de donne, rendu deux fois — une
+    /// fois par objectif, **sur les mêmes mondes** (même graine).
+    fn tiebreak_sweep(seed: u64, want: usize) -> Vec<(IsDdResult, IsDdResult)> {
+        use rand::SeedableRng;
+        let mut src = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut out = Vec::new();
+        for _ in 0..900 {
+            let Some(mut state) = random_playing_state(&mut src) else { continue };
+            while !state.is_terminal()
+                && card_count(state.hands[state.current_player() as usize]) > 4
+            {
+                let legal = state.legal_actions();
+                let idx = src.gen_range(0..legal.count_ones());
+                state.step(select_nth_bit(legal, idx));
+            }
+            if state.is_terminal() || state.legal_actions().count_ones() < 2 {
+                continue;
+            }
+            let run = |obj: PlayObjective| {
+                let cfg = IsDdConfig {
+                    determinizations: 24,
+                    parallel: false,
+                    early_termination: false,
+                    objective: obj,
+                    ..Default::default()
+                };
+                let mut rng = rand::rngs::StdRng::seed_from_u64(77);
+                let mut s = IsDdSearch::new();
+                s.init_deal_with_config(&state, state.current_player(), &cfg);
+                s.search_with_stats(&state, &cfg, &mut rng)
+            };
+            out.push((run(PlayObjective::DealScore), run(PlayObjective::CardPoints)));
+            if out.len() >= want {
+                break;
+            }
+        }
+        out
+    }
+
+    fn is_flat(r: &IsDdResult) -> bool {
+        r.card_scores.windows(2).all(|w| w[0].1 == w[1].1)
+    }
+
+    /// Quand le score de donne ne distingue plus rien, ce sont les points cartes
+    /// qui tranchent — donc exactement la carte de `CardPoints`.
+    ///
+    /// C'est la propriété entière du départage lexicographique, et elle se teste
+    /// sans construire de position à la main : sur une décision plate, les deux
+    /// objectifs partagent la même clé (le premier critère de `DealScore` est
+    /// constant, son second **est** celui de `CardPoints`), donc ils doivent
+    /// désigner la même carte. Avant le départage, la position plate rendait
+    /// l'indice légal le plus bas et les deux divergeaient dès que les points
+    /// cartes, eux, n'étaient pas plats.
+    #[test]
+    fn deal_score_ties_are_broken_by_card_points() {
+        let runs = tiebreak_sweep(20260806, 90);
+        let flat: Vec<_> = runs.iter().filter(|(sco, _)| is_flat(sco)).collect();
+        assert!(flat.len() >= 10,
+                "seulement {} décisions plates sur {} : l'échantillon ne teste rien",
+                flat.len(), runs.len());
+        for (sco, pts) in &flat {
+            assert_eq!(sco.best_action, pts.best_action,
+                       "décision plate en score de donne : le départage doit rendre \
+                        la carte de CardPoints ({:?} contre {:?})",
+                       sco.card_scores, pts.card_scores);
+        }
+    }
+
+    /// Sous `CardPoints`, les deux critères du départage sont la **même**
+    /// quantité : il ne peut rien changer. La carte rendue reste donc l'argmax
+    /// d'indice le plus bas, comme avant.
+    #[test]
+    fn card_points_objective_is_untouched_by_the_tiebreak() {
+        let runs = tiebreak_sweep(20260807, 60);
+        assert!(runs.len() >= 30, "pas assez de positions jouables");
+        for (_, pts) in &runs {
+            // L'orientation se lit sur le résultat plutôt que de se supposer :
+            // le siège au trait maximise ou minimise selon son camp.
+            let best = pts.card_scores.iter().map(|&(_, v)| v).fold(f32::NAN, f32::max);
+            let worst = pts.card_scores.iter().map(|&(_, v)| v).fold(f32::NAN, f32::min);
+            // Le siège au trait maximise ou minimise selon son camp : la carte
+            // rendue doit être un extremum, et le premier de son espèce.
+            let target = if pts.card_scores.iter().any(|&(c, v)| c == pts.best_action && v == best)
+            { best } else { worst };
+            let first = pts.card_scores.iter()
+                .find(|&&(_, v)| v == target)
+                .expect("l'extremum est dans la liste").0;
+            assert_eq!(pts.best_action, first,
+                       "CardPoints ne doit rendre que l'argmax d'indice le plus bas : {:?}",
+                       pts.card_scores);
+        }
     }
 
     /// Une source lente ne doit pas se faire redemander un lot qu'on n'aura

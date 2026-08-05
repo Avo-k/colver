@@ -98,6 +98,16 @@ des entrées complètes.
   `time_limit_ms` est posé, et l'écart va de ×0,1 à ×280 selon le pli. Deux régimes à
   mesurer séparément (`--parallel` ou non) : ils ne donnent pas le même agent.
   ~2 min pour 40 donnes × 2 échéances
+- `isdd_flatness.py` — le **plat** de `PlayObjective::DealScore` : le barème ne dépend
+  pas des points cartes sur deux paliers entiers (toute chute, tout contré tenu), donc
+  l'objectif ne distingue plus aucune carte dès que tous les mondes tombent du même côté
+  du seuil. Trois modes : `truth` (un solve par décision, sans GPU — le plat du vrai
+  monde, borne supérieure sur celui de Dédé), `agent` (IS-DD contre le vrai monde : à
+  quelle fréquence Dédé est plat, et à quelle fréquence il a tort de l'être), `ab`
+  (`DealScore` contre `CardPoints` **appariés à la même décision**, ce qu'un h2h ne peut
+  pas faire). C'est ce qui a motivé le départage lexicographique du 2026-08-06.
+  ⚠ `agent` / `ab` demandent le sidecar, sinon ils mesurent un autre agent.
+  ~1 s pour 300 donnes en `truth`, ~18 min pour 200 donnes en `agent`
 - `dd_solver_bench.py` — enveloppe du binaire Rust `bench_dd`. Un binaire ne peut pas appeler
   `runlog` lui-même, donc ce script l'exécute, lit son tableau et journalise le run. Cas
   particulier de provenance : il n'y a aucun modèle à hacher, mais **le résultat dépend des

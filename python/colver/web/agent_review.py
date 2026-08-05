@@ -44,7 +44,13 @@ logger = logging.getLogger(__name__)
 # v3 : chaque coup porte `isdd_cost`, ce que la carte jouée coûte **selon Dédé**
 #      — la moitié manquante pour distinguer une erreur d'une malchance
 #      (2026-08-05). Les revues v2 n'ont que la carte.
-REVIEW_VERSION = 3
+# v4 : IS-DD départage ses ex æquo par les points cartes (2026-08-06). Le score
+#      de donne est plat sur ~30 % des décisions — toute chute, tout contré
+#      tenu — et la carte de Dédé y change sans que rien dans la clé ne bouge.
+#      C'est le rendez-vous que cette constante avait manqué au départage de
+#      l'Oracle du 2026-08-03 ; `isdd_cost` reste bon (il est nul sur un plat),
+#      c'est `isdd` qui ment.
+REVIEW_VERSION = 4
 
 # Per-card IS-DD budget for the review. Lower than the 1000ms the web plays at:
 # a full deal is ~24 decisions and someone is watching them land.

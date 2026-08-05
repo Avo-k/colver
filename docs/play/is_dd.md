@@ -170,6 +170,65 @@ If all soft beliefs are off and no hard constraints zero out any unknown (early 
 
 A previous experiment exposed soft bid inference (`partner bid 100 → likely strong trump`) in `BeliefState` for `BisDd` (both since removed). It was **rejected**: against NN bidders, the heuristic interpretation rejected reality 72% of the time. See [BIS_DD.md](../belief/bis_dd.md). The bid belief NN v4 (`bid_belief_v4.bin`) replaced it. The dominance-based play heuristic in `CardBeliefs::use_soft_inference` is independent of bid interpretation.
 
+## L'objectif, et le départage de ses ex æquo
+
+`PlayObjective::DealScore` (défaut depuis le 2026-08-03) convertit chaque monde
+en **écart de score de donne N-S − E-O** avant la moyenne. Le corollaire qu'on
+n'avait pas regardé : ce barème est **plat sur deux paliers entiers**.
+
+- **Toute chute** vaut `162 + contrat×mult` pour la défense, quel que soit le
+  partage des plis. Les points cartes n'apparaissent pas dans la formule.
+- **Tout contrat contré ou surcontré tenu** vaut `162 + contrat×mult` (252 sur
+  capot réalisé) de même.
+- Seul **« réussi non contré »** a une pente — 2 par point carte du preneur.
+
+Donc dès que tous les mondes tombent du même côté du seuil, l'objectif ne
+distingue plus **aucune** carte, et la décision revenait à l'ordre de la boucle
+racine : l'indice légal le plus bas.
+
+### Ce que ça pèse, mesuré
+
+200 donnes réellement jouées par bid v6 + IS-DD (`isdd_games_v2.bin`),
+4 166 décisions non forcées. Brut et scripts :
+`data/analysis/dealscore_flatness/`.
+
+| | 64 mondes | 256 mondes (prod) |
+|---|---|---|
+| décisions où Dédé est plat | **30,1 %** | **27,0 %** |
+| … dont le vrai monde n'était pas plat | 0,6 % | 0,3 % |
+
+Le vrai monde, lui, est plat sur **65,2 %** des décisions (58,2 % en contrat
+normal, **85,9 % sous contre**). L'écart avec les 30 % de Dédé est structurel :
+son plat est une **conjonction sur les mondes**, un seul monde vivant la casse —
+d'où aussi le fait que doubler les mondes divise par deux le taux de plat faux.
+
+**Le plat est donc presque toujours juste, et le départage gratuit par
+construction** : quand le vrai monde est plat lui aussi, aucune carte ne change
+le score. Le reliquat — 0,6 % des plats — est le cas où Dédé croit la donne
+scellée à tort.
+
+### Le départage : score de donne, puis points cartes
+
+`IsDdSearch::prefers` compare **lexicographiquement** — jamais pondéré, un point
+carte ne doit pas payer un point de score de donne, sans quoi on rejoue l'erreur
+que `DealScore` a corrigée. Les points cartes sont la bonne couverture du cas
+résiduel : c'est exactement la quantité qui redevient décisive si le contrat
+n'était pas scellé. Sous `PlayObjective::CardPoints` les deux critères sont la
+même quantité, donc le départage est **inerte** (épinglé par
+`card_points_objective_is_untouched_by_the_tiebreak`).
+
+**Ce que la mesure ne dit pas.** Sur les mêmes 200 donnes, la fuite passe de
+0,27 à 0,10 point de score de donne par décision — mais c'est **2 événements
+contre 1**, chaque chiffre étant porté par un incident unique, et les deux runs
+ré-échantillonnent leurs mondes. L'écart n'est pas distinguable du bruit. Ce qui
+justifie le changement est structurel (gratuit sur 99,4 % des plats, couvre le
+reste), pas ce delta.
+
+À égalité sur les deux critères, l'indice le plus bas l'emporte. Un troisième
+palier « carte la moins chère » se défendrait — l'Oracle en tire +147 points de
+marge de match — mais c'est un autre critère (la valeur de la carte qu'on
+*dépense*, pas celle des plis qu'on ramasse) et il se mesure à part.
+
 ## Early termination
 
 Two cases skip the determinization loop entirely:
