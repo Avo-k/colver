@@ -1160,3 +1160,37 @@ Refait avec l'enchère v6 aux quatre sièges, contre DouDou50, 800 matchs par ce
 contrats plus hauts et plus disputés laissent plus de place à une carte à points gaspillée.
 
 Autrement dit, la première mesure **sous-estimait** la conclusion. Elle ne la biaisait pas.
+
+### Le prix de l'imprévisibilité
+
+Objection naturelle : un solveur déterministe est *prévisible*, et un adversaire pourrait en
+tirer parti. En théorie des jeux c'est fondé — dans un jeu à information imparfaite, toute
+politique déterministe se fait exploiter par une meilleure réponse. Reste à savoir ce que coûte
+le remède. Même protocole (enchère v6, DouDou50, 800 matchs, 3 graines) :
+
+| départage | marge | vs `cheapest` | étendue sur 3 graines |
+|---|---:|---:|---:|
+| **cheapest** (déterministe) | **1203** | +0 | 15 |
+| `random_cheap` (tirage parmi les moins chères) | 1165 | **−38** | 48 |
+| `random` (tirage uniforme parmi les ex æquo) | 1132 | **−71** | 53 |
+| `dearest` | 1056 | −147 | 98 |
+
+**Un tirage uniforme rend la moitié du gain.** −71 sur un écart total de 147 entre le meilleur et
+le pire départage : « un petit peu d'aléatoire » n'est pas un petit peu.
+
+**Et randomiser *dans* la classe la moins chère coûte encore −38** — alors que ces cartes sont à
+la fois DD-équivalentes *et* de même valeur en points. Autrement dit, « même valeur DD et mêmes
+points » n'est toujours pas « équivalent » : quelle couleur on assèche, quelle carte garde une
+fourchette, ça compte encore. Réserve honnête : l'écart n'est séparé de `cheapest` que de 7
+points aux extrêmes de trois graines — le signe est solide, la magnitude non.
+
+**La variance croît avec l'aléatoire** (étendue 15 → 48 → 53 → 98). Une politique mixte est plus
+bruyante, ce qui est un coût en soi dans un format à 2 000 points.
+
+**Où l'imprévisibilité aurait un sens, si on en voulait.** Pas contre un humain : modéliser un
+adversaire demande de revoir *les mêmes positions* de nombreuses fois, et l'espace d'états de la
+contrée l'interdit à l'échelle d'une soirée. En revanche contre un **apprenant** — un réseau
+entraîné face à Dédé — la question est réelle : c'est le sur-apprentissage aux habitudes de
+l'adversaire, un mode d'échec classique de l'auto-jeu. Et dans le chemin d'**analyse**
+(Rejouer, `/analyse/jeu`), le déterminisme est au contraire ce qui rend l'Oracle *enseignable* :
+une règle lisible s'apprend, un tirage au sort n'apprend rien.

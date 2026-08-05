@@ -117,6 +117,14 @@ pub enum OracleTiebreak {
     Cheapest,
     /// Most card points among the optimal ones.
     Dearest,
+    /// Uniform among all the optimal ones. Prices the "make the oracle unpredictable" idea:
+    /// mixing is what an imperfect-information game asks for in theory, but mixing *uniformly*
+    /// over a set whose members are measurably unequal against a real opponent throws away the
+    /// gap between the best and the worst of them.
+    Random,
+    /// Uniform among the **cheapest** optimal ones only. Keeps the measured rule and randomises
+    /// strictly inside the cards it cannot separate, so unpredictability costs nothing.
+    RandomCheap,
 }
 
 /// Exact double-dummy solver with all four hands visible. The ceiling, not a
@@ -127,11 +135,14 @@ pub struct OraclePlayer {
     /// table on every single decision.
     tt: Option<crate::solver::TtBuf>,
     tiebreak: OracleTiebreak,
+    /// Advanced on every randomised pick. Seeded per agent so a run stays reproducible —
+    /// an unseeded oracle would make its own arena result unrepeatable.
+    rng_state: u64,
 }
 
 impl Default for OraclePlayer {
     fn default() -> Self {
-        OraclePlayer { tt: None, tiebreak: OracleTiebreak::Order }
+        OraclePlayer { tt: None, tiebreak: OracleTiebreak::Order, rng_state: 0x2545_F491_4F6C_DD1D }
     }
 }
 
@@ -143,13 +154,16 @@ impl OraclePlayer {
             "highest" => OracleTiebreak::Highest,
             "cheapest" => OracleTiebreak::Cheapest,
             "dearest" => OracleTiebreak::Dearest,
+            "random" => OracleTiebreak::Random,
+            "random_cheap" => OracleTiebreak::RandomCheap,
             other => {
                 return Err(AgentError::Config(format!(
-                    "unknown oracle tiebreak {other:?} (order|lowest|highest|cheapest|dearest)"
+                    "unknown oracle tiebreak {other:?} \
+                     (order|lowest|highest|cheapest|dearest|random|random_cheap)"
                 )))
             }
         };
-        Ok(OraclePlayer { tt: None, tiebreak })
+        Ok(OraclePlayer { tt: None, tiebreak, rng_state: 0x2545_F491_4F6C_DD1D })
     }
 }
 
@@ -198,6 +212,22 @@ impl CardPlayer for OraclePlayer {
                 }
                 OracleTiebreak::Dearest => {
                     tied.max_by_key(|&c| (crate::card::card_points(c, ct), std::cmp::Reverse(c)))
+                }
+                OracleTiebreak::Random | OracleTiebreak::RandomCheap => {
+                    let mut pool: Vec<u8> = tied.collect();
+                    if self.tiebreak == OracleTiebreak::RandomCheap {
+                        let cheapest = pool
+                            .iter()
+                            .map(|&c| crate::card::card_points(c, ct))
+                            .min()
+                            .unwrap_or(0);
+                        pool.retain(|&c| crate::card::card_points(c, ct) == cheapest);
+                    }
+                    // xorshift64*: no dependency, and deterministic given the agent seed.
+                    self.rng_state ^= self.rng_state << 13;
+                    self.rng_state ^= self.rng_state >> 7;
+                    self.rng_state ^= self.rng_state << 17;
+                    pool.get((self.rng_state % pool.len().max(1) as u64) as usize).copied()
                 }
                 OracleTiebreak::Order => None,
             }
