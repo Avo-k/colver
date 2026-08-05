@@ -367,6 +367,7 @@ fn main() {
             (scores.clone(), done.clone(), n_done.clone(), stop.clone(), ranks.clone());
         let ranks_v = ranks_v.clone();
         let (out, offset, checkpoint) = (args.out.clone(), args.offset, args.checkpoint);
+        let resumed = resume;
         std::thread::spawn(move || {
             let mut last = 0usize;
             loop {
@@ -395,10 +396,14 @@ fn main() {
                         let r: Vec<String> = (0..4)
                             .map(|i| ranks[i].load(Ordering::Relaxed).to_string())
                             .collect();
+                        // La cadence se compte sur ce que CE processus a produit. La
+                        // compter sur `d` after une reprise divise 7 656 donnes déjà
+                        // faites par vingt secondes de chrono et affiche 380 donnes/s —
+                        // un chiffre qui ment, sur un run qui redémarrera plusieurs fois.
                         eprintln!(
-                            "  ✔ {dense} donnes écrites ({d} abouties) | {:.2} donnes/s | \
-                             {:.1} h écoulées | préfixes or/arg/bro/fer {}",
-                            d as f64 / el, el / 3600.0, r.join("/")
+                            "  ✔ {dense} donnes écrites ({d} abouties, dont {} ce processus) | \
+                             {:.2} donnes/s | {:.1} h écoulées | préfixes or/arg/bro/fer {}",
+                            d - resumed, (d - resumed) as f64 / el, el / 3600.0, r.join("/")
                         );
                     }
                     Err(e) => eprintln!("  ⚠ écriture {out} : {e}"),
@@ -491,8 +496,10 @@ fn main() {
 
     let el = start.elapsed().as_secs_f64();
     let d = n_done.load(Ordering::Relaxed);
+    let made = d - resume;
     eprintln!(
-        "\nterminé : {d} donnes en {:.1} h ({:.2} donnes/s, {:.1} étiquetages/s), {} erreurs",
-        el / 3600.0, d as f64 / el, 4.0 * d as f64 / el, errors.load(Ordering::Relaxed)
+        "\nterminé : {d} donnes au total, {made} par ce processus en {:.1} h \
+         ({:.2} donnes/s, {:.1} étiquetages/s), {} erreurs",
+        el / 3600.0, made as f64 / el, 4.0 * made as f64 / el, errors.load(Ordering::Relaxed)
     );
 }
