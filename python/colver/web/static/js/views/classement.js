@@ -22,17 +22,26 @@ const BOT_LABELS = {
 const TEMPLATE = `
 <div class="compte-page classement-page">
     <div class="compte-card">
-        <h2 class="compte-title">Classement Elo</h2>
-        <p class="salon-desc">Seules les <strong>parties en 2000 points</strong> comptent —
-        c'est le format des tournois. Les donnes seules et les parties en 1000 restent
-        libres, mais ne sont pas classées.</p>
-        <p class="salon-desc">La <strong>note</strong> est ce qu'on peut prouver : elle
-        part du bas et monte à mesure qu'on joue, même à niveau constant. Le
-        <strong>niveau</strong> est la meilleure estimation, avec son incertitude —
-        tant que deux intervalles se recouvrent, l'écart entre les deux joueurs n'est
-        pas établi. Les bots sont des <strong>étalons</strong> à valeur fixe, pas des
-        concurrents.</p>
+        <h2 class="compte-title">Classement</h2>
+        <p class="salon-desc">Seules les <strong>parties en 2000 points</strong> comptent,
+        et il en faut <strong>5</strong> pour apparaître.</p>
         <div id="classement-body"><div class="an-loading">Chargement…</div></div>
+        <details class="cl-about">
+            <summary>En savoir plus sur le classement</summary>
+            <p>La <strong>note</strong> est ce qu'on peut prouver. Elle part du bas et
+            monte à mesure que vous jouez, même si votre niveau ne change pas : plus vous
+            avez de parties, moins il reste de doute, et moins la prudence coûte cher.</p>
+            <p>Le <strong>niveau estimé</strong> est la meilleure hypothèse sur votre
+            force, avec sa marge d'erreur. Tant que deux marges se recouvrent, l'écart
+            entre les deux joueurs <strong>n'est pas établi</strong> — c'est le cas de la
+            plupart des lignes aujourd'hui, et ça se resserre en jouant.</p>
+            <p>Les bots sont des <strong>étalons</strong> : leur valeur est fixée une fois
+            pour toutes par des matchs entre bots, et ne bouge jamais. Ils servent de
+            règle graduée, ils ne sont pas en compétition.</p>
+            <p>Une donne seule ou une partie en 1000 restent jouables, analysables et
+            partageables — elles ne comptent simplement pas ici. Sous 5 parties votre note
+            existe et se construit, elle n'est pas publiée.</p>
+        </details>
         <p class="salon-desc">Vos propres chiffres — comment vous annoncez, à quel
         point vous jouez près de l'oracle — sont sur <a href="/stats">Mes stats</a>.</p>
     </div>
@@ -85,6 +94,17 @@ export async function mount(container) {
                 `<td class="cl-right cl-games">${r.games}</td></tr>`;
         });
         html += '</table></div>';
+        // Un joueur sous le seuil ne se voit pas dans le tableau : sans cette
+        // ligne il ne saurait pas pourquoi, et croirait à un bug. On lui rend sa
+        // note provisoire et son niveau, qui existent bel et bien.
+        const st = me && me.stats && me.stats.elo;
+        if (st && st.ranked === false) {
+            const n = st.remaining;
+            html += `<p class="salon-desc">Vous n'êtes pas encore classé : encore ` +
+                `<strong>${n}</strong> partie${n > 1 ? 's' : ''} en 2000 points. ` +
+                `Note provisoire <strong>${Math.round(st.elo)}</strong>, niveau estimé ` +
+                `${Math.round(st.level)} <span class="cl-pm">± ${Math.round(st.uncertainty)}</span>.</p>`;
+        }
         body.innerHTML = html;
     } catch {
         body.innerHTML = '<div class="an-loading">Classement indisponible</div>';

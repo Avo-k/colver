@@ -34,10 +34,14 @@ défauts mesurés motivaient le changement, tous invisibles à l'usage :
    à 550 affiche encore **832 après 12 parties** (biais +282) et il lui faut
    ~300 parties pour arriver. Coller un « ± » autour de ce nombre-là aurait
    attaché un intervalle de MLE à un centre qui n'en est pas un.
-3. **Le seuil d'affichage n'achetait rien.** À 5 parties l'IC95 vaut ±609 Elo ;
-   masquer en dessous ne rendait pas le reste fiable. Il n'existe plus : la note
-   conservatrice place un joueur non confirmé **en bas** au lieu de le cacher,
-   donc l'incertitude se lit dans la position.
+3. **Le seuil d'affichage ne servait pas à ce qu'on croyait.** Il était présenté
+   comme un seuil de précision, et il ne l'est pas : à 5 parties l'IC95 vaut
+   encore ±609 Elo, masquer en dessous ne rend pas le reste fiable. Il **reste
+   en place** (`MIN_RATED_MATCHES`) pour la seule raison qui tient — ne pas
+   lister publiquement quelqu'un qui a essayé une partie — et non plus au titre
+   d'une précision qu'il n'achète pas. Ce que la note conservatrice change, c'est
+   qu'il n'est plus *structurellement* nécessaire : un joueur non confirmé se
+   placerait tout seul en bas.
 
 Avec `mu - 2*sigma`, un nouveau venu **entre par le bas et monte en jouant** — à
 niveau constant, jouer réduit sigma donc remonte la note. C'est exactement
@@ -105,6 +109,20 @@ logger = logging.getLogger(__name__)
 # suffixe dit l'unité : une note « donne » et une note « partie » ne se comparent
 # pas, et le passage de l'une à l'autre a multiplié tous les écarts par ~3,4.
 ANCHOR_VERSION = "2026-08-post-match"
+
+# Parties nécessaires pour **apparaître** au tableau. En dessous, l'entité est
+# notée — son bilan s'accumule, sa note se construit — mais elle reste masquée.
+#
+# ⚠️ **Ce n'est pas un seuil de précision, et il ne faut pas le lire comme tel.**
+# À 5 parties l'IC95 vaut encore ±609 Elo, soit plus que l'étendue entière du jeu
+# de la carte : le franchir ne rend rien fiable. La raison est éditoriale — on ne
+# publie pas le nom de quelqu'un qui a joué une partie et s'est arrêté.
+#
+# Depuis que la note est conservatrice (`mu - 2*sigma`), le seuil n'est plus
+# *structurellement* nécessaire : un joueur non confirmé se range tout seul en
+# bas du tableau. Le retirer resterait donc correct, et c'est un arbitrage
+# produit, pas un arbitrage de mesure.
+MIN_RATED_MATCHES = 5
 
 # Seules les parties à cette cible comptent. Une donne isolée (`target = 0`, le
 # défaut du site) et une partie en 1000 restent jouables et analysables.
@@ -456,9 +474,11 @@ async def leaderboard():
     avec son incertitude. L'écart entre les deux est le prix de l'inexpérience,
     et il se referme en jouant.
 
-    **Plus de seuil d'affichage.** Il masquait un joueur sous 5 parties, ce qui
-    demandait ensuite d'expliquer une disparition ; la note conservatrice le place
-    en bas, ce qui dit la même chose sans rien cacher.
+    Un humain n'apparaît qu'à partir de `MIN_RATED_MATCHES` parties. En dessous
+    sa note existe et se construit ; c'est `standing()` qui la lui rend, pour que
+    la page puisse dire « encore 3 parties » plutôt que de le faire disparaître
+    sans explication. Les bots sont toujours là — ce sont les étalons, leur note
+    ne dépend d'aucune partie jouée.
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(
@@ -477,15 +497,22 @@ async def leaderboard():
             "name": username if kind == "user" else ref,
         }
         for kind, ref, elo_, level, sigma, games, username in rows
+        if kind == "bot" or games >= MIN_RATED_MATCHES
     ]
 
 
 async def standing(kind, ref):
-    """État du classement d'une entité.
+    """État du classement d'une entité, **y compris quand elle n'est pas classée**.
 
-    `ranked` / `needed` / `remaining` survivent au retrait du seuil : ils sont lus
-    par `/api/me` et par la page Compte. Tout le monde est désormais classé — un
-    joueur sans partie apparaît simplement au plancher.
+    C'est ce qui permet à la page de dire « encore 3 parties, note provisoire
+    1120 » au lieu de laisser un joueur se demander pourquoi il ne se voit pas.
+    Lu par `/api/me`, donc par Classement, Mes stats et Compte.
     """
     r = await get_rating(kind, ref)
-    return {**r, "ranked": True, "needed": 0, "remaining": 0}
+    games = r["games"]
+    return {
+        **r,
+        "ranked": kind == "bot" or games >= MIN_RATED_MATCHES,
+        "needed": MIN_RATED_MATCHES,
+        "remaining": max(0, MIN_RATED_MATCHES - games) if kind == "user" else 0,
+    }

@@ -3822,7 +3822,7 @@
 /* La note trie, le niveau informe : c'est la note qui doit se lire en premier,
    d'où le contraste et la graisse ici et pas sur la colonne voisine. */
 .cl-elo { font-weight: 600; }
-.cl-level { color: var(--text-dim); white-space: nowrap; }
+.cl-level { color: var(--c-text-dim); white-space: nowrap; }
 
 /* L'incertitude est plus petite que le niveau qu'elle accompagne, mais jamais
    effacée : c'est elle qui dit qu'un écart de classement n'est pas établi. */
@@ -3830,6 +3830,35 @@
 
 /* Un étalon n'a pas d'intervalle — sa valeur est posée, pas mesurée sur lui. */
 .cl-anchor { font-style: italic; opacity: 0.6; }
+
+/* L'explication du classement est repliée par défaut : le tableau se lit seul, et
+   quatre paragraphes au-dessus le repoussaient sous la ligne de flottaison au
+   téléphone. `<details>` natif — pas de JS, ouverture au clavier gratuite. */
+.cl-about {
+    margin-top: var(--sp-3);
+    font-size: var(--fs-sm);
+    color: var(--c-text-muted);
+}
+.cl-about summary {
+    cursor: pointer;
+    color: var(--c-text);
+    /* Cible tactile : un résumé d'une ligne fait 20px de haut sans ça. */
+    padding: var(--sp-2) 0;
+    list-style: none;
+}
+.cl-about summary::-webkit-details-marker { display: none; }
+.cl-about summary::before {
+    content: "▸ ";
+    display: inline-block;
+    transition: transform 0.15s ease;
+}
+.cl-about[open] summary::before { transform: rotate(90deg); }
+.cl-about summary:hover { color: var(--c-accent); }
+.cl-about p { margin: 0 0 var(--sp-2); line-height: 1.5; }
+
+@media (prefers-reduced-motion: reduce) {
+    .cl-about summary::before { transition: none; }
+}
 
 
 /* ============================================================

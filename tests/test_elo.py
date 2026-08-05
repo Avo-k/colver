@@ -243,25 +243,47 @@ class TestDecouplage:
         assert a == b
 
 
-class TestPlusDeSeuil:
-    """Le seuil de 5 parties n'achetait pas de précision (±609 Elo à 5 parties) et
-    obligeait à expliquer une disparition. La note conservatrice place un joueur
-    non confirmé **en bas** : l'incertitude se lit dans la position.
+class TestSeuilDAffichage:
+    """Le seuil masque l'affichage, **il ne suspend pas la notation**.
+
+    Et ce n'est pas un seuil de précision : à 5 parties l'IC95 vaut encore
+    ±609 Elo. C'est un choix éditorial — ne pas publier le nom de quelqu'un qui a
+    joué une partie. Depuis que la note est conservatrice il n'est plus
+    structurellement nécessaire (un joueur non confirmé se range tout seul en
+    bas), donc le retirer resterait correct.
     """
 
-    async def test_un_joueur_a_une_seule_partie_apparait(self, clean_db):
+    async def test_un_joueur_sous_le_seuil_n_apparait_pas(self, clean_db):
         await elo.rate_match(await _match())
-        assert [r for r in await elo.leaderboard() if r["kind"] == "user"]
-
-    async def test_il_apparait_en_bas(self, clean_db):
-        await elo.rate_match(await _match(winner=1))
         board = await elo.leaderboard()
-        assert board[-1]["kind"] == "user"
+        assert not [r for r in board if r["kind"] == "user"]
         assert [r for r in board if r["kind"] == "bot"], "les étalons restent visibles"
 
-    async def test_standing_classe_tout_le_monde(self, clean_db):
+    async def test_il_apparait_au_seuil(self, clean_db):
+        for _ in range(elo.MIN_RATED_MATCHES):
+            await elo.rate_match(await _match())
+        assert [r for r in await elo.leaderboard() if r["kind"] == "user"]
+
+    async def test_la_note_se_construit_quand_meme(self, clean_db):
+        """Masqué ≠ non noté : le bilan s'accumule, et le joueur arrive au seuil
+        avec la note qu'il a méritée, pas avec une note neuve."""
+        for _ in range(elo.MIN_RATED_MATCHES - 1):
+            await elo.rate_match(await _match(winner=0))
+        r = await elo.get_rating("user", 1)
+        assert r["games"] == elo.MIN_RATED_MATCHES - 1
+        assert r["level"] > elo.DISPLAY_TYPICAL, "quatre victoires doivent compter"
+
+    async def test_standing_dit_ce_qui_reste_a_jouer(self, clean_db):
+        """Sans ça, la page ferait disparaître quelqu'un sans explication."""
         await elo.rate_match(await _match())
         st = await elo.standing("user", 1)
+        assert st["ranked"] is False
+        assert st["remaining"] == elo.MIN_RATED_MATCHES - 1
+        assert st["level"] and st["uncertainty"], \
+            "la note provisoire doit être rendue, c'est ce que la page affiche"
+
+    async def test_un_bot_n_est_jamais_masque(self, clean_db):
+        st = await elo.standing("bot", "dede")
         assert st["ranked"] is True and st["remaining"] == 0
 
     async def test_le_classement_publie_l_ancre_du_bot(self, clean_db):

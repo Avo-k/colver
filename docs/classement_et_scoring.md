@@ -26,7 +26,7 @@ qu'on peut prouver, qui sert au tri) et le *niveau estimé ± son incertitude*.
 | unité notée | une donne | une partie en 2000 | une partie en 2000 |
 | estimateur | récurrence K | récurrence K | **posterior exact** |
 | nombre publié | l'Elo courant | l'Elo courant | **`mu − 2σ`, + le niveau ± IC** |
-| seuil d'affichage | — | 5 parties | **aucun** |
+| seuil d'affichage | — | 5 parties | 5 parties (**motif changé**) |
 | bots | dérivants | ancrés | ancrés |
 | échelle affichée | Elo brut | Elo brut | **affine, lisible (Dédé 2200)** |
 
@@ -42,9 +42,15 @@ Trois défauts mesurés motivaient la seconde refonte, tous invisibles à l'usag
    ~300 parties à arriver. Coller un « ± » autour de ce nombre-là aurait attaché un
    intervalle de MLE à un centre qui n'en est pas un — c'est pourquoi R6 ne pouvait pas
    se faire seul.
-3. **Le seuil de 5 parties n'achetait rien** (±609 Elo à 5 parties) et obligeait à
-   expliquer une disparition. La note conservatrice place un joueur non confirmé **en
-   bas** : l'incertitude se lit dans la position.
+3. **Le seuil de 5 parties ne servait pas à ce qu'il disait.** Il était présenté comme un
+   seuil de précision, et il ne l'est pas : à 5 parties l'IC95 vaut encore ±609 Elo.
+   **Il reste en place**, mais au titre de la seule raison qui tient — ne pas publier le
+   nom de quelqu'un qui a joué une partie et s'est arrêté. Ce que la note conservatrice
+   change, c'est qu'il n'est plus *structurellement* nécessaire : un joueur non confirmé
+   se rangerait tout seul en bas. Le retirer resterait donc correct — c'est un arbitrage
+   produit, pas un arbitrage de mesure. Sous le seuil, la note **se construit quand
+   même** et `standing()` la rend, pour que la page dise « encore 3 parties » au lieu de
+   faire disparaître quelqu'un sans explication.
 
 **La propriété qui ferme le défaut n° 1** : avec `mu − 2σ`, à niveau constant, **jouer
 fait monter la note** (jouer réduit sigma). Un nouveau venu entre par le bas et grimpe.
@@ -644,6 +650,11 @@ de victoires contre Dédé, donc descente systématique dont l'avancement domina
 Effet de bord heureux du choix d'échelle : **quatre joueurs sur sept gardent leur nombre
 à moins de 15 points près**. Ce n'est pas voulu — c'est une coïncidence entre la
 compression de `mu − 2σ` et le facteur 1,33 — mais ça rend la migration facile à annoncer.
+
+> Le tableau ci-dessus montre les **sept** comptes pour que la comparaison des ordres soit
+> lisible. À l'écran le seuil de 5 parties en masque quatre (Darju 3, Charles_deBatz 4,
+> Julesder 2, Charles_d_Artagnan 1) : la page n'en affiche que trois. Leur note est
+> calculée quand même — c'est un masque d'affichage, pas une abstention de notation.
 
 #### Intervalles de confiance réels (IC95 de Wilson transporté)
 
