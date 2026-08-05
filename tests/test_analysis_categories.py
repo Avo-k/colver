@@ -135,7 +135,53 @@ class TestResume:
         assert summary["players"][1]["counts"]["faute"] == 1
 
 
-@pytest.mark.parametrize("version", [4, 5, 6])
+class _FakeEnv:
+    """Le minimum que `_curve` interroge."""
+
+    def __init__(self, value, team, belote=(0, 0), coinche=0, trump=1):
+        self._c = {"value": value, "team": team, "coinche": coinche, "trump": trump}
+        self._b = list(belote)
+
+    def get_contract(self):
+        return self._c
+
+    def belote_final(self):
+        return self._b
+
+
+class TestCourbe:
+    """Le seuil de la courbe : l'unité, et la belote."""
+
+    def test_la_valeur_du_contrat_est_deja_en_points(self):
+        """`get_contract()['value']` rend `Contract::point_value()`, donc 110 et
+        non 11. Une première version le multipliait par 10 et traçait un seuil à
+        1100 — la courbe entière était fausse, sans rien casser par ailleurs."""
+        c = analysis._curve(_FakeEnv(110, 1), [], [[10, 40]], [[9, 100]])
+        assert c["value"] == 110
+        assert c["threshold"] == 110
+
+    def test_la_belote_abaisse_la_barre(self):
+        """`scoring` ajoute la belote au total du preneur pour décider de la
+        réussite : elle **déplace le seuil** au lieu d'ajouter 20 points au
+        bout. Tracer l'horizontale à la valeur nue ferait mentir la courbe sur
+        toutes les donnes à belote."""
+        c = analysis._curve(_FakeEnv(150, 0, belote=(20, 0)), [], [], [[1, 90]])
+        assert c["threshold"] == 130
+        # La belote de l'adversaire ne déplace pas la barre du preneur.
+        c = analysis._curve(_FakeEnv(150, 0, belote=(0, 20)), [], [], [[1, 90]])
+        assert c["threshold"] == 150
+
+    def test_le_capot_est_signale(self):
+        c = analysis._curve(_FakeEnv(250, 1), [], [], [[1, 252]])
+        assert c["capot"] is True
+        assert c["threshold"] == 250
+
+    def test_une_donne_passee_n_a_pas_de_courbe(self):
+        """Sans contrat il n'y a ni preneur, ni seuil, ni rien à projeter."""
+        assert analysis._curve(_FakeEnv(0, 0), [], [], []) is None
+
+
+@pytest.mark.parametrize("version", [4, 5, 6, 7])
 def test_toute_analyse_anterieure_est_perimee(version):
-    """v7 écrit `cost_score`, que personne avant lui ne produisait."""
+    """v7 écrit `cost_score` et v8 la courbe : rien d'antérieur n'est complet."""
     assert not analysis._is_fresh({"version": version, "playgen": True}, None, [0, 0])

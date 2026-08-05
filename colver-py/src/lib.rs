@@ -673,6 +673,24 @@ impl Env {
         self.state.belote
     }
 
+    /// Belote **finale** par camp (0 ou 20), cartes pas encore jouées comprises.
+    ///
+    /// [`get_belote`] compte ce qui a déjà été posé et sous-estime donc en cours
+    /// de donne. Celle-ci regarde `hands | played_by` : la belote est acquise dès
+    /// qu'un joueur détient Dame **et** Roi d'atout, puisqu'il finira par jouer
+    /// les deux. C'est la version qui décide de la réussite du contrat — elle
+    /// **déplace le seuil** au lieu d'ajouter 20 points au bout.
+    fn belote_final(&self) -> [i16; 2] {
+        if self.state.phase == Phase::Bidding {
+            return [0, 0];
+        }
+        colver_core::scoring::final_belote(
+            &self.state.hands,
+            &self.played_by,
+            self.state.contract.trump,
+        )
+    }
+
     /// Get dealer seat (0-3).
     fn get_dealer(&self) -> u8 {
         self.state.dealer
