@@ -164,6 +164,119 @@ pub fn deal_score_from_card_points(
     DealScore { scores }
 }
 
+// ── Du solveur DD au barème ──
+//
+// Le solveur rend des **points cartes**, et ce ne sont pas eux qui décident une
+// donne : l'écart entre les deux est une marche de `4V` au seuil du contrat et
+// une pente nulle en dessous. Toute lecture d'une valeur DD comme « ce que ce
+// coup rapporte » doit donc passer par ici.
+//
+// Ces trois fonctions vivaient en privé dans `is_dd.rs`, seul appelant jusqu'au
+// 2026-08-05 ; les pages d'analyse en ont besoin aussi, et le barème n'a le
+// droit d'exister qu'une fois.
+
+/// Total des points cartes de la donne, dix de der compris, connaissant le
+/// total N-S final.
+///
+/// 162 normalement, 252 quand un camp fait capot (le dix de der y vaut 100).
+///
+/// **Une seule situation reste ambiguë** : `ns == 0` peut vouloir dire « E-O a
+/// fait capot » (252) ou « N-S n'a ramassé que des plis à zéro point » (162) —
+/// il y a 11 cartes sans valeur dans un jeu, donc le second cas existe. Les
+/// plis déjà joués tranchent la plupart du temps : si N-S en a gagné un, le
+/// capot est impossible. Sinon on retient le capot, de loin le plus fréquent
+/// quand un camp finit à zéro. L'erreur résiduelle vaut 90 points de score sur
+/// un écart qui en fait plusieurs centaines, et seulement dans ce cas-là.
+#[inline]
+pub fn total_card_points(state: &GameState, ns_card_pts: i16) -> i16 {
+    if ns_card_pts == CAPOT_PTS {
+        return CAPOT_PTS; // N-S a tout pris : sans ambiguïté
+    }
+    if ns_card_pts == 0 && state.tricks_won[0] == 0 {
+        return CAPOT_PTS;
+    }
+    TOTAL_PTS
+}
+
+/// Belote/rebelote **finale**, par camp, depuis une donne en cours.
+///
+/// [`compute_deal_score`] lit `state.belote`, qui ne compte que ce qui a **déjà
+/// été joué** (`check_belote` dans `apply_play`) et sous-estime donc en cours de
+/// donne. Ici on veut la belote finale : elle est acquise dès qu'un joueur
+/// détient Dame **et** Roi d'atout, puisqu'il finira forcément par jouer les
+/// deux — d'où `hands | played_by`, les mains initiales reconstituées.
+#[inline]
+pub fn final_belote(
+    hands: &[crate::card::CardSet; 4],
+    played_by: &[crate::card::CardSet; 4],
+    trump: u8,
+) -> [i16; 2] {
+    // Bits de rang : Dame = 4, Roi = 5 ; indice de carte = couleur × 8 + rang.
+    let mask = (1u32 << (trump * 8 + 4)) | (1u32 << (trump * 8 + 5));
+    let mut bonus = [0i16; 2];
+    for p in 0..4usize {
+        if (hands[p] | played_by[p]) & mask == mask {
+            bonus[p % 2] = 20;
+        }
+    }
+    bonus
+}
+
+/// Écart de score marqué **N-S − E-O** correspondant à un total N-S en points
+/// cartes — typiquement une valeur rendue par le solveur DD.
+///
+/// C'est la conversion complète : réussite ou chute, valeur du contrat,
+/// contré/surcontré, capot, dix de der, belote. Le résultat est signé et vit sur
+/// une échelle de ±500 (davantage sous coinche), sans rapport avec les 0-252 des
+/// points cartes — **les deux ne se soustraient pas**.
+///
+/// `played_by[seat]` = les cartes que ce siège a déjà posées, nécessaires pour
+/// reconstituer la belote finale.
+#[inline]
+pub fn deal_score_delta(
+    state: &GameState,
+    played_by: &[crate::card::CardSet; 4],
+    ns_card_pts: i16,
+) -> i16 {
+    let total = total_card_points(state, ns_card_pts);
+    let card = [ns_card_pts, total - ns_card_pts];
+    let taker = state.contract.team as usize;
+    let belote = final_belote(&state.hands, played_by, state.contract.trump);
+    let s = deal_score_from_card_points(
+        &state.contract,
+        card,
+        belote,
+        card[taker] == CAPOT_PTS,
+    );
+    s.scores[0] - s.scores[1]
+}
+
+/// Le contrat est-il tenu, pour un total N-S en points cartes donné ?
+///
+/// C'est le seul prédicat qui sépare les deux régimes du barème, donc **le seul
+/// qui distingue une erreur qui coûte des points d'une erreur qui renverse la
+/// donne**. Il ne se déduit pas de l'écart rendu par [`deal_score_delta`] : un
+/// écart négatif peut aussi bien être une chute du preneur N-S qu'un contrat
+/// tenu par E-O.
+///
+/// La belote compte : `scoring` l'ajoute au total du preneur pour décider de la
+/// réussite, donc elle **déplace le seuil** au lieu d'ajouter 20 points au bout.
+#[inline]
+pub fn contract_made(
+    state: &GameState,
+    played_by: &[crate::card::CardSet; 4],
+    ns_card_pts: i16,
+) -> bool {
+    let total = total_card_points(state, ns_card_pts);
+    let taker = state.contract.team as usize;
+    let card = [ns_card_pts, total - ns_card_pts];
+    if state.contract.is_capot() {
+        return card[taker] == CAPOT_PTS;
+    }
+    let belote = final_belote(&state.hands, played_by, state.contract.trump);
+    card[taker] + belote[taker] >= state.contract.point_value() as i16
+}
+
 /// Convert deal score to rewards for RL: team 0 gets positive/negative based on comparison.
 pub fn deal_rewards(state: &GameState) -> [f32; 2] {
     if state.contract.value == 0 {
@@ -207,6 +320,136 @@ mod tests {
         state.belote[taker_team as usize] = taker_belote;
         state.belote[defense as usize] = defense_belote;
         state
+    }
+
+    /// Un état de jeu nu, sans plis joués : ce qu'il faut à `deal_score_delta`.
+    fn make_playing_state(taker_team: u8, bid_value: u8, trump: u8, coinche: u8) -> GameState {
+        let mut state = GameState::new(0, [0; 4]);
+        state.phase = Phase::Playing;
+        state.contract = Contract {
+            trump,
+            value: bid_value,
+            team: taker_team,
+            coinche,
+        };
+        state
+    }
+
+    #[test]
+    fn deal_score_is_flat_below_the_contract() {
+        // La propriété qui rend les points cartes trompeurs : sous le seuil, ils
+        // ne valent RIEN. La défense qui fait chuter encaisse 162 + contrat quel
+        // que soit le partage réel des plis, donc un coup qui « perd 30 points
+        // cartes » sans remettre le contrat en cause n'a rien coûté.
+        let state = make_playing_state(0, 10, 1, 0); // 100♥ par N-S
+        let played = [0u32; 4];
+        let floor = deal_score_delta(&state, &played, 0);
+        for ns in 1..100i16 {
+            assert_eq!(
+                deal_score_delta(&state, &played, ns),
+                floor,
+                "le score bouge à {ns} points cartes, sous un contrat à 100"
+            );
+        }
+    }
+
+    #[test]
+    fn deal_score_step_at_the_threshold_is_four_times_the_contract() {
+        // Et la contrepartie : au seuil, UN point carte vaut `4V`. C'est ce qui
+        // fait qu'un coup noté « −3 points cartes » peut coûter 400 points de
+        // score. Vérifié sur tous les paliers, contrat normal non contré.
+        for contract in [80i16, 90, 100, 110, 120, 130, 140, 150, 160] {
+            let value = (contract / 10) as u8;
+            let state = make_playing_state(0, value, 1, 0);
+            let played = [0u32; 4];
+            let below = deal_score_delta(&state, &played, contract - 1);
+            let at = deal_score_delta(&state, &played, contract);
+            assert_eq!(
+                at - below,
+                4 * contract,
+                "la marche d'un contrat à {contract} devrait valoir 4V"
+            );
+        }
+    }
+
+    #[test]
+    fn deal_score_delta_agrees_with_the_terminal_scoring() {
+        // `deal_score_delta` sert à lire une valeur DD *avant* la fin de la
+        // donne ; elle doit rendre exactement ce que `compute_deal_score` dira
+        // une fois la donne finie. Si les deux divergent, une page d'analyse
+        // annonce un écart que la feuille de marque contredira.
+        // `(points cartes du preneur, plis du preneur)` **cohérents entre eux** :
+        // un capot réalisé vaut 252 points cartes et non 162, et zéro pli vaut
+        // zéro point. Une première version de ce test passait 162 points avec 8
+        // plis — un état qu'aucune donne ne produit, et sur lequel
+        // `total_card_points` n'a aucune raison de tomber juste.
+        for contract in [80i16, 100, 130, 160] {
+            for taker_team in 0..2u8 {
+                for coinche in 0..3u8 {
+                    for (taker_pts, taker_tricks) in
+                        [(0i16, 0u8), (40, 2), (contract - 1, 4), (contract, 4), (152, 7), (252, 8)]
+                    {
+                        let value = (contract / 10) as u8;
+                        let total = if taker_pts == 252 || taker_pts == 0 {
+                            CAPOT_PTS
+                        } else {
+                            TOTAL_PTS
+                        };
+                        let defense_pts = total - taker_pts;
+                        let terminal = make_scored_state(
+                            taker_team,
+                            value,
+                            1,
+                            coinche,
+                            taker_pts as u8,
+                            defense_pts as u8,
+                            taker_tricks,
+                            0,
+                            0,
+                        );
+                        let expected = {
+                            let s = compute_deal_score(&terminal);
+                            s.scores[0] - s.scores[1]
+                        };
+                        let mut playing = make_playing_state(taker_team, value, 1, coinche);
+                        playing.tricks_won = terminal.tricks_won;
+                        let ns_pts = if taker_team == 0 { taker_pts } else { defense_pts };
+                        assert_eq!(
+                            deal_score_delta(&playing, &[0u32; 4], ns_pts),
+                            expected,
+                            "contrat {contract}, preneur {taker_team}, coinche {coinche}, \
+                             preneur à {taker_pts} points cartes"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn final_belote_sees_a_holding_the_state_has_not_scored_yet() {
+        // `state.belote` ne compte que ce qui a déjà été joué ; `final_belote`
+        // regarde `hands | played_by`. Les deux moitiés doivent compter : la
+        // carte encore en main, et celle déjà posée.
+        let trump = 1u8; // ♥ → Dame = 12, Roi = 13
+        let (dame, roi) = (trump * 8 + 4, trump * 8 + 5);
+
+        let mut hands = [0u32; 4];
+        hands[1] = (1 << dame) | (1 << roi); // Est tient les deux
+        assert_eq!(final_belote(&hands, &[0; 4], trump), [0, 20]);
+
+        // La Dame est déjà tombée : la belote reste acquise à Est-Ouest.
+        let mut hands = [0u32; 4];
+        hands[1] = 1 << roi;
+        let mut played = [0u32; 4];
+        played[1] = 1 << dame;
+        assert_eq!(final_belote(&hands, &played, trump), [0, 20]);
+
+        // Partagée entre les deux partenaires : ce n'est pas une belote.
+        let mut hands = [0u32; 4];
+        hands[1] = 1 << dame;
+        hands[3] = 1 << roi;
+        assert_eq!(final_belote(&hands, &[0; 4], trump), [0, 0]);
     }
 
     #[test]

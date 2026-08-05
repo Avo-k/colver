@@ -26,11 +26,17 @@ const base = () => document.querySelector('base')?.getAttribute('href') || '/';
 // Sous ce seuil, l'intervalle de Wilson couvre à peu près tout [0, 100].
 const MIN_OBS = 5;
 
+// Le vocabulaire vient d'`analysis.py` et a changé au bump v7 (2026-08-05) : le
+// coût d'une carte se lit en score de donne, et l'ancienne graduation en points
+// cartes (bon / erreur / faute) laisse place à un seul partage — le contrat
+// a-t-il basculé. Les trois anciennes clés restent listées : les analyses
+// antérieures se recalculent, mais un historique peut être servi le temps que
+// `get_or_compute` rende la main, et une colonne sans libellé serait pire.
 const CAT_LABELS = {
-    parfait: 'Sans perte', bon: 'Bon', imprecision: 'Imprécision',
-    erreur: 'Erreur', faute: 'Faute',
+    parfait: 'Sans perte', imprecision: 'Imprécision', decisive: 'Faute décisive',
+    bon: 'Bon', erreur: 'Erreur', faute: 'Faute',
 };
-const CAT_ORDER = ['parfait', 'bon', 'imprecision', 'erreur', 'faute'];
+const CAT_ORDER = ['parfait', 'imprecision', 'decisive', 'bon', 'erreur', 'faute'];
 const WEEKDAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
 // Le filtre de format. « Toutes » est le défaut et le reste : c'est le seul

@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 # v2 : même purge que ANALYSIS_VERSION v5 — invalide les revues calculées en
 # pleine donne avant le filtre `get_game` (2026-08-01).
-REVIEW_VERSION = 2
+# v3 : chaque coup porte `isdd_cost`, ce que la carte jouée coûte **selon Dédé**
+#      — la moitié manquante pour distinguer une erreur d'une malchance
+#      (2026-08-05). Les revues v2 n'ont que la carte.
+REVIEW_VERSION = 3
 
 # Per-card IS-DD budget for the review. Lower than the 1000ms the web plays at:
 # a full deal is ~24 decisions and someone is watching them land.
@@ -70,6 +73,42 @@ def _ask(agent, env):
     except Exception as e:  # noqa: BLE001 — one bad move must not lose the review
         logger.warning("decide failed: %s", e)
         return None
+
+
+def _ask_isdd(agent, env, team, played):
+    """La carte de Dédé **et ce que la carte réellement jouée lui coûte**.
+
+    `Agent.decide` rend déjà `candidates` = (carte, valeur) — et depuis que
+    l'objectif par défaut est `PlayObjective::DealScore`, ces valeurs sont des
+    **écarts de score de donne N-S − E-O**, la même échelle que `deal_scores`
+    dans `analysis.py`. On ne gardait que `action` et on jetait le reste, alors
+    que c'est ce qui permet de distinguer une erreur d'une malchance : une carte
+    que l'Oracle désapprouve mais que Dédé évalue à égalité n'était pas visible
+    depuis ce siège.
+
+    Rend `(carte de Dédé, coût de `played` selon Dédé)`, le coût étant orienté
+    vers l'équipe qui joue. `(None, None)` si la recherche échoue.
+
+    Le coût porte sur la carte **réellement jouée dans la partie**, pas sur
+    celle que Dédé aurait choisie : cette dernière est optimale pour lui par
+    construction, son coût serait toujours nul et la mesure ne dirait rien.
+    """
+    try:
+        decision = agent.decide(env)
+    except Exception as e:  # noqa: BLE001 — one bad move must not lose the review
+        logger.warning("decide failed: %s", e)
+        return None, None
+    action = int(decision["action"])
+    candidates = decision.get("candidates") or []
+    if not candidates:
+        return action, None
+    values = {int(c): float(v) for c, v in candidates}
+    if played not in values:
+        return action, None
+    best = max(values.values()) if team == 0 else min(values.values())
+    cost = ((best - values[played]) if team == 0
+            else (values[played] - best))
+    return action, round(max(0.0, cost), 1)
 
 
 def _count_cards(game):
@@ -150,7 +189,15 @@ class _Runner:
                     except Exception:  # noqa: BLE001
                         pass
                     if self._dede[player] is not None:
-                        move["isdd"] = _ask(self._dede[player], self._env)
+                        card, cost = _ask_isdd(
+                            self._dede[player], self._env, player % 2, action)
+                        move["isdd"] = card
+                        # Ce que ce coup coûte **vu du siège qui l'a joué**.
+                        # Croisé avec le coût DD, c'est ce qui sépare l'erreur
+                        # (les deux désapprouvent) de la malchance (l'Oracle
+                        # seul désapprouve, ce siège ne pouvait pas savoir).
+                        if cost is not None:
+                            move["isdd_cost"] = cost
 
             for agent in self._table:
                 agent.observe(self._env, action)
