@@ -343,22 +343,29 @@
        z-index 0 + pointer-events none : ce sont des repères, ils passent sous
        le panneau d'annonce (z-index 35) et n'interceptent aucun tap.
 
-       Rejouer reprend le même liseré pour Ouest et Est (Nord y garde sa main
-       entière, il a la place) : sans lui la page d'analyse perdait purement
-       et simplement deux des quatre mains au téléphone. */
+       Rejouer et Regarder sortent Ouest et Est de la grille de la même façon
+       (Nord y garde sa main entière, il a la place) — sans quoi ces deux pages
+       perdaient purement et simplement deux des quatre mains au téléphone —
+       mais ils ne les DÉCOUPENT pas : voir « pas de découpe » plus bas. */
     #play-table .seat.north,
     #play-table .seat.west,
     #play-table .seat.east,
     #replay-main .seat.west,
-    #replay-main .seat.east {
-        /* La languette fait la largeur (ou la hauteur) d'un index d'angle,
-           pas une valeur en dur : c'est ce qu'on vient y lire. */
-        --peek-x: max(18px, calc(var(--card-w) * 0.3));
-        --peek-y: max(24px, calc(var(--card-h) * 0.3));
+    #replay-main .seat.east,
+    #watch-main .seat.west,
+    #watch-main .seat.east {
         display: flex !important;
         position: absolute;
         z-index: 0;
         pointer-events: none;
+    }
+    /* La languette fait la largeur (ou la hauteur) d'un index d'angle, pas une
+       valeur en dur : c'est ce qu'on vient y lire. */
+    #play-table .seat.north,
+    #play-table .seat.west,
+    #play-table .seat.east {
+        --peek-x: max(18px, calc(var(--card-w) * 0.3));
+        --peek-y: max(24px, calc(var(--card-h) * 0.3));
     }
     /* En salon le libellé est un pseudo de longueur libre : il est tronqué,
        jamais élargi — sinon il pousserait le liseré hors du bord. */
@@ -366,7 +373,9 @@
     #play-table .seat.west .seat-label,
     #play-table .seat.east .seat-label,
     #replay-main .seat.west .seat-label,
-    #replay-main .seat.east .seat-label {
+    #replay-main .seat.east .seat-label,
+    #watch-main .seat.west .seat-label,
+    #watch-main .seat.east .seat-label {
         margin-bottom: 2px;
         max-width: 100%;
         white-space: nowrap;
@@ -387,9 +396,7 @@
        n'étaient qu'une bande de dessins sans valeurs tant que la découpe
        tombait de l'autre côté. */
     #play-table .seat.west .hand,
-    #play-table .seat.east .hand,
-    #replay-main .seat.west .hand,
-    #replay-main .seat.east .hand {
+    #play-table .seat.east .hand {
         width: var(--peek-x);
         overflow: hidden;
         /* `.hand` centre ses cartes : centrées dans une boîte d'un tiers de
@@ -416,27 +423,92 @@
        coin haut-droit dès le deuxième pli et le recouvrait. */
     #play-table .seat.north .seat-label { margin: 0 0 2px; max-width: 55vw; }
 
-    /* Ouest / Est : le nom reste dans l'écran, seule la main est rognée. */
+    /* Ouest / Est : le nom reste dans l'écran ; sur le tapis de jeu, seule la
+       main est rognée. */
     #play-table .seat.west,
     #play-table .seat.east,
     #replay-main .seat.west,
-    #replay-main .seat.east {
+    #replay-main .seat.east,
+    #watch-main .seat.west,
+    #watch-main .seat.east {
         top: 50%;
         transform: translateY(-50%);
     }
     #play-table .seat.west,
-    #replay-main .seat.west  { left: 0; align-items: flex-start; }
+    #replay-main .seat.west,
+    #watch-main .seat.west  { left: 0; align-items: flex-start; }
     #play-table .seat.east,
-    #replay-main .seat.east  { right: 0; align-items: flex-end; }
+    #replay-main .seat.east,
+    #watch-main .seat.east  { right: 0; align-items: flex-end; }
     #play-table .seat.west .seat-label,
-    #play-table .seat.east .seat-label,
+    #play-table .seat.east .seat-label { max-width: 30vw; }
+    /* ===== Rejouer et Regarder : pas de découpe, la place est là =====
+       Les deux tapis d'analyse dessinent leurs cartes à 48px — ils partagent
+       la même déclaration (`#watch-main, #replay-main` dans watch.css) quand
+       celui du jeu part de 65px, et le pli ne fait jamais que trois largeurs
+       de carte au centre : à 390px il occupe 115→260, il reste donc 107px de
+       chaque côté pour une main de 48. Rogner Ouest et Est à une languette y
+       était un réflexe hérité du tapis de jeu, où le même calcul ne laisse
+       qu'un pixel. On garde le positionnement absolu — il rend au pli toute la
+       largeur — mais la main est entière.
+
+       `margin-inline` : `.hand` porte `auto`, qui la recentrerait sous
+       l'étiquette au lieu de la coller au bord ; l'écarter du bord, c'est le
+       rapprocher du pli. */
+    #replay-main .seat.west .hand,
+    #replay-main .seat.east .hand,
+    #watch-main .seat.west .hand,
+    #watch-main .seat.east .hand {
+        width: var(--card-w);
+        margin-inline: 0;
+    }
+    /* Contrepartie : Nord et Sud rendent une largeur de carte de chaque côté.
+       Leurs huit cartes couvraient toute la ligne et venaient buter dans les
+       colonnes latérales — préexistant, mais une languette de 18px s'y noyait
+       là où une main entière se voit. Les quatre mains occupent désormais
+       quatre zones disjointes. Le resserrement qui en résulte laisse 28px
+       entre deux cartes à 390px, contre ~14px d'index d'angle : rien ne
+       devient illisible. */
+    #replay-main .seat.north .hand,
+    #replay-main .seat.south .hand,
+    #watch-main .seat.north .hand,
+    #watch-main .seat.south .hand {
+        max-width: calc(100% - 2 * var(--side-col));
+    }
+    /* Et les étiquettes latérales rentrent dans leur colonne : à 30vw elles
+       débordaient sur la bande de Nord, où elles se hachaient contre ses
+       cartes — un des deux noms passait dessus, l'autre dessous. Tronquées à
+       la largeur de la colonne il reste « OUEST… », c'est-à-dire la position,
+       la seule chose qu'on lise ici : le nom du bot est déjà sur les
+       étiquettes de Nord et de Sud, qui ont la place. */
     #replay-main .seat.west .seat-label,
-    #replay-main .seat.east .seat-label { max-width: 30vw; }
-    /* Rejouer : c'est `.seats` qui découpe, comme sur le tapis de jeu, et il
-       lui faut de quoi loger la colonne de huit cartes qu'on y superpose. */
-    #replay-main .seats {
+    #replay-main .seat.east .seat-label,
+    #watch-main .seat.west .seat-label,
+    #watch-main .seat.east .seat-label {
+        max-width: var(--side-col);
+        /* L'interlettrage de 1,5px et deux points de corps coûtent ici trois
+           lettres : « OUEST… » entre dans la colonne, « OUE… » est ce qu'on
+           obtient sans ça. */
+        letter-spacing: 0;
+        font-size: var(--fs-2xs);
+    }
+    /* `--side-col` : la largeur d'une colonne latérale, carte comprise, plus
+       les 12px que réclame « OUEST… » — c'est l'étiquette qui la fixe, pas la
+       carte. Une seule déclaration parce que les deux règles qui la lisent
+       doivent se partager la largeur EXACTEMENT : ce que la colonne prend est
+       ce que la bande centrale rend, sinon les deux se recouvrent à nouveau.
+
+       `.seats` découpe ce qui dépasse. Ce qui garantit que la colonne de huit
+       cartes y tient, c'est la hauteur intrinsèque de la grille — Nord (92) +
+       pli (137) + Sud (92) à 390px — contre 232 pour un siège latéral. Il y a
+       eu ici une `min-height` censée l'assurer : elle n'a jamais rien fait,
+       `#replay-left .seats { min-height: 0 }` (watch.css) ayant la même
+       spécificité et le dernier mot. Elle est retirée plutôt que réparée :
+       sur ce palier `#app` est en hauteur libre, donc rien ne comprime. */
+    #replay-main .seats,
+    #watch-main .seats {
+        --side-col: calc(var(--card-w) + 12px);
         overflow: hidden;
-        min-height: calc(var(--card-h) * 2.82 + 1.5rem);
     }
     /* South hand: span full screen width, cards overlap dynamically */
     #play-table .seat.south .hand {
