@@ -817,7 +817,9 @@ class PlayProblemSession:
         advanced the game with a heuristic player, so there is no belief state
         worth carrying, and a one-shot judgement is what the panel shows.
         """
-        bots = AgentTable({2: "dede"}, time_ms=self.PROBE_TIME_MS)
+        # `window=False` : 100 ms, un dixième du budget du jeu. Ces décisions
+        # comptent dans l'origine des mondes, pas dans la jauge de santé.
+        bots = AgentTable({2: "dede"}, time_ms=self.PROBE_TIME_MS, window=False)
         bots.init_deal(self.env)
         decision = bots.decide(self.env, int(self.env.current_player()))
         if decision is None:

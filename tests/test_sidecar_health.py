@@ -11,6 +11,7 @@ d'un jour sur des mondes contraints-uniformes :
    au journal, et personne ne regarde une interface à trois heures du matin.
 """
 
+import collections
 import logging
 
 import pytest
@@ -374,3 +375,67 @@ class TestCompteursMondes:
         """Sinon un appelant de /health pourrait muter les compteurs vivants."""
         agents.world_stats()["decisions"] = 999
         assert agents.world_stats()["decisions"] == 0
+
+
+class TestToutesLesDecisionsComptent:
+    """Une décision IS-DD compte, **d'où qu'elle vienne**.
+
+    Les compteurs vivaient dans `AgentTable.decide`, donc seul le jeu réel y
+    entrait. Or `agent_review` et `card_analysis` construisent leurs
+    `colver.Agent` à la main : une revue, c'est ~20 recherches, et `/health`
+    publiait un bloc `worlds` entièrement à zéro juste après. Constaté sur la
+    prod le 2026-08-06. Une jauge qui sous-rapporte est pire qu'aucune : elle
+    rassure.
+
+    Mais les deux compteurs ne répondent pas à la même question, et c'est ce que
+    `window` sépare — voir `note_decision`.
+    """
+
+    @pytest.fixture(autouse=True)
+    def reset(self, monkeypatch):
+        monkeypatch.setattr(
+            agents, "_WORLD_STATS", dict.fromkeys(agents._WORLD_STATS, 0))
+        monkeypatch.setattr(agents, "_RECENT_WORLDS", collections.deque(maxlen=200))
+
+    @staticmethod
+    def _isdd(injected=64, dets=64):
+        return {"source": "isdd", "action": 0, "candidates": [],
+                "determinizations": dets,
+                "worlds": {"injected": injected, "playgen": 0,
+                           "belief": 0, "uniform": 0}}
+
+    def test_une_decision_de_jeu_alimente_les_deux(self):
+        agents.note_decision("dede", self._isdd())
+        assert agents.world_stats()["worlds_injected"] == 64
+        assert agents.recent_worlds_per_decision()["n"] == 1
+
+    def test_une_decision_d_analyse_compte_sans_polluer_la_jauge(self):
+        """C'est le cœur : l'origine des mondes est budget-indépendante, la
+        fenêtre ne l'est pas. Une revue à 500 ms tirerait la moyenne vers le bas
+        dès qu'un joueur ouvre Rejouer, et ça se lirait comme une pression GPU."""
+        agents.note_decision("dede", self._isdd(injected=80, dets=80), window=False)
+        s = agents.world_stats()
+        assert (s["decisions"], s["sampled"], s["all_playgen"]) == (1, 1, 1)
+        assert s["worlds_injected"] == 80
+        assert agents.recent_worlds_per_decision() is None
+
+    def test_une_decision_qui_n_est_pas_is_dd_est_ignoree(self):
+        """DouDou50 traverse le même point d'appel dans `card_analysis`."""
+        assert agents.note_decision("doudou", {"source": "dmc", "action": 3}) is None
+        assert agents.note_decision("dede", None) is None
+        assert agents.world_stats()["decisions"] == 0
+
+    def test_la_revue_d_agents_passe_bien_par_le_compteur(self, monkeypatch):
+        """Le lien qui manquait. Testé au point d'appel réel, pas sur un double
+        de `note_decision` : c'est l'oubli de l'appel qui était le défaut."""
+        import colver.web.agent_review as review
+
+        class _Agent:
+            def decide(self, env):
+                return TestToutesLesDecisionsComptent._isdd(injected=48, dets=48) | {
+                    "action": 7, "candidates": [(7, 1.0), (9, 0.0)]}
+
+        card, cost = review._ask_isdd(_Agent(), None, 0, 7)
+        assert card == 7 and cost == 0.0
+        assert agents.world_stats()["worlds_injected"] == 48
+        assert agents.recent_worlds_per_decision() is None  # hors jauge

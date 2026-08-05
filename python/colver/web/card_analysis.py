@@ -190,7 +190,12 @@ def opinions(dealer, initial_hands, actions, upto, seat,
         if agent is None:
             continue
         try:
-            out[key] = int(agent.decide(env)["action"])
+            decision = agent.decide(env)
+            # Même raison qu'`agent_review` : on décide hors d'`AgentTable`, donc
+            # le comptage des mondes ne se ferait nulle part. `note_decision` ne
+            # retient que les décisions IS-DD, celle de DouDou50 passe au travers.
+            agents.note_decision("dede", decision, window=False)
+            out[key] = int(decision["action"])
         except Exception as e:  # noqa: BLE001 — sidecar down must not lose the page
             logger.warning("%s failed: %s", key, e)
     try:

@@ -104,6 +104,10 @@ def _ask_isdd(agent, env, team, played):
     except Exception as e:  # noqa: BLE001 — one bad move must not lose the review
         logger.warning("decide failed: %s", e)
         return None, None
+    # Hors de `AgentTable`, donc c'est ici qu'il faut compter — une revue, c'est
+    # ~20 recherches IS-DD, et sans cette ligne `/health` les ignorait toutes.
+    # `window=False` : la revue tourne à `ISDD_MS`, pas au budget du jeu.
+    agents.note_decision("dede", decision, window=False)
     action = int(decision["action"])
     candidates = decision.get("candidates") or []
     if not candidates:

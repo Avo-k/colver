@@ -133,6 +133,13 @@ def recent_worlds_per_decision():
     et le plafond de la spec (`min_worlds` / `max_worlds`). En dessous du
     plancher, quelque chose empêche la recherche d'atteindre son compte ; au
     plafond en permanence, le budget de temps n'est jamais la contrainte.
+
+    **Seul le jeu au budget de production l'alimente** (`window=True`). Les
+    pages d'analyse et le panneau des problèmes cherchent à 500 et 100 ms : ils
+    atteignent le plancher, donc la lecture « entre plancher et plafond »
+    survivrait — mais ils tireraient la **moyenne** vers le bas dès qu'un joueur
+    ouvre Rejouer, et cette baisse se lirait comme une pression GPU. Leurs
+    mondes sont comptés ailleurs, dans [`world_stats`].
     """
     if not _RECENT_WORLDS:
         return None
@@ -151,8 +158,12 @@ def world_stats():
     return dict(_WORLD_STATS)
 
 
-def _note_worlds(stats):
-    """Comptabiliser l'origine des mondes d'une décision IS-DD."""
+def _note_worlds(stats, window=True):
+    """Comptabiliser l'origine des mondes d'une décision IS-DD.
+
+    `window` : cette décision entre-t-elle dans la fenêtre glissante ? **Non**
+    pour les pages d'analyse — voir [`note_decision`].
+    """
     worlds = stats.get("worlds") or {}
     total = sum(int(v) for v in worlds.values())
     _WORLD_STATS["decisions"] += 1
@@ -161,7 +172,7 @@ def _note_worlds(stats):
     # inutilisables pour répondre à « est-ce que ça va *maintenant* ? » — une
     # heure de bon fonctionnement noie une dégradation en cours. La fenêtre
     # répond à cette question-là, et c'est elle que /health publie.
-    if total:
+    if total and window:
         _RECENT_WORLDS.append(int(stats.get("determinizations") or total))
     for key in ("injected", "playgen", "belief", "uniform"):
         _WORLD_STATS["worlds_" + key] += int(worlds.get(key, 0))
@@ -212,6 +223,42 @@ def _note_degraded(seat, stats):
         SIDECAR_URL)
     _degraded["since"] = now
     _degraded["count"] = 0
+
+
+def note_decision(kind, decision, *, seat=None, window=True):
+    """Comptabiliser une décision IS-DD, **d'où qu'elle vienne**.
+
+    Les compteurs vivaient dans `AgentTable.decide`, donc seul le jeu réel y
+    entrait : la revue d'agents (`agent_review`) et l'analyse du jeu
+    (`card_analysis`) construisent leurs `colver.Agent` à la main et appellent
+    `decide` en direct. Or ce sont de **gros** consommateurs de mondes — une
+    revue, c'est ~20 recherches par donne. Résultat : `/health` publiait un bloc
+    `worlds` entièrement à zéro juste après une revue, et une jauge qui
+    sous-rapporte est pire qu'aucune, parce qu'elle rassure. Constaté sur la
+    prod le 2026-08-06, après le redéploiement du sidecar.
+
+    `window` sépare les deux questions, et **c'est le point à ne pas rater** :
+
+    - les compteurs d'**origine** (playgen / belief / uniforme) répondent à « la
+      file playgen s'assèche-t-elle ? ». La réponse ne dépend pas du budget, donc
+      toutes les décisions comptent ;
+    - la fenêtre glissante (`recent_worlds_per_decision`) répond à « IS-DD
+      atteint-il son compte de mondes ? », et se lit **contre le plancher et le
+      plafond de la spec**. Or les pages d'analyse tournent à
+      `COLVER_REVIEW_ISDD_MS` (500 ms), moitié moins que le jeu : les y verser
+      ferait passer la jauge sous son plancher en permanence dès qu'un joueur
+      ouvre Rejouer. On transformerait une alarme qui marche en bruit de fond —
+      exactement ce que `_note_degraded` a déjà eu à corriger une fois.
+
+    Rend le blob de stats, que l'appelant peut réutiliser.
+    """
+    if decision is None or decision.get("source") != "isdd":
+        return None
+    stats = decision_stats(kind, decision)
+    _note_worlds(stats, window=window)
+    _note_degraded(seat, stats)
+    return stats
+
 
 AGENT_NAMES = {
     "dede": "Dédé (IS-DD)",
@@ -283,11 +330,19 @@ class AgentTable:
     have no entry; `observe` still runs for every seat that does.
     """
 
-    def __init__(self, kinds, *, bid_model=None, play_model=None, belief_model=None, time_ms=None):
-        """`kinds`: {seat: agent_type} for the seats played by bots."""
+    def __init__(self, kinds, *, bid_model=None, play_model=None, belief_model=None,
+                 time_ms=None, window=True):
+        """`kinds`: {seat: agent_type} for the seats played by bots.
+
+        `window` : cette table joue-t-elle au budget du jeu réel ? Mettre
+        `False` pour une table sonde (cf. [`note_decision`]) — le panneau des
+        problèmes interroge Dédé à 100 ms, un dixième du jeu, et ses décisions
+        tireraient la jauge vers le bas sans qu'aucune dégradation ait eu lieu.
+        """
         self.kinds = dict(kinds)
         self.agents = {}
         self.errors = {}
+        self.window = bool(window)
         # Mondes résolus et temps par décision IS-DD de la donne en cours.
         self._deal_worlds = []
         self._deal_ms = []
@@ -368,18 +423,18 @@ class AgentTable:
     def decide(self, env, seat):
         """Full decision dict for `seat`, or `None` if that seat has no bot.
 
-        Point de passage unique de tout coup de bot, solo comme salon : c'est
-        donc ici qu'on remarque qu'une décision s'est jouée sans les mondes
-        qu'on croyait (`_note_degraded`).
+        Point de passage unique de tout coup de bot **joué**, solo comme salon.
+        Le comptage lui-même vit dans [`note_decision`] : les pages d'analyse
+        décident hors de cette table et doivent compter aussi. Ce qui reste ici
+        est ce qui n'a de sens qu'à une table — la jauge par donne, et la
+        fenêtre glissante, qui se lit contre le budget du jeu réel.
         """
         agent = self.agents.get(int(seat))
         if agent is None:
             return None
         decision = agent.decide(env)
-        if decision is not None and decision.get("source") == "isdd":
-            stats = decision_stats(self.kind(seat), decision)
-            _note_worlds(stats)
-            _note_degraded(seat, stats)
+        noted = note_decision(self.kind(seat), decision, seat=seat, window=self.window)
+        if noted is not None and self.window:
             dets = int(decision.get("determinizations") or 0)
             if dets:
                 # Les décisions sans échantillonnage (coup forcé, position
