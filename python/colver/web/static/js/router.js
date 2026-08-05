@@ -6,6 +6,7 @@ const routes = {
     '/jouer/salon':       () => import('./views/salon.js'),
     '/jouer/ia':          () => import('./views/watch.js'),
     '/analyse/rejouer':   () => import('./views/replay.js'),
+    '/analyse/partie':    () => import('./views/partie.js'),
     '/analyse/annonces':  () => import('./views/annonces.js'),
     '/analyse/jeu':       () => import('./views/analyse-jeu.js'),
     '/analyse/croyances': () => import('./views/beliefs.js'),

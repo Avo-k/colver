@@ -30,6 +30,10 @@ export const TEAM_COLOR_VARS = ['var(--c-team-ns)', 'var(--c-team-ew)'];
 //   - neutre    : personne n'est assis (Regarder, Rejouer, Annonces, Croyances).
 export const TEAM_NAMES_FR = ['Nord-Sud', 'Est-Ouest'];
 export const TEAM_NAMES_REL = ['Nous', 'Eux'];
+// Forme compacte, pour un en-tête de colonne étroit — c'est aussi ce qu'on
+// écrit sur une feuille de marque en papier. « Nord-Sud » en toutes lettres
+// fixe à lui seul la largeur d'une colonne de score sur un téléphone.
+export const TEAM_INITIALS_FR = ['N-S', 'E-O'];
 
 /** Nom du camp `team` (0 = NS, 1 = EO). `relative` : vu par le joueur au Sud. */
 export function teamName(team, relative = false) {

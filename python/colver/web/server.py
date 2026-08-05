@@ -192,6 +192,15 @@ _ROUTE_META = {
         "description": "Comparez les cartes jouables d'une position de belote "
                        "contrée : valeur exacte à l'Oracle et taux de réussite simulé.",
     },
+    # Feuille de marque d'une partie. `noindex` : sans `?id=`, la page est vide,
+    # et avec un `id` elle décrit une partie qui appartient à quelqu'un. Elle
+    # reste partageable par lien — c'est `/compte` qui y mène, pas un moteur.
+    "/analyse/partie": {
+        "title": "Feuille de marque — Colver",
+        "description": "Le déroulé d'une partie de belote contrée, donne par "
+                       "donne : contrat, preneur, points marqués et cumul.",
+        "noindex": True,
+    },
     "/analyse/croyances": {
         "title": "Croyances de l'IA — Colver",
         "description": "Visualisez ce que l'IA déduit des mains cachées au fil "
@@ -530,6 +539,31 @@ async def api_get_game(game_id: str):
     if not game:
         return JSONResponse({"error": "Game not found"}, status_code=404)
     return JSONResponse(game)
+
+
+@app.get("/api/matches/{match_id}")
+async def api_get_match(match_id: str):
+    """La feuille de marque d'une partie **terminée**.
+
+    Sans authentification, comme `/api/games/{id}` : une donne terminée est
+    publique et partageable, et une partie n'est que la suite de ses donnes —
+    exiger un compte ici casserait le partage d'un lien sans rien protéger de
+    plus.
+
+    La garde est ailleurs, et c'est la même que partout : **seule une partie
+    close sort d'ici**. Une partie en cours dirait le score en direct d'une
+    table où quelqu'un joue encore, et `db.get_match` n'écarte les donnes non
+    terminées que de sa feuille, pas de son total. Le propriétaire, lui, la
+    retrouve par la reprise, qui vérifie qui il est.
+
+    `user_id` ne sort pas : il n'est utile qu'au serveur, et les sièges sont
+    déjà nommés par `seats`.
+    """
+    match = await db.get_match(match_id)
+    if not match or not match["is_complete"] or match["target"] <= 0:
+        return JSONResponse({"error": "Partie introuvable"}, status_code=404)
+    match.pop("user_id", None)
+    return JSONResponse(match)
 
 
 async def _check_then_rate():

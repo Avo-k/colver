@@ -4498,3 +4498,159 @@
     opacity: 0;
     pointer-events: none;
 }
+
+/* ===== Feuille de marque d'une partie (/analyse/partie) ===== */
+/* Deux échelles de points existent dans une donne et la feuille n'en montre
+   qu'une : le grand chiffre est ce qui a été **marqué**, le petit le cumul.
+   Les points cartes ne sont qu'en infobulle — leur donner une colonne, c'est
+   inviter à lire l'une pour l'autre. */
+
+.pt-page { max-width: 860px; }
+
+.pt-back { margin: 0 0 var(--sp-3); }
+.pt-back a { color: var(--c-text-muted); text-decoration: none; font-size: var(--fs-sm); }
+.pt-back a:hover { color: var(--c-accent); }
+
+.pt-verdict {
+    display: block;
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    margin-bottom: var(--sp-2);
+    color: var(--c-text-muted);
+}
+.pt-verdict.victory { color: var(--c-accent); }
+.pt-verdict.defeat { color: var(--c-danger-txt); }
+.pt-verdict.pt-abandoned { color: var(--c-warn); }
+
+.pt-totals {
+    display: flex;
+    align-items: baseline;
+    gap: var(--sp-3);
+    font-size: var(--fs-md);
+    margin-bottom: var(--sp-3);
+}
+.pt-totals b { font-size: var(--fs-xl); margin-left: var(--sp-1); }
+.pt-totals .pt-sep { color: var(--c-text-dim); }
+
+.pt-meta { color: var(--c-text-muted); font-size: var(--fs-sm); margin: 0 0 var(--sp-3); }
+
+.pt-seats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+}
+.pt-seat {
+    background: var(--c-surface-2);
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--fs-2xs);
+    color: var(--c-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.pt-seat b { color: var(--c-text); text-transform: none; letter-spacing: 0; }
+
+.pt-elo { font-size: var(--fs-sm); color: var(--c-text-muted); margin: 0; }
+.pt-elo .pt-up { color: var(--c-success-txt); }
+.pt-elo .pt-down { color: var(--c-danger-txt); }
+.pt-elo-after { color: var(--c-text-dim); }
+.pt-unrated { color: var(--c-text-dim); }
+
+/* Un tableau large défile dans son propre conteneur, jamais la page — et le
+   conteneur a besoin d'une largeur *définie* : `overflow-x` seul ne coupe pas
+   la propagation de la largeur intrinsèque (même piège qu'`#aj-wrap`). */
+.pt-scroll { width: 100%; overflow-x: auto; }
+
+.pt-sheet {
+    width: 100%;
+    min-width: 420px;
+    border-collapse: collapse;
+    font-size: var(--fs-sm);
+}
+.pt-sheet th {
+    text-align: left;
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--c-text-dim);
+    font-weight: 600;
+    padding: 0 var(--sp-2) var(--sp-2);
+    border-bottom: 1px solid var(--c-border);
+    white-space: nowrap;
+}
+.pt-sheet th.pt-score, .pt-sheet td.pt-score { text-align: right; }
+/* Les deux en-têtes de colonne prennent la couleur de leur camp : c'est ce qui
+   relie une colonne à ses chiffres sans rien écrire de plus. La règle `th`
+   ci-dessus les repeindrait en gris (spécificité égale, écrite avant). */
+.pt-sheet th.team-ns { color: var(--c-team-ns); }
+.pt-sheet th.team-ew { color: var(--c-team-ew); }
+
+.pt-row { cursor: pointer; border-bottom: 1px solid var(--c-border); }
+.pt-row:hover { background: var(--c-surface-1); }
+.pt-sheet td { padding: var(--sp-2); vertical-align: middle; }
+
+.pt-no { width: 2.5rem; color: var(--c-text-dim); }
+.pt-open {
+    color: var(--c-text-dim);
+    text-decoration: none;
+    font-variant-numeric: tabular-nums;
+}
+.pt-row:hover .pt-open { color: var(--c-accent); }
+
+.pt-contract { white-space: nowrap; }
+.pt-taker { color: var(--c-text-muted); }
+.pt-taker i { color: var(--c-text-dim); font-style: normal; }
+.pt-passed { color: var(--c-text-dim); font-style: italic; }
+
+.pt-outcome {
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: var(--sp-1);
+}
+.pt-outcome.pt-made { color: var(--c-success-txt); }
+.pt-outcome.pt-down-c { color: var(--c-danger-txt); }
+
+/* Le score marqué et le cumul dans la même cellule : c'est ainsi qu'on tient
+   une feuille de marque sur papier, et ça épargne deux colonnes. */
+.pt-score .pt-pts { display: block; font-weight: 700; }
+.pt-score .pt-cum { display: block; font-size: var(--fs-2xs); color: var(--c-text-dim); }
+
+/* Le camp du lecteur, quand on sait qui il est : un liseré, pas un retournement
+   du tableau — la feuille reste lue en Nord-Sud / Est-Ouest. */
+.pt-sheet th.pt-mine, .pt-sheet td.pt-mine { background: var(--c-surface-1); }
+.pt-totals .pt-mine b { text-decoration: underline; text-underline-offset: 3px; }
+
+.pt-legend, .pt-gap {
+    font-size: var(--fs-xs);
+    color: var(--c-text-dim);
+    margin: var(--sp-3) 0 0;
+}
+.pt-gap { color: var(--c-warn); }
+.pt-gap b { color: inherit; }
+
+/* Le preneur est rendu deux fois : en colonne, et replié sous le contrat. En
+   dessous de 640px les cinq colonnes ne tiennent pas, et ce sont les deux
+   colonnes de score qui doivent rester — elles sont la raison d'être de la
+   page. Faire défiler pour lire un score serait perdre la feuille de marque
+   sur un téléphone, là où on la consulte le plus. */
+.pt-taker-inline { display: none; }
+.pt-short { display: none; }
+
+@media (max-width: 640px) {
+    .pt-sheet { min-width: 0; }
+    .pt-long { display: none; }
+    .pt-short { display: inline; }
+    .pt-no { width: 1.6rem; }
+    .pt-sheet td, .pt-sheet th { padding-left: var(--sp-1); padding-right: var(--sp-1); }
+    .pt-sheet .pt-taker { display: none; }
+    .pt-taker-inline {
+        display: block;
+        margin-top: 2px;
+        font-size: var(--fs-2xs);
+        color: var(--c-text-muted);
+    }
+    .pt-taker-inline i { color: var(--c-text-dim); font-style: normal; }
+    .pt-outcome { margin-left: 2px; }
+}

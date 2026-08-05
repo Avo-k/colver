@@ -523,9 +523,22 @@ def _job_view(job):
 
 
 @router.get("/me/matches")
-async def my_open_matches(request: Request):
-    """Les parties en 1000 / 2000 points laissées en plan, à reprendre."""
+async def my_matches(request: Request, status: str = "open",
+                     limit: int = 20, offset: int = 0):
+    """Les parties en 1000 / 2000 points d'un joueur.
+
+    `status=open` (le défaut) : celles laissées en plan, à reprendre.
+    `status=done` : celles qui sont allées au bout, abandons compris.
+
+    Le défaut reste « en cours » parce que deux appelants existaient avant
+    l'historique — la carte « Parties en cours » de /compte et le bandeau de
+    reprise de Jouer — et qu'ils n'ont pas à apprendre qu'un paramètre est
+    apparu.
+    """
     user = await current_user(request)
     if user is None:
         return JSONResponse({"error": "Non connecté"}, status_code=401)
+    if status == "done":
+        return JSONResponse(await db.list_matches(
+            user["id"], limit=min(max(limit, 1), 100), offset=max(offset, 0)))
     return JSONResponse(await db.list_open_matches(user["id"]))

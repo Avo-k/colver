@@ -755,6 +755,53 @@ async def list_open_matches(user_id, limit=8):
     ]
 
 
+async def list_matches(user_id, limit=20, offset=0):
+    """Les parties **terminées** d'un joueur, la plus récente d'abord.
+
+    Le complément exact de `list_open_matches` : celle-ci ne rend que
+    `is_complete = 1`, **abandons compris**. Une partie concédée est un
+    résultat — l'Elo la note comme une défaite (`elo._losing_team`), donc la
+    cacher ici ferait deux comptes différents de la même chose.
+
+    Le siège du joueur ne se lit pas au même endroit selon le mode : en solo
+    c'est `matches.human_seat`, en salon c'est `game_players` — là-bas
+    `matches.user_id` désigne **l'hôte**, pas les trois autres. D'où le
+    COALESCE, et d'où l'appartenance en deux branches : sans la seconde, un
+    invité de salon ne verrait aucune des parties qu'il a jouées.
+
+    `elo_delta` est nul-able et doit le rester à l'affichage : seule une partie
+    en 2000 points jouée jusqu'au bout est notée (migration v14), et une partie
+    dont une donne est en quarantaine ne l'est pas non plus. « Non noté » et
+    « noté 0 » sont deux choses différentes.
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT m.id, m.mode, m.created_at, m.target, m.points_ns, m.points_ew, "
+        "m.deals, m.winner, m.abandoned, m.pacing, "
+        "COALESCE(m.human_seat, (SELECT gp.seat FROM game_players gp "
+        "        JOIN games g ON g.id = gp.game_id "
+        "       WHERE g.match_id = m.id AND gp.user_id = ? LIMIT 1)) AS user_seat, "
+        "(SELECT e.delta FROM elo_history e WHERE e.match_id = m.id "
+        "   AND e.kind = 'user' AND e.ref = ?) AS elo_delta "
+        "FROM matches m "
+        "WHERE m.is_complete = 1 AND m.target > 0 "
+        "  AND (m.user_id = ? OR EXISTS (SELECT 1 FROM game_players gp "
+        "       JOIN games g ON g.id = gp.game_id "
+        "      WHERE g.match_id = m.id AND gp.user_id = ?)) "
+        "ORDER BY m.created_at DESC LIMIT ? OFFSET ?",
+        (user_id, str(user_id), user_id, user_id, limit, offset),
+    )
+    return [
+        {
+            "id": r[0], "mode": r[1], "created_at": r[2], "target": r[3],
+            "points_ns": r[4], "points_ew": r[5], "deals": r[6],
+            "winner": r[7], "abandoned": bool(r[8]), "pacing": r[9],
+            "user_seat": r[10], "elo_delta": r[11],
+        }
+        for r in rows
+    ]
+
+
 async def open_match_summary(match_id, user_id):
     """Une partie en cours appartenant à ce joueur, ou None. Sert au lien de
     reprise que Rejouer affiche sous une donne de partie."""
@@ -876,8 +923,78 @@ async def abandon_match(match_id, user_id):
     return cur.rowcount > 0
 
 
+def _taker_seat(actions_json):
+    """Le siège qui a pris : la **dernière** annonce chiffrée de l'enchère.
+
+    `games.contract` ne porte que l'*équipe* (`$.team`), et en solo trois sièges
+    sur quatre sont des bots : « mon camp a pris » ne dit pas « j'ai pris ».
+    Même définition qu'en SQL dans `stats._TAKER` — là-bas parce qu'il faut
+    agréger des centaines de donnes sans les relire, ici parce que le journal
+    est déjà en main.
+
+    Les actions 1-40 sont des annonces (0 = passe, 41/42 = contre et surcontre),
+    mais **seulement en phase 0** : en phase de jeu les mêmes entiers sont des
+    indices de carte. Un journal sans `phase` rend donc None plutôt qu'un siège
+    tiré d'une carte — c'est déjà ce que fait `stats`.
+    """
+    try:
+        actions = json.loads(actions_json) if actions_json else []
+    except (TypeError, ValueError):
+        return None
+    taker = None
+    for entry in actions:
+        if entry.get("phase") == 0 and 1 <= int(entry.get("action", 0)) <= 40:
+            taker = entry.get("player")
+    return taker
+
+
+async def _match_seat_names(match_id):
+    """Qui tenait les quatre sièges d'une partie, lus sur sa première donne.
+
+    Une donne suffit : en salon les sièges sont liés aux comptes pour toute la
+    partie, en solo `human_seat` est un réglage de partie (`matches.human_seat`,
+    migration v8). C'est la même lecture que fait l'Elo (`elo._match_seats`).
+    """
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT id, mode, human_seat, user_id, agents FROM games "
+        "WHERE match_id = ? AND is_complete = 1 ORDER BY deal_no LIMIT 1",
+        (match_id,),
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    return await game_seat_names({
+        "id": r[0], "mode": r[1], "human_seat": r[2], "user_id": r[3],
+        "agents": json.loads(r[4]) if r[4] else {},
+    })
+
+
 async def get_match(match_id):
-    """Une partie et la liste ordonnée de ses donnes."""
+    """Une partie et sa **feuille de marque** : une ligne par donne jouée, avec
+    son score marqué et le cumul courant.
+
+    Ce cumul-là n'était pas calculable avant la migration **v16** : le score
+    marqué d'une donne n'était enregistré nulle part, seul son total vivait dans
+    `matches.points_ns/ew`, et `games.points_ns/ew` sont les points *cartes* —
+    une autre échelle, qui donne des chiffres plausibles et faux (152 au lieu
+    de 380).
+
+    **Les deux totaux sont rendus, et ils peuvent diverger** (`points_ns/ew` de
+    la partie contre `sheet_ns/ew` recalculé). Trois causes, toutes réelles :
+    une donne pas encore rattrapée par `integrity.backfill_scores`, une donne
+    mise en quarantaine après coup, et surtout le **barème** — la ligne
+    `matches` a été écrite au fil de la partie sous le barème du jour, tandis
+    que les scores par donne d'une vieille partie ont été *rejoués* sous le
+    barème courant, qui a changé deux fois (2026-04-16, 2026-07-31). C'est le
+    total de `matches` qui fait foi : c'est lui qui a désigné le vainqueur et
+    nourri l'Elo. L'écart se dit, il ne se masque pas — d'où les deux compteurs
+    `unscored_deals` / `invalid_deals` qui l'expliquent.
+
+    Ne rend que les donnes **terminées et saines** : une donne en plan n'est
+    comptée nulle part ailleurs non plus, et une donne en quarantaine décrit une
+    partie impossible.
+    """
     db = await get_db()
     rows = await db.execute_fetchall(
         "SELECT * FROM matches WHERE id = ?", (match_id,))
@@ -885,22 +1002,57 @@ async def get_match(match_id):
         return None
     match = dict(rows[0])
     match["is_complete"] = bool(match["is_complete"])
+    match["abandoned"] = bool(match["abandoned"])
     deals = await db.execute_fetchall(
-        "SELECT id, deal_no, dealer, points_ns, points_ew, contract, is_complete "
+        "SELECT id, deal_no, dealer, points_ns, points_ew, score_ns, score_ew, "
+        "contract, actions, created_at, is_complete, invalid "
         "FROM games WHERE match_id = ? ORDER BY deal_no",
         (match_id,),
     )
-    match["games"] = [
-        {
+    games, total, unscored, invalid = [], [0, 0], 0, 0
+    for d in deals:
+        if not d[10]:
+            continue
+        if d[11]:
+            invalid += 1
+            continue
+        if d[5] is None:
+            unscored += 1
+        else:
+            total = [total[0] + d[5], total[1] + d[6]]
+        games.append({
             "id": d[0],
             "deal_no": d[1],
             "dealer": d[2],
             "points_ns": d[3],
             "points_ew": d[4],
-            "contract": json.loads(d[5]) if d[5] else None,
-            "is_complete": bool(d[6]),
-        }
-        for d in deals
+            "score_ns": d[5],
+            "score_ew": d[6],
+            "contract": json.loads(d[7]) if d[7] else None,
+            "taker": _taker_seat(d[8]),
+            "created_at": d[9],
+            # Le cumul *après* cette donne — c'est la colonne qu'on lit sur une
+            # feuille de marque, et elle n'a de sens qu'en ordre de donne.
+            "total_ns": total[0],
+            "total_ew": total[1],
+        })
+    match["games"] = games
+    match["sheet_ns"], match["sheet_ew"] = total
+    match["unscored_deals"] = unscored
+    match["invalid_deals"] = invalid
+    match["seats"] = await _match_seat_names(match_id)
+    # Les deltas d'Elo de la partie, humains seulement : `K_BOT = 0` depuis la
+    # v12, donc les lignes des bots sont des zéros écrits pour l'idempotence de
+    # `rate_match`, pas une information.
+    elo_rows = await db.execute_fetchall(
+        "SELECT e.ref, u.username, e.delta, e.elo_after FROM elo_history e "
+        "LEFT JOIN users u ON u.id = CAST(e.ref AS INTEGER) "
+        "WHERE e.match_id = ? AND e.kind = 'user'",
+        (match_id,),
+    )
+    match["elo"] = [
+        {"ref": e[0], "name": e[1], "delta": e[2], "elo_after": e[3]}
+        for e in elo_rows
     ]
     return match
 

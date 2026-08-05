@@ -198,7 +198,16 @@ function renderRail(me, st) {
         ['Surcoinches', st.surcoinches], ['Donnes contrées', st.contres_played],
     ].filter(([, v]) => v);
 
-    return card('', [identity], 'st-card-id')
+    // Cette page **agrège** ; elle n'énumère rien (cf. l'en-tête du fichier, et
+    // l'onglet « Vie du site » retiré pour cette raison). Quand le filtre
+    // désigne un format de partie, le renvoi vers la liste de ces parties-là est
+    // donc un lien, pas un tableau de plus.
+    const listLink = scope === '2000' || scope === '1000'
+        ? `<p class="st-hint">Ces parties une par une, avec leur feuille de
+            marque : <a href="/compte">Mes parties</a>.</p>`
+        : '';
+
+    return card('', [identity, listLink], 'st-card-id')
         + card('Activité', [heatmap(st.activity)])
         + card('Partenaires', [
             st.partners.length

@@ -51,6 +51,13 @@ const PROFILE_TEMPLATE = `
         <h3 class="compte-subtitle">Parties en cours</h3>
         <div id="compte-open" class="history-list"></div>
     </div>
+    <!-- Les parties terminées juste sous celles qui ne le sont pas : c'est le
+         même objet dans ses deux états, et « Mes donnes » en dessous est le
+         cran de granularité suivant. -->
+    <div class="compte-card hidden" id="compte-done-card">
+        <h3 class="compte-subtitle">Mes parties</h3>
+        <div id="compte-done" class="history-list compte-games"></div>
+    </div>
     <div class="compte-card">
         <h3 class="compte-subtitle">Mes donnes</h3>
         <div id="compte-games" class="history-list compte-games">
@@ -209,10 +216,14 @@ async function mountProfile(container, me) {
     const since = new Date(me.user.created_at);
     const pct = stats.games > 0 ? Math.round(100 * stats.wins / stats.games) : null;
     const elo = stats.elo && stats.elo.games > 0 ? Math.round(stats.elo.elo) : '—';
+    // « donnes », pas « parties » : `user_game_stats` compte des lignes de
+    // `games`, et l'Elo à côté note des **parties** en 2000 points. Tant que la
+    // page n'en listait qu'une sorte, l'à-peu-près passait ; avec « Mes
+    // parties » juste en dessous, les deux mots doivent dire chacun sa chose.
     document.getElementById('profile-stats').innerHTML = `
         <div class="compte-stat"><span class="compte-stat-val compte-elo">${elo}</span><span class="compte-stat-label">Elo</span></div>
-        <div class="compte-stat"><span class="compte-stat-val">${stats.games}</span><span class="compte-stat-label">parties</span></div>
-        <div class="compte-stat"><span class="compte-stat-val">${stats.wins}</span><span class="compte-stat-label">victoires</span></div>
+        <div class="compte-stat"><span class="compte-stat-val">${stats.games}</span><span class="compte-stat-label">donnes</span></div>
+        <div class="compte-stat"><span class="compte-stat-val">${stats.wins}</span><span class="compte-stat-label">donnes gagnées</span></div>
         <div class="compte-stat"><span class="compte-stat-val">${pct === null ? '—' : pct + '%'}</span><span class="compte-stat-label">réussite</span></div>
         <div class="compte-stat"><span class="compte-stat-val">${since.toLocaleDateString('fr-FR')}</span><span class="compte-stat-label">membre depuis</span></div>`;
 
@@ -232,11 +243,18 @@ async function mountProfile(container, me) {
 
     // Une *partie* (1000 / 2000 points) groupe des *donnes* : elle ne peut pas
     // vivre dans la liste ci-dessus, qui en montre les lignes une à une.
-    // Reprendre passe par la page Jouer, qui tient la socket de jeu.
+    // Reprendre passe par la page Jouer, qui tient la socket de jeu ; une partie
+    // terminée, elle, s'ouvre sur sa feuille de marque.
     try {
         const resp = await fetch(`${base()}api/me/matches`);
         const matches = resp.ok ? await resp.json() : [];
         renderOpenMatches(matches);
+    } catch { /* la carte reste masquée */ }
+
+    try {
+        const resp = await fetch(`${base()}api/me/matches?status=done&limit=25`);
+        const matches = resp.ok ? await resp.json() : [];
+        renderDoneMatches(matches);
     } catch { /* la carte reste masquée */ }
 
     mountSettings(me.user);
@@ -374,6 +392,57 @@ function renderOpenMatches(matches) {
         const meta = document.createElement('span');
         meta.className = 'history-date';
         meta.textContent = `/ ${m.target} · ${m.deals} donne${m.deals > 1 ? 's' : ''}`;
+
+        row.appendChild(id);
+        row.appendChild(info);
+        row.appendChild(meta);
+        list.appendChild(row);
+    }
+}
+
+/** Les parties allées au bout, la plus récente d'abord.
+ *
+ *  Le score est lu du côté du joueur (`user_seat` : `matches.human_seat` en
+ *  solo, le siège de `game_players` en salon) — c'est le seul endroit de la
+ *  page où « nous / eux » a un sens, parce qu'on sait de qui on parle. La
+ *  feuille de marque, elle, est partageable et reste en Nord-Sud / Est-Ouest.
+ *
+ *  Une partie **abandonnée** apparaît ici comme les autres : l'Elo la compte
+ *  comme une défaite, la cacher ferait deux comptes de la même chose. */
+function renderDoneMatches(matches) {
+    if (!matches || matches.length === 0) return;
+    document.getElementById('compte-done-card').classList.remove('hidden');
+    const list = document.getElementById('compte-done');
+    list.innerHTML = '';
+    for (const m of matches) {
+        const row = document.createElement('div');
+        row.className = 'history-row';
+        row.addEventListener('click', () => {
+            navigateTo(`/analyse/partie?id=${encodeURIComponent(m.id)}`);
+        });
+
+        const id = document.createElement('span');
+        id.className = 'history-id';
+        id.textContent = m.id;
+
+        const mine = (m.user_seat ?? 2) % 2;
+        const us = mine === 0 ? m.points_ns : m.points_ew;
+        const them = mine === 0 ? m.points_ew : m.points_ns;
+        const info = document.createElement('span');
+        // Une partie abandonnée n'a pas de vainqueur (`winner IS NULL`) : elle
+        // ne se colore ni en victoire ni en défaite, elle se dit.
+        info.className = 'history-info '
+            + (m.abandoned ? '' : (m.winner === mine ? 'ns-won' : 'ew-won'));
+        info.textContent = `${us}-${them}`;
+
+        const meta = document.createElement('span');
+        meta.className = 'history-date';
+        const d = new Date(m.created_at);
+        const elo = m.elo_delta === null || m.elo_delta === undefined
+            ? '' : ` · ${m.elo_delta >= 0 ? '+' : ''}${Math.round(m.elo_delta * 10) / 10} Elo`;
+        meta.textContent = `/ ${m.target}${m.abandoned ? ' · abandonnée' : ''}`
+            + ` · ${m.deals} donne${m.deals > 1 ? 's' : ''}${elo}`
+            + ` · ${d.toLocaleDateString('fr-FR')}`;
 
         row.appendChild(id);
         row.appendChild(info);
