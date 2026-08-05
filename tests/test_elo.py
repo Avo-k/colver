@@ -1,15 +1,23 @@
 """L'unité classée est la partie en 2000 points, et les bots en sont l'étalon.
 
-Deux invariants, tous deux invisibles à l'usage :
+Quatre invariants, tous invisibles à l'usage :
 
-- **une non-variation** — quoi qu'il arrive, l'Elo d'un bot ne bouge pas. Avant le
-  2026-08-03 ils dérivaient avec la population (Dédé était monté de 1000 à 1044,
-  pic 1119) et, comme *tout* le monde est mesuré contre eux, l'arrivée de joueurs
-  plus faibles dévaluait en silence les inscrits ;
+- **une non-variation** — quoi qu'il arrive, la note d'un bot ne bouge pas. Avant
+  le 2026-08-03 ils dérivaient avec la population (Dédé était monté de 1000 à
+  1044, pic 1119) et, comme *tout* le monde est mesuré contre eux, l'arrivée de
+  joueurs plus faibles dévaluait en silence les inscrits ;
 - **une abstention** — une donne isolée et une partie en 1000 ne comptent pas. Le
   jour où quelqu'un les rebranchera « pour avoir plus de données », l'échelle
-  changera d'un facteur ~3,4 sans que rien ne le signale.
+  changera d'un facteur ~3,4 sans que rien ne le signale ;
+- **un découplage** — la note d'un joueur ne dépend que de son propre bilan.
+  Ré-estimer le prior sur la population (Bayes empirique) était la première idée,
+  et elle déplaçait la note des autres de ±30 à chaque partie ;
+- **une monotonie** — à niveau constant, jouer fait *monter* la note. C'est ce qui
+  ferme le défaut qui a motivé toute la refonte : le tableau ordonnait par
+  inexpérience (Spearman −0,89 entre parties jouées et note affichée).
 """
+
+import pytest
 
 import colver.web.database as db
 from colver.web import elo
@@ -39,9 +47,6 @@ async def _match(target=2000, winner=0, deals=1, user_id=1, human_seat=2,
 
 
 class TestAncrage:
-    def test_un_bot_ne_bouge_pas(self):
-        assert elo.K_BOT == 0.0, "un K non nul laisse le bot redériver"
-
     def test_les_ancres_sont_celles_qui_ont_ete_posees(self):
         """Dédé vaut 1000 par définition ; DouDou est 170 en dessous.
 
@@ -63,18 +68,33 @@ class TestAncrage:
         assert elo.bot_elo("un_bot_qui_n_existe_pas") == elo.START_ELO
 
     def test_l_unite_est_dite_dans_la_version_d_etalonnage(self):
-        """Un Elo « donne » et un Elo « partie » ne se comparent pas (×3,4)."""
+        """Une note « donne » et une note « partie » ne se comparent pas (×3,4)."""
         assert elo.ANCHOR_VERSION.endswith("match")
 
 
-class TestKParPaliers:
-    def test_le_k_decroit(self):
-        assert elo.k_for(0) > elo.k_for(10) > elo.k_for(30)
+class TestEchelleDAffichage:
+    """L'échelle interne est celle des mesures ; l'affichage en est une transformée
+    affine, appliquée en un seul endroit. Les deux points humains sont le contrat.
+    """
 
-    def test_les_paliers_sont_ceux_annonces(self):
-        assert elo.k_for(0) == elo.k_for(9) == 64.0
-        assert elo.k_for(10) == elo.k_for(29) == 32.0
-        assert elo.k_for(30) == elo.k_for(500) == 24.0
+    def test_les_deux_points_humains_sont_ceux_annonces(self):
+        assert elo.to_display(elo._INTERNAL_NEW) == elo.DISPLAY_NEW
+        assert elo.to_display(elo.PRIOR_MEAN) == elo.DISPLAY_TYPICAL
+
+    def test_la_conversion_est_reversible(self):
+        for x in (-500.0, 0.0, 550.0, 1000.0, 1210.0):
+            assert abs(elo.from_display(elo.to_display(x)) - x) < 1e-9
+
+    def test_ancrer_sur_un_bot_enverrait_les_humains_sous_zero(self):
+        """Le piège de la lecture « échiquéenne » : mettre DouDou à 1000 demande
+        k ≈ 3,7, et le joueur typique tombe alors sous 0. L'écart humain →
+        DouDou50 (280 en interne) est plus grand que DouDou → Dédé (170)."""
+        assert elo.bot_elo("dede") - elo.bot_elo("doudou") == 170.0
+        assert elo.PRIOR_MEAN < elo.bot_elo("doudou") - 170.0
+
+    def test_les_bots_se_lisent_dans_la_plage_annoncee(self):
+        assert round(elo.to_display(elo.bot_elo("dede"))) == 2200
+        assert round(elo.to_display(elo.bot_elo("doudou"))) == 1973
 
 
 class TestSeulesLesPartiesEn2000Comptent:
@@ -100,20 +120,74 @@ class TestSeulesLesPartiesEn2000Comptent:
         assert await elo.rate_match(mid) is False
 
 
+def _note(record):
+    return elo.note_of(*elo.posterior(record))
+
+
+class TestPosterior:
+    """Le posterior est une fonction pure du bilan : il se teste sans base."""
+
+    def test_gagner_vaut_mieux_que_perdre(self):
+        gagne, _ = elo.posterior([(1.0, 1000.0, 1000.0)])
+        perd, _ = elo.posterior([(0.0, 1000.0, 1000.0)])
+        assert gagne > elo.PRIOR_MEAN > perd
+
+    def test_jouer_reduit_l_incertitude(self):
+        sigmas = [elo.posterior([(0.5, 1000.0, 1000.0)] * n)[1]
+                  for n in (0, 5, 20, 100)]
+        assert sigmas == sorted(sigmas, reverse=True)
+        # Sans partie, le posterior EST le prior — au bruit de discrétisation de
+        # la grille près (pas de 1 Elo, soit 1/12 de variance ajoutée).
+        assert sigmas[0] == pytest.approx(elo.PRIOR_SD, abs=0.01)
+
+    def test_la_note_monte_a_niveau_constant(self):
+        """**La propriété qui ferme le défaut d'origine.** Un joueur exactement au
+        niveau du prior voit son niveau estimé rester sur place ; seul sigma
+        tombe, donc sa note monte. Un nouveau venu entre par le bas et grimpe, au
+        lieu d'entrer au milieu et de couler — ce qui faisait que le tableau
+        ordonnait par inexpérience (Spearman −0,89).
+        """
+        p = 1.0 / (1.0 + 10 ** ((1000.0 - elo.PRIOR_MEAN) / 800.0))
+        record = [(p, 1000.0, 1000.0)]
+        notes = [_note(record * n) for n in (0, 5, 20, 100)]
+        assert notes == sorted(notes)
+        assert notes[-1] - notes[0] > 500, "la montée doit être franche, pas un epsilon"
+        # Le niveau, lui, tient sa place : il ne dérive que de quelques points
+        # (la vraisemblance logistique n'est pas symétrique autour de son mode,
+        # donc la moyenne a posteriori bouge un peu), sans commune mesure avec la
+        # montée de la note.
+        niveaux = [elo.posterior(record * n)[0] for n in (0, 5, 20, 100)]
+        assert all(abs(x - elo.PRIOR_MEAN) < 20.0 for x in niveaux), \
+            "le niveau doit rester sur place : c'est sigma qui porte la montée"
+
+    def test_la_note_est_toujours_sous_le_niveau(self):
+        """`mu - 2 sigma` : la note est ce qu'on peut prouver, jamais l'estimation
+        elle-même. Les afficher comme un seul nombre était le défaut n° 2."""
+        for n in (0, 1, 10, 100):
+            mean, sd = elo.posterior([(0.5, 1000.0, 1000.0)] * n)
+            assert _note([(0.5, 1000.0, 1000.0)] * n) < elo.to_display(mean)
+
+    def test_un_joueur_sans_partie_lit_le_plancher(self):
+        assert _note([]) == pytest.approx(elo.DISPLAY_NEW, abs=0.05)
+
+
 class TestNotation:
     async def test_l_humain_monte_en_gagnant(self, clean_db):
         await elo.rate_match(await _match(winner=0, human_seat=2))  # siège 2 = N-S
-        assert (await elo.get_rating("user", 1))["elo"] > elo.START_ELO
+        gagne = await elo.get_rating("user", 1)
+        await db.get_db()
+        assert gagne["level"] > elo.DISPLAY_TYPICAL
 
     async def test_l_humain_descend_en_perdant(self, clean_db):
         await elo.rate_match(await _match(winner=1, human_seat=2))
-        assert (await elo.get_rating("user", 1))["elo"] < elo.START_ELO
+        assert (await elo.get_rating("user", 1))["level"] < elo.DISPLAY_TYPICAL
 
     async def test_le_bot_reste_a_son_ancre(self, clean_db):
         await elo.rate_match(await _match())
         r = await elo.get_rating("bot", "dede")
-        assert r["elo"] == 1000.0
-        assert r["games"] == 1, "le compteur avance même sans que l'Elo bouge"
+        assert r["elo"] == elo.to_display(1000.0)
+        assert r["uncertainty"] == 0.0, "un étalon n'a pas d'intervalle"
+        assert r["games"] == 1, "le compteur avance même sans que la note bouge"
 
     async def test_games_compte_des_parties_pas_des_sieges(self, clean_db):
         """Dédé tient trois sièges sur quatre ; ça reste **une** partie.
@@ -141,27 +215,54 @@ class TestAbandon:
         noterait une victoire à qui a quitté la table.
         """
         await elo.rate_match(await _match(winner=0, human_seat=2, abandoned=True))
-        assert (await elo.get_rating("user", 1))["elo"] < elo.START_ELO
+        assert (await elo.get_rating("user", 1))["level"] < elo.DISPLAY_TYPICAL
 
 
-class TestSeuilDAffichage:
-    async def test_un_humain_sous_le_seuil_n_apparait_pas(self, clean_db):
+class TestDecouplage:
+    """La note d'un joueur ne dépend que de son propre bilan.
+
+    Ré-estimer le prior sur la population (Bayes empirique) semblait plus
+    rigoureux et c'était une régression : mesuré sur la base de prod, une seule
+    partie gagnée par X déplaçait la note de tous les autres de +28 à +32, et
+    l'arrivée d'un joueur qui perd ses 20 premières les faisait tous chuter de 100
+    à 150. C'est le défaut que `K_BOT = 0` avait fermé pour les bots, remonté d'un
+    étage. D'où `PRIOR_MEAN` / `PRIOR_SD` **figés**.
+    """
+
+    async def test_la_note_ne_bouge_pas_quand_quelqu_un_d_autre_joue(self, clean_db):
+        await elo.rate_match(await _match(user_id=1))
+        avant = await elo.get_rating("user", 1)
+        for _ in range(5):
+            await elo.rate_match(await _match(user_id=2, winner=1))
+        assert await elo.get_rating("user", 1) == avant
+
+    async def test_deux_bilans_identiques_donnent_deux_notes_identiques(self, clean_db):
+        for uid in (1, 2):
+            await elo.rate_match(await _match(user_id=uid, winner=1))
+        a, b = await elo.get_rating("user", 1), await elo.get_rating("user", 2)
+        assert a == b
+
+
+class TestPlusDeSeuil:
+    """Le seuil de 5 parties n'achetait pas de précision (±609 Elo à 5 parties) et
+    obligeait à expliquer une disparition. La note conservatrice place un joueur
+    non confirmé **en bas** : l'incertitude se lit dans la position.
+    """
+
+    async def test_un_joueur_a_une_seule_partie_apparait(self, clean_db):
         await elo.rate_match(await _match())
-        board = await elo.leaderboard()
-        assert not [r for r in board if r["kind"] == "user"], \
-            "un classement sur 1 partie vaut ±609 Elo : c'est du bruit publié"
-        assert [r for r in board if r["kind"] == "bot"], "les étalons restent visibles"
-
-    async def test_il_apparait_au_seuil(self, clean_db):
-        for _ in range(elo.MIN_RATED_MATCHES):
-            await elo.rate_match(await _match())
         assert [r for r in await elo.leaderboard() if r["kind"] == "user"]
 
-    async def test_standing_dit_ce_qui_reste_a_jouer(self, clean_db):
+    async def test_il_apparait_en_bas(self, clean_db):
+        await elo.rate_match(await _match(winner=1))
+        board = await elo.leaderboard()
+        assert board[-1]["kind"] == "user"
+        assert [r for r in board if r["kind"] == "bot"], "les étalons restent visibles"
+
+    async def test_standing_classe_tout_le_monde(self, clean_db):
         await elo.rate_match(await _match())
         st = await elo.standing("user", 1)
-        assert st["ranked"] is False
-        assert st["remaining"] == elo.MIN_RATED_MATCHES - 1
+        assert st["ranked"] is True and st["remaining"] == 0
 
     async def test_le_classement_publie_l_ancre_du_bot(self, clean_db):
         """Le tableau lit `elo_ratings.elo` d'un seul SELECT : la copie en base
@@ -169,7 +270,7 @@ class TestSeuilDAffichage:
         await elo.rate_match(await _match())
         board = await elo.leaderboard()
         dede = next(r for r in board if r["kind"] == "bot" and r["ref"] == "dede")
-        assert dede["elo"] == 1000.0
+        assert dede["elo"] == elo.to_display(1000.0)
 
 
 class TestListeDesDonnes:

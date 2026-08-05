@@ -9,40 +9,63 @@ Tout ce qui est chiffré ici est mesuré ; ce qui ne l'est pas est marqué comme
 
 ---
 
-## 0. Ce qui a été décidé et livré le 2026-08-03
+## 0. Ce qui tourne aujourd'hui (5 août 2026)
 
-**L'unité classée est la partie en 2000 points.** Une donne isolée (`target = 0`, le
-défaut du site) et une partie en 1000 restent jouables, analysables et partageables ;
-elles ne comptent simplement pas au classement. **Abandonner vaut défaite.** Il faut
-**5 parties** pour apparaître au tableau, et `K` décroît par paliers (64 / 32 / 24).
+**L'unité classée est la partie en 2000 points** (2026-08-03). Une donne isolée
+(`target = 0`, le défaut du site) et une partie en 1000 restent jouables, analysables et
+partageables ; elles ne comptent simplement pas au classement. **Abandonner vaut
+défaite.** Les bots sont des **étalons figés**, pas des joueurs.
 
-| | avant | après |
-|---|---|---|
-| unité notée | une donne | **une partie en 2000 points** |
-| score | marge de donne écrasée (R3) | vainqueur (1 / 0) |
-| étendue du jeu de la carte | 171 Elo | **~580 Elo** (×3,4 mesuré) |
-| K | 32 fixe | 64 (<10) / 32 (<30) / 24 |
-| bots | ancrés (R1) | ancrés, en unité de partie |
-| `elo_ratings.games` | des sièges | **des parties** |
+**La note est un posterior, plus une récurrence** (2026-08-05). Elle est recalculée
+exactement depuis le bilan complet, sous prior figé `N(550, 300²)`, et publiée sous sa
+forme conservatrice `mu − 2·sigma`. Le tableau montre **deux colonnes** : la *note* (ce
+qu'on peut prouver, qui sert au tri) et le *niveau estimé ± son incertitude*.
 
-Trois raisons, dans l'ordre : c'est le format des **tournois réels** ; c'est l'unité de
-l'**arène**, donc l'ancre d'un bot devient une mesure directe au lieu d'une conversion
-modélisée ; et c'est le **seul levier honnête** qui élargisse l'échelle — multiplier les
-écarts par une constante n'aurait rien créé, signal et bruit étant multipliés à
-l'identique.
+| | avant le 03/08 | après le 03/08 | **après le 05/08** |
+|---|---|---|---|
+| unité notée | une donne | une partie en 2000 | une partie en 2000 |
+| estimateur | récurrence K | récurrence K | **posterior exact** |
+| nombre publié | l'Elo courant | l'Elo courant | **`mu − 2σ`, + le niveau ± IC** |
+| seuil d'affichage | — | 5 parties | **aucun** |
+| bots | dérivants | ancrés | ancrés |
+| échelle affichée | Elo brut | Elo brut | **affine, lisible (Dédé 2200)** |
 
-**Ce que ça ne règle pas, et qu'il faut savoir avant de lire le reste.** Le seuil de
-5 parties n'est **pas** un seuil de précision : en solo l'humain n'est qu'un des deux de
-son équipe, donc l'erreur-type vaut ~695/√n — **±609 Elo à 5 parties, ±431 à 10, ±193 à
-50**. À 5 comme à 10, l'intervalle reste plus large que l'étendue entière du jeu de la
-carte. Monter la barre n'achèterait rien ; ce qui achètera de la précision est la note à
-la **marge de partie** (dont l'échelle reste à mesurer) puis R4.
+Trois défauts mesurés motivaient la seconde refonte, tous invisibles à l'usage :
+
+1. **Le tableau ordonnait par inexpérience.** Spearman entre « parties jouées » et « note
+   affichée » : **−0,89**. Tout le monde partait de 1000, les humains gagnent ~24 % de
+   leurs parties contre Dédé, donc tout le monde descendait — et le classement disait
+   surtout qui avait le moins joué. Le 1er avait joué **une** partie et l'avait perdue ;
+   le meilleur bilan réel (4/12) était **6ᵉ sur 7**.
+2. **Le nombre affiché n'était pas l'estimation du niveau.** Simulé sur 20 000 tirages, un
+   joueur réellement à 550 affiche encore **832 après 12 parties** (biais +282) et met
+   ~300 parties à arriver. Coller un « ± » autour de ce nombre-là aurait attaché un
+   intervalle de MLE à un centre qui n'en est pas un — c'est pourquoi R6 ne pouvait pas
+   se faire seul.
+3. **Le seuil de 5 parties n'achetait rien** (±609 Elo à 5 parties) et obligeait à
+   expliquer une disparition. La note conservatrice place un joueur non confirmé **en
+   bas** : l'incertitude se lit dans la position.
+
+**La propriété qui ferme le défaut n° 1** : avec `mu − 2σ`, à niveau constant, **jouer
+fait monter la note** (jouer réduit sigma). Un nouveau venu entre par le bas et grimpe.
+
+**Ce que ça ne règle toujours pas.** Aucun écart entre deux joueurs n'est significatif :
+le mieux classé est à ±484 et le dernier à ±727, sur une échelle où les deux se
+recouvrent presque intégralement. L'élargissement de l'échelle **n'y change rien** —
+multiplier les écarts multiplie le bruit à l'identique. Ce qui achètera de la précision
+est le volume (§8, journal du 05/08), puis R3 et R4.
 
 ---
 
-## 1. Ce que fait le système aujourd'hui
+## 1. L'état qui a motivé les deux refontes (mesures historiques)
 
-`python/colver/web/elo.py`, ~190 lignes :
+> ⚠️ **Cette section décrit le système d'avant le 2026-08-03**, conservée pour ses
+> mesures. Les chiffres y sont en **unité donne** et l'estimateur y est la récurrence K :
+> ni les uns ni l'autre ne décrivent ce qui tourne. L'implémentation courante et son
+> raisonnement complet vivent dans le docstring de `python/colver/web/elo.py` ; le
+> résumé est en §0 et les mesures du 05/08 en §8.
+
+`python/colver/web/elo.py` à l'époque, ~190 lignes :
 
 - **une donne = un match noté** (pas la partie en 1000/2000) ;
 - **équipe = moyenne des deux partenaires**, espérance Elo classique sur cet écart ;
@@ -50,6 +73,11 @@ la **marge de partie** (dont l'échelle reste à mesurer) puis R4.
 - **K = 32 pour un humain, 8 pour un bot** ; un bot occupant plusieurs sièges voit ses
   deltas sommés ;
 - départ à 1000, `rate_game` idempotent, backfill au démarrage.
+
+La seule ligne qui a survécu telle quelle est **« équipe = moyenne des deux
+partenaires »** : c'est encore la vraisemblance du posterior actuel, donc la dilution par
+le partenaire (l'écart d'équipe ne porte que la moitié de l'écart individuel) reste la
+raison de fond pour laquelle il faut des centaines de parties en solo.
 
 ### État de la base de prod (3 août 2026, 1 073 donnes valides, 4 comptes, 2 bots)
 
@@ -122,11 +150,18 @@ grande — mais elle l'est *par l'enchère*, pas par la carte.
 
 ---
 
-## 2. Les six défauts du système actuel
+## 2. Les six défauts d'origine — état au 5 août 2026
 
-1. **K = 32 sur une donne.** Calibré pour une partie d'échecs, où le résultat est ~du
-   signal. Une donne de contrée est ~de la distribution.
+**Fermés :** n° 1 (plus de K du tout — posterior exact), n° 4 (bots ancrés, `K_BOT = 0`
+le 03/08), n° 5 (h2h direct Dédé ↔ DouDou mesuré le 03/08, §8), n° 6 (`games` compte des
+parties). **Ouverts :** n° 2 (score binaire → R3) et n° 3 (dilution par le partenaire —
+intrinsèque au 2v2, seul un par par décision y échappe, R4).
+
+1. ~~**K = 32 sur une donne.**~~ Calibré pour une partie d'échecs, où le résultat est ~du
+   signal. Une donne de contrée est ~de la distribution. **Fermé le 05/08** : il n'y a
+   plus de K, la note est le posterior du bilan complet.
 2. **Score binaire.** Gagner de 10 points ou de 400 vaut pareil ; la marge est jetée.
+   **Toujours ouvert** — mais son paramètre manquant est désormais mesuré (R3).
 3. **Un siège sur quatre.** L'écart individuel est dilué de moitié par le partenaire, donc
    le bruit double quand on le reconvertit en Elo individuel. **Et la dilution n'est pas
    exactement un facteur 2** : la contribution d'un siège dépend de la force de son
@@ -420,6 +455,14 @@ le blob de stats porte `score_scale`, et `watch.js` / `prob-jeu.js` affichent l'
 `s = σ(écart de points marqués / échelle)` au lieu de 1/0. Gratuit, divise la variance par
 ~2. Défaut n° 2.
 
+**Le paramètre qui bloquait est mesuré** (2026-08-05). `elo.py` et cette section disaient
+tous deux « demande l'écart-type des marges de partie, qui n'est pas mesuré ». Sur les
+**32 parties classées non abandonnées** de la prod : écart-type de la marge signée
+**962 points** (IC95 sur l'écart-type : ±239), médiane absolue 930, p10 410, p90 1552,
+max 2034 ; **16 %** de parties serrées (marge < 500), **31 %** d'écrasées (> 1200). C'est
+l'échelle qu'attend le `σ(·)`. Le facteur de réduction de variance, lui, **reste non
+mesuré** — le « ~2 » ci-dessus est une estimation, pas un résultat.
+
 ### R4 — Le par : la seule voie vers un classement fiable en quelques dizaines de donnes
 
 Noter l'**écart au par** plutôt que le résultat : `analysis.py` calcule déjà le coût DD de
@@ -473,15 +516,31 @@ d'abandonner Elo — c'est une raison de ne pas lui demander mieux que ~20 % de 
 la décomposition d'une équipe. Un par calculé **par décision** échappe entièrement au
 problème, puisqu'il n'attribue jamais à un joueur un résultat produit à quatre.
 
-### R5 — Glicko-2 (ou une rampe de K), **après** R3/R4
+### R5 — Suivre l'incertitude — **fait le 2026-08-05, et l'ordre annoncé était faux**
 
-Un K décroissant seul ne corrige rien : il fige plus proprement un bruit déjà accumulé.
-L'ordre compte.
+Cette section disait « après R3/R4 », au motif qu'un K décroissant seul ne corrige rien
+et fige plus proprement un bruit déjà accumulé. **L'argument est juste et la conclusion
+ne l'était pas** : il porte sur la *rampe de K*, pas sur le fait de **suivre un sigma**.
+Ce sont deux choses, et la seconde ne dépend ni de R3 ni de R4 — elle corrigeait à elle
+seule un défaut visible à l'écran (le tableau ordonnait par inexpérience, §0).
 
-### R6 — Afficher l'incertitude
+Livré sans passer par Glicko-2, et c'est délibéré : **à 33 parties et 9 entités, le
+posterior exact est moins cher que son approximation en ligne**. Glicko-2 existe pour les
+pools à millions de parties ; ici on recalcule tout, sur une grille, en quelques
+millisecondes. Le jour où le volume l'exigera, Glicko-2 remplacera le calcul sans changer
+la sémantique — c'est le même objet.
+
+### R6 — Afficher l'incertitude — **fait le 2026-08-05**
 
 « 973 ± 58 » ou un palier, pas un nombre au dixième. Une série chaude cesse alors de
 ressembler à une progression.
+
+**R6 ne pouvait pas se faire avant R5, et c'est le piège de la séquence.** Mettre un « ± »
+autour de l'Elo de la récurrence K aurait été faux deux fois : le nombre affiché n'est pas
+l'estimation du niveau (biais +282 à 12 parties, §0), et l'intervalle du MLE n'est pas son
+intervalle. Le tableau affiche donc **deux colonnes** — la note `mu − 2σ` qui trie, le
+niveau `mu ± 2σ` qui informe — plutôt qu'un nombre décoré d'une barre d'erreur qui ne lui
+appartient pas.
 
 ---
 
@@ -525,15 +584,25 @@ par rôle, sa dépendance au partenaire, la fraction de donnes sans aucune prise
 total entre DouDou50 et le jeu parfait (87-112), et le nombre de donnes qu'il faudrait pour
 séparer deux joueurs proches (876).
 
+**Mesuré depuis le 2026-08-05** (§8) : l'écart réel Dédé ↔ DouDou (h2h direct, 36-14 sur
+50 matchs, +164 Elo au niveau match, IC95 [+58 ; +270]) ; les IC de chaque joueur inscrit ;
+le biais du nombre affiché sous la récurrence K (+282 à 12 parties) ; la non-identifiabilité
+de `tau` et le couplage qu'introduirait un prior ré-estimé ; **l'écart-type des marges de
+partie (962 points)**, qui débloque R3 ; et le volume nécessaire pour séparer deux joueurs
+(65 parties chacun pour 50 % de recouvrement, 217 pour des IC disjoints).
+
 **Non mesuré :**
 
 - de combien R2 améliore la force de jeu (l'analyse dit que l'objectif est faux, pas de
   combien) ;
-- l'écart réel Dédé ↔ DouDou au niveau de la donne — un smoke de 20 matchs donne 85 % / +922
-  au niveau *match*, avec ±16 pp d'IC, et l'Elo du web les place à 55 points d'écart.
-  **C'est devenu la mesure la plus urgente** : §8 borne à ~110 Elo tout l'espace entre
-  DouDou50 et l'omniscience, donc l'ancre à 50 points donne à Dédé près de la moitié du
-  chemin, ce qui demande vérification ;
+- **de combien R3 réduirait la variance.** Son *échelle* est mesurée depuis le 05/08
+  (962 points), son *gain* non — le « ~2 » de R3 reste une estimation ;
+- **l'étendue humaine réelle**, et c'est le trou le plus gênant du document. Les 580 Elo
+  de §8 sont mesurés **à enchère figée** (v6 aux quatre sièges) : ils décrivent le jeu de
+  la carte seul. Or DouDou, Dédé et l'Oracle partagent tous bid v6, donc **c'est à
+  l'annonce que les humains se distinguent**, et cette dispersion-là n'a jamais été
+  mesurée. Tout ce que ce document déduit d'un « l'écart affiché dépasse l'étendue du
+  jeu » est donc à relire avec cette réserve ;
 - ce que vaut une pondération `√longueur` sur nos volumes ;
 - si le plateau de séparation est bien vers 5 000 donnes (c'est une extrapolation de la
   courbe d'IC, pas une mesure) ;
@@ -549,6 +618,114 @@ séparer deux joueurs proches (876).
 ---
 
 ## 8. Journal des mesures
+
+### 2026-08-05 — Le classement ordonnait par inexpérience, et de combien il faut jouer
+
+Base de prod au 5 août : **33 parties classées**, 7 comptes, 2 bots. **Toutes en solo**
+(un humain, trois bots identiques) — aucune partie de salon n'est encore classée, donc
+aucun résultat d'un joueur n'informe sur celui d'un autre.
+
+#### Le défaut, et il se voit sans modèle
+
+| joueur | bilan | rang **avant** | note avant | rang **après** | note après |
+|---|---|---|---|---|---|
+| Jvet | 4V–8D | 6 | 899 | **1** | 1283 |
+| Darju | 1V–2D | 2 | 945 | 2 | 939 |
+| Avo-k | 1V–4D | 4 | 918 | 3 | 927 |
+| Leuy | 1V–5D | 7 | 887 | 4 | 899 |
+| Charles_deBatz | 1V–3D | 5 | 907 | 5 | 894 |
+| Charles_d_Artagnan | 0V–1D | **1** | 960 | 6 | 749 |
+| Julesder | 0V–2D | 3 | 938 | 7 | 738 |
+
+**Spearman(parties jouées, note affichée) = −0,89.** Le 1er avait joué une partie et
+l'avait perdue ; le meilleur bilan réel était 6ᵉ. Cause : départ à 1000, humains à ~24 %
+de victoires contre Dédé, donc descente systématique dont l'avancement dominait l'ordre.
+
+Effet de bord heureux du choix d'échelle : **quatre joueurs sur sept gardent leur nombre
+à moins de 15 points près**. Ce n'est pas voulu — c'est une coïncidence entre la
+compression de `mu − 2σ` et le facteur 1,33 — mais ça rend la migration facile à annoncer.
+
+#### Intervalles de confiance réels (IC95 de Wilson transporté)
+
+| joueur | bilan | MLE | IC95 | largeur |
+|---|---|---|---|---|
+| Jvet | 4/12 | 759 | [364 ; 1155] | 791 |
+| Leuy | 1/6 | 441 | [−207 ; 1089] | 1296 |
+| Avo-k | 1/5 | 518 | [−140 ; 1177] | 1317 |
+| Julesder | 0/2 | −∞ | [−∞ ; 1227] | ∞ |
+
+Précision asymptotique, `SE = 695/√n`, **IC95 = ±1362/√n** : ±609 à 5 parties, ±393 à 12,
+±193 à 50, ±136 à 100. La conversion en temps est ~10,4 donnes/partie (mesuré) × 42 s.
+
+#### Combien de volume pour que les écarts cessent de se recouvrir
+
+C'est **beaucoup moins pessimiste que « connaître chaque niveau »** : séparer deux
+joueurs est une question plus facile qu'estimer chacun. Le 1er contre le dernier, si
+leurs niveaux réels sont ceux qu'on estime (écart affiché 302) :
+
+| parties chacun | 12 (auj.) | 25 | 50 | **65** | 100 | 200 | **217** |
+|---|---|---|---|---|---|---|---|
+| recouvrement des IC | 83 % | 72 % | 57 % | **50 %** | 35 % | 5 % | **0 %** |
+
+Soit **~8 h de jeu chacun** pour le seuil des 50 %, ~26 h pour la séparation nette. Et le
+paramètre qui commande est le **vrai** écart, pas le volume :
+
+| écart réel affiché | 133 | 301 | 400 | 533 | 800 |
+|---|---|---|---|---|---|
+| ≤ 50 % de recouvrement | 296 | 68 | 41 | 26 | 14 |
+| IC disjoints | 1086 | 223 | 130 | 77 | 38 |
+
+⚠️ **Correction d'une affirmation répétée dans ce document.** « L'intervalle est plus
+large que l'étendue entière du jeu » (§1) est **trop fort** : les 580 Elo sont l'étendue
+du *jeu de la carte seul*, mesurée **à enchère figée** (v6 aux quatre sièges). Elle ne
+borne donc pas la dispersion humaine, qui inclut l'annonce — et c'est justement là que
+les humains se distinguent, puisque DouDou, Dédé et l'Oracle partagent tous bid v6. Si
+l'écart humain réel est de 500-800 plutôt que 300, la séparation demande **14 à 26
+parties**, pas des centaines.
+
+#### Pourquoi le prior est figé et non ajusté
+
+Le Bayes empirique (`mu0`, `tau` estimés sur la population) était la première idée. Deux
+constats l'ont tuée :
+
+- **`tau` n'est pas identifiable.** Son maximum de vraisemblance est **0** — les 7 bilans
+  sont compatibles avec 7 joueurs *identiques* — et tout `tau` jusqu'à ~300 est dans le
+  bruit (écart de log-vraisemblance ≤ 0,55 ; seul `tau` ≥ 500 est exclu, à 2,32). `mu0`,
+  lui, est identifié mais **dépend de `tau`** : 560 à `tau = 2`, 508 à `tau = 200`.
+- **Ré-estimer couple les joueurs entre eux.** Mesuré : une partie gagnée par X déplace la
+  note **des autres** de +28 à +32 ; l'arrivée d'un joueur qui perd ses 20 premières les
+  fait tous chuter de **101 à 150**. C'est **exactement le défaut que `K_BOT = 0` a
+  fermé**, remonté d'un étage — au lieu que l'ancre du bot dérive avec la population,
+  c'est le prior. Une fois `mu0` et `tau` figés, le couplage est **exactement zéro**
+  (vérifié : Δ = 0,000000), et la note devient une fonction pure du bilan personnel, donc
+  publiable et vérifiable à la main.
+
+`tau = 300` plutôt que 150 : l'ordre du classement est inchangé de 100 à 300, mais un
+prior serré coûte **~2,4×** en parties à un joueur d'exception qui doit prouver son
+niveau (141 parties contre 59 pour dépasser Dédé à niveau 1200). Figer bas reviendrait à
+inscrire dans la constante « personne ici n'est fort ».
+
+#### L'échelle d'affichage, et le piège de l'ancrage sur un bot
+
+L'échelle interne reste celle des mesures (constante Elo = 400) ; l'affichage en est une
+transformée **affine appliquée en un seul endroit** (`elo.to_display`), calée sur deux
+points humains : un nouveau joueur lit **800**, un joueur confirmé de niveau moyen
+**1600**. Il en découle Heuristique 1785, DouDou50 1973, **Dédé 2200**, Oracle DD 2480.
+
+**Ancrer sur un bot était le piège.** Mettre DouDou à 1000 « comme aux échecs » demande
+k ≈ 3,7, et envoie alors le joueur typique du site à **−24**, les sept comptes actuels de
+−123 à +206. La cause est structurelle : l'écart humain → DouDou50 vaut **280** en
+interne, soit **plus** que l'écart DouDou → Dédé (170). Les bots ne sont pas « un peu
+au-dessus » du terrain humain.
+
+Un changement d'échelle est légitime **à une condition** : remplacer la constante 400 par
+400·k partout. Sinon le système devient incohérent — mesuré, un même joueur converge vers
+**900 ou 1330 selon le bot qu'il a croisé**, soit 430 points d'écart. Et **ça ne crée
+aucune précision** : l'intervalle du mieux classé passe de ±253 à ±484 dans la même
+opération.
+
+Scripts : scratchpad de session (non versionnés) ; les chiffres sont reproductibles depuis
+`elo.posterior` et les bilans ci-dessus.
 
 ### 2026-08-03 — Plan factoriel 2⁴ : combien un seul siège peut-il déplacer une donne ?
 
@@ -764,5 +941,9 @@ peut expliquer une part de la baisse ; les deux causes sont confondues dans ce r
 - [agents.md](agents.md) — comment un bot est assemblé, format des specs
 - [arena_results.md](arena_results.md) — le classement des bots
 - [play/is_dd.md](play/is_dd.md) — l'agrégation IS-DD dont §3.2 parle
-- `python/colver/web/elo.py` — l'implémentation actuelle
+- `python/colver/web/elo.py` — **l'implémentation actuelle, et la référence** : son
+  docstring porte le raisonnement complet du posterior, du prior figé et des deux
+  échelles. En cas de désaccord avec ce document, c'est lui qui a raison.
+- `tests/test_elo.py` — les invariants épinglés : découplage, monotonie de la note,
+  ancrage des bots, abstention sur les formats non classés
 - `colver-core/src/engine/scoring.rs` — le barème dont §3.1 tire la marche

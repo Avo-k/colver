@@ -3817,7 +3817,19 @@
 /* Toute table large vit dans son propre défilement horizontal, sinon c'est la
    page entière qui déborde sur un téléphone. */
 .cl-scroll { overflow-x: auto; margin-bottom: var(--sp-3); }
-.cl-scroll .classement-table { width: 100%; min-width: 22rem; }
+.cl-scroll .classement-table { width: 100%; min-width: 28rem; }
+
+/* La note trie, le niveau informe : c'est la note qui doit se lire en premier,
+   d'où le contraste et la graisse ici et pas sur la colonne voisine. */
+.cl-elo { font-weight: 600; }
+.cl-level { color: var(--text-dim); white-space: nowrap; }
+
+/* L'incertitude est plus petite que le niveau qu'elle accompagne, mais jamais
+   effacée : c'est elle qui dit qu'un écart de classement n'est pas établi. */
+.cl-pm { font-size: 0.82em; opacity: 0.75; }
+
+/* Un étalon n'a pas d'intervalle — sa valeur est posée, pas mesurée sur lui. */
+.cl-anchor { font-style: italic; opacity: 0.6; }
 
 
 /* ============================================================

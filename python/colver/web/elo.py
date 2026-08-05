@@ -1,168 +1,214 @@
-"""Elo ratings for users and bot types.
+"""Classement des joueurs et des bots.
 
-**L'unité notée est la partie en 2000 points** (2026-08-03), plus la donne. Une
+**L'unité classée est la partie en 2000 points** (2026-08-03), pas la donne. Une
 donne isolée ou une partie en 1000 restent jouables, analysables et partageables :
-elles ne comptent simplement pas au classement.
+elles ne comptent simplement pas au classement. C'est le format des tournois
+réels, c'est l'unité de l'arène — donc l'ancre d'un bot est une mesure directe au
+lieu d'une conversion — et c'est le seul levier honnête qui élargisse l'échelle.
 
-Trois raisons, dans l'ordre :
+**Abandonner vaut défaite.** Sans ça, quitter quand on perd serait gratuit. Ce qui
+rend la règle juste est qu'une partie interrompue **se reprend**
+(`server._resume_match`) : l'abandon est un acte délibéré, pas un accident de
+connexion.
 
-1. **C'est le format des tournois réels.** On note ce que les gens jouent en
-   compétition, comme les échecs notent des parties et non des coups.
-2. **C'est l'unité de l'arène.** `arena h2h` joue déjà des parties en 2000, donc
-   le chiffre qu'elle rend est *directement* celui à écrire dans `BOT_ELO`. Avant,
-   il fallait convertir entre deux échelles — et c'est exactement de là que venait
-   le bricolage de l'ancre DouDou (fourchette modélisée [+28, +52], arrondie à 50).
-3. **C'est le seul levier honnête qui élargisse l'échelle.** Mesuré **×3,4** sur
-   deux couples indépendants (DouDou35→DouDou50 : 62,5 % des parties contre 46,0 %
-   des donnes ; Heuristique→DouDou50 : 69,3 % contre 42,7 % — 1 200 parties
-   chacun). L'étendue du jeu de la carte passe de 171 à ~580 Elo. Multiplier les
-   écarts par une constante, à l'inverse, n'aurait rien créé : signal et bruit
-   auraient été multipliés à l'identique.
+**Les bots sont l'étalon, pas des joueurs.** Leur note est figée. Avant le
+2026-08-03 ils dérivaient avec la population — Dédé était monté de 1000 à 1044,
+pic 1119, uniquement parce que les humains perdent contre lui — et comme tout le
+monde est mesuré contre eux, l'arrivée de joueurs plus faibles dévaluait en
+silence les inscrits.
 
-Une partie est notée quand ses quatre sièges sont identifiables (bots, ou humains
-avec un compte) : rating d'équipe = moyenne des deux partenaires, espérance Elo
-classique, score 1/0 selon le vainqueur.
+## La note n'est plus une mise à jour incrémentale (2026-08-05)
 
-**Abandonner vaut défaite.** Sans ça, quitter quand on perd serait gratuit — et
-sur ~10 donnes, ça arriverait. L'argument qui rend la règle juste est qu'une
-partie interrompue **se reprend** (`server._resume_match`) : l'abandon est donc un
-acte délibéré, pas un accident de connexion. Limite connue : en salon, un joueur
-qui quitte tue la partie sans la clore (`is_complete = 0`), donc elle n'est jamais
-notée — la porte reste ouverte de ce côté.
+Elle est le **posterior exact** recalculé depuis le bilan complet, et publiée sous
+sa forme **conservatrice** `mu - 2*sigma` (convention TrueSkill/Xbox). Trois
+défauts mesurés motivaient le changement, tous invisibles à l'usage :
 
-**Les bots sont l'étalon, pas des joueurs** (2026-08-03). Leur Elo est figé et
-`K_BOT = 0` : ils ne bougent jamais. Avant ça ils dérivaient avec la population —
-Dédé était monté de 1000 à 1044, pic 1119, uniquement parce que les humains
-perdent contre lui — et comme tout le monde est mesuré contre eux, l'arrivée de
-joueurs plus faibles dévaluait en silence les inscrits.
+1. **Le classement ordonnait par inexpérience.** Corrélation de Spearman entre
+   « parties jouées » et « note affichée » : **−0,89** sur la base de prod du
+   2026-08-05. Tout le monde partait de 1000, les humains gagnent ~24 % de leurs
+   parties contre Dédé, donc tout le monde descendait — et le tableau classait
+   surtout qui avait fait le moins de chemin. Le 1er avait joué **une** partie et
+   l'avait perdue ; le meilleur bilan réel (4/12) était **6e sur 7**.
+2. **Le nombre affiché n'était pas l'estimation du niveau.** La récurrence K part
+   de 1000 et converge lentement : simulé sur 20 000 tirages, un joueur réellement
+   à 550 affiche encore **832 après 12 parties** (biais +282) et il lui faut
+   ~300 parties pour arriver. Coller un « ± » autour de ce nombre-là aurait
+   attaché un intervalle de MLE à un centre qui n'en est pas un.
+3. **Le seuil d'affichage n'achetait rien.** À 5 parties l'IC95 vaut ±609 Elo ;
+   masquer en dessous ne rendait pas le reste fiable. Il n'existe plus : la note
+   conservatrice place un joueur non confirmé **en bas** au lieu de le cacher,
+   donc l'incertitude se lit dans la position.
 
-Trois choses à savoir sur ce choix :
+Avec `mu - 2*sigma`, un nouveau venu **entre par le bas et monte en jouant** — à
+niveau constant, jouer réduit sigma donc remonte la note. C'est exactement
+l'inverse du défaut n° 1, et ça vient de la structure, pas d'un correctif.
 
-- **Ça ne casse pas la somme nulle, elle était déjà cassée.** Avec `K_USER = 32`
-  et `K_BOT = 8`, la somme des deltas d'une donne solo valait `24(s−e)`, soit
-  ±24 points créés ou détruits à chaque donne. Et la conservation n'a de sens
-  que dans un pool où tout le monde joue contre tout le monde, pas quand une
-  entité tient trois sièges sur quatre.
-- **C'est la pratique standard** des listes de moteurs (CCRL, SSDF) : ancrer sur
-  une référence fixe pour que l'échelle ne dérive pas quand la population change.
-- **Le coût est déplacé, pas supprimé** : la dérive passe de « qui joue » à
-  « quelle version du bot ». D'où `ANCHOR_VERSION` — quand un bot change, il faut
-  mesurer le nouveau contre l'ancien à l'arène et décaler **explicitement**, pas
-  laisser l'Elo s'ajuster tout seul.
+## Pourquoi mu0 et tau sont FIGÉS, et pas ajustés sur la population
 
-`rate_match` is idempotent (elo_history has one row per match × entity), which
-makes the startup backfill safe to run on every boot. Les lignes des bots y sont
-écrites malgré un delta toujours nul : c'est ce qui garantit l'idempotence même
-sur une partie sans humain.
+Les estimer par Bayes empirique était la première idée, et c'est une régression.
+Mesuré sur la base de prod : ré-estimer `mu0` à chaque partie fait bouger la note
+**des autres joueurs** de +28 à +32 quand quelqu'un gagne une partie, et de −101 à
+−150 à l'arrivée d'un joueur qui perd ses 20 premières.
+
+C'est **exactement le défaut que `K_BOT = 0` a fermé**, remonté d'un étage : au
+lieu que ce soit l'ancre du bot qui dérive avec la population, c'est le prior. Une
+fois `mu0` et `tau` figés, le couplage tombe à **exactement zéro** — la note
+devient une fonction pure du bilan personnel, donc publiable et vérifiable à la
+main, et personne ne bouge sans jouer.
+
+Le coût est déplacé, pas supprimé : `mu0` vieillira si la population se déplace.
+C'est le même problème que l'ancre des bots et il a le même remède —
+`ANCHOR_VERSION`, un décalage explicite et daté plutôt qu'un ajustement silencieux.
+Signal supplémentaire qu'il s'agit bien d'une convention et non d'une mesure :
+`mu0` ajusté vaut 560 à `tau = 2` mais 508 à `tau = 200`, et `tau` lui-même n'est
+**pas identifiable** — le maximum de vraisemblance le place à 0 (les 7 bilans de
+prod sont compatibles avec 7 joueurs identiques) et tout `tau` jusqu'à ~300 est
+dans le bruit.
+
+`tau = 300` plutôt que 150 pour une raison précise : l'ordre du classement est
+inchangé de 100 à 300, mais un prior serré coûte ~2,4× en parties à un joueur
+d'exception qui doit prouver son niveau. Figer `tau` bas reviendrait à inscrire
+dans la constante « personne ici n'est fort », ce qui est vrai aujourd'hui et sera
+faux au premier bon joueur qui s'inscrit.
+
+## Deux échelles, et une seule conversion
+
+L'échelle **interne** est celle des mesures : les écarts entre bots viennent de
+`arena h2h` et la constante Elo y vaut 400. L'échelle **d'affichage** en est une
+transformée affine, appliquée en un seul endroit (`to_display`), choisie pour se
+lire comme aux échecs : un nouveau joueur lit 800, un joueur confirmé de niveau
+moyen lit 1600, Dédé 2200.
+
+⚠️ **Ça ne crée aucune précision.** Multiplier les écarts multiplie le bruit à
+l'identique : l'intervalle du mieux classé passe de ±253 à ±484 dans la même
+opération. C'est un choix de lisibilité, à ne jamais présenter comme un gain de
+fiabilité.
+
+`rate_match` est idempotent (une ligne d'`elo_history` par partie × entité), ce qui
+rend le backfill du démarrage sûr à chaque boot.
 """
 
 import asyncio
 import logging
+import math
+
+import numpy as np
 
 import colver.web.database as db
 
 logger = logging.getLogger(__name__)
 
-START_ELO = 1000.0
-K_USER = 32.0
+# ===== Étalonnage figé =====================================================
+#
+# Version de l'étalonnage. À incrémenter — et à redocumenter — dès qu'un bot
+# change de modèle, ou que `PRIOR_MEAN` / `PRIOR_SD` / l'affichage bougent. Le
+# suffixe dit l'unité : une note « donne » et une note « partie » ne se comparent
+# pas, et le passage de l'une à l'autre a multiplié tous les écarts par ~3,4.
+ANCHOR_VERSION = "2026-08-post-match"
 
 # Seules les parties à cette cible comptent. Une donne isolée (`target = 0`, le
-# défaut du site) et une partie en 1000 restent jouables et analysables : elles
-# ne sont simplement pas notées.
+# défaut du site) et une partie en 1000 restent jouables et analysables.
 #
 # Ouvrir plus tard aux parties en 1000 est la décision la plus réversible du lot
-# — il suffirait d'un poids `√(1000/2000) = 0,71`, à la manière de FIBS au
+# — il suffirait d'un poids `sqrt(1000/2000) = 0,71`, à la manière de FIBS au
 # backgammon. À garder en réserve si le classement se révèle trop vide.
 RATED_TARGET = 2000
 
-# Parties nécessaires pour apparaître au classement. En dessous, l'entité est
-# notée (son Elo se construit) mais reste **masquée** du tableau.
-#
-# ⚠️ **Ce seuil n'est pas un seuil de précision, et il ne faut pas le lire comme
-# tel.** En solo l'humain n'est qu'un des deux de son équipe, donc l'écart
-# individuel est dilué de moitié et l'erreur-type vaut ~695/√n :
-#
-#     5 parties → ±609 Elo (IC95)      20 → ±305      50 → ±193      100 → ±136
-#
-# À 5 comme à 10 parties, l'intervalle reste plus large que l'étendue entière du
-# jeu de la carte (~580 Elo). Monter la barre à 10 coûterait 2 à 3 heures de jeu
-# avant le moindre retour sans franchir aucun seuil utile : on n'achète rien avec
-# la sévérité. Ce qui achètera vraiment de la précision est ailleurs — noter la
-# **marge** de la partie plutôt que le seul vainqueur (R3 transposé, dont
-# l'échelle reste à mesurer), puis le par par décision (R4).
-MIN_RATED_MATCHES = 5
+# Prior sur le niveau d'un humain, échelle interne. CONVENTIONS, pas ajustements
+# — voir l'en-tête : les ré-estimer couple les joueurs entre eux.
+PRIOR_MEAN = 550.0
+PRIOR_SD = 300.0
 
-# Les bots ne bougent pas. Zéro, et non « petit » : un K non nul les fait
-# redériver entre deux recalages, ce qui est exactement le défaut qu'on ferme.
-K_BOT = 0.0
+# Note publiée = mu - CONSERVATISM * sigma. 2 plutôt que le 3 de TrueSkill : à
+# 3 sigma un joueur à 12 parties afficherait une note négative sur l'échelle
+# interne, et le tableau se lirait comme une punition de l'inexpérience.
+CONSERVATISM = 2.0
 
-# Version de l'étalonnage. À incrémenter — et à redocumenter — dès qu'un bot
-# change de modèle ou de configuration de fond, sinon l'échelle bouge en silence.
-# Le suffixe dit l'unité : un Elo « donne » et un Elo « match » ne se comparent
-# pas, et le passage de l'un à l'autre a multiplié tous les écarts par ~3,4.
-ANCHOR_VERSION = "2026-08-match"
+# Transformation d'affichage, définie par deux points humains lisibles. Les bots
+# atterrissent où les mesures les mettent (Dédé 2200, DouDou50 1973, Oracle 2480).
+# Ancrer sur un BOT serait le piège : l'écart humain → DouDou50 vaut 280 en
+# interne, soit plus que l'écart DouDou → Dédé (170), donc mettre DouDou à 1000
+# enverrait les joueurs réels **sous zéro**.
+DISPLAY_NEW = 800.0      # ce que lit un joueur sans aucune partie classée
+DISPLAY_TYPICAL = 1600.0  # ce que lit un joueur confirmé de niveau moyen
 
-# Elo figé de chaque bot, **en unité de partie**.
+_INTERNAL_NEW = PRIOR_MEAN - CONSERVATISM * PRIOR_SD
+DISPLAY_SCALE = (DISPLAY_TYPICAL - DISPLAY_NEW) / (PRIOR_MEAN - _INTERNAL_NEW)
+DISPLAY_OFFSET = DISPLAY_NEW - _INTERNAL_NEW * DISPLAY_SCALE
+
+# Note figée de chaque bot, **échelle interne, unité de partie**.
 #
 # Dédé vaut 1000 par définition : c'est lui l'origine de l'échelle.
 #
-# DouDou est 170 points en dessous. Ce nombre est la conversion en unité de
-# partie (×3,4, mesuré) de l'écart de 50 points qui valait à la donne — lequel
-# était déjà un arrondi dans une fourchette modélisée [+28, +52], et non une
-# mesure. **Il hérite donc de toute l'incertitude de son prédécesseur, amplifiée
-# par la conversion.**
-#
-# La bonne nouvelle est que ce bricolage a maintenant une date de péremption :
-# depuis que le site note en parties de 2000, `arena h2h web_dede web_doudou`
-# rend **directement** le chiffre à écrire ici, sans conversion ni modèle. Il
-# faut un GPU tranquille (Dédé passe par le sidecar playgen, et la contention le
-# pénaliserait seul, biaisant l'ancre vers le bas). C'est la mesure la plus
-# urgente du dossier.
-#
-# Repères mesurés le 2026-08-03 pour lire l'échelle (`arena h2h`, 1 200 parties
-# de 2000 points chacun, enchère v6 partout, seul le jeu de la carte varie) :
-#
-#     Heuristique -141   ·   DouDou35 -89   ·   DouDou50 0   ·   Oracle DD ~+380
-#
-# soit ~580 Elo entre le joueur à règles et l'omniscience double-mort. L'enchère
-# ajoute ~270 de plus (`seat_influence.py --a b_petit_bide --b b_v6` et voisins).
-# Détail : `docs/classement_et_scoring.md` §8.
+# DouDou est 170 points en dessous, mesuré par `arena h2h web_dede web_doudou`
+# (36-14 sur 50 matchs, soit +164 Elo, IC95 [+58 ; +270] — précision modeste,
+# mais sans commune mesure avec le « 988,6 sur 11 donnes » d'avant).
 BOT_ELO = {
     "dede": 1000.0,
-    "doudou": 830.0,  # 50 à la donne × 3,4 — conversion, pas mesure
+    "doudou": 830.0,
 }
 
+# Repli d'un bot non étalonné. Il le traite comme l'égal de Dédé — c'est le bon
+# défaut (mieux vaut une hypothèse visible et fausse qu'un bot qui dérive) mais
+# **tout bot ajouté doit passer par un h2h avant d'être assis en production**.
+START_ELO = 1000.0
 
-def k_for(matches_played):
-    """K décroissant : la note converge vite, puis se stabilise.
+# Grille d'intégration du posterior. Large des deux côtés : un joueur qui perd
+# ses 20 premières parties a un posterior qui déborde franchement sous le prior.
+_GRID = np.arange(-2000.0, 4000.0, 1.0)
+_PRIOR_LOGP = -0.5 * ((_GRID - PRIOR_MEAN) / PRIOR_SD) ** 2
 
-    Trois paliers plutôt qu'une formule : c'est une approximation grossière de
-    ce que Glicko-2 fait proprement avec son RD, et le jour où Glicko-2 arrivera
-    il remplacera ces paliers sans rien casser d'autre.
 
-    ⚠️ **Cet outil n'était pas légitime avant aujourd'hui.** Tant que la métrique
-    était fausse — score binaire à la donne, bots non ancrés — un K décroissant
-    ne corrigeait rien : il figeait plus proprement un bruit déjà accumulé.
-    Maintenant que l'unité est la partie, que les bots sont l'étalon et que le
-    classement ne bouge plus qu'avec de l'information, la décroissance est
-    exactement ce qu'il faut. L'ordre comptait.
+def to_display(x):
+    """Échelle interne (celle des mesures) → échelle affichée."""
+    return DISPLAY_OFFSET + DISPLAY_SCALE * x
+
+
+def from_display(x):
+    return (x - DISPLAY_OFFSET) / DISPLAY_SCALE
+
+
+def bot_elo(name):
+    """Note figée d'un bot, échelle interne."""
+    return BOT_ELO.get(name, START_ELO)
+
+
+def posterior(record):
+    """(moyenne, sigma) a posteriori sur l'échelle interne.
+
+    `record` : itérable de `(score, partner_elo, opp_elo)`, une entrée par partie
+    classée, toutes sur l'échelle interne. `score` vaut 1 (victoire) ou 0.
+
+    La vraisemblance est celle qu'`elo.py` a toujours utilisée : l'équipe vaut la
+    moyenne de ses deux joueurs, donc l'écart d'équipe ne porte que **la moitié**
+    de l'écart individuel — c'est la dilution par le partenaire, et c'est la
+    raison de fond pour laquelle il faut des centaines de parties en solo.
     """
-    if matches_played < 10:
-        return 64.0
-    if matches_played < 30:
-        return 32.0
-    return 24.0
+    lp = _PRIOR_LOGP.copy()
+    for score, partner, opp in record:
+        p = 1.0 / (1.0 + 10 ** ((opp - (_GRID + partner) / 2) / 400.0))
+        np.clip(p, 1e-15, 1 - 1e-15, out=p)
+        lp += score * np.log(p) + (1.0 - score) * np.log1p(-p)
+    w = np.exp(lp - lp.max())
+    w /= w.sum()
+    mean = float((_GRID * w).sum())
+    return mean, float(math.sqrt(float(((_GRID - mean) ** 2 * w).sum())))
+
+
+def note_of(mean, sd):
+    """Note publiée : la borne basse, sur l'échelle d'affichage."""
+    return to_display(mean - CONSERVATISM * sd)
 
 
 _lock = asyncio.Lock()  # serialize read-modify-write across concurrent matches
 
 
 def _seat_entities(game, player_rows):
-    """Map each seat to a rated entity (kind, ref), or None if unratable.
+    """Chaque siège → une entité notable `(kind, ref)`, ou None si la partie
+    n'est pas notable (un siège anonyme, un bot inconnu).
 
     Les sièges d'une partie ne changent pas d'une donne à l'autre (seul le
-    donneur tourne), donc n'importe quelle donne de la partie rend le même
-    tableau — on prend la première.
+    donneur tourne), donc n'importe quelle donne rend le même tableau.
     """
     agents = game["agents"]
     humans = {row["seat"]: row["user_id"] for row in player_rows}
@@ -220,8 +266,65 @@ async def _losing_team(conn, match_id, owner_id):
     return rows[0][0] % 2
 
 
+async def _level_internal(conn, ent):
+    """Niveau courant d'une entité, échelle interne — pour servir de partenaire
+    ou d'adversaire dans la vraisemblance d'un autre joueur.
+
+    Un bot rend son ancre. Un humain rend sa moyenne a posteriori courante, ou le
+    prior s'il n'a rien joué.
+
+    ⚠️ **Approximation, et elle ne mord pas aujourd'hui.** Le posterior exact
+    d'une partie humain-contre-humain serait *joint* sur les quatre sièges. Les
+    33 parties classées de la prod sont toutes en solo (un humain, trois bots),
+    donc ce chemin ne s'emprunte pas encore. Le jour où le salon sera classé, il
+    faudra soit itérer cette passe jusqu'au point fixe, soit passer à un vrai
+    modèle joint.
+    """
+    if ent[0] == "bot":
+        return bot_elo(ent[1])
+    rows = await conn.execute_fetchall(
+        "SELECT level FROM elo_ratings WHERE kind = ? AND ref = ?", ent)
+    if not rows or rows[0][0] is None:
+        return PRIOR_MEAN
+    return from_display(rows[0][0])
+
+
+async def _record(conn, ent):
+    """Le bilan complet d'une entité, dans l'ordre où il s'est constitué."""
+    rows = await conn.execute_fetchall(
+        "SELECT e.score, e.partner_elo, e.opp_elo FROM elo_history e "
+        "JOIN matches m ON m.id = e.match_id "
+        "WHERE e.kind = ? AND e.ref = ? ORDER BY m.created_at",
+        ent,
+    )
+    return [(r[0], r[1], r[2]) for r in rows]
+
+
+async def _store(conn, ent, record):
+    """Recalcule le posterior d'une entité depuis son bilan et l'écrit."""
+    if ent[0] == "bot":
+        # Un étalon ne se calcule pas : il EST l'échelle. On garde quand même sa
+        # ligne pour que le tableau se lise d'un seul SELECT, et son compteur de
+        # parties pour l'afficher.
+        note = level = to_display(bot_elo(ent[1]))
+        sigma = 0.0
+    else:
+        mean, sd = posterior(record)
+        note, level, sigma = note_of(mean, sd), to_display(mean), DISPLAY_SCALE * sd
+    await conn.execute(
+        "INSERT INTO elo_ratings (kind, ref, elo, level, sigma, games, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(kind, ref) DO UPDATE SET "
+        "  elo = excluded.elo, level = excluded.level, sigma = excluded.sigma, "
+        "  games = excluded.games, updated_at = excluded.updated_at",
+        (*ent, round(note, 2), round(level, 2), round(sigma, 2),
+         len(record), db._now()),
+    )
+    return note
+
+
 async def rate_match(match_id):
-    """Rate one finished 2000-point match. Idempotent; never raises."""
+    """Note une partie terminée en 2000 points. Idempotent ; ne lève jamais."""
     try:
         async with _lock:
             return await _rate_match_locked(match_id)
@@ -268,56 +371,49 @@ async def _rate_match_locked(match_id):
     if seats is None:
         return False
 
-    # Ratings courants. Celui d'un bot ne se lit pas en base : c'est une
-    # constante d'étalonnage, et la base n'en garde une copie que pour que le
-    # classement affiché puisse la lire d'un seul SELECT.
-    ratings = {}
+    levels = {}
     for ent in set(seats):
-        r = await conn.execute_fetchall(
-            "SELECT elo, games FROM elo_ratings WHERE kind = ? AND ref = ?", ent)
-        played = r[0][1] if r else 0
-        if ent[0] == "bot":
-            ratings[ent] = (bot_elo(ent[1]), played)
-        else:
-            ratings[ent] = (r[0][0] if r else START_ELO, played)
+        levels[ent] = await _level_internal(conn, ent)
 
-    team_elo = [
-        (ratings[seats[0]][0] + ratings[seats[2]][0]) / 2,
-        (ratings[seats[1]][0] + ratings[seats[3]][0]) / 2,
-    ]
-    expected_ns = 1.0 / (1.0 + 10 ** ((team_elo[1] - team_elo[0]) / 400))
-
-    # Deltas agrégés par entité (un type de bot peut tenir plusieurs sièges).
-    deltas = {}
+    # Une entité peut tenir plusieurs sièges (un bot en tient trois en solo). On
+    # ne l'inscrit qu'une fois, sur son premier siège : `games` compte des
+    # **parties**, plus des sièges — Dédé affichait 2 540 pour 881 donnes jouées.
+    seen = set()
     for seat, ent in enumerate(seats):
+        if ent in seen:
+            continue
+        seen.add(ent)
         team = seat % 2
-        s = score_ns if team == 0 else 1.0 - score_ns
-        e = expected_ns if team == 0 else 1.0 - expected_ns
-        k = k_for(ratings[ent][1]) if ent[0] == "user" else K_BOT
-        deltas[ent] = deltas.get(ent, 0.0) + k * (s - e)
+        score = score_ns if team == 0 else 1.0 - score_ns
+        partner = levels[seats[seat ^ 2]]
+        opp = (levels[seats[(seat + 1) % 4]] + levels[seats[(seat + 3) % 4]]) / 2
 
-    now = db._now()
-    for ent, delta in deltas.items():
-        new_elo = ratings[ent][0] + delta
-        # `games` compte des **parties**, une par entité — plus des sièges. Dédé
-        # affichait 2 540 pour 881 donnes jouées, et la page mentait.
+        before = await _record(conn, ent)
+        note_before = (note_of(*posterior(before)) if ent[0] == "user"
+                       else to_display(bot_elo(ent[1])))
         await conn.execute(
-            "INSERT INTO elo_ratings (kind, ref, elo, games, updated_at) "
-            "VALUES (?, ?, ?, 1, ?) "
-            "ON CONFLICT(kind, ref) DO UPDATE SET elo = ?, games = games + 1, updated_at = ?",
-            (*ent, new_elo, now, new_elo, now),
+            "INSERT INTO elo_history "
+            "(match_id, kind, ref, score, partner_elo, opp_elo, delta, elo_after) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0, 0)",
+            (match_id, *ent, score, partner, opp),
         )
+        note_after = await _store(conn, ent, before + [(score, partner, opp)])
+        # `delta` / `elo_after` gardent leurs noms et changent de sens : ce n'est
+        # plus le pas d'une récurrence K mais **le déplacement de la note publiée
+        # causé par cette partie**, ce qui est ce que « combien m'a rapporté ce
+        # match » veut dire. Les deux consommateurs (`list_matches`, `get_match`)
+        # n'ont rien à changer.
         await conn.execute(
-            "INSERT INTO elo_history (match_id, kind, ref, delta, elo_after) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (match_id, *ent, round(delta, 2), round(new_elo, 2)),
+            "UPDATE elo_history SET delta = ?, elo_after = ? "
+            "WHERE match_id = ? AND kind = ? AND ref = ?",
+            (round(note_after - note_before, 2), round(note_after, 2), match_id, *ent),
         )
     await conn.commit()
     return True
 
 
 async def backfill():
-    """Rate every finished rated-format match not yet in elo_history, oldest first."""
+    """Note toutes les parties terminées au format classé, la plus vieille d'abord."""
     conn = await db.get_db()
     rows = await conn.execute_fetchall(
         "SELECT id FROM matches WHERE is_complete = 1 AND target = ? "
@@ -333,86 +429,63 @@ async def backfill():
         logger.info("backfill: rated %d match(es)", rated)
 
 
-# `score_from_margin` a vécu ici entre R3 et le passage à la partie. La note à la
-# marge reste une bonne idée — une partie gagnée 2000-400 en dit plus qu'un
-# 2000-1950 — mais elle demande l'**écart-type des marges de partie**, qui n'est
-# pas mesuré. L'inventer serait refaire exactement l'erreur que ce module passe
-# son temps à documenter. Une partie agrège déjà ~10 donnes, donc le binaire y
-# est bien moins pauvre qu'à la donne : le manque est réel mais borné.
-#
-# `arena.rs` garde sa ligne « Note à la marge », qui reste juste — elle décrit
-# l'échelle **par donne**, utile pour comparer deux bots, et qui n'est plus celle
-# du site. Les deux ne sont plus couplées.
-
-
-def bot_elo(name):
-    """Elo figé d'un bot. Un bot inconnu vaut l'origine de l'échelle.
-
-    Le repli sur `START_ELO` n'est pas anodin : il fait qu'un nouveau type de bot
-    non étalonné est traité comme l'égal de Dédé. C'est le bon défaut — il vaut
-    mieux une hypothèse visible et fausse qu'un bot qui dérive — mais tout bot
-    ajouté doit passer par un h2h avant d'être assis en production.
-    """
-    return BOT_ELO.get(name, START_ELO)
-
-
 async def get_rating(kind, ref):
-    if kind == "bot":
-        conn = await db.get_db()
-        rows = await conn.execute_fetchall(
-            "SELECT games FROM elo_ratings WHERE kind = 'bot' AND ref = ?", (str(ref),))
-        return {"elo": bot_elo(str(ref)), "games": rows[0][0] if rows else 0}
+    """Note, niveau estimé et incertitude d'une entité, échelle d'affichage."""
     conn = await db.get_db()
     rows = await conn.execute_fetchall(
-        "SELECT elo, games FROM elo_ratings WHERE kind = ? AND ref = ?",
+        "SELECT elo, level, sigma, games FROM elo_ratings WHERE kind = ? AND ref = ?",
         (kind, str(ref)))
+    if kind == "bot":
+        anchor = to_display(bot_elo(str(ref)))
+        return {"elo": anchor, "level": anchor, "uncertainty": 0.0,
+                "games": rows[0][3] if rows else 0}
     if not rows:
-        return {"elo": START_ELO, "games": 0}
-    return {"elo": round(rows[0][0], 1), "games": rows[0][1]}
+        mean, sd = posterior([])
+        return {"elo": round(note_of(mean, sd), 1), "level": round(to_display(mean), 1),
+                "uncertainty": round(DISPLAY_SCALE * sd * 2, 1), "games": 0}
+    elo_, level, sigma, games = rows[0]
+    return {"elo": round(elo_, 1), "level": round(level, 1),
+            "uncertainty": round((sigma or 0.0) * 2, 1), "games": games}
 
 
 async def leaderboard():
-    """Entités classées, meilleure d'abord, avec le pseudo pour les humains.
+    """Entités classées, meilleure d'abord.
 
-    Un humain n'apparaît qu'à partir de `MIN_RATED_MATCHES` parties : en dessous,
-    son Elo existe et se construit, mais l'afficher serait publier du bruit. Les
-    bots sont toujours là — ce sont les étalons, leur Elo ne dépend d'aucune
-    partie jouée.
+    Deux colonnes, parce qu'elles disent deux choses : la **note** est ce qu'on
+    peut prouver (elle sert au tri), le **niveau** est la meilleure estimation
+    avec son incertitude. L'écart entre les deux est le prix de l'inexpérience,
+    et il se referme en jouant.
 
-    `provisional` et `remaining` accompagnent chaque ligne pour que la page
-    puisse dire « encore 3 parties » plutôt que de faire disparaître quelqu'un
-    sans explication.
+    **Plus de seuil d'affichage.** Il masquait un joueur sous 5 parties, ce qui
+    demandait ensuite d'expliquer une disparition ; la note conservatrice le place
+    en bas, ce qui dit la même chose sans rien cacher.
     """
     conn = await db.get_db()
     rows = await conn.execute_fetchall(
-        "SELECT r.kind, r.ref, r.elo, r.games, u.username "
+        "SELECT r.kind, r.ref, r.elo, r.level, r.sigma, r.games, u.username "
         "FROM elo_ratings r "
         "LEFT JOIN users u ON r.kind = 'user' AND u.id = CAST(r.ref AS INTEGER) "
         "ORDER BY r.elo DESC",
     )
-    out = []
-    for kind, ref, elo, games, username in rows:
-        provisional = kind == "user" and games < MIN_RATED_MATCHES
-        if provisional:
-            continue
-        out.append({
-            "kind": kind,
-            "ref": ref,
-            "elo": round(elo, 1),
+    return [
+        {
+            "kind": kind, "ref": ref,
+            "elo": round(elo_, 1),
+            "level": round(level, 1) if level is not None else round(elo_, 1),
+            "uncertainty": round((sigma or 0.0) * 2, 1),
             "games": games,
             "name": username if kind == "user" else ref,
-        })
-    return out
+        }
+        for kind, ref, elo_, level, sigma, games, username in rows
+    ]
 
 
 async def standing(kind, ref):
-    """État du classement d'une entité, y compris quand elle n'est pas classée."""
+    """État du classement d'une entité.
+
+    `ranked` / `needed` / `remaining` survivent au retrait du seuil : ils sont lus
+    par `/api/me` et par la page Compte. Tout le monde est désormais classé — un
+    joueur sans partie apparaît simplement au plancher.
+    """
     r = await get_rating(kind, ref)
-    games = r["games"]
-    ranked = kind == "bot" or games >= MIN_RATED_MATCHES
-    return {
-        **r,
-        "ranked": ranked,
-        "needed": MIN_RATED_MATCHES,
-        "remaining": max(0, MIN_RATED_MATCHES - games) if kind == "user" else 0,
-    }
+    return {**r, "ranked": True, "needed": 0, "remaining": 0}

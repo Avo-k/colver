@@ -25,7 +25,13 @@ const TEMPLATE = `
         <h2 class="compte-title">Classement Elo</h2>
         <p class="salon-desc">Seules les <strong>parties en 2000 points</strong> comptent —
         c'est le format des tournois. Les donnes seules et les parties en 1000 restent
-        libres, mais ne sont pas classées. Il faut 5 parties pour apparaître ici.</p>
+        libres, mais ne sont pas classées.</p>
+        <p class="salon-desc">La <strong>note</strong> est ce qu'on peut prouver : elle
+        part du bas et monte à mesure qu'on joue, même à niveau constant. Le
+        <strong>niveau</strong> est la meilleure estimation, avec son incertitude —
+        tant que deux intervalles se recouvrent, l'écart entre les deux joueurs n'est
+        pas établi. Les bots sont des <strong>étalons</strong> à valeur fixe, pas des
+        concurrents.</p>
         <div id="classement-body"><div class="an-loading">Chargement…</div></div>
         <p class="salon-desc">Vos propres chiffres — comment vous annoncez, à quel
         point vous jouez près de l'oracle — sont sur <a href="/stats">Mes stats</a>.</p>
@@ -60,27 +66,25 @@ export async function mount(container) {
         } catch { /* anonymous */ }
 
         let html = '<div class="cl-scroll"><table class="classement-table">' +
-            '<tr><th>#</th><th></th><th class="cl-right">Elo</th><th class="cl-right">Parties</th></tr>';
+            '<tr><th>#</th><th></th><th class="cl-right">Note</th>' +
+            '<th class="cl-right">Niveau estimé</th><th class="cl-right">Parties</th></tr>';
         rows.forEach((r, i) => {
             const isBot = r.kind === 'bot';
             const isMe = me && !isBot && r.name === me.username;
             const name = isBot ? `${esc(BOT_LABELS[r.ref] || r.ref)} 🤖` : esc(r.name);
+            // Un étalon n'a pas d'incertitude : afficher « ± 0 » suggérerait une
+            // mesure très précise là où il s'agit d'une valeur posée par convention.
+            const level = isBot
+                ? '<span class="cl-anchor">étalon</span>'
+                : `${Math.round(r.level)} <span class="cl-pm">± ${Math.round(r.uncertainty)}</span>`;
             html += `<tr class="${isMe ? 'cl-me' : ''} ${isBot ? 'cl-bot' : 'cl-human'}">` +
                 `<td class="cl-rank">${i + 1}</td>` +
                 `<td class="cl-name">${name}${isMe ? ' <span class="cl-you">(vous)</span>' : ''}</td>` +
                 `<td class="cl-right cl-elo">${Math.round(r.elo)}</td>` +
+                `<td class="cl-right cl-level">${level}</td>` +
                 `<td class="cl-right cl-games">${r.games}</td></tr>`;
         });
         html += '</table></div>';
-        // Un joueur sous le seuil ne se voit pas dans le tableau : sans cette ligne
-        // il ne saurait pas pourquoi, et croirait à un bug.
-        const st = me && me.stats && me.stats.elo;
-        if (st && st.ranked === false) {
-            const n = st.remaining;
-            html += `<p class="salon-desc">Vous n'êtes pas encore classé : encore ` +
-                `<strong>${n}</strong> partie${n > 1 ? 's' : ''} en 2000 points ` +
-                `(classement provisoire ${Math.round(st.elo)}).</p>`;
-        }
         body.innerHTML = html;
     } catch {
         body.innerHTML = '<div class="an-loading">Classement indisponible</div>';

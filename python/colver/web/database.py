@@ -320,6 +320,45 @@ MIGRATIONS = [
     CREATE INDEX idx_games_unscored ON games(is_complete, score_ns)
         WHERE score_ns IS NULL;
     """,
+    # v17 — la note devient un posterior, plus une récurrence.
+    #
+    # `elo.py` calculait la note par mise à jour incrémentale (K décroissant
+    # depuis 1000). Trois défauts mesurés, détaillés dans son en-tête ; le plus
+    # visible est que le tableau **ordonnait par inexpérience** (Spearman −0,89
+    # entre parties jouées et note affichée) : tout le monde partait de 1000 et
+    # descendait, donc le classement disait surtout qui avait le moins joué.
+    #
+    # La note est désormais le posterior exact recalculé depuis le bilan complet,
+    # publié sous sa forme conservatrice `mu - 2*sigma`. Ce qui change en base :
+    #
+    # - `elo_history` porte le **bilan** et non plus le pas d'une récurrence :
+    #   `score`, `partner_elo`, `opp_elo` suffisent à refaire le calcul de zéro.
+    #   `delta` / `elo_after` gardent leurs noms et changent de sens (déplacement
+    #   de la note publiée causé par cette partie), donc `list_matches` et
+    #   `get_match` n'ont rien à changer.
+    # - `elo_ratings` gagne `level` (niveau estimé) et `sigma` (son incertitude).
+    #   `elo` reste la note, donc la clé de tri, donc `ORDER BY elo DESC` tient.
+    #
+    # On vide les deux tables : `backfill()` les reconstruit au démarrage à
+    # partir de `matches`, qui est la source de vérité. Rien n'est perdu — les
+    # anciennes valeurs étaient sur une échelle qui n'existe plus.
+    """
+    DROP TABLE elo_history;
+    CREATE TABLE elo_history (
+        match_id    TEXT NOT NULL REFERENCES matches(id),
+        kind        TEXT NOT NULL,
+        ref         TEXT NOT NULL,
+        score       REAL NOT NULL,
+        partner_elo REAL NOT NULL,
+        opp_elo     REAL NOT NULL,
+        delta       REAL NOT NULL,
+        elo_after   REAL NOT NULL,
+        PRIMARY KEY (match_id, kind, ref)
+    );
+    ALTER TABLE elo_ratings ADD COLUMN level REAL;
+    ALTER TABLE elo_ratings ADD COLUMN sigma REAL;
+    DELETE FROM elo_ratings;
+    """,
 ]
 
 
@@ -1041,9 +1080,14 @@ async def get_match(match_id):
     match["unscored_deals"] = unscored
     match["invalid_deals"] = invalid
     match["seats"] = await _match_seat_names(match_id)
-    # Les deltas d'Elo de la partie, humains seulement : `K_BOT = 0` depuis la
-    # v12, donc les lignes des bots sont des zéros écrits pour l'idempotence de
-    # `rate_match`, pas une information.
+    # Le déplacement de note causé par la partie, humains seulement : la note
+    # d'un bot est une ancre figée, donc ses lignes sont des zéros écrits pour
+    # l'idempotence de `rate_match`, pas une information.
+    #
+    # ⚠️ Depuis la v17 `delta` n'est plus le pas d'une récurrence K mais l'écart
+    # entre la note publiée avant et après cette partie — deux définitions qui
+    # donnent des ordres de grandeur différents. Les anciennes lignes ont été
+    # supprimées par la migration, il n'y a donc pas de mélange en base.
     elo_rows = await db.execute_fetchall(
         "SELECT e.ref, u.username, e.delta, e.elo_after FROM elo_history e "
         "LEFT JOIN users u ON u.id = CAST(e.ref AS INTEGER) "
