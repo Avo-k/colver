@@ -250,8 +250,12 @@ let methodBeforeReplay = null;
 // Une relecture n'est pas un essai : la réponse vient d'être affichée juste
 // au-dessus. Elle ne repasse donc pas par la saisie et ne compte pas.
 let inReplay = false;
+// Le progrès du joueur connecté, tel que le serveur le tient. `null` = anonyme
+// (ou pas encore chargé), et on retombe alors sur le localStorage.
+let serverStats = null;
 
 const $ = (id) => document.getElementById(id);
+const base = () => document.querySelector('base')?.getAttribute('href') || '/';
 
 // ===== Réglages persistés ===================================================
 
@@ -277,6 +281,41 @@ function loadStats() {
     } catch { return {}; }
 }
 function saveStats(s) { try { localStorage.setItem(K_STATS, JSON.stringify(s)); } catch { /* quota */ } }
+
+// Le progrès affiché : celui du compte s'il y en a un, celui du navigateur
+// sinon. On ne fusionne jamais les deux — additionner les essais anonymes à la
+// connexion les compterait deux fois sur l'appareil qui les a déjà envoyés, et
+// aucune fois sur les autres. Le local reste écrit dans tous les cas : il porte
+// le jeu anonyme, et c'est aussi ce qui reste si le serveur ne répond pas.
+function effectiveStats() { return serverStats || loadStats(); }
+
+async function fetchServerStats() {
+    try {
+        const resp = await fetch(`${base()}api/me/exercises?exercise=compter`);
+        if (!resp.ok) return;
+        const body = await resp.json();
+        if (!body.synced) return;   // anonyme : le localStorage fait foi
+        serverStats = body.stats || {};
+        renderStats();
+    } catch { /* hors ligne : le local suffit */ }
+}
+
+// Un essai part au serveur en **delta**, jamais en total : deux onglets ouverts
+// sur la page, ou un second appareil, s'écraseraient l'un l'autre sinon. Le
+// serveur renvoie l'état à jour, qui devient ce qu'on affiche.
+async function pushAttempt(variant, delta, exact, streak) {
+    if (serverStats === null) return;
+    try {
+        const resp = await fetch(`${base()}api/me/exercises`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ exercise: 'compter', variant, delta, exact, streak }),
+        });
+        if (!resp.ok) return;
+        const body = await resp.json();
+        if (body.stats) { serverStats = body.stats; renderStats(); }
+    } catch { /* hors ligne : l'essai reste dans le local */ }
+}
 
 // Les donnes déjà servies depuis la base. Sans cette mémoire, « Mes parties »
 // resservirait la même donne au bout de quelques tirages : un joueur en a
@@ -771,11 +810,18 @@ function recordStats(teams, exp) {
     }
     stats[key] = s;
     saveStats(stats);
+    // Le serveur n'a pas la série locale : elle vient de l'historique de CE
+    // navigateur, alors que la sienne suit le compte. On lui envoie donc la
+    // série *du compte* prolongée, pas celle d'ici.
+    if (serverStats !== null) {
+        const prev = serverStats[key] || { streak: 0 };
+        pushAttempt(key, delta, delta === 0, delta === 0 ? prev.streak + 1 : 0);
+    }
     renderStats();
 }
 
 function renderStats() {
-    const s = loadStats()[statsKey()];
+    const s = effectiveStats()[statsKey()];
     const el = $('pc-stats');
     if (!s || !s.plays) { el.textContent = ''; return; }
     const pct = Math.round(100 * s.exact / s.plays);
@@ -1173,8 +1219,13 @@ export function mount(container) {
     cfg = loadCfg();
     if (cfg.rules === 'realiste') cfg.nTricks = 8;
 
+    serverStats = null;
     syncFine();
     renderStats();
+    // Le progrès du compte arrive après coup : le local est affiché tout de
+    // suite, et remplacé s'il y a mieux. Une page qui attendrait le réseau pour
+    // montrer un record serait vide sur une connexion lente.
+    fetchServerStats();
 
     $('pc-presets').addEventListener('click', (e) => {
         const b = e.target.closest('.pc-seg-btn');

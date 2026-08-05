@@ -522,6 +522,62 @@ def _job_view(job):
     return {k: v for k, v in job.items() if k != "task"}
 
 
+# Les exercices dont le progrès est suivi côté serveur. Liste fermée : la
+# `variant` est libre (elle vient du préréglage choisi), mais l'`exercise` est
+# ce qui décide de quel écran on parle, et un client ne doit pas pouvoir en
+# inventer — ce serait une table à clés arbitraires, remplissable à volonté.
+_EXERCISES = {"compter"}
+
+
+@router.get("/me/exercises")
+async def my_exercises(request: Request, exercise: str = "compter"):
+    """Le progrès du joueur connecté sur un exercice.
+
+    Anonyme, la réponse est vide plutôt qu'une erreur : la page marche sans
+    compte, elle retombe simplement sur son localStorage. Un 401 ferait écrire
+    une gestion d'erreur à un appelant pour qui ce n'est pas une erreur.
+    """
+    if exercise not in _EXERCISES:
+        return JSONResponse({"error": "Exercice inconnu"}, status_code=400)
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"stats": {}, "synced": False})
+    return JSONResponse({"stats": await db.exercise_stats(user["id"], exercise),
+                         "synced": True})
+
+
+@router.post("/me/exercises")
+async def record_exercise(request: Request):
+    """Enregistrer **un** essai. Le corps porte un delta, jamais un total.
+
+    Voir la migration v19 : un total poussé par le client écraserait le travail
+    d'un autre onglet et ferait de lui l'autorité sur son propre record.
+    """
+    user = await current_user(request)
+    if user is None:
+        return JSONResponse({"error": "Non connecté"}, status_code=401)
+    body = await request.json()
+    exercise = str(body.get("exercise") or "")
+    if exercise not in _EXERCISES:
+        return JSONResponse({"error": "Exercice inconnu"}, status_code=400)
+    variant = str(body.get("variant") or "")[:64]
+    if not variant:
+        return JSONResponse({"error": "Variante manquante"}, status_code=400)
+    try:
+        # Borné : ces deux nombres viennent du client et alimentent des
+        # compteurs cumulés. L'écart d'un essai ne peut pas dépasser le total de
+        # points d'une donne, une série ne peut pas dépasser le nombre d'essais.
+        delta = max(0, min(504, int(body.get("delta", 0))))
+        streak = max(0, min(100_000, int(body.get("streak", 0))))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "Requête invalide"}, status_code=400)
+    await db.record_exercise_attempt(
+        user["id"], exercise, variant,
+        delta=delta, exact=bool(body.get("exact")), streak=streak)
+    return JSONResponse(
+        {"stats": await db.exercise_stats(user["id"], exercise)})
+
+
 @router.get("/me/matches")
 async def my_matches(request: Request, status: str = "open",
                      limit: int = 20, offset: int = 0):

@@ -373,8 +373,12 @@ function renderProgress() {
     const { completed, total, elapsed_ms } = progress;
     const p = total > 0 ? Math.round(completed / total * 100) : 0;
     wrap.querySelector('.sim-progress-fill').style.width = `${p}%`;
+    // Un résultat servi depuis la base n'a pas de durée : afficher celle du
+    // calcul d'origine ferait passer une réponse instantanée pour un travail
+    // de trois secondes, et « 0.0s » pour une prouesse.
+    const suffix = elapsed_ms == null ? 'en cache' : `${(elapsed_ms / 1000).toFixed(1)}s`;
     wrap.querySelector('.sim-progress-text').textContent =
-        `${completed}/${total} — ${(elapsed_ms / 1000).toFixed(1)}s`;
+        `${completed}/${total} — ${suffix}`;
     wrap.classList.toggle('done', completed >= total);
 
     const badge = document.getElementById('aj-worlds-badge');
