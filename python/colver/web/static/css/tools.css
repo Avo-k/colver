@@ -4497,6 +4497,72 @@
     background: var(--c-accent-a10);
 }
 
+/* Bandeau « où en est la partie ». Partagé par Rejouer, /analyse/annonces et
+   /analyse/jeu : le score de partie situe la donne, et sur les annonces il
+   explique pourquoi la même main peut recevoir deux réponses différentes
+   (Bid V6 lit une observation score-aware).
+
+   `flex-wrap` plutôt qu'un `white-space: nowrap` : à 360px la ligne compte
+   quatre segments, et les couper vaut mieux que déborder — cette barre vit
+   au-dessus du tapis, elle ne doit jamais pousser la table de côté. */
+.match-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--sp-1) var(--sp-3);
+    margin: var(--sp-2) var(--sp-3) 0;
+    padding: var(--sp-1) var(--sp-2);
+    font-size: var(--fs-xs);
+    color: var(--c-text-muted);
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-sm);
+}
+.match-bar-label,
+.match-bar-target,
+.match-bar-delta,
+.match-bar-when {
+    color: var(--c-text-muted);
+}
+/* Le cumul est ce qu'on vient lire : c'est lui qui porte la couleur et le
+   poids, le reste est du contexte. */
+.match-bar-score {
+    font-weight: 600;
+    color: var(--c-text);
+}
+.match-bar-link {
+    color: var(--c-text);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--c-border-strong);
+}
+.match-bar-link:hover {
+    color: var(--c-accent);
+    border-bottom-color: var(--c-accent);
+}
+/* Un cumul amputé se dit plutôt que de passer pour exact. */
+.match-bar-warn {
+    color: var(--c-warn);
+}
+/* Au téléphone la barre tombe sur trois lignes et repousse le tapis d'autant.
+   Ce qui saute est l'incrément de la donne : il se relit à la fin du rejeu,
+   alors que le cumul d'avant, lui, n'est écrit nulle part ailleurs. « avant la
+   donne » reste — sans lui, deux nombres nus ne disent pas de quand ils
+   datent. */
+@media (max-width: 640px) {
+    .match-bar { gap: 0 var(--sp-2); }
+    .match-bar-delta { display: none; }
+}
+/* Chip de score sur une main enregistrée : deux entrées qui ne diffèrent que
+   par le score seraient sinon indiscernables. */
+.ann-saved-score {
+    margin-left: var(--sp-1);
+    padding: 0 var(--sp-1);
+    font-size: var(--fs-2xs);
+    color: var(--c-text-muted);
+    border: 1px solid var(--c-border);
+    border-radius: var(--r-sm);
+}
+
 /* Champ pseudo des formulaires à mot de passe : présent pour les gestionnaires
    de mots de passe (et pour Chrome, qui avertit sans lui), invisible à l'écran.
    `display: none` suffirait mais certains gestionnaires ignorent alors le

@@ -67,11 +67,29 @@ impl WasmBidNet {
         ))
     }
 
-    /// Evaluate a hand with prior bid actions.
+    /// Evaluate a hand with prior bid actions, at a match score of 0-0.
+    ///
+    /// Kept as the zero-score shorthand for `evaluate_at_score`: a lone deal is
+    /// the site's default, and 0-0 is the truth there rather than a fallback.
+    pub fn evaluate(&mut self, hand: &[u8], prior_actions: &[u8]) -> Result<String, JsValue> {
+        self.evaluate_at_score(hand, prior_actions, 0, 0)
+    }
+
+    /// Evaluate a hand with prior bid actions at a given match score.
     /// `hand`: Uint8Array of 8 card indices (0-31)
     /// `prior_actions`: Uint8Array of prior bid action indices
+    /// `score_ns` / `score_ew`: cumulative match score, seat 2 (the evaluated
+    /// hand) being North-South. Bid v6 reads it (obs 110/113/117): the same
+    /// hand is bid differently at 900-200 than at 0-0. Ignored by a 108-dim
+    /// net, which has no room for it.
     /// Returns JSON string: {"q_values":[[action,q],...], "best_action":N}
-    pub fn evaluate(&mut self, hand: &[u8], prior_actions: &[u8]) -> Result<String, JsValue> {
+    pub fn evaluate_at_score(
+        &mut self,
+        hand: &[u8],
+        prior_actions: &[u8],
+        score_ns: i32,
+        score_ew: i32,
+    ) -> Result<String, JsValue> {
         if hand.len() != 8 {
             return Err(JsValue::from_str("hand must have exactly 8 cards"));
         }
@@ -119,8 +137,8 @@ impl WasmBidNet {
         }
 
         // Build observation matching the loaded NN's obs_dim (108 / 110 / 113).
-        // Score-aware models receive a match-neutral 0/0 score (the context the
-        // web page runs in — single-deal analysis with no match history).
+        // Score-aware models get the match score they are asked for — 0-0 when
+        // the caller has no match behind the hand, which is the site's default.
         let obs_dim = self.net.obs_dim();
         let mut obs = match obs_dim {
             BID_OBS_DIM => {
@@ -130,17 +148,17 @@ impl WasmBidNet {
             }
             BID_OBS_DIM_SCORE_AWARE => {
                 let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE];
-                write_bid_observation_score_aware(&mut buf, 0, &state, &bid_history, 0, 0);
+                write_bid_observation_score_aware(&mut buf, 0, &state, &bid_history, score_ns, score_ew);
                 buf
             }
             BID_OBS_DIM_SCORE_AWARE_V2 => {
                 let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V2];
-                write_bid_observation_score_aware_v2(&mut buf, 0, &state, &bid_history, 0, 0);
+                write_bid_observation_score_aware_v2(&mut buf, 0, &state, &bid_history, score_ns, score_ew);
                 buf
             }
             BID_OBS_DIM_SCORE_AWARE_V3 => {
                 let mut buf = vec![0.0f32; BID_OBS_DIM_SCORE_AWARE_V3];
-                write_bid_observation_score_aware_v3(&mut buf, 0, &state, &bid_history, 0, 0);
+                write_bid_observation_score_aware_v3(&mut buf, 0, &state, &bid_history, score_ns, score_ew);
                 buf
             }
             other => {

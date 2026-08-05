@@ -72,12 +72,21 @@ async function _doInit() {
  * @param {number[]} priorActions - prior bid action indices
  * @returns {{ q_values: [number, number][], best_action: number }}
  */
-export function evaluateBid(hand, priorActions) {
+export function evaluateBid(hand, priorActions, scores) {
     if (!_bidNet) throw new Error('BidNet not ready');
     const handArr = new Uint8Array(hand);
     const priorArr = new Uint8Array(priorActions);
-    const jsonStr = _bidNet.evaluate(handArr, priorArr);
-    return JSON.parse(jsonStr);
+    // Bid v6 lit le score de partie : la même main s'annonce autrement à
+    // 900-200 qu'à 0-0. `evaluate` reste le raccourci 0-0 — et le repli quand
+    // le bundle servi précède l'ajout du score (cache du navigateur, image
+    // Docker plus ancienne), auquel cas la page le dira plutôt que de rendre
+    // des Q silencieusement calculés au mauvais score.
+    const [ns, ew] = scores || [0, 0];
+    if (!ns && !ew) return JSON.parse(_bidNet.evaluate(handArr, priorArr));
+    if (typeof _bidNet.evaluate_at_score !== 'function') {
+        throw new Error('bundle WASM sans score de partie');
+    }
+    return JSON.parse(_bidNet.evaluate_at_score(handArr, priorArr, ns, ew));
 }
 
 /**

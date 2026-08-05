@@ -27,6 +27,7 @@ const THRESHOLD_LABELS = ['80', '90', '100', '110', '120', '130', '140', '150', 
 
 const TEMPLATE = `
 <a id="annonces-back" class="analyse-back hidden" href="#"></a>
+<div id="annonces-match" class="match-bar hidden"></div>
 <div id="annonces-top-row">
     <aside id="annonces-saved">
         <div id="annonces-saved-head">
@@ -170,6 +171,53 @@ function currentForced() {
 // travers les réécritures d'URL — cf. syncUrl.
 let backParams = {};
 
+// ── Le score de partie ──
+// Bid V6 lit une observation *score-aware* : la même main s'annonce autrement à
+// 900-200 qu'à 0-0. Analyser une annonce hors de son score, c'est donc poser
+// une autre question que celle que le joueur s'est posée à la table.
+//
+// `?s=<ns>-<ew>` est **dans le repère de cette page**, qui assied toujours le
+// siège analysé en Sud : « nous » y est Nord-Sud quel que soit le siège
+// d'origine. La rotation est faite une fois pour toutes par Rejouer au moment
+// de fabriquer le lien, comme `rooms.rotate_state` le fait à la diffusion.
+//
+// 0-0 hors de ce chemin : une main tapée à la main n'a pas de partie derrière
+// elle, et c'est le cas nominal de la page.
+let matchScores = [0, 0];
+
+function parseScoreParam(raw) {
+    const m = /^(\d{1,4})-(\d{1,4})$/.exec((raw || '').trim());
+    if (!m) return [0, 0];
+    return [Number(m[1]), Number(m[2])];
+}
+
+function hasMatchScore() {
+    return matchScores[0] > 0 || matchScores[1] > 0;
+}
+
+function scoreSig() {
+    return hasMatchScore() ? `${matchScores[0]}-${matchScores[1]}` : '';
+}
+
+// Un bandeau, pas un réglage : le score vient de la partie d'origine et ne se
+// modifie pas ici. Il doit être lisible, parce qu'il explique pourquoi la même
+// main peut recevoir deux réponses différentes.
+function renderMatchScore() {
+    const el = document.getElementById('annonces-match');
+    if (!el) return;
+    if (!hasMatchScore()) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    el.innerHTML =
+        `<span class="match-bar-label">Score de partie</span>` +
+        `<span class="match-bar-score"><span class="team-ns">Nous ${matchScores[0]}</span>` +
+        ` – <span class="team-ew">Eux ${matchScores[1]}</span></span>` +
+        `<span class="match-bar-when">Bid V6 est évalué à ce score</span>`;
+    el.classList.remove('hidden');
+}
+
 // ── La vraie donne ──
 // Quand on arrive depuis Rejouer, on connaît les quatre mains : le solveur dit
 // exactement ce que cette distribution-là permettait. C'est une ligne de plus
@@ -226,6 +274,9 @@ function syncUrl() {
         const v = backParams[key];
         if (v) parts.push(`${key}=${encodeURIComponent(v)}`);
     }
+    // Le score fait partie de la question posée, donc de l'URL partageable :
+    // sans lui, rouvrir le lien répondrait à 0-0 sans le dire.
+    if (hasMatchScore()) parts.push(`s=${scoreSig()}`);
     history.replaceState(null, '', window.location.pathname + (parts.length ? '?' + parts.join('&') : ''));
 }
 
@@ -1375,12 +1426,20 @@ async function evalLocal(hand, tab) {
         return;
     }
 
-    // 1. BidNet eval (main thread, sub-ms)
+    // 1. BidNet eval (main thread, sub-ms), au score de la partie d'origine.
+    //    Un bundle WASM antérieur au score n'a pas de quoi répondre : plutôt
+    //    que des Q silencieusement calculés à 0-0, on repasse par le serveur,
+    //    qui sait le faire. L'Oracle et le Jeu réel, eux, ne lisent pas le
+    //    score — c'est le bidder qui est score-aware, pas le solveur.
     try {
-        const result = wasmBridge.evaluateBid(hand, annoncesHistory);
-        handleBidEvalResult(result);
+        handleBidEvalResult(wasmBridge.evaluateBid(hand, annoncesHistory, matchScores));
     } catch (err) {
-        handleBidEvalResult({ error: `WASM BidNet: ${err.message || err}` });
+        if (hasMatchScore()) {
+            console.warn('[annonces] BidNet WASM sans score, repli serveur:', err);
+            send({ type: 'bid_eval', hand, prior_actions: annoncesHistory, scores: matchScores });
+        } else {
+            handleBidEvalResult({ error: `WASM BidNet: ${err.message || err}` });
+        }
     }
 
     // 2. Oracle via Worker (streaming). Partagé par tous les onglets : ouvrir
@@ -1407,7 +1466,7 @@ async function evalLocal(hand, tab) {
 }
 
 function evalServer(hand, tab) {
-    send({ type: 'bid_eval', hand, prior_actions: annoncesHistory });
+    send({ type: 'bid_eval', hand, prior_actions: annoncesHistory, scores: matchScores });
     // Le serveur enchaîne Oracle puis Dédé sur un même pool de mondes : le
     // Jeu réel de ce flux appartient à l'onglet de base.
     tab.status = 'running';
@@ -1417,16 +1476,20 @@ function evalServer(hand, tab) {
 }
 
 // ── Mains sauvegardées ──
-// Une main analysée, c'est la main *et* les enchères qui la précèdent : les
-// deux forment la situation, et la même main après « 100♥ » de l'adversaire
-// n'est pas la même question. La clé de déduplication porte donc sur les deux.
+// Une main analysée, c'est la main, les enchères qui la précèdent *et* le score
+// de partie : les trois forment la situation. La même main après « 100♥ » de
+// l'adversaire n'est pas la même question, et la même main à 1900-200 non plus
+// — Bid V6 lit le score. La clé de déduplication porte donc sur les trois.
 
 const SAVED_KEY = 'colver:annonces:saved';
 const SIDEBAR_KEY = 'colver:annonces:sidebar';
 const SAVED_MAX = 40;
 
-function handSig(hand, history) {
-    return Array.from(hand).slice().sort((a, b) => a - b).join(',') + '|' + history.join(',');
+// `scores` absent d'une entrée écrite avant que le score existe = 0-0, ce qui
+// est exactement ce sous quoi elle a été analysée.
+function handSig(hand, history, scores) {
+    const s = (scores && (scores[0] || scores[1])) ? `${scores[0]}-${scores[1]}` : '';
+    return Array.from(hand).slice().sort((a, b) => a - b).join(',') + '|' + history.join(',') + '|' + s;
 }
 
 function loadSaved() {
@@ -1444,11 +1507,12 @@ function storeSaved(list) {
 // Enregistre (ou remonte en tête) la situation courante.
 function recordSavedHand(hand, history) {
     if (hand.length !== 8) return;
-    const sig = handSig(hand, history);
-    const list = loadSaved().filter(e => handSig(e.hand, e.history || []) !== sig);
+    const sig = handSig(hand, history, matchScores);
+    const list = loadSaved().filter(e => handSig(e.hand, e.history || [], e.scores) !== sig);
     list.unshift({
         hand: Array.from(hand).sort((a, b) => a - b),
         history: history.slice(),
+        scores: hasMatchScore() ? matchScores.slice() : null,
         ts: Date.now(),
     });
     storeSaved(list);
@@ -1471,11 +1535,11 @@ function renderSavedList() {
     }
     document.getElementById('annonces-saved-clear').classList.remove('hidden');
 
-    const current = handSig(Array.from(annoncesHand), annoncesHistory);
+    const current = handSig(Array.from(annoncesHand), annoncesHistory, matchScores);
     entries.forEach((entry, i) => {
         const row = document.createElement('div');
         row.className = 'ann-saved-row';
-        row.dataset.sig = handSig(entry.hand, entry.history || []);
+        row.dataset.sig = handSig(entry.hand, entry.history || [], entry.scores);
         if (row.dataset.sig === current) row.classList.add('current');
 
         const body = document.createElement('button');
@@ -1494,6 +1558,12 @@ function renderSavedList() {
         hist.innerHTML = (entry.history && entry.history.length)
             ? entry.history.map(bidChipHtml).join('')
             : '<span class="ann-saved-first">Premier à parler</span>';
+        // Sans ce repère, deux entrées qui ne diffèrent que par le score sont
+        // indiscernables — or elles ne portent pas la même réponse.
+        if (entry.scores && (entry.scores[0] || entry.scores[1])) {
+            hist.innerHTML += `<span class="ann-saved-score" title="Score de partie">` +
+                `${entry.scores[0]}–${entry.scores[1]}</span>`;
+        }
         body.appendChild(hist);
 
         body.addEventListener('click', () => loadSavedEntry(entry));
@@ -1518,7 +1588,7 @@ function renderSavedList() {
 // Repeindre la liste à chaque carte cliquée reconstruirait des centaines
 // d'images : seul le liseré « situation courante » change vraiment.
 function markCurrentSaved() {
-    const cur = handSig(Array.from(annoncesHand), annoncesHistory);
+    const cur = handSig(Array.from(annoncesHand), annoncesHistory, matchScores);
     document.querySelectorAll('#annonces-saved-list .ann-saved-row').forEach(row => {
         row.classList.toggle('current', row.dataset.sig === cur);
     });
@@ -1526,11 +1596,16 @@ function markCurrentSaved() {
 
 function loadSavedEntry(entry) {
     // Une main enregistrée ne porte pas la donne dont elle vient : sa clé est
-    // (main, enchères précédentes). On perd donc la vraie donne au
-    // rechargement, plutôt que de risquer de la rattacher à une autre.
+    // (main, enchères précédentes, score). On perd donc la vraie donne au
+    // rechargement, plutôt que de risquer de la rattacher à une autre. Le
+    // score, lui, est dans l'entrée : sans lui la même main reviendrait
+    // analysée à 0-0 sous le même libellé.
     trueWorld = null;
     annoncesHand = new Set(entry.hand);
     annoncesHistory = (entry.history || []).slice();
+    matchScores = (entry.scores || [0, 0]).slice();
+    renderMatchScore();
+    syncUrl();
     renderAnnoncesHistory();
     updateAnnoncesDisplay();
     renderSavedList();
@@ -1582,7 +1657,9 @@ export function mount(container) {
     const histParam = params.get('history');
     // Retour vers la partie d'où l'on vient, quand on arrive depuis Rejouer.
     backParams = { from: params.get('from'), i: params.get('i') };
+    matchScores = parseScoreParam(params.get('s'));
     renderBackLink('annonces-back', backParams.from, backParams.i);
+    renderMatchScore();
     requestTrueWorld();
     if (handParam) {
         annoncesHand = new Set(handParam.split(',').map(parseCardToken).filter(n => n >= 0 && n < 32));

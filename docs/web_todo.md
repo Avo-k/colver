@@ -422,29 +422,60 @@ depuis le 2026-08-01, mais un socket ouvert et muet est gardé pour toujours).
 
 ## 4. Confort et cohérence
 
-### 4.1 Le score de partie dans les pages d'analyse
+### 4.1 Le score de partie dans les pages d'analyse — FAIT (2026-08-05)
 
-Les pages d'analyse raisonnent toutes à **0-0**. `AgentTable.set_scores` n'est
-appelé que depuis `game_manager.py` (donc en jeu, solo et salon) ; ni
-`/analyse/annonces` ni `/analyse/jeu` ne le font. Or bid v6 lit une observation
-*score-aware* : la même main s'annonce autrement à 900-200 qu'à 0-0. Analyser
-une annonce hors de son score, c'est donc poser une autre question que celle
-que le joueur s'est posée à la table.
+Les pages d'analyse raisonnaient toutes à **0-0**. `AgentTable.set_scores`
+n'était appelé que depuis `game_manager.py` (donc en jeu, solo et salon) ; ni
+`/analyse/annonces` ni `/analyse/jeu` ne le faisaient, et `Env.set_match_scores`
+— ajouté précisément pour ça — n'avait aucun appelant côté web. Or bid v6 lit
+une observation *score-aware* : la même main s'annonce autrement à 900-200 qu'à
+0-0. Analyser une annonce hors de son score posait donc une autre question que
+celle que le joueur s'est posée à la table. **Vérifié à l'écran** : la même main
+(`QS,JH,AH,8D,9D,JD,QD,AC`, premier à parler) rend **110♦ à 221-333** et
+**120♦ à 1900-200**.
 
-Ce qu'il faudrait :
+Ce qui a été fait :
 
-- **Annonces** : un score de partie saisissable (et pré-rempli depuis la partie
-  d'origine quand on arrive par « Analyser cette annonce », via `from=<gameId>`
-  — le score cumulé vit dans `matches.points_ns/ew`, pas dans `games`). Il
-  appartient à la question, donc à la clé de déduplication des mains
-  enregistrées, au même titre que les enchères précédentes.
-- **Analyse du jeu** : même chose, mais l'effet est indirect — c'est le bidder
-  qui est score-aware, pas DouDou50 ni le solveur. Ça ne change les chiffres que
-  pour les mondes échantillonnés (playgen tokenise l'auction) ; à vérifier avant
-  d'y mettre du travail.
-- Le CFN complet ne porte pas le score de partie : il faudra un paramètre d'URL
-  de plus (`?ns=&ew=`) pour que la situation reste partageable — c'est le
-  principe déjà en place sur ces deux pages.
+- **Le score voyage depuis la donne.** `db.deal_match_context(game)` rend le
+  cumul d'**avant** la donne — recalculé sur `games.score_ns/ew` (v16), et non
+  `matches.points_ns/ew` qui ne porte que le total de la partie. `replay_loaded`
+  l'embarque, Rejouer l'affiche (bandeau `.match-bar`, lien vers la feuille de
+  marque) et le pousse dans les deux liens « Analyser cette … ».
+- **`?s=<ns>-<ew>`, dans le repère de la page qui le reçoit.** La page annonces
+  assied le siège analysé en Sud, donc Rejouer y échange les deux nombres pour
+  un siège Est-Ouest ; `/analyse/jeu` dessine les sièges physiques et les reçoit
+  tels quels. La rotation est faite une seule fois, à la fabrication du lien —
+  même principe que `rooms.rotate_state` à la diffusion. Le CFN, lui, n'a pas
+  bougé : lui ajouter une section aurait touché un format partagé avec
+  `Env.to_cfn` pour une valeur qui n'appartient pas à la donne.
+- **Le score entre dans le calcul, pas seulement à l'écran** : `bid_eval` et
+  `analysis._analyze_sync` appellent `set_match_scores`, et le WASM a gagné
+  `evaluate_at_score` (il codait `0, 0` en dur — c'est le chemin **par défaut**
+  de la page annonces, donc le corriger côté serveur seul n'aurait rien changé
+  pour personne). Il entre aussi dans la clé des mains enregistrées.
+- **`ANALYSIS_VERSION` 5 → 6, sans jeter le cache des donnes à 0-0.** Les deux
+  versions calculent alors le même blob (`_is_fresh` a l'exception, à retirer au
+  prochain bump), sinon le site aurait re-solvé toutes ses donnes isolées — son
+  cas par défaut — pour un résultat identique. `_DD_COMPATIBLE_VERSIONS` dit la
+  même chose pour les valeurs DD du « vrai monde ».
+- **Une partie en cours ne dit son score qu'à son propriétaire.** Une donne est
+  publique et son identifiant fait quatre caractères ; sans ce filtre, Rejouer
+  donnerait le score en direct d'une table où l'on joue encore. Même règle que
+  `get_match`, servi seulement une fois la partie close.
+
+Ce qui **n'a pas** été fait :
+
+- **Le score n'est pas saisissable** sur `/analyse/annonces` : il vient de la
+  partie d'origine ou vaut 0-0. Poser « et à 1900-200, j'annonce quoi ? » sur
+  une main tapée à la main demande un champ, donc une décision de plus sur ce
+  qu'il advient de la « vraie donne » et des onglets quand on le change.
+- **`/analyse/jeu` l'affiche sans le consommer.** C'est le bidder qui est
+  score-aware, pas le solveur ni DouDou50, et les mondes viennent de playgen,
+  qui tokenise l'enchère et non le score : aucun chiffre du tableau ne bouge.
+  Le bandeau situe la position, rien de plus. Rendre le *jeu* sensible au score
+  de partie est un autre sujet — c'est le niveau 3 de
+  [classement_et_scoring.md](classement_et_scoring.md) §3.3, et il demande une
+  table d'équité de match.
 
 ### 4.2 Le « vrai monde » sur la page annonces — FAIT (2026-08-02) par le chemin Rejouer
 

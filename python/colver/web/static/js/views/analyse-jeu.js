@@ -34,6 +34,7 @@ const AVIS = [
 const TEMPLATE = `
 <div id="aj-wrap">
     <a id="aj-back" class="analyse-back hidden" href="#"></a>
+    <div id="aj-match" class="match-bar hidden"></div>
     <div id="aj-import" class="prob-box">
         <div class="annonces-title">Analyse du jeu de la carte</div>
         <div class="aj-import-row">
@@ -121,6 +122,32 @@ let pending = null;
 // Partie d'où l'on vient, quand on arrive depuis Rejouer. Conservée à travers
 // les réécritures d'URL — cf. syncUrl.
 let backGame = null;
+// Score de partie d'avant la donne, transmis par Rejouer (`?s=<ns>-<ew>`, repère
+// physique — cette page dessine les sièges tels quels). Affiché, pas consommé :
+// c'est le *bidder* qui est score-aware, pas le solveur DD ni DouDou50, et les
+// mondes viennent de playgen, qui tokenise l'enchère et non le score. Il situe
+// donc la position sans changer un seul chiffre du tableau.
+let matchScores = [0, 0];
+
+function hasMatchScore() {
+    return matchScores[0] > 0 || matchScores[1] > 0;
+}
+
+function renderMatchScore() {
+    const el = document.getElementById('aj-match');
+    if (!el) return;
+    if (!hasMatchScore()) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    el.innerHTML =
+        `<span class="match-bar-label">Score de partie</span>` +
+        `<span class="match-bar-score"><span class="team-ns">N-S ${matchScores[0]}</span>` +
+        ` – <span class="team-ew">E-O ${matchScores[1]}</span>` +
+        `<span class="match-bar-when"> avant la donne</span></span>`;
+    el.classList.remove('hidden');
+}
 
 function currentReq() { return `aj-${reqId}`; }
 
@@ -129,6 +156,7 @@ function syncUrl(cfn, idx) {
     // Partie d'origine : ne décrit pas la position, mais l'effacer priverait
     // l'URL de son chemin de retour au premier changement de coup.
     if (backGame) q.set('from', backGame);
+    if (hasMatchScore()) q.set('s', `${matchScores[0]}-${matchScores[1]}`);
     history.replaceState(null, '', `${window.location.pathname}?${q}`);
 }
 
@@ -465,6 +493,7 @@ export function mount(container) {
     reqId = 0;
     position = null; truth = null; opinions = null; rows = null;
     progress = null; worldsSource = null; pending = null; backGame = null;
+    matchScores = [0, 0];
 
     onOpen(flushPending);
     onMessage('card_analysis_position', onPosition);
@@ -491,7 +520,10 @@ export function mount(container) {
     // navigateur, donc marche aussi sur un lien partagé ou un signet — là où le
     // bouton Retour ramènerait ailleurs, voire hors du site.
     backGame = params.get('from');
+    const sm = /^(\d{1,4})-(\d{1,4})$/.exec((params.get('s') || '').trim());
+    matchScores = sm ? [Number(sm[1]), Number(sm[2])] : [0, 0];
     renderBackLink('aj-back', backGame, params.get('i'));
+    renderMatchScore();
 
     if (cfn) {
         document.getElementById('aj-cfn').value = cfn;
@@ -511,4 +543,5 @@ export function unmount() {
     reqId += 1;  // les messages en vol deviennent périmés
     position = null; truth = null; opinions = null; rows = null; pending = null;
     backGame = null;
+    matchScores = [0, 0];
 }

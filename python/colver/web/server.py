@@ -891,6 +891,28 @@ def _doudou_accumulate(cells, stats, dd):
             stats["opp_overbid"] += 1
 
 
+def _client_match_scores(data):
+    """Score de partie envoyé par le client → `[nous, eux]`, borné.
+
+    La page annonces assied toujours le siège analysé en Sud, donc « nous » y
+    est Nord-Sud : le repère est celui de la page, la rotation ayant été faite
+    une fois pour toutes au moment de fabriquer le lien (cf. `replay.js`, même
+    principe que `rooms.rotate_state` à la diffusion).
+
+    Borné parce que la valeur vient de l'URL : une observation *score-aware*
+    normalise sur la cible, un score aberrant n'a pas à traverser jusqu'au
+    réseau. `[0, 0]` — le cas par défaut du site — est aussi ce que le réseau
+    voyait avant que ce chemin existe.
+    """
+    raw = data.get("scores")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return [0, 0]
+    try:
+        return [max(0, min(5000, int(raw[0]))), max(0, min(5000, int(raw[1])))]
+    except (TypeError, ValueError):
+        return [0, 0]
+
+
 async def _run_annonces_sim(ws: WebSocket, data: dict):
     """Oracle DD + Dédé simulation, runs as a background task."""
     import time as _time
@@ -2137,11 +2159,26 @@ async def _websocket_session(ws: WebSocket):
                 if ws_user is not None and game_data.get("match_id"):
                     resume = await db.open_match_summary(
                         game_data["match_id"], ws_user["id"])
+                # Où en était la partie quand cette donne s'est jouée. Le score
+                # ne fait pas que situer la donne : il change ce que bid v6
+                # annonce, donc il voyage jusqu'aux pages d'analyse. Une partie
+                # **close** se lit comme une donne se lit (`get_match` est déjà
+                # public dans ce cas) ; une partie en cours ne le dit qu'à son
+                # propriétaire, sans quoi un identifiant de donne à quatre
+                # caractères donnerait le score en direct d'une table où l'on
+                # joue encore.
+                match_ctx = await db.deal_match_context(game_data)
+                if match_ctx is not None:
+                    owner = match_ctx.pop("owner_id")
+                    if not match_ctx["is_complete"] and (
+                            ws_user is None or owner != ws_user["id"]):
+                        match_ctx = None
                 await wsend({
                     "type": "replay_loaded",
                     "state": initial_state,
                     "game_id": game_id,
                     "resume": resume,
+                    "match": match_ctx,
                     "mode": game_data["mode"],
                     "agents": game_data["agents"],
                     "seat_names": await db.game_seat_names(game_data),
@@ -2260,6 +2297,12 @@ async def _websocket_session(ws: WebSocket):
                     dealer = (seat - 1 - n_prior + 32) % 4
                     env = _colver_pkg.Env.deal_with_hands(dealer, hands)
                     env.load_bid_model(BID_MODEL_PATH)
+                    # Bid v6 lit le score de partie (obs 110/113/117). Sans cet
+                    # appel il observait toujours 0-0, donc la page répondait à
+                    # « que ferais-tu en début de partie ? » quelle que soit la
+                    # donne analysée.
+                    bid_scores = _client_match_scores(data)
+                    env.set_match_scores(bid_scores[0], bid_scores[1])
                     analyst = None
                     if PLAYGEN_MODEL_PATH:
                         try:
@@ -2286,6 +2329,10 @@ async def _websocket_session(ws: WebSocket):
                         "q_values": [[int(a), round(float(q), 3)] for a, q in result["q_values"]],
                         "best_action": int(result["best_action"]),
                         "playgen_policy": playgen_policy,
+                        # Renvoyé pour que la page dise sous quel score ces
+                        # Q ont été calculés : deux réponses différentes sur la
+                        # même main ne s'expliquent pas autrement.
+                        "scores": bid_scores,
                     })
                 except Exception as e:
                     await ws.send_json({"type": "bid_eval_result", "error": str(e)})

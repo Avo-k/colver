@@ -34,6 +34,7 @@ const TEMPLATE = `
             <span id="replay-score-ew">Est-Ouest : 0</span>
             <button id="replay-report-btn" class="report-btn hidden" title="Signaler un bug">Bug</button>
         </div>
+        <div id="replay-match-bar" class="match-bar hidden"></div>
         <div id="replay-cfn" class="cfn-box hidden" title="Cliquer pour copier"></div>
 
         <div class="seats">
@@ -110,6 +111,11 @@ let _agentsDone = 0;         // cards reviewed so far (streamed, in play order)
 let _agentsTotal = 0;        // cards the review will cover
 let _pendingJumpIdx = null;  // coup demandé par l'URL, appliqué au chargement
 let _currentGameId = null;   // guards late answers from a previously-open game
+// Où en était la partie quand cette donne s'est jouée (`replay_loaded.match`),
+// ou null pour une donne isolée — le cas par défaut du site. `before` est le
+// cumul d'avant la donne : c'est celui-là qui a compté au moment d'annoncer,
+// pas le total final.
+let _match = null;
 
 // The three reference bots, in the order they are shown under a played card.
 const REVIEW_BOTS = [
@@ -130,6 +136,23 @@ function pct(p) {
     return `${(p * 100).toFixed(p >= 0.1 ? 0 : 1)} %`;
 }
 
+// Score de partie d'avant la donne, **dans le repère de la page qui le reçoit**
+// — le paramètre `s` vaut toujours « Nord-Sud − Est-Ouest » chez son
+// destinataire. La page annonces assied le siège analysé en Sud, donc un siège
+// Est-Ouest voit ses deux nombres échangés ici ; /analyse/jeu dessine les
+// sièges physiques et les reçoit tels quels. La rotation se fait une seule
+// fois, à la fabrication du lien — même principe que `rooms.rotate_state` à la
+// diffusion.
+//
+// Rendu vide hors partie : un `s` absent vaut 0-0, et 0-0 est alors la vérité.
+function matchScoreParam(seat) {
+    if (!_match) return '';
+    const [ns, ew] = _match.before;
+    if (!ns && !ew) return '';
+    const rot = (seat !== null && seat % 2 === 1) ? [ew, ns] : [ns, ew];
+    return `&s=${rot[0]}-${rot[1]}`;
+}
+
 // URL de la page annonces pré-remplie avec la main du siège qui parle et
 // l'enchère jusqu'à ce coup (exclu). `from`/`i` portent le chemin du retour.
 // Retourne null si le coup n'est pas une annonce analysable.
@@ -147,6 +170,7 @@ function bidAnalysisUrl(idx) {
     let url = `/analyse/annonces?hand=${hand.map(cardCode).join(',')}`;
     if (history.length) url += `&history=${history.join(',')}`;
     if (_currentGameId) url += `&from=${encodeURIComponent(_currentGameId)}&i=${idx}`;
+    url += matchScoreParam(data.move.player);
     return url;
 }
 
@@ -155,6 +179,8 @@ function cardAnalysisUrl(idx) {
     if (!_gameCfn) return null;
     let url = `/analyse/jeu?cfn=${encodeURIComponent(_gameCfn)}&i=${idx}`;
     if (_currentGameId) url += `&from=${encodeURIComponent(_currentGameId)}`;
+    // Sièges physiques sur cette page-là : aucune rotation.
+    url += matchScoreParam(null);
     return url;
 }
 
@@ -579,10 +605,52 @@ function handleReplayLoaded(data) {
     }
     syncReplayUrl();
 
+    _match = data.match || null;
+    renderMatchBar();
     renderResumeLink(data.resume);
 
     loadAnalysis(data.game_id);
     requestAgentReview(data.game_id);
+}
+
+// « Donne 7 · N-S 940 – E-O 620 avant la donne · objectif 2000 ».
+//
+// Une donne ne se lit pas pareil selon l'endroit de la partie où elle tombe :
+// à 1900-200 on n'annonce pas comme à 0-0, et bid v6 le sait — c'est le même
+// score qui part dans les liens d'analyse. Le cumul montré est celui d'**avant**
+// la donne, seul état qui existait au moment d'annoncer ; ce qu'elle a marqué
+// vient après, en incrément.
+//
+// Le repère reste Nord-Sud / Est-Ouest : un lien partagé n'a pas de « nous ».
+function renderMatchBar() {
+    const el = document.getElementById('replay-match-bar');
+    if (!el) return;
+    if (!_match) {
+        el.classList.add('hidden');
+        el.innerHTML = '';
+        return;
+    }
+    const [ns, ew] = _match.before;
+    const parts = [];
+    parts.push(`<a class="match-bar-link" href="/analyse/partie?id=${encodeURIComponent(_match.id)}"` +
+        ` title="Voir la feuille de marque">Donne ${_match.deal_no ?? '?'}/${_match.deals}</a>`);
+    parts.push(`<span class="match-bar-score">` +
+        `<span class="team-ns">N-S ${ns}</span> – <span class="team-ew">E-O ${ew}</span>` +
+        `<span class="match-bar-when"> avant la donne</span></span>`);
+    if (_match.score) {
+        const sign = (v) => (v > 0 ? `+${v}` : `${v}`);
+        parts.push(`<span class="match-bar-delta">` +
+            `donne : ${sign(_match.score[0])} / ${sign(_match.score[1])}</span>`);
+    }
+    parts.push(`<span class="match-bar-target">objectif ${_match.target}</span>`);
+    // Un cumul amputé se dit : `integrity.backfill_scores` n'a pas encore
+    // rattrapé ces donnes-là, donc les nombres ci-dessus sont trop bas.
+    if (_match.unscored_before) {
+        parts.push(`<span class="match-bar-warn" title="Ces donnes n'ont pas encore de score marqué en base">` +
+            `${_match.unscored_before} donne${_match.unscored_before > 1 ? 's' : ''} non comptée${_match.unscored_before > 1 ? 's' : ''}</span>`);
+    }
+    el.innerHTML = parts.join('');
+    el.classList.remove('hidden');
 }
 
 // Chemin de retour vers la partie en cours, quand la donne analysée en est une
@@ -825,4 +893,5 @@ export function unmount() {
     _wantedGameId = null;
     _pendingJumpIdx = null;
     _gameCfn = null;
+    _match = null;
 }

@@ -1101,6 +1101,77 @@ async def get_match(match_id):
     return match
 
 
+async def deal_match_context(game):
+    """Où en était la partie **avant** que cette donne se joue.
+
+    Le score cumulé n'est pas qu'un affichage : bid v6 lit une observation
+    *score-aware*, donc la même main s'annonce autrement à 900-200 qu'à 0-0
+    (cf. `match_state`). Une donne relue hors de son score est donc analysée
+    sous une autre question que celle que le joueur s'est posée à la table.
+
+    `before` est le cumul des donnes **antérieures** — c'est lui qui a compté
+    au moment d'annoncer, pas le total final. Il se recalcule depuis
+    `games.score_ns/ew` (migration v16) : `matches.points_ns/ew` ne porte que
+    le total de la partie entière, sans découpage par donne.
+
+    Rend None hors partie : `target = 0` ne crée pas de ligne `matches`, et
+    c'est le cas par défaut du site.
+
+    Le repère est physique (`[NS, EW]`), comme partout côté serveur. Rendre
+    `owner_id` laisse l'appelant appliquer la règle de diffusion : une partie
+    close se lit comme une donne se lit, une partie **en cours** dirait le
+    score en direct d'une table où l'on joue encore (même règle que
+    `get_match`, servi seulement une fois la partie finie).
+    """
+    match_id = game.get("match_id")
+    if not match_id:
+        return None
+    db = await get_db()
+    rows = await db.execute_fetchall(
+        "SELECT target, user_id, is_complete, abandoned, points_ns, points_ew "
+        "FROM matches WHERE id = ?", (match_id,))
+    if not rows:
+        return None
+    target, owner_id, is_complete, abandoned, pts_ns, pts_ew = rows[0]
+    if not target:
+        return None
+
+    deal_no = game.get("deal_no")
+    deals = await db.execute_fetchall(
+        "SELECT deal_no, score_ns, score_ew FROM games "
+        "WHERE match_id = ? AND is_complete = 1 AND invalid = 0 "
+        "ORDER BY deal_no", (match_id,))
+
+    before, unscored = [0, 0], 0
+    for d_no, s_ns, s_ew in deals:
+        if deal_no is None or d_no is None or d_no >= deal_no:
+            continue
+        if s_ns is None:
+            # Donne pas encore rattrapée par `integrity.backfill_scores` : le
+            # cumul est alors incomplet, et il vaut mieux le dire que servir un
+            # chiffre trop bas sans le signaler.
+            unscored += 1
+            continue
+        before = [before[0] + s_ns, before[1] + s_ew]
+
+    score = ([game["score_ns"], game["score_ew"]]
+             if game.get("score_ns") is not None else None)
+    return {
+        "id": match_id,
+        "target": int(target),
+        "deal_no": deal_no,
+        "deals": len(deals),
+        "before": before,
+        "after": [before[0] + score[0], before[1] + score[1]] if score else None,
+        "score": score,
+        "unscored_before": unscored,
+        "is_complete": bool(is_complete),
+        "abandoned": bool(abandoned),
+        "final": [pts_ns, pts_ew],
+        "owner_id": owner_id,
+    }
+
+
 async def mark_game_checked(game_id, reason=None):
     """Consigner le verdict d'`integrity.check_deal` sur une donne.
 

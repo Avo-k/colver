@@ -11,12 +11,23 @@ export class WasmBidNet {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Evaluate a hand with prior bid actions.
-     * `hand`: Uint8Array of 8 card indices (0-31)
-     * `prior_actions`: Uint8Array of prior bid action indices
-     * Returns JSON string: {"q_values":[[action,q],...], "best_action":N}
+     * Evaluate a hand with prior bid actions, at a match score of 0-0.
+     *
+     * Kept as the zero-score shorthand for `evaluate_at_score`: a lone deal is
+     * the site's default, and 0-0 is the truth there rather than a fallback.
      */
     evaluate(hand: Uint8Array, prior_actions: Uint8Array): string;
+    /**
+     * Evaluate a hand with prior bid actions at a given match score.
+     * `hand`: Uint8Array of 8 card indices (0-31)
+     * `prior_actions`: Uint8Array of prior bid action indices
+     * `score_ns` / `score_ew`: cumulative match score, seat 2 (the evaluated
+     * hand) being North-South. Bid v6 reads it (obs 110/113/117): the same
+     * hand is bid differently at 900-200 than at 0-0. Ignored by a 108-dim
+     * net, which has no room for it.
+     * Returns JSON string: {"q_values":[[action,q],...], "best_action":N}
+     */
+    evaluate_at_score(hand: Uint8Array, prior_actions: Uint8Array, score_ns: number, score_ew: number): string;
     /**
      * Construct from raw weight bytes (little-endian f32).
      */
@@ -45,6 +56,7 @@ export interface InitOutput {
     readonly __wbg_wasmbidnet_free: (a: number, b: number) => void;
     readonly __wbg_wasmoracle_free: (a: number, b: number) => void;
     readonly wasmbidnet_evaluate: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmbidnet_evaluate_at_score: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly wasmbidnet_new: (a: number, b: number) => [number, number, number];
     readonly wasmoracle_new: () => number;
     readonly wasmoracle_single_sim: (a: number, b: number, c: number) => [number, number, number, number];

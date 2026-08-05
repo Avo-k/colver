@@ -261,6 +261,9 @@ struct Env {
     dmc_net: Option<DmcNet>,
     // Bid Q-network (loaded lazily)
     bid_net: Option<BidNet>,
+    // Cumulative match score [NS, EW] that score-aware bid nets condition on.
+    // Survives `reset` / `redeal_with_hands`: it belongs to the match, not the deal.
+    match_scores: [i32; 2],
 }
 
 #[pymethods]
@@ -280,7 +283,19 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            match_scores: [0, 0],
         }
+    }
+
+    /// Cumulative match score `[NS, EW]` fed to score-aware bid nets (obs 110/113/117).
+    ///
+    /// Without this, `action_bid_nn` always observed 0-0 — so every measurement made
+    /// through `Env` described v6 at the start of a match only, and the score half of
+    /// its observation was untestable from Python. `Agent.set_scores` is the equivalent
+    /// on the production path; this one keeps the Q-values, which `Agent.decide` does
+    /// not return for bidding.
+    fn set_match_scores(&mut self, ns: i32, ew: i32) {
+        self.match_scores = [ns, ew];
     }
 
     /// Reset the environment with a new random deal.
@@ -434,7 +449,7 @@ impl Env {
             return 0;
         }
         if let Some(ref mut net) = self.bid_net {
-            let obs = build_bid_obs(net, &self.state, &self.bid_history);
+            let obs = build_bid_obs(net, &self.state, &self.bid_history, self.match_scores);
             let legal = self.state.legal_actions();
             let (action, _) = net.best_action(&obs, legal);
             action
@@ -733,6 +748,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            match_scores: [0, 0],
         })
     }
 
@@ -1156,7 +1172,7 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_bid_model() first")
         })?;
 
-        let obs = build_bid_obs(net, &self.state, &self.bid_history);
+        let obs = build_bid_obs(net, &self.state, &self.bid_history, self.match_scores);
         let legal = self.state.legal_actions();
         let (best_action, q_values) = net.best_action(&obs, legal);
 
@@ -1233,6 +1249,7 @@ impl Env {
             bid_history,
             dmc_net: None,
             bid_net: None,
+            match_scores: [0, 0],
         })
     }
 
@@ -1255,24 +1272,30 @@ fn build_bid_obs(
     net: &BidNet,
     state: &colver_core::state::GameState,
     history: &[(u8, u8)],
+    match_scores: [i32; 2],
 ) -> Vec<f32> {
     use colver_core::bid_obs;
     let obs_dim = net.obs_dim();
+    // The score tail is written from the *speaking seat's* point of view, so it has to
+    // be re-oriented per decision — the same match score is "my 1500" for one seat and
+    // "their 1500" for the next.
+    let my_team = (state.current_player() & 1) as usize;
+    let (my_score, opp_score) = (match_scores[my_team], match_scores[1 - my_team]);
     match obs_dim {
         bid_obs::BID_OBS_DIM => bid_obs::make_bid_observation(state, history),
         bid_obs::BID_OBS_DIM_SCORE_AWARE => {
             let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE];
-            bid_obs::write_bid_observation_score_aware(&mut buf, 0, state, history, 0, 0);
+            bid_obs::write_bid_observation_score_aware(&mut buf, 0, state, history, my_score, opp_score);
             buf
         }
         bid_obs::BID_OBS_DIM_SCORE_AWARE_V2 => {
             let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V2];
-            bid_obs::write_bid_observation_score_aware_v2(&mut buf, 0, state, history, 0, 0);
+            bid_obs::write_bid_observation_score_aware_v2(&mut buf, 0, state, history, my_score, opp_score);
             buf
         }
         bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 => {
             let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V3];
-            bid_obs::write_bid_observation_score_aware_v3(&mut buf, 0, state, history, 0, 0);
+            bid_obs::write_bid_observation_score_aware_v3(&mut buf, 0, state, history, my_score, opp_score);
             buf
         }
         other => panic!(

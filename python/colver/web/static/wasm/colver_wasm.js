@@ -18,10 +18,10 @@ export class WasmBidNet {
         wasm.__wbg_wasmbidnet_free(ptr, 0);
     }
     /**
-     * Evaluate a hand with prior bid actions.
-     * `hand`: Uint8Array of 8 card indices (0-31)
-     * `prior_actions`: Uint8Array of prior bid action indices
-     * Returns JSON string: {"q_values":[[action,q],...], "best_action":N}
+     * Evaluate a hand with prior bid actions, at a match score of 0-0.
+     *
+     * Kept as the zero-score shorthand for `evaluate_at_score`: a lone deal is
+     * the site's default, and 0-0 is the truth there rather than a fallback.
      * @param {Uint8Array} hand
      * @param {Uint8Array} prior_actions
      * @returns {string}
@@ -35,6 +35,43 @@ export class WasmBidNet {
             const ptr1 = passArray8ToWasm0(prior_actions, wasm.__wbindgen_malloc);
             const len1 = WASM_VECTOR_LEN;
             const ret = wasm.wasmbidnet_evaluate(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * Evaluate a hand with prior bid actions at a given match score.
+     * `hand`: Uint8Array of 8 card indices (0-31)
+     * `prior_actions`: Uint8Array of prior bid action indices
+     * `score_ns` / `score_ew`: cumulative match score, seat 2 (the evaluated
+     * hand) being North-South. Bid v6 reads it (obs 110/113/117): the same
+     * hand is bid differently at 900-200 than at 0-0. Ignored by a 108-dim
+     * net, which has no room for it.
+     * Returns JSON string: {"q_values":[[action,q],...], "best_action":N}
+     * @param {Uint8Array} hand
+     * @param {Uint8Array} prior_actions
+     * @param {number} score_ns
+     * @param {number} score_ew
+     * @returns {string}
+     */
+    evaluate_at_score(hand, prior_actions, score_ns, score_ew) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passArray8ToWasm0(hand, wasm.__wbindgen_malloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray8ToWasm0(prior_actions, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmbidnet_evaluate_at_score(this.__wbg_ptr, ptr0, len0, ptr1, len1, score_ns, score_ew);
             var ptr3 = ret[0];
             var len3 = ret[1];
             if (ret[3]) {

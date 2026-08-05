@@ -29,7 +29,13 @@ logger = logging.getLogger(__name__)
 # v5 : invalide tout cache antérieur au filtre `get_game` (2026-08-01) — une
 # analyse calculée en pleine donne sur une donne terminée depuis est partielle,
 # indiscernable d'une complète, et la migration v9 ne peut pas l'identifier.
-ANALYSIS_VERSION = 5
+# v6 : l'avis de bid v6 est calculé au score de partie de la donne, plus à 0-0.
+ANALYSIS_VERSION = 6
+
+# Versions dont les valeurs DD restent bonnes : v5 → v6 n'a changé que le score
+# passé au bidder. À vider au prochain bump qui touche au barème ou aux coups
+# légaux — là, tout ce qui précède est périmé.
+_DD_COMPATIBLE_VERSIONS = (5, 6)
 
 # Cost thresholds (card points) -> category label
 CATEGORIES = [
@@ -96,9 +102,19 @@ def _playgen_analysts(env, model_path):
         return None
 
 
-def _analyze_sync(game, bid_model_path=None, playgen_model_path=None):
-    """Replay the stored actions, solving each play decision. CPU-bound."""
+def _analyze_sync(game, bid_model_path=None, playgen_model_path=None,
+                  match_scores=None):
+    """Replay the stored actions, solving each play decision. CPU-bound.
+
+    `match_scores` est le cumul `[NS, EW]` **avant** cette donne. Il ne change
+    que l'avis de bid v6, dont l'observation est score-aware : la même main
+    s'annonce autrement à 900-200 qu'à 0-0. Ni le solveur DD ni la tête
+    d'enchère de playgen ne le lisent — le premier ne connaît que les cartes,
+    la seconde n'a été entraînée que sur des donnes isolées.
+    """
     env = colver.Env.deal_with_hands(game["dealer"], game["hands"])
+    scores = [int(match_scores[0]), int(match_scores[1])] if match_scores else [0, 0]
+    env.set_match_scores(scores[0], scores[1])
 
     # Oracle annonces: DD solve of the full deal, one solve per trump suit
     oracle_bids = None
@@ -187,6 +203,7 @@ def _analyze_sync(game, bid_model_path=None, playgen_model_path=None):
     summary = _summarize(moves)
     return {
         "version": ANALYSIS_VERSION,
+        "match_scores": scores,
         "playgen": had_playgen,
         "moves": moves,
         "bids": bids,
@@ -216,12 +233,23 @@ def _summarize(moves):
     return {"players": players}
 
 
-def _is_fresh(cached, playgen_model_path):
+def _is_fresh(cached, playgen_model_path, match_scores=None):
     """A cached row is stale on a version bump, and also when it was computed
     without the playgen model while that model is now available — otherwise a
     single failed load would leave the game without a playgen annonce forever.
+
+    **Une ligne v5 reste valable pour une donne jouée à 0-0.** La seule
+    différence entre v5 et v6 est le score de partie passé à bid v6, et 0-0 est
+    exactement ce que v5 supposait — donc les deux calculs rendent le même blob.
+    Ça couvre le cas par défaut du site (`target = 0`, aucune partie) et la
+    première donne de toute partie : sans cette exception, le bump jetterait des
+    milliers de solves DD pleine donne pour les recalculer à l'identique.
+    **À supprimer au prochain bump**, où l'équivalence ne tiendra plus.
     """
-    if cached is None or cached.get("version") != ANALYSIS_VERSION:
+    if cached is None:
+        return False
+    version = cached.get("version")
+    if version != ANALYSIS_VERSION and not (version == 5 and not any(match_scores or ())):
         return False
     return bool(cached.get("playgen")) or not playgen_model_path
 
@@ -268,8 +296,10 @@ async def true_world(game_id, action_idx):
     cached = await db.get_analysis(game_id)
     bids = cached.get("oracle_bids") if cached else None
     # Une version antérieure a pu être calculée sous d'autres règles de jeu :
-    # un barème ou un coup légal qui change périme les valeurs DD.
-    if not bids or cached.get("version") != ANALYSIS_VERSION:
+    # un barème ou un coup légal qui change périme les valeurs DD. v5 fait
+    # exception — le passage à v6 n'a touché que le score lu par le bidder, les
+    # valeurs DD sont les mêmes.
+    if not bids or cached.get("version") not in _DD_COMPATIBLE_VERSIONS:
         try:
             bids = await asyncio.to_thread(
                 lambda: _oracle_bids(
@@ -290,26 +320,45 @@ async def true_world(game_id, action_idx):
     }, None
 
 
-async def get_or_compute(game_id, bid_model_path=None, playgen_model_path=None):
-    """Return the cached analysis for a game, computing it on first request."""
-    cached = await db.get_analysis(game_id)
-    if _is_fresh(cached, playgen_model_path):
-        return cached, None
+async def match_scores_before(game):
+    """Le cumul `[NS, EW]` d'avant cette donne, ou 0-0 hors partie.
 
+    Ce que bid v6 voyait au moment d'annoncer. Hors partie il n'y a rien à lire
+    et 0-0 est la vérité, pas un défaut de repli.
+    """
+    ctx = await db.deal_match_context(game)
+    return list(ctx["before"]) if ctx else [0, 0]
+
+
+async def get_or_compute(game_id, bid_model_path=None, playgen_model_path=None):
+    """Return the cached analysis for a game, computing it on first request.
+
+    La donne est relue **avant** de statuer sur le cache : la fraîcheur dépend
+    désormais du score de partie d'avant la donne, qui n'est pas dans le blob
+    en cache. Ça coûte un SELECT indexé de plus sur un cache chaud, et ça ferme
+    au passage le cas d'une donne re-scorée après coup par
+    `integrity.backfill_scores` — son analyse avait alors été calculée sur un
+    cumul incomplet.
+    """
     game = await db.get_game(game_id)
     if game is None:
         return None, "Partie introuvable"
     if not game["actions"]:
         return None, "Aucune action à analyser"
+    scores = await match_scores_before(game)
+
+    cached = await db.get_analysis(game_id)
+    if _is_fresh(cached, playgen_model_path, scores):
+        return cached, None
 
     lock = _locks.setdefault(game_id, asyncio.Lock())
     async with lock:
         # Another request may have computed it while we waited on the lock
         cached = await db.get_analysis(game_id)
-        if _is_fresh(cached, playgen_model_path):
+        if _is_fresh(cached, playgen_model_path, scores):
             return cached, None
         analysis = await asyncio.to_thread(
-            _analyze_sync, game, bid_model_path, playgen_model_path)
+            _analyze_sync, game, bid_model_path, playgen_model_path, scores)
         await db.save_analysis(game_id, json.dumps(analysis))
     _locks.pop(game_id, None)
     return analysis, None

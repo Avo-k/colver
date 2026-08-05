@@ -72,14 +72,20 @@ class TestTrueWorld:
         assert tw["pts"] == [s[seat % 2] for s in faux]
 
     async def test_un_cache_d_une_autre_version_est_recalcule(self, clean_db, played_deal):
-        """Un barème ou un coup légal qui change périme les valeurs DD."""
+        """Un barème ou un coup légal qui change périme les valeurs DD.
+
+        La version périmée se prend **sous** `_DD_COMPATIBLE_VERSIONS` et non à
+        `ANALYSIS_VERSION - 1` : toutes les versions ne périment pas les valeurs
+        DD. v5 → v6 n'a changé que le score lu par le bidder, donc v5 garde ses
+        solves — c'est le test suivant qui l'épingle.
+        """
         hands, actions = played_deal(seed=2)
         game_id = await _store(hands, actions)
         idx = _first_bid_idx(actions)
 
         faux = [[10, 20], [30, 40], [50, 60], [70, 80]]
         await db.save_analysis(game_id, json.dumps({
-            "version": analysis.ANALYSIS_VERSION - 1,
+            "version": min(analysis._DD_COMPATIBLE_VERSIONS) - 1,
             "oracle_bids": {"suits": faux,
                             "best": [{"suit": 0, "pts": 0, "value": 0}] * 2},
         }))
@@ -87,6 +93,25 @@ class TestTrueWorld:
         tw, err = await analysis.true_world(game_id, idx)
         assert err is None
         assert tw["pts"] != [s[actions[idx]["player"] % 2] for s in faux]
+
+    async def test_une_version_dd_compatible_garde_ses_solves(self, clean_db, played_deal):
+        """v5 a été calculée sous le même barème et les mêmes coups légaux que
+        v6 : re-solver ses quatre couleurs rendrait exactement les mêmes
+        nombres, au prix de ~300 ms à chaque ouverture."""
+        hands, actions = played_deal(seed=2)
+        game_id = await _store(hands, actions)
+        idx = _first_bid_idx(actions)
+
+        faux = [[10, 20], [30, 40], [50, 60], [70, 80]]
+        await db.save_analysis(game_id, json.dumps({
+            "version": 5,
+            "oracle_bids": {"suits": faux,
+                            "best": [{"suit": 0, "pts": 0, "value": 0}] * 2},
+        }))
+
+        tw, err = await analysis.true_world(game_id, idx)
+        assert err is None
+        assert tw["pts"] == [s[actions[idx]["player"] % 2] for s in faux]
 
     async def test_refuse_un_coup_qui_n_est_pas_une_annonce(self, clean_db, played_deal):
         hands, actions = played_deal(seed=3)
