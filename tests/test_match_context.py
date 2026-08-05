@@ -129,36 +129,40 @@ class TestFraicheurDuCache:
 
     v6 acceptait encore une ligne v5 pour une donne jouée à 0-0 : les deux
     versions y calculaient le même blob, et la garder évitait des milliers de
-    solves inutiles. v7 lit le coût des cartes en score de donne, que ni v5 ni
-    v6 n'ont jamais écrit — **aucune ligne antérieure n'est récupérable**, et
-    c'est ce que ces tests épinglent.
+    solves inutiles. v7 lit le coût des cartes en score de donne et v8 y ajoute
+    la courbe — **aucune ligne antérieure n'est récupérable**, et c'est ce que
+    ces tests épinglent.
+
+    Ils lisent `ANALYSIS_VERSION` au lieu de coder un numéro en dur : le seul
+    littéral serait à corriger à chaque bump, et un test qui suit tout seul vaut
+    mieux qu'un test qu'on oublie.
     """
 
-    def test_v7_est_bonne(self):
+    def test_la_version_courante_est_bonne(self):
         cached = {"version": analysis.ANALYSIS_VERSION, "playgen": True}
         assert analysis._is_fresh(cached, None, [940, 620])
         assert analysis._is_fresh(cached, None, [0, 0])
         assert analysis._is_fresh(cached, None, None)
 
-    def test_v5_et_v6_sont_perimees_meme_a_zero_zero(self):
-        for version in (5, 6):
+    def test_toute_version_anterieure_est_perimee(self):
+        """Y compris v5 sur une donne à 0-0, l'exception que v6 s'accordait."""
+        for version in range(4, analysis.ANALYSIS_VERSION):
             cached = {"version": version, "playgen": True}
-            assert not analysis._is_fresh(cached, None, [0, 0])
-            assert not analysis._is_fresh(cached, None, None)
-            assert not analysis._is_fresh(cached, None, [940, 620])
+            assert not analysis._is_fresh(cached, None, [0, 0]), version
+            assert not analysis._is_fresh(cached, None, None), version
+            assert not analysis._is_fresh(cached, None, [940, 620]), version
 
-    def test_une_version_anterieure_reste_perimee(self):
-        assert not analysis._is_fresh({"version": 4, "playgen": True}, None, [0, 0])
-
-    def test_les_valeurs_dd_de_v5_et_v6_restent_bonnes(self):
+    def test_les_valeurs_dd_des_versions_recentes_restent_bonnes(self):
         """Périmé pour le blob n'est pas périmé pour les valeurs DD.
 
-        v7 ne touche ni au barème ni aux coups légaux : il relit autrement le
-        même solve. `true_world` peut donc encore réutiliser l'`oracle_bids`
-        d'une ligne v5 ou v6 au lieu de repayer quatre solves pleine donne.
+        Ni v7 ni v8 ne touchent au barème ou aux coups légaux : elles relisent
+        le même solve, ou en gardent une valeur qui était jetée. `true_world`
+        peut donc encore réutiliser l'`oracle_bids` d'une ligne v5 ou v6 au lieu
+        de repayer quatre solves pleine donne.
         """
-        for version in (5, 6, 7):
+        for version in (5, 6, 7, 8):
             assert version in analysis._DD_COMPATIBLE_VERSIONS
+        assert analysis.ANALYSIS_VERSION in analysis._DD_COMPATIBLE_VERSIONS
 
 
 class TestWebSocket:
@@ -252,3 +256,27 @@ class TestBidEval:
     def test_les_bornes(self):
         assert server._client_match_scores({"scores": [940, 620]}) == [940, 620]
         assert server._client_match_scores({}) == [0, 0]
+
+
+class TestLeBlobRepubliePasUneAutreTable:
+    """`match_scores` doit être le score de **partie**, pas une table DD.
+
+    Une variable de boucle `scores = dict(result["scores"])` masquait le score
+    de partie posé en tête de `_analyze_sync` : le blob sortait avec la table
+    de points cartes de la dernière décision résolue — `{"26": 83, "31": 46}`
+    au lieu de `[1374, 1464]`. Le calcul, lui, restait juste (le
+    `set_match_scores` passe avant la boucle), donc rien ne le signalait, et
+    aucun client ne lit ce champ : c'est exactement le genre de champ qui ment
+    pendant des mois. Trouvé en enquêtant sur la donne `2dzn`.
+    """
+
+    def test_le_score_donne_ressort_intact(self, played_deal):
+        hands, actions = played_deal(seed=3)
+        game = {"dealer": 0, "hands": [list(h) for h in hands], "actions": actions}
+        blob = analysis._analyze_sync(game, None, None, [1374, 1464])
+        assert blob["match_scores"] == [1374, 1464]
+
+    def test_hors_partie_c_est_zero_zero(self, played_deal):
+        hands, actions = played_deal(seed=4)
+        game = {"dealer": 0, "hands": [list(h) for h in hands], "actions": actions}
+        assert analysis._analyze_sync(game, None, None, None)["match_scores"] == [0, 0]
