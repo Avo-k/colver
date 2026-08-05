@@ -559,8 +559,8 @@ pas un binaire qui n'existe pas :
    par thread (un par budget), donc 3× les clients IS-DD sur un sidecar qui plafonne déjà
    — le réglage à 96-160 threads a coûté deux faux départs. Gain refusé au profit de la
    robustesse d'un run de plusieurs jours.
-2. **Pas de `dets_schedule` décroissant.** Même raison : un réglage de plus à valider en
-   pleine nuit sur un binaire neuf. Le 1,24× reste disponible pour la reprise du matin.
+2. **Pas de `dets_schedule` décroissant — et c'est désormais un choix mesuré, pas un
+   report.** Voir « Le calendrier de mondes ne rapporte pas ici » ci-dessous.
 3. **Pas encore de `tail_100k`.** La mesure C (§6) a montré que la strate se filtre sur
    `evaluate_for_trump` sans simuler ; elle se construira à part, quand le corps de la
    couche existera.
@@ -583,6 +583,36 @@ sa 3090 à colver.net pour la journée.
 moxxi câblé dedans rendrait trop facile d'envoyer par mégarde de la charge sur la prod ;
 mesuré une nuit à 1/4 de pondération, elle tient (`no_playgen: 0` sous charge, cf. §9),
 mais c'est une décision à reprendre à chaque lancement, pas un défaut.
+
+### Le calendrier de mondes ne rapporte pas ici (2026-08-05)
+
+`dets_schedule = "40,40,40,30,20,15,15"` vaut **1,24×** sur `gen_games_isdd`
+([isdd_games.md](isdd_games.md)). Transporté ici, il ne vaut presque rien. Deux mesures,
+400 donnes chacune :
+
+| | résultat |
+|---|---|
+| **le prix** — l'étiquette bouge-t-elle ? | **−0,22 ± 0,59 pt** (z = −0,4), soit **0,009×** le bruit d'une étiquette. Contrôle : **100 %** de rangs de préfixe identiques entre les deux bras, donc la comparaison porte bien sur le seul budget de mondes |
+| **le gain** — A/B **alterné**, 4 tours, minimum par bras | plat `329 322 335 321` → 321 s ; calendrier `301 305 327 309` → 301 s ⇒ **1,069×** (médiane 1,060×) |
+
+**Pourquoi le 1,24× ne se transporte pas, et c'est la partie réutilisable.** Le calendrier
+retire **28,6 %** des mondes (280 → 200) et ne gagne que ~6 % de temps, parce qu'il les
+retire là où **un monde coûte le moins cher** : en fin de donne il reste peu de cartes
+cachées, donc peu de pas de décodage. C'est l'asymétrie de
+[« un total égal n'est pas un coût égal »](isdd_games.md) prise dans l'autre sens — un
+**compte** égal de mondes n'est pas un **coût** égal, et couper dans les moins chers ne
+rapporte pas.
+
+**Décision : on ne bascule pas.** 7 h gagnées sur 111 h, contre soit une couche à deux
+régimes, soit jeter les donnes déjà produites. Le calcul ne se retourne à aucun moment du
+run.
+
+⚠️ **Note de méthode.** Une première tentative avait lancé les deux bras **l'un après
+l'autre** et donnait 1,08× — proche du bon chiffre, ce qui est de la chance et ne valide
+pas la méthode : la charge de la machine varie de 20 % ici, plus que l'effet cherché. Le
+chiffre retenu vient de l'alternance. Et les plages se **chevauchent** (un lot du
+calendrier à 327 s dépasse le meilleur lot plat) : l'effet est réel mais petit devant le
+bruit de charge, ce qui est une raison de plus de ne pas réorganiser un run pour lui.
 
 ### L'estimation d'origine, gardée pour mémoire
 

@@ -1,0 +1,28 @@
+# Le joueur qui **étiquette** une couche de scores : identique à `gen_isdd.toml`,
+# sauf l'objectif.
+#
+# `objective = "card_points"` n'est pas un repli, c'est une nécessité de format.
+# Une couche `COLVSC01` est un `[u8; 4]` indexé par le seul atout, donc elle ne peut
+# porter qu'une quantité **indépendante du contrat** ; l'écart de score de donne n'en
+# est pas une. Détail : docs/data_gen/isdd_score_layer_v2.md §3.
+#
+# Corollaire assumé : le *jeu* est aveugle au contrat. Un vrai preneur à 80 sécurise,
+# une vraie défense à 160 cherche la chute ; ici IS-DD maximise ses points des deux
+# côtés. C'est une approximation du style de jeu, pas du barème.
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+
+[play]
+method = "isdd"
+time_ms = 0          # mode compte : `determinizations` mondes exactement
+determinizations = 40
+dets_schedule = "40,40,40,30,20,15,15"
+objective = "card_points"
+parallel = false     # débit, pas latence — cf. l'en-tête de gen_games_isdd.rs
+
+[worlds]
+source = "sidecar"
+fallback = "strict"  # une étiquette à moitié en mondes uniformes n'est pas une étiquette
