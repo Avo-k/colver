@@ -30,6 +30,7 @@ SUP="${LOG%.log}_supervisor.log"
 ARGS=(--pool data/deals/base_5M.bin --offset 0 --count 500000
       --threads 160 --checkpoint 500
       --out data/deals/scores_isdd_v2.sc
+      --games data/training/isdd_games_v2.bin
       --url "http://localhost:8003,http://localhost:8003,http://localhost:8003,http://192.168.1.23:8003")
 
 stamp() { date +'%Y-%m-%d %H:%M:%S'; }
