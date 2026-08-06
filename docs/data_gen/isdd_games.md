@@ -249,6 +249,95 @@ et rien n'est écrit — au lieu d'envoyer silencieusement la moitié des mondes
 dans un trou et de produire un corpus à moitié dégradé. Avec les deux vivants,
 les deux servent (175 lots contre 57 sur un test court).
 
+### Emprunter le GPU de la **prod** : mesuré une fois, ça passe (2026-08-06)
+
+La section précédente dit de ne pas partager le GPU d'un run en cours. La
+question inverse — un run peut-il partager le GPU des **joueurs** ? — a été
+mesurée, et la réponse est oui, avec une marge confortable et un levier connu
+si elle se referme.
+
+Configuration mesurée : un run de 500 000 donnes avec le sidecar de prod en
+quatrième URL, donc **un quart du trafic sur le GPU de moxxi** pendant qu'un
+joueur faisait une partie de trois donnes sur colver.net.
+
+```bash
+./target/release/gen_score_layer --pool data/deals/base_5M.bin \
+  --offset 0 --count 500000 --threads 160 --checkpoint 500 \
+  --out data/deals/scores_isdd_v2.sc --games data/training/isdd_games_v2.bin \
+  --url http://localhost:8003,http://localhost:8003,http://localhost:8003,http://192.168.1.23:8003
+```
+
+**La charge sur le sidecar de prod est massive** — deux ordres de grandeur :
+
+| | témoin (jeu seul) | pendant le run |
+|---|---|---|
+| requêtes/min | 20 | **2 100** (×107) |
+| lanes/min | 3 700 | **84 400** (×23) |
+| attente en file par lot | 0 ms | **45 ms** |
+
+**Ce que Dédé paie est bien plus modeste**, parce que le groupage du sidecar
+amortit : latence côté sidecar (GPU + attente) de la requête de Dédé,
+**93 ms → 193 ms de médiane** (p90 150 → 303, max 417). Soit **×2,1, +100 ms
+par décision**.
+
+**Et le joueur ne voit rien**, parce que `pacing.hold` fait compter la
+recherche *dans* la pause d'affichage au lieu de s'y ajouter. Le tempo standard
+impose 1,4 s → 0,9 s par carte, et les trois lignes `IS-DD donne terminée` de
+la partie disent :
+
+```
+16 décisions, 226.4 mondes/déc (min 64,  méd 256), 693 ms/coup
+15 décisions, 244.8 mondes/déc (min 88,  méd 256), 302 ms/coup
+14 décisions, 251.8 mondes/déc (min 197, méd 256), 305 ms/coup
+```
+
+Tout est sous le **plancher** de 0,9 s, donc il reste au moins 200 ms de marge
+sur la pire donne. La force de jeu ne bouge pas non plus : médiane 256 mondes,
+soit le plafond `ISDD_MAX_WORLDS`, sur les trois donnes. Le plancher de 64 n'a
+mordu qu'**une fois** (`min 64` exactement sur la première donne = budget de
+1200 ms dépassé) : c'est le seul coup qui a pu être visible, et c'est le
+comportement voulu — sous pression, la dégradation se paie en latence, qui se
+voit, et non en force de jeu, qui ne se voit pas.
+
+**Le levier si ça se referme** est `ISDD_MAX_WORLDS` (256), pas
+`ISDD_MIN_WORLDS` (64) : c'est le plafond qui fabrique la contention, et le
+genou mesuré est à 60 mondes. Baisser le plancher ne rendrait que du jeu plus
+faible, sans rendre de GPU.
+
+**Ce qui ne se déduit pas des durées de donne** : les donnes du joueur ont duré
+143 / 113 / 144 s contre ~68 s pour le témoin de la veille, et **ce n'est pas
+le GPU**. Le tempo à lui seul impose ~42 s par donne, et le total de recherche
+de Dédé fait 11 s puis 4,5 s — *à l'intérieur* des pauses. Le reste est du
+temps de réflexion humain, qui varie d'un joueur à l'autre bien plus que tout
+ce qui est mesuré ici. Une durée de donne ne peut pas servir de jauge.
+
+Réplication — le témoin est la partie d'un joueur **avant** le démarrage du
+run, dans le même journal, et il faut vérifier qu'il est en `pacing = standard`
+(sinon c'est DouDou50, qui ne touche pas le sidecar) :
+
+```bash
+# 1. les lots du sidecar de prod (le journal tourne : extraire avant qu'il parte)
+ssh moxxi "journalctl -u playgen-gpu --since '13 hours ago' --no-pager -o short-iso" \
+  | grep 'lot:' > lots.txt
+# 2. la vue de Dédé, une ligne par donne, côté web
+ssh moxxi-docker "docker logs colver-colver-1 2>&1 | grep 'IS-DD donne'"
+# 3. le mode de la partie, sinon la comparaison ne vaut rien
+ssh moxxi-docker "docker exec colver-colver-1 python -c \"import sqlite3,os; \
+  print(sqlite3.connect(os.environ['COLVER_DB_PATH']).execute( \
+  'select id,pacing from matches order by rowid desc limit 5').fetchall())\""
+```
+
+Isoler la requête de Dédé dans `lots.txt` demande de retirer les requêtes du
+run : elles font **42 lanes** de médiane contre ~256 pour Dédé, donc un lot le
+contient si `lanes − 42 × (requêtes − 1) ≥ 200`. Sans ce filtre on mesure des
+lots de génération à six requêtes, qui atteignent 240 lanes tout seuls — la
+première lecture donnait 163 ms au lieu de 193 par cette erreur-là.
+
+Deux réserves sur la portée : la latence est mesurée **côté sidecar**, pas en
+aller-retour client (le LAN est le même dans les deux fenêtres, donc l'écart
+est bon, pas le niveau) ; et c'est **un joueur, trois donnes**. Ça suffit à
+dire « la marge est d'un facteur 3 », pas à cadrer une file d'attente.
+
 ## Où passe le temps
 
 Profil mesuré le 2026-08-04 (sidecar playgen v2_final sur une 3090, client sur
