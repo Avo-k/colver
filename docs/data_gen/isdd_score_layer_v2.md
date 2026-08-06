@@ -3,13 +3,22 @@
 *Ouvert le 2026-08-04. Plan d'exécution : ce qui est décidé, ce qui reste à mesurer,
 et les pièges qui produiraient des chiffres plausibles et faux.*
 
-> **État au 2026-08-05.** Les **trois mesures sont faites** (A §4, B §4, C §6) et la
+> **État au 2026-08-06.** Les **trois mesures sont faites** (A §4, B §4, C §6) et la
 > génération **tourne** — `gen_score_layer` sur `base_5M[0..500k]`, deux GPU,
 > 1,3 donnes/s, sortie `data/deals/scores_isdd_v2.sc` + `.ranks`, reprise à chaque
 > checkpoint. Compter **~111 h** pour les 500 k. `tail_100k` n'est **pas** commencé et
 > a perdu deux de ses trois justifications (§6, §11). Avant tout entraînement sur cette
 > couche, lire **§9 — `--pool-size` est obligatoire**, sinon le trainer regénère un
 > million de donnes en silence.
+>
+> **La reprise a été exercée pour de vrai** (arrêt volontaire le 2026-08-05 à 21 h 02,
+> reprise le 2026-08-06 à 01 h 49) : 95 055 étiquettes, 95 055 rangs et 40 414 rejeux
+> relus, 43 donnes perdues — celles d'après le dernier checkpoint. Le débit repart au
+> même chiffre, donc **une pause ne coûte que le lot en cours**. Deux règles apprises
+> à cette occasion : arrêter dans l'ordre *superviseur → générateur → chien de garde →
+> sidecar* (ils se relancent mutuellement), et **ne pas recompiler entre deux tronçons**
+> — un binaire différent produirait une couche à deux régimes que rien dans le fichier
+> ne signalerait.
 
 Une **couche de scores** (`COLVSC01`) est un tableau `[u8; 4]` par donne : les points
 cartes N-S sous chaque atout, sous jeu fort. C'est l'entrée de la reward du bidder —
