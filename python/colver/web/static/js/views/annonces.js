@@ -952,8 +952,8 @@ function renderDoudouHeadline(stats) {
     // 1000 simulations ce ± vaut ±22 points (mesuré), et il dit ce qu'on veut
     // savoir : à partir de quel écart deux annonces se séparent.
     const ci = gapCi95(stats);
-    const err = ci === null ? '' : ` ± ${Math.round(ci)}`;
-    const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)}${err} pts`;
+    const err = ci === null ? '' : ` (± ${Math.round(ci)})`;
+    const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts${err}`;
 
     const forced = currentForced();
     const after = forced !== null
