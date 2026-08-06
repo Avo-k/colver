@@ -252,6 +252,40 @@ fn show(name: &str, xs: &[f64], unit: &str) {
     println!("  {name:<30} n={n:<5} {m:+8.4} ±{se:.4} {unit}  (z={z:+6.1})   σ={sd:.4}");
 }
 
+/// Écrit le brut, par fichier temporaire puis `rename`, **en cours de run**.
+///
+/// Ne garder les lignes qu'en mémoire jusqu'au `join` rend un run non interruptible :
+/// l'arrêter à 110 donnes sur 150 perd tout, sans rien sur disque. `gen_score_layer`
+/// a un checkpoint pour exactement cette raison. `rename` plutôt qu'une écriture en
+/// place, sinon un lecteur qui tombe pendant l'écriture voit un JSON tronqué.
+fn write_json(path: &str, rows: &[Row], worlds: usize) {
+    let mut s = String::from("{\"arms\":[");
+    for (k, name) in ARM_NAMES.iter().enumerate() {
+        if k > 0 { s.push(','); }
+        s.push_str(&format!("\"{name}\""));
+    }
+    s.push_str(&format!("],\"worlds\":{worlds},\"rows\":["));
+    for (i, r) in rows.iter().enumerate() {
+        if i > 0 { s.push(','); }
+        s.push_str(&format!("{{\"peel_is_raise\":{},\"acc\":[", r.peel_is_raise));
+        for (k, v) in r.acc.iter().enumerate() {
+            if k > 0 { s.push(','); }
+            s.push_str(&format!("{v:.6}"));
+        }
+        s.push_str("],\"nll\":[");
+        for (k, v) in r.nll.iter().enumerate() {
+            if k > 0 { s.push(','); }
+            s.push_str(&format!("{v:.6}"));
+        }
+        s.push_str("]}");
+    }
+    s.push_str("]}");
+    let tmp = format!("{path}.tmp");
+    if let Err(e) = std::fs::write(&tmp, s).and_then(|()| std::fs::rename(&tmp, path)) {
+        eprintln!("  ⚠ écriture de {path} : {e}");
+    }
+}
+
 fn main() {
     let args = parse_args();
 
@@ -285,6 +319,7 @@ fn main() {
         let model = model.clone();
         let (bid_model, seed, worlds, temperature) =
             (args.bid_model.clone(), args.seed, args.worlds, args.temperature);
+        let json = args.json.clone();
         handles.push(std::thread::spawn(move || {
             let mut net = BidNet::load(&bid_model).expect("bid v6");
             let mut obs = vec![0.0f32; net.obs_dim()];
@@ -373,6 +408,10 @@ fn main() {
                 rows.lock().unwrap().push(Row { peel_is_raise, acc, nll });
                 let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                 if d % 10 == 0 {
+                    if let Some(p) = json.as_deref() {
+                        let snap = rows.lock().unwrap().clone();
+                        write_json(p, &snap, worlds);
+                    }
                     let el = start.elapsed().as_secs_f64();
                     eprintln!(
                         "  {d}/{n} donnes  {:.2} donnes/s  ETA {:.0} s",
@@ -443,31 +482,8 @@ fn main() {
         show(&format!("{label} : −ΔNLL"), &dl, "nat");
     }
 
-    if let Some(path) = args.json {
-        let mut s = String::from("{\"arms\":[");
-        for (k, name) in ARM_NAMES.iter().enumerate() {
-            if k > 0 { s.push(','); }
-            s.push_str(&format!("\"{name}\""));
-        }
-        s.push_str("],\"worlds\":");
-        s.push_str(&args.worlds.to_string());
-        s.push_str(",\"rows\":[");
-        for (i, r) in rows.iter().enumerate() {
-            if i > 0 { s.push(','); }
-            s.push_str(&format!("{{\"peel_is_raise\":{},\"acc\":[", r.peel_is_raise));
-            for (k, v) in r.acc.iter().enumerate() {
-                if k > 0 { s.push(','); }
-                s.push_str(&format!("{v:.6}"));
-            }
-            s.push_str("],\"nll\":[");
-            for (k, v) in r.nll.iter().enumerate() {
-                if k > 0 { s.push(','); }
-                s.push_str(&format!("{v:.6}"));
-            }
-            s.push_str("]}");
-        }
-        s.push_str("]}");
-        std::fs::write(&path, s).expect("écriture du JSON");
+    if let Some(path) = args.json.as_deref() {
+        write_json(path, &rows, args.worlds);
         eprintln!("brut → {path}");
     }
 }

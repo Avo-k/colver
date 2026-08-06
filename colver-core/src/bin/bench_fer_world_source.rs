@@ -163,6 +163,44 @@ fn show(name: &str, xs: &[f64], unit: &str) {
     println!("  {name:<34} n={n:<5} {m:+8.4} ±{se:.4} {unit}  (z={z:+6.1})   σ={sd:.4}");
 }
 
+/// Écrit le brut, par fichier temporaire puis `rename`.
+///
+/// **Appelée en cours de run, pas seulement à la fin.** La première version ne gardait
+/// les lignes qu'en mémoire et n'écrivait qu'après le `join` : interrompre le run à
+/// 110 donnes sur 150 aurait perdu 1 h 40 de calcul, sans rien sur disque. `gen_score_layer`
+/// a un checkpoint toutes les 500 donnes pour exactement cette raison ; ce binaire avait
+/// été calqué sur `bench_prefix_label` sans reprendre le réflexe.
+///
+/// `rename` plutôt qu'une écriture en place : un lecteur qui tombe pendant l'écriture
+/// verrait un JSON tronqué, donc invalide — même défaut que les checkpoints de la couche.
+fn write_json(path: &str, rows: &[Row], dets: u32) {
+    let mut s = String::from("{\"arms\":[");
+    for (k, name) in ARM_NAMES.iter().enumerate() {
+        if k > 0 { s.push(','); }
+        s.push_str(&format!("\"{name}\""));
+    }
+    s.push_str(&format!("],\"dets\":{dets},\"rows\":["));
+    for (i, r) in rows.iter().enumerate() {
+        if i > 0 { s.push(','); }
+        s.push_str(&format!("{{\"decisions\":{},\"cost\":[", r.decisions));
+        for (k, v) in r.cost.iter().enumerate() {
+            if k > 0 { s.push(','); }
+            s.push_str(&format!("{v:.6}"));
+        }
+        s.push_str("],\"optimal\":[");
+        for (k, v) in r.optimal.iter().enumerate() {
+            if k > 0 { s.push(','); }
+            s.push_str(&format!("{v:.6}"));
+        }
+        s.push_str("]}");
+    }
+    s.push_str("]}");
+    let tmp = format!("{path}.tmp");
+    if let Err(e) = std::fs::write(&tmp, s).and_then(|()| std::fs::rename(&tmp, path)) {
+        eprintln!("  ⚠ écriture de {path} : {e}");
+    }
+}
+
 fn main() {
     let args = parse_args();
 
@@ -212,6 +250,7 @@ fn main() {
         let replays = replays.clone();
         let (sa, sb, su) = (spec_a.clone(), spec_b.clone(), spec_u.clone());
         let seed = args.seed;
+        let (json, dets) = (args.json.clone(), dets);
         handles.push(std::thread::spawn(move || {
             let build = |sp: &AgentSpec| -> Result<[Box<dyn Player>; 4], _> {
                 (0..4).map(|s| sp.build(s)).collect::<Result<Vec<_>, _>>()
@@ -358,6 +397,12 @@ fn main() {
                 });
                 let k = done.fetch_add(1, Ordering::Relaxed) + 1;
                 if k % 10 == 0 {
+                    // Le brut est réécrit en entier : quelques centaines de lignes, donc
+                    // le coût est nul devant une donne qui prend des minutes.
+                    if let Some(p) = json.as_deref() {
+                        let snap = rows.lock().unwrap().clone();
+                        write_json(p, &snap, dets);
+                    }
                     let el = start.elapsed().as_secs_f64();
                     eprintln!(
                         "  {k}/{n} donnes  {:.3} donnes/s  ETA {:.0} s",
@@ -405,29 +450,8 @@ fn main() {
     println!("  tirage de mondes pur. Si l'uniforme tient dedans, les deux sources");
     println!("  étiquettent aussi bien — ce qui serait déjà une réponse.");
 
-    if let Some(path) = args.json {
-        let mut s = String::from("{\"arms\":[");
-        for (k, name) in ARM_NAMES.iter().enumerate() {
-            if k > 0 { s.push(','); }
-            s.push_str(&format!("\"{name}\""));
-        }
-        s.push_str(&format!("],\"dets\":{dets},\"rows\":["));
-        for (i, r) in rows.iter().enumerate() {
-            if i > 0 { s.push(','); }
-            s.push_str(&format!("{{\"decisions\":{},\"cost\":[", r.decisions));
-            for (k, v) in r.cost.iter().enumerate() {
-                if k > 0 { s.push(','); }
-                s.push_str(&format!("{v:.6}"));
-            }
-            s.push_str("],\"optimal\":[");
-            for (k, v) in r.optimal.iter().enumerate() {
-                if k > 0 { s.push(','); }
-                s.push_str(&format!("{v:.6}"));
-            }
-            s.push_str("]}");
-        }
-        s.push_str("]}");
-        std::fs::write(&path, s).expect("écriture du JSON");
+    if let Some(path) = args.json.as_deref() {
+        write_json(path, &rows, dets);
         eprintln!("brut → {path}");
     }
 }
