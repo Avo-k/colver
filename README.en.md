@@ -26,16 +26,16 @@ pip install colver
 ```python
 import colver
 
-env = colver.Env.deal(dealer=3, seed=23)   # reproducible deal; seat 0 speaks first
-# seat 0 holds   ♠ —   ♥ 9   ♦ K Q J 9   ♣ K 8 7
+env = colver.Env.deal(dealer=1, seed=35)   # reproducible deal; South opens the bidding
+# South holds   ♠ —   ♥ 10 J   ♦ K Q J 9   ♣ K 8
 
-# What would you bid?
+# What does South bid?
 env.load_bid_model(colver.download_bid_model())   # fetched from the Hub on first use
 print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
 # 120♦
 
-# And what would you lead? The model bids the auction out at all four seats;
-# nobody outbids it, so it plays 120♦ for North-South.
+# And what does South lead? The model bids the auction out at all four seats;
+# nobody outbids it, so South plays 120♦ for North-South.
 while env.phase() == 0:
     env.step(env.action_bid_nn()["best_action"])
 

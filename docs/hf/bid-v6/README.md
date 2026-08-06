@@ -33,8 +33,8 @@ pip install colver
 ```python
 import colver
 
-env = colver.Env.deal(dealer=3, seed=23)   # donne reproductible ; le siège 0 ouvre
-# le siège 0 tient : ♠ —   ♥ 9   ♦ R D V 9   ♣ R 8 7
+env = colver.Env.deal(dealer=1, seed=35)   # donne reproductible ; Sud ouvre les enchères
+# Sud tient : ♠ —   ♥ 10 V   ♦ R D V 9   ♣ R 8
 
 poids = colver.download_bid_model()        # Hub → ~/.cache/colver/models/
 env.load_bid_model(poids)
@@ -55,16 +55,16 @@ for action, q in top:
 ```
 
 ```
-  120♦  0.129
-  110♦  0.120
-  130♦  0.105
-  100♦  0.093
-   90♦  0.073
+  120♦  0.136
+  110♦  0.130
+  100♦  0.108
+  130♦  0.104
+   90♦  0.089
 ```
 
-Les trois premières valeurs tiennent dans **0,024** — c'est un défaut connu et mesuré du
+Les trois premières valeurs tiennent dans **0,028** — c'est un défaut connu et mesuré du
 modèle, décrit plus bas. Le classement dit clairement « carreau, autour de 120 » ; il ne
-dit pas grand-chose sur le choix exact entre 110 et 130.
+dit pas grand-chose sur le choix exact entre 100 et 130.
 
 Le modèle est entièrement déterministe : mêmes cartes, mêmes valeurs, à la décimale près.
 
@@ -100,7 +100,7 @@ model = "{poids}"
 hidden = 512
 score_aware = true
 '''
-bot = colver.Agent(spec, seat=0)
+bot = colver.Agent(spec, seat=2)
 bot.init_deal(env)
 print(bot.action(env))
 ```
