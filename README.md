@@ -1,23 +1,35 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Avo-k/colver/master/images/colver.png" alt="Colver Logo" width="200">
+  <img src="images/colver.png" alt="Logo Colver" width="200">
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?color=blue" alt="PyPI"></a>
-  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/pyversions/colver" alt="Python"></a>
-  <a href="https://colver.net/"><img src="https://img.shields.io/badge/play-colver.net-green" alt="colver.net"></a>
-  <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/pypi/l/colver" alt="License"></a>
+  <a href="https://github.com/Avo-k/colver/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Avo-k/colver/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white" alt="CI"></a>
+  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?logo=pypi&logoColor=white&label=PyPI&color=blue" alt="Version PyPI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-lightgrey" alt="Licence MIT"></a>
+</p>
+
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-%C3%A9dition%202021-000000?logo=rust&logoColor=white" alt="Rust édition 2021"></a>
+  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
+  <a href="colver-wasm/"><img src="https://img.shields.io/badge/WebAssembly-solveur%20navigateur-654FF0?logo=webassembly&logoColor=white" alt="WebAssembly"></a>
+  <a href="Dockerfile"><img src="https://img.shields.io/badge/Docker-x86--64%20%2F%20ARM64-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
+</p>
+
+<p align="center">
+  <a href="https://colver.net/"><img src="https://img.shields.io/badge/jouer-colver.net-2ea44f?logo=firefoxbrowser&logoColor=white" alt="Jouer sur colver.net"></a>
+  <a href="https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20mod%C3%A8les-Hugging%20Face-FFD21E" alt="Modèles sur Hugging Face"></a>
+  <a href="docs/README.md"><img src="https://img.shields.io/badge/documentation-docs%2F-8A2BE2" alt="Documentation"></a>
 </p>
 
 # Colver
 
-**[Lire en francais](README.fr.md)**
+**[Read in English](README.en.md)**
 
-Fast Belote Contree game environment for reinforcement learning. Rust core with Python bindings.
+Environnement de Belote Contrée rapide pour l'apprentissage par renforcement. Moteur Rust avec bindings Python.
 
-**Play online: [colver.net](https://colver.net)** — a self-hosted public site: solo or multiplayer games, accounts, ratings and analysis.
+**Jouer en ligne : [colver.net](https://colver.net)** — un site public auto-hébergé : parties solo ou multijoueur, comptes, classement et analyse.
 
-## Quickstart
+## Démarrage rapide
 
 ```bash
 pip install colver
@@ -28,192 +40,193 @@ import colver
 
 env = colver.Env()
 env.reset()
-env.load_bid_model(colver.download_bid_model())   # fetched from the Hub on first use
+env.load_bid_model(colver.download_bid_model())   # récupéré depuis le Hub au premier appel
 print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
 ```
 
-Model weights live on the [Hugging Face Hub](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65)
-— one repo per model, each with a card explaining what it does, what it is worth and what
-it cannot do. `download_*()` caches them under `~/.cache/colver/models/` (GitHub Releases
-is kept as a fallback); point `COLVER_MODEL_PATH` & co. at your own files to override.
+Les poids vivent sur le [Hub Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65)
+— un dépôt par modèle, chacun avec une fiche qui dit ce qu'il fait, ce qu'il vaut et ce
+qu'il ne sait pas faire. `download_*()` les met en cache dans `~/.cache/colver/models/`
+(GitHub Releases reste en repli) ; `COLVER_MODEL_PATH` et consorts permettent de pointer
+vers ses propres fichiers.
 
-## Features
+## Caractéristiques
 
-- **~1.4M rollouts/sec** single-threaded (play phase), ~895K rollouts/sec on a full deal
-- **≤96-byte `Copy` game state** for fast MCTS cloning
-- **Six AI agents** — DMC Q-network, IS-DD, DD oracle, Smart/Naive IS-MCTS, and heuristic
-- **NN bidding** — "Bid V6 IS-DD", a score- and belote-aware Dueling DQN (117→512³→43) trained 75M steps on real IS-DD points with full match simulation, used by all agents
-- **ML interpretability** — XGBoost distillation + hidden-layer probe reveal the NN's implicit scoring system, translated into human-usable rules (88-94% agreement)
-- **Playgen world model** — a causal transformer that continues a deal from what one seat can see; rolling it out reveals the hidden hands, which is where IS-DD's sampled worlds now come from
-- **One agent layer** — a bot is a TOML spec (`[bid]` / `[play]` / `[worlds]`), built by the Rust side and driven identically by the arena, the web and `colver.Agent`
-- **Web interface** — play solo or in multiplayer rooms, spectate, replay with per-card analysis, and train on problems (FastAPI + WebSocket)
-- **Python bindings** via PyO3 — `Env`, `Agent`, `Analyst` and `Beliefs` with full type stubs, installable from PyPI
-- Zero dependencies in the core (only `rand` behind a feature flag)
+- **~1.4M rollouts/sec** en mono-thread (phase de jeu), ~895K rollouts/sec sur une donne complète
+- **État de jeu `Copy` de <=96 octets** pour un clonage MCTS performant
+- **Six agents IA** — réseau Q DMC, IS-DD, oracle DD, Smart/Naive IS-MCTS, et heuristique
+- **Enchères par réseau de neurones** — "Bid V6 IS-DD", un Dueling DQN score-aware et belote-aware (117→512³→43) entraîné 75M étapes sur points réels IS-DD avec simulation de match complète
+- **Interprétabilité ML** — distillation XGBoost + sondage de couche cachée révèlent le système de scoring implicite du NN, traduit en règles utilisables par un humain (88-94% d'accord)
+- **Modèle de mondes Playgen** — un transformer causal qui prolonge une donne à partir de ce qu'un seul siège voit ; le dérouler révèle les mains cachées, et c'est de là que viennent désormais les mondes échantillonnés par IS-DD
+- **Une seule couche d'agents** — un bot est une spec TOML (`[bid]` / `[play]` / `[worlds]`), construite côté Rust et pilotée à l'identique par l'arène, le web et `colver.Agent`
+- **Interface web** — jouez en solo ou en salon multijoueur, observez, rejouez avec analyse carte par carte, entraînez-vous sur des problèmes (FastAPI + WebSocket)
+- **Bindings Python** via PyO3 — `Env`, `Agent`, `Analyst` et `Beliefs` avec stubs de types complets, installable depuis PyPI
+- Zéro dépendances dans le cœur (seulement `rand` derrière un feature flag)
 
-## Web Interface
+## Interface Web
 
-Play against AI agents directly in your browser at **[colver.net](https://colver.net)**, or run it locally:
+Jouez contre les agents IA directement dans le navigateur sur **[colver.net](https://colver.net)**, ou lancez-le en local :
 
 ```bash
 uv run python -m colver.web
-# Or: uv run colver-web
-# Open http://localhost:8000
+# Ou : uv run colver-web
+# Ouvrir http://localhost:8000
 ```
 
-Everything is in French, behind four destinations: **Jouer**, **Analyser**, **Apprendre**, **Classement**. An account is optional — it is what links games to you, and what makes matches resumable and rated.
+Quatre destinations : **Jouer**, **Analyser**, **Apprendre**, **Classement**. Le compte est facultatif — c'est lui qui rattache les parties à un joueur, rend les parties reprenables et les fait classer.
 
 ### Jouer
 
-**Humain vs IA** — Play as South against three bots. There are exactly two settings, both chosen before the deal:
+**Humain vs IA** — Jouez en Sud contre trois bots. Exactement deux réglages, tous deux choisis avant la donne :
 
-- **Tempo** — `Standard` (Dede, ~40 s a deal) or `Rapide` (DouDou50, ~15 s). The bundle is deliberate: an IS-DD search costs real wall-clock per move, so a fast tempo is only honest behind a bot that answers instantly. All four AI seats run the same bot — a table where your partner is weaker than your opponents tells you nothing about how you played.
-- **Match length** — a single deal (default), or a match to 1000 / 2000 points. The running score is passed to the bots, and Bid V6 reads it: it bids differently at 900-200 than at 0-0.
+- **Tempo** — `Standard` (Dédé, ~40 s la donne) ou `Rapide` (DouDou50, ~15 s). Le couplage est voulu : une recherche IS-DD coûte du temps réel par coup, donc un tempo rapide n'est honnête que derrière un bot qui répond instantanément. Les quatre sièges IA jouent le même bot — une table où le partenaire est plus faible que les adversaires ne dit rien de la façon dont vous avez joué.
+- **Format** — une donne sèche (défaut), ou une partie en 1000 / 2000 points. Le score cumulé part aux bots, et Bid V6 le lit : il n'annonce pas la même chose à 900-200 qu'à 0-0.
 
-Cards are played instantly on click; the pause belongs to the position *before* a move and the bot thinks inside it, not on top of it. Forced passes are played for you, the last trick (where nobody has a choice left) runs itself, and the final trick is held 2 s before the end-of-deal panel. Signed-in players can leave a match and resume it later.
+Vos cartes sont jouées instantanément au clic ; la pause appartient à la position *précédant* un coup, et le bot réfléchit dedans, pas par-dessus. Le passe forcé est joué pour vous, le dernier pli — où plus personne n'a de choix — se déroule tout seul, et la dernière levée reste 2 s à l'écran avant le panneau de fin. Connecté, on peut quitter une partie et la reprendre plus tard.
 
-![Play tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-play.png)
+![Onglet Jouer](images/screenshots/tab-play.png)
 
-**Salon multijoueur** — Rooms with a 4-character join code; bots fill whatever seats humans do not. The host picks the tempo and the match length. Every broadcast state is filtered to the viewer's own hand and rotated so the viewer always sits South. Seats are account-bound, so a disconnected player can come back to their seat.
+**Salon multijoueur** — Des salons à code de 4 caractères ; les bots occupent les sièges que les humains ne prennent pas. L'hôte choisit le tempo et le format. Chaque état diffusé est filtré sur la main du destinataire et pivoté pour qu'il soit toujours assis en Sud. Les sièges sont liés aux comptes : un joueur déconnecté retrouve le sien.
 
-![Salon](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-salon.png)
+![Salon](images/screenshots/tab-salon.png)
 
-**IA vs IA** — Spectate AI vs AI matches with all hands visible. Assign a different agent to each of the 4 seats. Step through actions, play full tricks, or use auto-play. The stats panel shows Q-values, DD scores, or hand evaluations for each decision. Paste a CFN string to load a specific position.
+**IA vs IA** — Observez des parties IA contre IA avec toutes les mains visibles. Assignez un agent différent à chacune des 4 places. Avancez action par action, jouez des plis entiers, ou utilisez la lecture automatique. Le panneau de stats affiche les Q-values, scores DD ou évaluations de main. Collez une chaîne CFN pour charger une position spécifique.
 
-![Watch tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-watch.png)
+![Onglet Regarder](images/screenshots/tab-watch.png)
 
 ### Analyser
 
-**Rejouer** — Browse and replay past deals (played, spectated or shared) and step through them card by card. Two independent analysis passes run on top, each cached and fetched separately so the slow one never blocks the fast one:
+**Rejouer** — Parcourez et rejouez les donnes passées (jouées, observées ou partagées), coup par coup. Deux passes d'analyse indépendantes s'y ajoutent, chacune mise en cache et chargée séparément pour que la lente ne bloque jamais la rapide :
 
-- the **DD pass** — the exact cost of every card, plus a bid review carrying two opinions per auction action: Bid V6's Q-values and playgen's 43-way auction head;
-- the **agent review** — what DouDou50, the Oracle and Dede would have played at every non-forced card, streamed in as it computes.
+- la **passe DD** — le coût exact de chaque carte, plus une revue d'enchère portant deux avis par annonce : les Q-values de Bid V6 et la tête d'enchère 43-voies de playgen ;
+- la **revue d'agents** — ce que DouDou50, l'Oracle et Dédé auraient joué à chaque carte non forcée, envoyée au fil du calcul.
 
-Every card and every bid links out to its own analysis page, and back.
+Chaque carte et chaque annonce porte un lien vers sa page d'analyse, et le chemin du retour.
 
-![Rejouer](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-replay.png)
+![Rejouer](images/screenshots/tab-replay.png)
 
-**Annonces** — Compose an 8-card hand, set the bids that preceded your turn, and see what *Bid V6 IS-DD* would call — Q-values for every legal action, plus an XGBoost-distilled "key factors" panel (which features drove the decision). Two tables then play the hand out over hundreds of random deals of the other 24 cards: **Jeu parfait** (each deal solved double-dummy by the Oracle — a theoretical ceiling) and **Jeu reel** (the full auction bid by the NN at all four seats, then 8 tricks played by DouDou50 — what actually happens). One tab per bid analysed, so two bids on the same hand can be compared side by side, and analysed hands are kept in a sidebar. Runs server-side or fully in the browser via WASM ("Calcul local").
+**Annonces** — Composez une main de 8 cartes, posez les enchères qui ont précédé votre tour, et voyez ce que *Bid V6 IS-DD* annoncerait — les Q-values de chaque action légale, plus un panneau "Facteurs clés" distillé par XGBoost. Deux tableaux jouent ensuite la main sur des centaines de distributions des 24 autres cartes : **Jeu parfait** (chaque donne résolue en double-dummy par l'Oracle — un plafond théorique) et **Jeu réel** (l'enchère complète menée par le NN aux quatre places, puis 8 plis joués par DouDou50 — ce qui arrive vraiment). Un onglet par annonce analysée, donc deux annonces sur la même main se comparent côte à côte ; les mains analysées restent dans une barre latérale. Tourne côté serveur ou entièrement dans le navigateur via WASM ("Calcul local").
 
-![Annonces tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annonces.png)
+![Onglet Annonces](images/screenshots/tab-annonces.png)
 
-**Jeu de la carte** — One row per playable card at a given position, answering two questions that must not be confused: *the worlds of the information set* (deals compatible with what the seat could know, each solved double-dummy — this is where the decision is judged) and *the real world* (a single exact solve on the deal as it actually was). A third block forces the card and lets DouDou50 finish the deal. A card that was second-best in the real deal but best in 70 % of the worlds was a good play against bad luck.
+**Jeu de la carte** — Une ligne par carte jouable à une position donnée, pour répondre à deux questions qu'il ne faut pas confondre : *les mondes de l'information set* (des donnes compatibles avec ce que le siège pouvait savoir, chacune résolue en double-dummy — c'est là qu'on juge la décision) et *le vrai monde* (un seul solve exact, sur la donne telle qu'elle était). Un troisième bloc force la carte et laisse DouDou50 finir la donne. Une carte deuxième dans la vraie donne mais meilleure dans 70 % des mondes était un bon coup contre de la malchance.
 
-![Jeu de la carte](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-analyse-jeu.png)
+![Jeu de la carte](images/screenshots/tab-analyse-jeu.png)
 
-**Croyances** — Watch *playgen* locate the hidden cards as a deal unfolds, during the auction as well as during play. Step through a generated deal and read the per-card probability bars against ground truth, from any of the four seats.
+**Croyances** — Regardez *playgen* localiser les cartes cachées au fil d'une donne, pendant l'enchère comme pendant le jeu. Avancez pas à pas et lisez les barres de probabilité par carte face à la vérité terrain, depuis chacun des quatre sièges.
 
-![Croyances tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-croyances.png)
+![Onglet Croyances](images/screenshots/tab-croyances.png)
 
-**Problemes d'annonce** — Bidding practice problems. See a hand and bidding history, then find the right bid. The AI evaluates your answer against the NN bidder's recommendation.
+**Problèmes d'annonce** — Problèmes d'enchères. Voyez une main et l'historique des enchères, puis trouvez la bonne annonce. L'IA évalue votre réponse.
 
-**Problemes de jeu** — Card play practice problems. See a mid-game position and find the best card. Compare your choice to the DD solver's optimal play.
+**Problèmes de jeu** — Problèmes de jeu de la carte. Voyez une position en cours de partie et trouvez la meilleure carte. Comparez votre choix au jeu optimal du solveur DD.
 
 ### Apprendre
 
-**Aide-memoire** — Visual cheat sheet: card strength order and values (trump / non-trump), deal points, bidding rules.
+**Aide-mémoire** — Aide-mémoire visuel : ordre de force et valeur des cartes (atout / non-atout), points de la donne, règles d'enchères.
 
-**Guide des annonces** — Visual strategy guide derived from the bot via ML (per-card point weights, decision rules per position, mirror rule for defense). 88-94% agreement with the NN, memorizable in minutes.
+**Guide des annonces** — Guide de stratégie visuel dérivé du bot par ML : pondération par carte, règles de décision par position, règle du miroir en défense. 88-94% d'accord avec le NN, mémorisable en quelques minutes.
 
-![Annoncer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-annoncer.png)
+![Onglet Annoncer](images/screenshots/tab-annoncer.png)
 
-**Marquer les points** — Score keeper for real-life games. Pick a target score (1000-3000), add rounds with a form that computes exact FFB scores automatically (contract, coinche/surcoinche multiplier, points made, belote), and watch the live win-probability estimate update after every round. Everything lives in the browser — no server, no account.
+**Marquer les points** — Compteur de points pour vos vraies parties. Choisissez un score cible (1000-3000), ajoutez des manches avec un formulaire qui calcule automatiquement les scores exacts aux règles FFB (contrat, multiplicateur coinche/surcoinche, points faits, belote), et suivez la probabilité de victoire mise à jour après chaque manche. Tout vit dans le navigateur — pas de serveur, pas de compte.
 
-![Marquer tab](https://raw.githubusercontent.com/Avo-k/colver/master/images/screenshots/tab-score.png)
+![Onglet Marquer](images/screenshots/tab-score.png)
 
 ### Classement
 
-One Elo per rated entity — a human account or a bot type — updated deal by deal whenever all four seats are identifiable. Bots use a lower K: they are reference points and occupy up to three seats per game.
+Un Elo par entité classée — un compte humain ou un type de bot — mis à jour donne par donne dès que les quatre sièges sont identifiables. Les bots ont un K plus faible : ce sont des points de repère, et ils occupent jusqu'à trois sièges par partie.
 
-## Build & Run
+## Compilation et exécution
 
-Requires Rust 1.70+ and Python 3.10+.
+Nécessite Rust stable (édition 2021) et Python 3.10+.
 
 ```bash
-# Tests (418 tests)
+# Tests (479 tests)
 cargo test -p colver-core
 
-# Performance benchmark
+# Benchmark de performance
 cargo run -p colver-core --bin bench --release
 
-# MCTS vs random demo
+# Démo MCTS vs aléatoire
 cargo run -p colver-core --bin mcts_demo --release -- 100
 
-# Smart IS-MCTS vs random + vs naive demo
+# Démo Smart IS-MCTS vs aléatoire + vs naïf
 cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
 
-# Python bindings (via uv)
+# Bindings Python (via uv)
 uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
-# Web interface (play against AI)
+# Interface web (jouer contre l'IA)
 uv run python -m colver.web
 
-# Bot vs bot, 200 matches each way (bots are TOML files in arena/bots/)
+# Bot contre bot, 200 matchs dans chaque sens (les bots sont des TOML dans arena/bots/)
 cargo run --bin arena --release -- h2h v6_isdd_75M_belief v6_isdd_75M --matches 200
 
-# Joint bid+play training (GPU, candle)
+# Entraînement conjoint enchère + jeu (GPU, candle)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
 
-# Playgen GPU sidecar — where IS-DD gets its worlds from
+# Sidecar GPU playgen — la source de mondes d'IS-DD
 cargo run -p colver-core --bin playgen_gpu_server --features gpu_server --release -- --playgen models/playgen/playgen_v2_final.bin --port 8003
 export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
 ```
 
-Without `$COLVER_PLAYGEN_GPU_URL`, IS-DD bots fall back to constraint-uniform worlds (the web says so in the decision's stats; the arena refuses to build the bot unless the spec opts in).
+Sans `$COLVER_PLAYGEN_GPU_URL`, les bots IS-DD retombent sur des mondes uniformes sous contraintes (le web l'annonce dans les stats de la décision ; l'arène, elle, refuse de construire le bot si la spec ne le demande pas explicitement).
 
-## AI Agents
+## Agents IA
 
-### Oracle — DD Solver (`solver.rs`)
+### Oracle — Solveur DD (`solver.rs`)
 
-Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~35 ms from a full deal, ~190 us mid-game and ~1.5 us in the endgame (measured 2026-08-02, 1 thread). Useful as an upper bound.
+Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et élagage par équivalence de cartes. Calcule la carte optimale exacte en ~24 ms sur donne complète, ~150 us en mi-partie et ~1,4 us en finale (mesure du 2026-08-03, 1 thread ; le tableau complet, avec son corpus et sa dispersion, vit dans [docs/play/dd_solver.md](docs/play/dd_solver.md#performance)). Utile comme borne supérieure.
 
-### Dede — IS-DD (`is_dd.rs`)
+### Dédé — IS-DD (`is_dd.rs`)
 
-Information Set Double-Dummy search: sample plausible deals consistent with what this seat can know, solve each one exactly with the alpha-beta DD solver, aggregate. Hard constraints (voids revealed by the play, trump ceiling, cards already gone) are facts and always apply. The sampled worlds come from a `WorldSource` the agent owns — **playgen over the GPU sidecar by default**, with a constraint-uniform sampler as the fallback. A **belief network** can additionally weight the sampling. IS-DD sounds like "is Dede" — hence the name.
+Recherche Information Set Double-Dummy : échantillonner des donnes compatibles avec ce que ce siège peut savoir, résoudre chacune exactement avec le solveur alpha-beta DD, agréger. Les contraintes dures (coupes révélées par le jeu, plafond d'atout, cartes déjà tombées) sont des faits et s'appliquent toujours. Les mondes viennent d'une `WorldSource` que l'agent possède — **playgen via le sidecar GPU par défaut**, avec un échantillonnage uniforme sous contraintes en repli. Un **réseau de croyances** peut en plus pondérer le tirage. IS-DD se prononce « is Dédé » — d'où le surnom.
 
-### DouDou50 — DMC Q-Network (`dmc_net.rs`)
+### DouDou50 — Réseau Q DMC (`dmc_net.rs`)
 
-[DouZero](https://arxiv.org/abs/2106.06135)-style reinforcement learning agent. A Q-network picks card plays with a single forward pass — **no search tree**. Default play model, trained 50M steps with the NN bidder frozen (triforge play-only phase).
+Agent par apprentissage par renforcement de style [DouZero](https://arxiv.org/abs/2106.06135). Un réseau Q choisit les cartes à jouer en une seule passe forward — **sans arbre de recherche**. Modèle de jeu par défaut, entraîné sur 50M étapes avec l'enchérisseur NN gelé (phase play-only du triforge).
 
-**Architecture**: ResNet Dueling DQN 411→1024→1024→1024→32 with LayerNorm and skip connections (~2.6M parameters). Uses canonical suit encoding (no augmentation needed). Inference in pure Rust (~1ms/decision, no PyTorch needed). Strongest overall agent.
+**Architecture** : ResNet Dueling DQN 411→1024→1024→1024→32 avec LayerNorm et skip connections (~2.6M paramètres). Utilise un encodage canonique des couleurs (pas d'augmentation nécessaire). Inférence en Rust pur (~1ms/décision, pas de PyTorch nécessaire). Agent le plus fort dans l'ensemble.
 
-The previous model **DouDou35** (415→1024³→32, legacy obs, 35M steps) is still supported for backward compatibility. *DouDou* = a reference to DouZero.
+L'ancien modèle **DouDou35** (415→1024³→32, obs legacy, 35M étapes) reste supporté. *DouDou* = en référence à DouZero.
 
-### Playgen — world model (`playgen/`)
+### Playgen — modèle de mondes (`playgen/`)
 
-A causal transformer (10.7M params) trained to continue a deal autoregressively from the prefix one observer can see. Rolling it out reveals the hidden hands, so a rollout *is* a determinized world drawn from a learned posterior rather than from a uniform shuffle — that is what IS-DD samples, and what the Croyances page displays. v2 also carries a 43-way auction head, which makes it usable for mid-auction sampling (and, as a curiosity, as a bidder in its own right). It runs on CPU or CUDA; in production a sidecar (`playgen_gpu_server`) serves it over HTTP, ~50× faster than sampling on CPU.
+Un transformer causal (10,7M paramètres) entraîné à prolonger une donne de manière autorégressive à partir du préfixe visible par un seul observateur. Le dérouler révèle les mains cachées : un déroulement *est* donc un monde déterminisé tiré d'une postérieure apprise, et non d'un mélange uniforme — c'est ce qu'IS-DD échantillonne, et ce que la page Croyances affiche. La v2 porte en plus une tête d'enchère 43-voies, qui rend possible l'échantillonnage en cours d'enchère (et, par curiosité, l'usage de playgen comme enchérisseur). Il tourne sur CPU ou CUDA ; en production un sidecar (`playgen_gpu_server`) le sert en HTTP, ~50x plus vite que sur CPU.
 
-### Older search agents
+### Anciens agents de recherche
 
-**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
+**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondéré par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Déterminisation par ensemble sans croyances. Les deux sont configurables et documentés dans [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
 
-### Bid V6 IS-DD — NN Bidder (`bid_net.rs`)
+### Bid V6 IS-DD — Enchérisseur NN (`bid_net.rs`)
 
-Dueling DQN **117→512→512→512→43** with score-aware v3 observation (match-score features + 4 belote bits). Trained **75M steps on real IS-DD points** (not DD oracle) with belote-aware reward and full **match simulation** (cumulative scores, dealer rotation, reset at 2000). Beats the previous champion Bid V5 in both eval sets (55.8% with DMC play, 57.3% / +181 pts with IS-DD play). `BidNet::load` auto-detects hidden size and obs_dim (108 / 110 / 113 / 117).
+Dueling DQN **117→512→512→512→43** avec observation score-aware v3 (features de score de match + 4 bits de belote). Entraîné **75M étapes sur points réels IS-DD** (pas DD oracle) avec reward belote-aware et **simulation de match** complète (scores cumulés, rotation du donneur, reset à 2000). Bat le champion précédent Bid V5 dans les deux jeux d'évaluation (55.8% en jeu DMC, 57.3% / +181 pts en jeu IS-DD). `BidNet::load` détecte automatiquement la taille cachée et obs_dim (108 / 110 / 113 / 117).
 
-Past versions still supported via auto-detect:
-- **Bid V5 IS-DD** — 113-dim score-aware obs, 25M steps on real IS-DD points
-- **Bid V3 Max** — 108-dim, trained on `max(DMC, IS-DD)` real points (20M steps)
-- **Bid à Dédé** (v2) — 108-dim, DD oracle reward
-- **Bid à Doudou** (v1) — 114→256² dueling, DouZero self-play
+Versions précédentes toujours supportées via auto-détection :
+- **Bid V5 IS-DD** — obs score-aware 113-dim, 25M étapes sur points réels IS-DD
+- **Bid V3 Max** — 108-dim, entraîné sur `max(DMC, IS-DD)` points réels (20M étapes)
+- **Bid à Dédé** (v2) — 108-dim, reward DD oracle
+- **Bid à Doudou** (v1) — 114→256² dueling, self-play DouZero
 
-**Interpretability**: XGBoost distillation and a hidden-layer linear probe revealed that the NN's implicit scoring differs sharply from the classical hand evaluation (e.g., J atout = +11 effective, 9 = +4, A atout = +1, side A = 0 net; plus an anti-synergy J×9 = −2). Translated into a mnemonic 5-feature decision tree reaching 88-94% NN agreement — see [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) and [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
+**Interprétabilité** : distillation XGBoost et sondage linéaire sur la couche cachée révèlent que le scoring implicite du NN diffère nettement de l'évaluation classique (ex. V atout = +11 effectif, 9 = +4, A atout = +1, A latéral = 0 net ; plus une anti-synergie V×9 = −2). Traduit en un arbre de décision à 5 features atteignant 88-94% d'accord avec le NN — voir [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) et [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
 
-## Agent Comparison
+## Comparaison des agents
 
-| Agent | Type | Speed/move | Notes |
+| Agent | Type | Vitesse/coup | Notes |
 |---|---|---|---|
-| Oracle (DD) | DD solver (cheats) | 35 ms -> 1.5 us (trick 1 -> trick 8) | Perfect info upper bound |
-| Dede (IS-DD) | DD solver over sampled worlds | budget (1 s in the web) | Strongest search-based |
-| **DouDou50** | **Q-network (ResNet)** | **<1ms** | Strongest overall, no search |
-| Smart IS-MCTS | Search + beliefs | ~9ms | Configurable budget |
-| Naive IS-MCTS | Search | ~8ms | Configurable budget |
+| Oracle (DD) | Solveur DD (triche) | 24 ms -> 1,4 us (pli 1 -> pli 8) | Borne supérieure |
+| Dédé (IS-DD) | Solveur DD sur mondes échantillonnés | budget (1 s sur le web) | Plus fort avec recherche |
+| **DouDou50** | **Réseau Q (ResNet)** | **<1ms** | Plus fort, sans recherche |
+| Smart IS-MCTS | Recherche + croyances | ~9ms | Budget configurable |
+| Naive IS-MCTS | Recherche | ~8ms | Budget configurable |
 
-**Note**: Search-based agents get stronger with more time budget. The DMC agent uses no search — one forward pass per decision.
+**Note** : Les agents à base de recherche voient leur force augmenter avec le budget de temps. L'agent DMC n'utilise aucune recherche — la décision est prise en une seule inférence.
 
-## Bots are specs, not code paths
+## Un bot est une spec, pas un chemin de code
 
-A bot is a TOML file describing a bidder, a card player and (for IS-DD) a world source. The arena, the web frontend and `colver.Agent` all read the same spec and get the same agent — there is no second implementation anywhere.
+Un bot est un fichier TOML décrivant un enchérisseur, un joueur de cartes et (pour IS-DD) une source de mondes. L'arène, le frontend web et `colver.Agent` lisent la même spec et obtiennent le même agent — il n'existe aucune seconde implémentation.
 
 ```toml
 [bid]
@@ -224,71 +237,71 @@ model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle_dd|heuristic
 time_ms = 1000
 
-[worlds]                           # IS-DD only; defaults to the sidecar
+[worlds]                           # IS-DD uniquement ; sidecar par défaut
 source = "sidecar"
 url = "http://localhost:8003"
 ```
 
-`arena/bots/*.toml` holds the reference bots; head-to-head and round-robin results accumulate in `arena/results/matches.csv`. Testing a new combination means writing a file, not recompiling.
+`arena/bots/*.toml` contient les bots de référence ; les résultats en face-à-face et en round-robin s'accumulent dans `arena/results/matches.csv`. Tester une nouvelle combinaison, c'est écrire un fichier, pas recompiler.
 
 ## Architecture
 
-**Workspace:** `colver-core` (pure Rust) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (in-browser solver) + `python/colver/web` (FastAPI/WebSocket)
+**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (solveur dans le navigateur) + `python/colver/web` (FastAPI/WebSocket)
 
-### Card Representation
+### Représentation des cartes
 
-Bitmask system: `Card = u8` (0-31), `CardSet = u32` (bitmask). Layout: Spades\[0-7\], Hearts\[8-15\], Diamonds\[16-23\], Clubs\[24-31\]. Within each suit: 7, 8, 9, J, Q, K, 10, A (plain strength order). Trump strength: J > 9 > A > 10 > K > Q > 8 > 7.
+Système de bitmask : `Card = u8` (0-31), `CardSet = u32` (bitmask). Disposition : Pique\[0-7\], Cœur\[8-15\], Carreau\[16-23\], Trèfle\[24-31\]. Dans chaque couleur : 7, 8, 9, V, D, R, 10, A (ordre de force hors atout). Force à l'atout : V > 9 > A > 10 > R > D > 8 > 7.
 
-### Game State
+### État de jeu
 
-`GameState` is `Copy` and ≤96 bytes (compile-time enforced) for fast MCTS cloning. Contains hands, current trick, contract, points/tricks per team, bidding state, played cards bitmask, void tracking, and belote tracking.
+`GameState` est `Copy` et fait <=96 octets (vérifié à la compilation) pour un clonage MCTS rapide. Contient les mains, le pli courant, le contrat, les points/plis par équipe, l'état des enchères, le bitmask des cartes jouées, le suivi des coupes et de la belote.
 
-### Action Encoding
+### Encodage des actions
 
-| Phase | Actions | Encoding |
+| Phase | Actions | Encodage |
 |---|---|---|
-| Bidding | 43 total | 0=PASS, 1-36=bids (9 values x 4 suits), 37-40=capot x 4, 41=COINCHE, 42=SURCOINCHE |
-| Playing | 32 total | Card index 0-31 directly |
+| Enchères | 43 total | 0=PASSE, 1-36=enchères (9 valeurs x 4 couleurs), 37-40=capot x 4, 41=COINCHE, 42=SURCOINCHE |
+| Jeu | 32 total | Index de carte 0-31 directement |
 
-### Game Flow
+### Déroulement
 
-Bidding → Playing → Done. Bidding ends after 3 consecutive passes, a surcoinche, or 4 passes (void deal). Playing runs 8 tricks of 4 cards. Card point total = 152; with dix de der = 162 (normal) or 252 (capot).
+Enchères → Jeu → Fin. Les enchères se terminent après 3 passes consécutives, une surcoinche, ou 4 passes (donne nulle). Le jeu comporte 8 plis de 4 cartes. Total des points de carte = 152 ; avec dix de der = 162 (normal) ou 252 (capot).
 
-## Python API
+## API Python
 
 ```python
 import colver
 
-print(colver.__version__)  # "0.9.1"
+print(colver.__version__)  # "0.10.0"
 
-# Single environment
+# Environnement unique
 env = colver.Env()
 obs, legal_actions = env.reset()
 obs, reward, done, legal_actions = env.step(action)
 
 env.current_player()       # 0-3
-env.phase()                # 0=Bidding, 1=Playing, 2=Done
-env.legal_action_mask()    # numpy array (43,)
-env.rewards()              # [NS_score, EW_score]
-env.bid_improved()         # improved_bid action
-env.deal_outcome()         # [NS_outcome, EW_outcome] binary
-env.get_observation()      # 415-float observation vector
-env.action_naive_ismcts(20)  # naive IS-MCTS action (20ms)
-env.action_smart_ismcts(20)  # smart IS-MCTS action (20ms)
+env.phase()                # 0=Enchères, 1=Jeu, 2=Fin
+env.legal_action_mask()    # tableau numpy (43,)
+env.rewards()              # [score_NS, score_EO]
+env.bid_improved()         # action d'enchère improved_bid
+env.deal_outcome()         # [résultat_NS, résultat_EO] binaire
+env.get_observation()      # vecteur d'observation de 415 flottants
+env.action_naive_ismcts(20)  # action IS-MCTS naïf (20ms)
+env.action_smart_ismcts(20)  # action IS-MCTS intelligent (20ms)
 
-# DMC Q-network (if model weights downloaded)
+# Réseau Q DMC (si les poids du modèle sont téléchargés)
 model = colver.model_path()  # ~/.cache/colver/models/dmc_final.bin
 if model:
     env.load_dmc_model(str(model))
     result = env.action_dmc_with_stats()  # {"best_action": 5, "q_values": [...]}
 
-# A whole bot from a spec — same TOML the arena reads
+# Un bot complet à partir d'une spec — le même TOML que lit l'arène
 agent = colver.Agent(spec_toml, seat=2)
 agent.init_deal(env)
-agent.observe(env, action)       # every action, including your own
-decision = agent.decide(env)     # {"action": …, plus per-method stats}
+agent.observe(env, action)       # toutes les actions, y compris les vôtres
+decision = agent.decide(env)     # {"action": …, plus les stats de la méthode}
 
-# Playgen as an analyst: hidden-card marginals, sampled worlds, auction policy
+# Playgen comme analyste : marginales des cartes cachées, mondes, politique d'enchère
 analyst = colver.Analyst("models/playgen/playgen_v2_final.bin")
 analyst.init_deal(env, observer=2)
 probs = analyst.marginals(env, n_worlds=50)
@@ -296,45 +309,45 @@ probs = analyst.marginals(env, n_worlds=50)
 
 ## Performance
 
-| Workload | Throughput | Latency |
+| Charge | Débit | Latence |
 |---|---|---|
-| Play-phase rollout | 1.4M/sec | ~720 ns |
-| Full-deal rollout | 895K/sec | ~1118 ns |
-| MCTS game (1000 iter) vs random | — | 8 ms |
-| Smart IS-MCTS game (20x50) vs random | — | 9 ms |
-| DMC Q-Network inference | — | <1 ms |
+| Rollout phase de jeu | 1.4M/sec | ~720 ns |
+| Rollout donne complète | 895K/sec | ~1118 ns |
+| Partie MCTS (1000 iter) vs aléatoire | — | 8 ms |
+| Partie Smart IS-MCTS (20x50) vs aléatoire | — | 9 ms |
+| Inférence DMC Q-Network | — | <1 ms |
 
 ## Docker
 
-The Docker image lets you deploy the web interface on any machine, x86-64 or ARM64.
+L'image Docker permet de déployer l'interface web sur n'importe quelle machine, x86-64 ou ARM64.
 
 ```bash
-# Build and run
+# Build et lancement
 docker build -t colver .
 docker run -p 8000:8000 colver
 
-# Or with Docker Compose
+# Ou avec Docker Compose
 docker compose up -d
 
-# Cross-build for ARM64
+# Cross-build pour ARM64
 docker buildx build --platform linux/arm64 -t colver .
 ```
 
-The image is ~257 MB (no PyTorch dependency). All agents run in pure Rust and work on all architectures.
+L'image fait ~257 Mo (pas de dépendance PyTorch). Tous les agents tournent en Rust pur et fonctionnent sur toutes les architectures.
 
-## Rules
+## Règles
 
-Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scoring mode: "points faits + points demandes", with the coinche (x2) and surcoinche (x3) multipliers applying to the contract value only. On a chute the defense takes the contract *and* every card point, whatever the real split of tricks.
+Implémente la Belote Contrée avec 4 couleurs (Pique, Cœur, Carreau, Trèfle). Comptage en mode "points faits + points demandés", les multiplicateurs coinche (x2) et surcoinche (x3) ne portant que sur la valeur du contrat. Sur une chute, la défense prend le contrat *et* tous les points cartes, quel que soit le partage réel des plis.
 
-Scores are **exact — nothing is rounded**. The FFB rounds the marque to the nearest 10; here a chute marks 162 + the contract, not 160, so the engine and the web score sheet always show the same number. See the [FFB rulebook](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) for the full official text, and [docs/rules-survey/](docs/rules-survey/) for how ~594 published rulebooks actually differ from it.
+Les scores sont **exacts — rien n'est arrondi**. La FFB arrondit la marque à la dizaine ; ici une chute marque 162 + le contrat, pas 160, de sorte que le moteur et la feuille de score du web affichent toujours le même chiffre. Voir le [règlement FFB](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) pour le texte officiel complet, et [docs/rules-survey/](docs/rules-survey/) pour ce que ~594 règlements publiés en font réellement.
 
-## References
+## Références
 
-- Kocsis, L. & Szepesvari, C. (2006). [Bandit Based Monte-Carlo Planning](https://link.springer.com/chapter/10.1007/11871842_29). *ECML*.
-- Cowling, P.I., Powley, E.J. & Whitehouse, D. (2012). [Information Set Monte Carlo Tree Search](https://doi.org/10.1109/TCIAIG.2012.2200894). *IEEE Transactions on Computational Intelligence and AI in Games*.
+- Kocsis, L. et Szepesvári, C. (2006). [Bandit Based Monte-Carlo Planning](https://link.springer.com/chapter/10.1007/11871842_29). *ECML*.
+- Cowling, P.I., Powley, E.J. et Whitehouse, D. (2012). [Information Set Monte Carlo Tree Search](https://doi.org/10.1109/TCIAIG.2012.2200894). *IEEE Transactions on Computational Intelligence and AI in Games*.
 - Zha, D. et al. (2021). [DouZero: Mastering DouDiZhu with Self-Play Deep Reinforcement Learning](https://arxiv.org/abs/2106.06135). *ICML*.
-- Auer, P., Cesa-Bianchi, N. & Fischer, P. (2002). [Finite-time Analysis of the Multiarmed Bandit Problem](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf). *Machine Learning*.
+- Auer, P., Cesa-Bianchi, N. et Fischer, P. (2002). [Finite-time Analysis of the Multiarmed Bandit Problem](https://homes.di.unimi.it/~cesabian/Pubblicazioni/ml-02.pdf). *Machine Learning*.
 
-## Acknowledgments
+## Remerciements
 
-Thanks to **Ronan Guillou**, seasoned coinche player, for his advice on the game and for being the first tester — his good sense guided many UI decisions.
+Merci à **Ronan Guillou**, joueur de coinche aguerri, pour ses conseils avisés sur le jeu et pour avoir été le premier testeur — son bon sens a guidé de nombreux choix d'interface.
