@@ -734,6 +734,49 @@ impl Env {
         }
     }
 
+    /// Deal 8 cards to each seat and return a fresh env, ready to bid.
+    ///
+    /// `seed` makes the deal reproducible — and seeds the env's own RNG, so every
+    /// later random draw on it (`reset`, the rollouts, the IS-MCTS searches) follows
+    /// from it too. `dealer` defaults to a random seat; seat `(dealer + 1) % 4` speaks
+    /// first.
+    ///
+    /// `Env()` + `reset()` already deals at random, but it hands back an observation
+    /// vector and keeps the cards to itself, so every caller who wanted *a deal* was
+    /// shuffling `range(32)` by hand and going through `deal_with_hands`.
+    #[staticmethod]
+    #[pyo3(signature = (dealer=None, seed=None))]
+    fn deal(dealer: Option<u8>, seed: Option<u64>) -> PyResult<Self> {
+        let mut rng = match seed {
+            Some(s) => StdRng::seed_from_u64(s),
+            None => StdRng::from_entropy(),
+        };
+        let dealer = match dealer {
+            Some(d) if d >= 4 => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Invalid dealer: {} (expected 0-3)",
+                    d
+                )))
+            }
+            Some(d) => d,
+            None => rng.gen_range(0..4u8),
+        };
+        let state = GameState::deal_random(dealer, &mut rng);
+        Ok(Env {
+            state,
+            rng,
+            naive_search: None,
+            smart_searches: None,
+            smart_initialized: false,
+            played_by: [0; 4],
+            play_order: Vec::with_capacity(32),
+            bid_history: Vec::new(),
+            dmc_net: None,
+            bid_net: None,
+            match_scores: [0, 0],
+        })
+    }
+
     /// Create env with specific hands. hands: list of 4 lists of card indices.
     #[staticmethod]
     fn deal_with_hands(dealer: u8, hands: Vec<Vec<u8>>) -> PyResult<Self> {

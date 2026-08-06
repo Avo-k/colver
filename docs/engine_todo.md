@@ -1,7 +1,7 @@
 # Backlog moteur & modèles (non implémenté)
 
 Pendant de [web_todo.md](web_todo.md), côté moteur : règles, données,
-entraînement, zoo de modèles, arène. (Dernière mise à jour : 2026-08-01)
+entraînement, zoo de modèles, arène. (Dernière mise à jour : 2026-08-06)
 
 Rangé par **dépendance**, pas par thème : le §1 conditionne tout le reste, et
 il n'y a rien d'utile à mesurer tant qu'il n'est pas fait. L'effort est en
@@ -324,3 +324,74 @@ c'est le contrat assumé d'un moteur RL, et c'est ce qui rend possible d'écrire
 une donne impossible. Un `debug_assert` sur la légalité dans `step`, actif dans
 les builds de développement du site, coûterait zéro en release et aurait attrapé
 ces deux donnes à l'écriture.
+
+### 4.5 Le paquet Python se lit mal, et sa fiche Hugging Face le prouve
+
+Pas urgent — à traiter le jour où on rouvre la façon dont le paquet PyPI est
+fait. Deux morceaux sont déjà tombés le 2026-08-06 ; le reste attend.
+
+**Fait** : le démarrage rapide des deux README posait `env.reset()`, qui
+distribue au hasard **sans jamais montrer la main** — le nom d'annonce imprimé
+portait donc sur des cartes que le lecteur ne verrait pas. Le premier exemple du
+projet démontrait que l'API s'appelle, pas qu'elle sert à quelque chose. Il pose
+maintenant les deux seules questions qu'un lecteur se pose (« qu'est-ce que tu
+annonces ? », « qu'est-ce que tu entames ? »), sur une main affichée en
+commentaire. Et `Env.deal(dealer=…, seed=…)` a été ajouté pour ça : distribuer
+une donne reproductible était `random.Random(s).shuffle(list(range(32)))` plus
+un découpage en quatre plus `deal_with_hands`, recopié à l'identique dans la
+fiche HF de bid-v6 et dans tout script d'analyse.
+
+**Reste** la ligne qui répond à la question :
+
+```python
+print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
+```
+
+Trois choses s'y empilent : un dict dont il faut deviner la clé, une méthode
+statique appelée sur la classe alors qu'on tient une instance, et un `0` magique
+qui est la phase.
+
+La preuve que le défaut est dans la bibliothèque et pas dans le README est dans
+[`docs/hf/bid-v6/README.md`](hf/bid-v6/README.md) : pour poser correctement la
+seule question qui intéresse un lecteur — *voilà une main, qu'est-ce que tu
+annonces ?* — la fiche dépense 25 lignes, mélange un paquet à la main et
+**réimplémente `Env.action_name`** sous le nom `nom_annonce`. Elle a deux
+raisons de le faire, toutes deux réparables : `action_name` rend `110D`
+(couleurs en lettres anglaises) là où l'on veut `110♦`, et c'est une statique à
+qui il faut redire la phase. Une fiche de modèle qui réécrit une fonction de la
+bibliothèque qu'elle documente est un rapport de bug sur cette bibliothèque.
+
+Ce qui manque est une couche mince au-dessus de `Env`, de l'ordre de :
+
+```python
+main = colver.Hand("♠D ♥D7 ♦ARV9 ♣A")   # ou une liste d'indices
+print(colver.Bidder().call(main))        # -> 110♦
+print(colver.Bidder().ranking(main)[:5]) # -> [(110♦, 0.100), (100♦, 0.095), …]
+```
+
+Le détail qui compte, dans les deux cas :
+
+- **un objet qui porte le modèle**, téléchargement compris, plutôt qu'un
+  `load_bid_model` posé sur l'environnement — le modèle n'appartient pas à la
+  donne ;
+- **un type d'annonce** qui s'affiche tout seul (`110♦`) et expose `.value` /
+  `.suit` / `.is_pass`, au lieu d'un `int` dont le décodage vit en prose dans la
+  fiche HF et dans CLAUDE.md ;
+- **dire ce qui est déjà masqué** — `action_bid_nn` rend un `best_action` et des
+  `q_values` **déjà restreints aux actions légales** (41 entrées sur 43 à
+  l'ouverture, 8 cartes en jeu), mais rien ne le dit et la fiche HF affirme
+  l'inverse en toutes lettres (« pensez à masquer par `env.legal_actions()` ») —
+  vrai pour qui écrit son propre chargeur, faux pour ce chemin-là ;
+- **une main lisible**, parce que `[3, 12, 14, 18, 19, 21, 23, 31]` n'apprend
+  rien à personne.
+
+Deux garde-fous :
+
+- **`Env` reste la surface RL** — brute, rapide, sans allocation par décision.
+  La couche s'ajoute au-dessus, elle ne remplace rien : un entraînement ne doit
+  pas payer un objet Python par coup.
+- Le §4.2 s'applique directement : cette couche-là est précisément ce qui se
+  teste en Python sans GPU ni modèle, contrairement au reste de `colver-py`.
+
+Le jour où c'est fait, le démarrage rapide des deux README **et** l'exemple des
+quatre fiches HF se réécrivent dessus, et cessent de diverger.

@@ -31,10 +31,8 @@ pip install colver
 ```
 
 ```python
-import random
 import colver
 
-RANGS = ["7", "8", "9", "V", "D", "R", "10", "A"]
 COULEURS = "♠♥♦♣"                # une carte = couleur × 8 + rang
 
 def nom_annonce(a):
@@ -43,27 +41,20 @@ def nom_annonce(a):
     if a <= 40: return f"Capot{COULEURS[a - 37]}"
     return ("Contre", "Surcontre")[a - 41]
 
-# Une donne au hasard, reproductible
-paquet = list(range(32))
-random.Random(21).shuffle(paquet)
-mains = [sorted(paquet[i * 8:(i + 1) * 8]) for i in range(4)]
+env = colver.Env.deal(dealer=3, seed=23)   # donne reproductible ; le siège 0 ouvre
 
-# siège 0 : ♠ D      ♥ D 7      ♦ A R V 9   ♣ A
-# siège 1 : ♠ V 9 8  ♥ 10 V     ♦ —         ♣ D 9 7
-# siège 2 : ♠ A R 7  ♥ —        ♦ 8 7       ♣ R V 8
-# siège 3 : ♠ 10     ♥ A R 9 8  ♦ 10 D      ♣ 10
-
-env = colver.Env.deal_with_hands(dealer=3, hands=mains)   # donneur 3 → le siège 0 ouvre
+# le siège 0 tient : ♠ —   ♥ 9   ♦ R D V 9   ♣ R 8 7
 
 poids = colver.download_bid_model()      # Hub → ~/.cache/colver/models/
 env.load_bid_model(poids)
 
 reponse = env.action_bid_nn()
-print(nom_annonce(reponse["best_action"]))     # -> 110♦
+print(nom_annonce(reponse["best_action"]))     # -> 120♦
 ```
 
-Le modèle annonce **110 à carreau**. C'est là qu'est la main : quatre cartes dont le
-Valet et le 9, les deux plus fortes à l'atout, et l'As par-dessus.
+Le modèle annonce **120 à carreau**. C'est là qu'est la main : quatre cartes dont le
+Valet et le 9, les deux plus fortes à l'atout, avec le Roi et la Dame derrière — et une
+coupe à pique pour couper dès la première fois qu'on y revient.
 
 ## Voir *toutes* ses préférences, pas seulement son choix
 
@@ -74,16 +65,16 @@ for action, q in top:
 ```
 
 ```
-  110♦  0.100
-  100♦  0.095
-  120♦  0.092
-   90♦  0.081
-   80♦  0.056
+  120♦  0.129
+  110♦  0.120
+  130♦  0.105
+  100♦  0.093
+   90♦  0.073
 ```
 
-Les quatre premières valeurs tiennent dans **0,02** — c'est un défaut connu et mesuré du
-modèle, décrit plus bas. Le classement dit clairement « carreau, autour de 110 » ; il ne
-dit pas grand-chose sur le choix exact entre 100 et 120.
+Les trois premières valeurs tiennent dans **0,024** — c'est un défaut connu et mesuré du
+modèle, décrit plus bas. Le classement dit clairement « carreau, autour de 120 » ; il ne
+dit pas grand-chose sur le choix exact entre 110 et 130.
 
 Le modèle est entièrement déterministe : mêmes cartes, mêmes valeurs, à la décimale près.
 
@@ -101,8 +92,11 @@ C'est ce que fait `nom_annonce` ci-dessus :
 Les couleurs sont numérotées **♠ 0, ♥ 1, ♦ 2, ♣ 3**, partout et pour tout — cartes comme
 annonces.
 
-Pensez à masquer par `env.legal_actions()` avant de prendre l'argmax : le réseau note
-les 43 actions, y compris celles qui sont interdites dans la position.
+`action_bid_nn` rend un `best_action` **et** des `q_values` déjà restreints aux actions
+légales de la position — 41 entrées sur 43 à l'ouverture ci-dessus, jamais les 43. Si
+vous chargez les poids vous-même à partir de `env.get_bid_observation()`, en revanche, le
+réseau note bien les 43 actions, y compris celles qui sont interdites : masquez par
+`env.legal_actions()` avant de prendre l'argmax.
 
 ## Le faire jouer une donne entière
 

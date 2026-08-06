@@ -23,14 +23,34 @@ Environnement de Belote Contrée rapide pour l'apprentissage par renforcement. M
 pip install colver
 ```
 
+**Qu'est-ce que tu annonces ?**
+
 ```python
 import colver
 
-env = colver.Env()
-env.reset()
+env = colver.Env.deal(dealer=3, seed=23)   # donne reproductible ; le siège 0 ouvre
+# le siège 0 tient   ♠ —   ♥ 9   ♦ R D V 9   ♣ R 8 7
+
 env.load_bid_model(colver.download_bid_model())   # récupéré depuis le Hub au premier appel
 print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
+# 120D — 120 à carreau. Le valet et le 9 sont les deux plus fortes cartes à
+#        l'atout et la main tient les deux, plus une coupe à pique.
 ```
+
+**Et qu'est-ce que tu entames ?**
+
+```python
+while env.phase() == 0:                    # le modèle déroule l'enchère aux quatre sièges
+    env.step(env.action_bid_nn()["best_action"])
+# personne ne surenchérit : le contrat est 120♦ pour Nord-Sud
+
+env.load_dmc_model(colver.download_model())
+print(colver.Env.action_name(env.action_dmc_with_stats()["best_action"], 1))
+# JD — le maître atout, en 0,6 ms sur CPU
+```
+
+Les deux appels rendent aussi `q_values`, le classement complet du modèle, déjà restreint
+aux actions légales.
 
 Les poids vivent sur le [Hub Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65)
 — un dépôt par modèle, chacun avec une fiche qui dit ce qu'il fait, ce qu'il vaut et ce

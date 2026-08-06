@@ -98,6 +98,11 @@ class Env:
     @staticmethod
     def from_cfn(cfn: str) -> "Env": ...
     @staticmethod
+    def deal(dealer: int | None = None, seed: int | None = None) -> "Env":
+        """Deal 8 cards to each seat. `seed` makes it reproducible and seeds the
+        env's RNG; `dealer` defaults to random, and seat `(dealer + 1) % 4` speaks
+        first."""
+    @staticmethod
     def deal_with_hands(dealer: int, hands: list[list[int]]) -> "Env": ...
     def redeal_with_hands(self, dealer: int, hands: list[list[int]]) -> None: ...
 
