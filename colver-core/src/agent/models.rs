@@ -50,6 +50,13 @@ impl DmcWeights {
         Ok(DmcWeights { floats: read_floats(path)?, hidden, obs_dim, dueling })
     }
 
+    /// Les flottants bruts, pour un backend qui construit ses propres tenseurs
+    /// (le déroulement groupé sur GPU). Rendus tels quels : la disposition est
+    /// documentée par `DmcNet::from_floats`, qui reste la référence.
+    pub fn floats(&self) -> &[f32] {
+        &self.floats
+    }
+
     /// Build a fresh net for one player. `residual` enables the skip
     /// connections of the triforge/DouDou50 architecture — same weights,
     /// different forward pass, so it cannot be detected from the file.

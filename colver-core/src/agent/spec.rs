@@ -78,6 +78,33 @@ pub struct BidSpec {
     /// in the wrong suit. Same footgun as `residual` on the play side, and the same
     /// reason it is explicit.
     pub canonical: bool,
+
+    // ── `strategy = "rollout"` seulement ─────────────────────────────
+    //
+    // Annoncer en simulant la donne. `model` reste le réseau de référence :
+    // il présélectionne les candidates *et* parle pour les quatre sièges dans
+    // la suite de chaque simulation. Voir [`crate::agent::bid_rollout`].
+    /// Mondes tirés par décision, rejoués par chaque candidate.
+    pub sims: u32,
+    /// Plafond du nombre d'annonces simulées. 0 = pas de plafond.
+    pub candidates: usize,
+    /// Comment la liste est construite : `probe` (défaut — celle du réseau,
+    /// passe, la deuxième couleur, deux voisines) ou `top` (les meilleures au Q).
+    pub candidate_mode: crate::agent::bid_rollout::CandidateMode,
+    /// Éclater les déroulements d'une décision sur rayon. Utile au web (latence
+    /// d'un coup), inutile en arène où les matchs saturent déjà les cœurs.
+    pub parallel: bool,
+    /// Dérouler les mondes en lot sur GPU (feature `dmc_train`). Le vrai levier.
+    pub gpu: bool,
+    /// Le modèle de jeu des simulations. `None` reprend `[play] model`, ce qui
+    /// est le cas normal : on simule avec le joueur qu'on est.
+    pub play_model: Option<String>,
+    /// Idem pour les connexions résiduelles ; `None` reprend `[play] residual`.
+    pub play_residual: Option<bool>,
+    /// Ce que la simulation maximise (`margin` par défaut, `winrate` offert).
+    pub objective: crate::agent::bid_rollout::RolloutObjective,
+    /// Échéance par décision d'enchère, en ms. 0 = pas d'horloge.
+    pub time_ms: u32,
 }
 
 impl Default for BidSpec {
@@ -90,6 +117,15 @@ impl Default for BidSpec {
             temperature: 0.0,
             score_aware: false,
             canonical: false,
+            sims: 20,
+            candidates: 5,
+            candidate_mode: crate::agent::bid_rollout::CandidateMode::Probe,
+            parallel: false,
+            gpu: false,
+            play_model: None,
+            play_residual: None,
+            objective: crate::agent::bid_rollout::RolloutObjective::Margin,
+            time_ms: 0,
         }
     }
 }
@@ -310,6 +346,40 @@ impl AgentSpec {
                 ("bid", "temperature") => spec.bid.temperature = num(0.0),
                 ("bid", "score_aware") => spec.bid.score_aware = flag(),
                 ("bid", "canonical") => spec.bid.canonical = flag(),
+                ("bid", "sims") => spec.bid.sims = int(20),
+                ("bid", "candidates") => spec.bid.candidates = int(5) as usize,
+                ("bid", "parallel") => spec.bid.parallel = flag(),
+                ("bid", "gpu") => spec.bid.gpu = flag(),
+                ("bid", "candidate_mode") => {
+                    spec.bid.candidate_mode = match val {
+                        "top" => crate::agent::bid_rollout::CandidateMode::Top,
+                        "probe" | "around" | "sondage" => {
+                            crate::agent::bid_rollout::CandidateMode::Probe
+                        }
+                        other => {
+                            return Err(AgentError::Config(format!(
+                                "unknown bid candidate_mode '{other}' (expected 'probe' or 'top')"
+                            )))
+                        }
+                    }
+                }
+                ("bid", "play_model") => spec.bid.play_model = Some(val.into()),
+                ("bid", "play_residual") => spec.bid.play_residual = Some(flag()),
+                ("bid", "time_ms") => spec.bid.time_ms = int(0),
+                ("bid", "objective") => {
+                    // Même règle que `[play] objective` : pas de repli
+                    // silencieux, une faute de frappe changerait ce que le bot
+                    // maximise sans rien afficher.
+                    spec.bid.objective = match val {
+                        "margin" | "score" => crate::agent::bid_rollout::RolloutObjective::Margin,
+                        "winrate" | "win" => crate::agent::bid_rollout::RolloutObjective::WinRate,
+                        other => {
+                            return Err(AgentError::Config(format!(
+                                "unknown bid objective '{other}' (expected 'margin' or 'winrate')"
+                            )))
+                        }
+                    }
+                }
 
                 ("play", "method") => spec.play.method = val.into(),
                 ("play", "model") => spec.play.model = Some(val.into()),
@@ -418,6 +488,77 @@ impl AgentSpec {
                 model,
                 seat,
                 self.bid.temperature,
+                seed,
+            )));
+        }
+        if self.bid.strategy == "rollout" {
+            // Le réseau de référence : présélection des candidates, et parole
+            // des quatre sièges dans la suite de chaque simulation.
+            let path = self.bid.model.as_deref().ok_or_else(|| {
+                AgentError::Config("bid strategy 'rollout' requires a model path".into())
+            })?;
+            let bid_weights = models::bid_weights(path, self.bid.hidden)?;
+            // Le joueur des simulations est celui du bot, sauf mention
+            // contraire : simuler avec un autre joueur que soi mesurerait
+            // l'annonce d'un bot qui n'existe pas.
+            let play_path = self
+                .bid
+                .play_model
+                .as_deref()
+                .or(self.play.model.as_deref())
+                .ok_or_else(|| {
+                    AgentError::Config(
+                        "bid strategy 'rollout' needs a play model: set bid.play_model, \
+                         or a [play] model it can borrow"
+                            .into(),
+                    )
+                })?;
+            let dmc_weights = models::dmc_weights(play_path)?;
+            // Les mondes d'enchère se règlent dans `[worlds]`, comme ceux du
+            // jeu — même section, même défaut sidecar, même refus de dégrader
+            // en silence. `worlds.model` sert le mode CPU.
+            let pg_model = match self.worlds.kind {
+                WorldSourceKind::LocalPlaygen => {
+                    Some(models::playgen_model(self.worlds.model.as_deref().ok_or_else(|| {
+                        AgentError::Config(
+                            "worlds.source = \"playgen\" requires worlds.model".into(),
+                        )
+                    })?)?)
+                }
+                _ => None,
+            };
+            let kind = match self.worlds.kind {
+                WorldSourceKind::Sidecar => "sidecar",
+                WorldSourceKind::LocalPlaygen => "playgen",
+                WorldSourceKind::Uniform => "uniform",
+            };
+            let worlds = super::bid_rollout::build_bid_worlds(
+                kind,
+                self.worlds.url.as_deref(),
+                pg_model,
+                self.worlds.temperature,
+                self.worlds.timeout,
+                std::env::var(SIDECAR_URL_ENV).ok(),
+            )?;
+            return Ok(Box::new(super::bid_rollout::RolloutBidPolicy::new(
+                bid_weights,
+                dmc_weights,
+                self.bid.play_residual.unwrap_or(self.play.residual),
+                self.bid.penalty,
+                self.bid.score_aware,
+                self.bid.canonical,
+                worlds,
+                super::bid_rollout::RolloutBidConfig {
+                    sims: self.bid.sims,
+                    candidates: self.bid.candidates,
+                    mode: self.bid.candidate_mode,
+                    objective: self.bid.objective,
+                    time_ms: self.bid.time_ms,
+                    parallel: self.bid.parallel,
+                    gpu: self.bid.gpu,
+                    fallback: self.worlds.fallback,
+                },
+                seat,
                 seed,
             )));
         }
@@ -622,6 +763,25 @@ impl AgentSpec {
         };
         if self.bid.temperature > 0.0 {
             label.push_str(&format!("@T{}", self.bid.temperature));
+        }
+        // Le budget de simulation *est* l'identité de ce bidder — deux
+        // `rollout:bid_v6` à 10 et à 200 mondes ne sont pas le même joueur, et
+        // `matches.csv` doit pouvoir les distinguer.
+        if self.bid.strategy == "rollout" {
+            label.push_str(&format!("@{}x{}", self.bid.sims, self.bid.candidates));
+            if self.bid.candidate_mode == crate::agent::bid_rollout::CandidateMode::Top {
+                label.push_str("+top");
+            }
+            // D'où viennent les mondes fait partie de l'identité : `uniform`
+            // contredit l'enchère entendue, playgen non — deux joueurs.
+            label.push_str(match self.worlds.kind {
+                WorldSourceKind::Sidecar => "+pg",
+                WorldSourceKind::LocalPlaygen => "+pgcpu",
+                WorldSourceKind::Uniform => "+unif",
+            });
+            if self.bid.objective == crate::agent::bid_rollout::RolloutObjective::WinRate {
+                label.push_str("+win");
+            }
         }
         label
     }

@@ -17,7 +17,7 @@ pub use dmc::{dmc_net, dmc_obs};
 #[cfg(feature = "rand")]
 pub use dmc::{dmc_eval, dmc_replay, dmc_env};
 #[cfg(feature = "dmc_train")]
-pub use dmc::dmc_candle;
+pub use dmc::{dmc_candle, gpu_rollout};
 
 pub mod belief;
 pub use belief::{belief_obs, belief_net};

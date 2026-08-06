@@ -355,6 +355,53 @@ impl WorldSource for SidecarWorldSource {
 }
 
 impl SidecarWorldSource {
+    /// Full deals sampled from a **mid-auction** position (`POST /auction_deals`).
+    ///
+    /// Distinct from [`WorldSource::worlds`], which serves the *play* phase and
+    /// returns the cards each seat has **left**. Here nothing has been played,
+    /// so a world is four complete hands — and, crucially, playgen v2 completes
+    /// the auction with its own bid head, so the hands it invents are ones that
+    /// **explain the bids already heard**. A uniform draw cannot do that: it
+    /// hands a random hand to the seat that just bid 100♥, and the world then
+    /// contradicts the auction it was drawn under.
+    ///
+    /// Same body, same round-robin, same timeout as the play-phase route — only
+    /// the path differs, which is why it lives here rather than in a second type.
+    ///
+    /// **Découpé en plusieurs requêtes**, parce que le sidecar plafonne à son
+    /// `max_worlds` (512) et le fait **en silence** : on lui demande 1024, il en
+    /// rend 512, sans erreur ni champ qui le dise. Un appelant qui complète la
+    /// différence autrement — mondes uniformes, par exemple — se retrouve avec
+    /// la moitié d'un échantillon qui ne sait rien de l'enchère, et rien ne
+    /// l'en avertit. On redemande donc jusqu'à avoir le compte.
+    pub fn auction_deals(&mut self, observer: u8, n: usize) -> Result<Vec<World>, AgentError> {
+        let mut out: Vec<World> = Vec::with_capacity(n);
+        // Garde-fou : un sidecar qui rendrait un seul monde par appel ferait
+        // boucler indéfiniment. 64 tours couvrent 32 000 mondes à 512.
+        for _ in 0..64 {
+            if out.len() >= n {
+                break;
+            }
+            let body = self.request_body(observer, n - out.len());
+            let url = self.pick();
+            let resp = http_request(url, "POST", "/auction_deals", Some(&body), self.timeout)?;
+            let batch = parse_hands(&resp).ok_or_else(|| {
+                AgentError::WorldSource(format!(
+                    "{}: malformed /auction_deals response ({} bytes)",
+                    url,
+                    resp.len()
+                ))
+            })?;
+            // Un lot vide veut dire « je n'ai plus rien » : insister bouclerait.
+            if batch.is_empty() {
+                break;
+            }
+            out.extend(batch);
+        }
+        out.truncate(n);
+        Ok(out)
+    }
+
     /// The sidecar's raw answer, before [`retain_valid`]. Exposed so a benchmark
     /// can count what the filter throws away — a rejection rate that only means
     /// something if it is measured on the unfiltered stream.
@@ -500,7 +547,45 @@ fn http_request(
     if !(200..300).contains(&status) {
         return Err(AgentError::WorldSource(format!("{host}{path}: HTTP {status}")));
     }
+    // tiny_http passe en `Transfer-Encoding: chunked` au-delà de ~32 Ko et
+    // envoie un `Content-Length` en dessous — donc **la même route change de
+    // cadrage avec la taille de sa réponse**. Mesuré : 512 mondes = 21 949
+    // octets avec longueur annoncée, 1024 mondes = 44 Ko en blocs.
+    //
+    // Le bug que ça donne ne ressemble pas à un problème de transport : les
+    // tailles de bloc sont écrites **en hexadécimal dans le corps**, donc
+    // `parse_hands` les compte comme des entiers de plus et rend « réponse
+    // malformée ». Latent jusqu'ici parce que rien ne demandait assez de
+    // mondes pour franchir le seuil.
+    if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        return dechunk(payload).ok_or_else(|| {
+            AgentError::WorldSource(format!("{host}{path}: chunked response is malformed"))
+        });
+    }
     Ok(payload.to_string())
+}
+
+/// Recoller un corps `Transfer-Encoding: chunked` : `<taille hexa>\r\n<données>\r\n`,
+/// jusqu'à une taille nulle.
+fn dechunk(body: &str) -> Option<String> {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    loop {
+        let (line, tail) = rest.split_once("\r\n")?;
+        // Une extension de bloc (`1a2b;nom=valeur`) est légale : on ne garde
+        // que ce qui précède le `;`.
+        let size_hex = line.split(';').next().unwrap_or(line).trim();
+        let size = usize::from_str_radix(size_hex, 16).ok()?;
+        if size == 0 {
+            return Some(out);
+        }
+        if tail.len() < size {
+            return None; // corps tronqué
+        }
+        out.push_str(&tail[..size]);
+        // Le `\r\n` qui suit les données du bloc.
+        rest = tail.get(size + 2..)?;
+    }
 }
 
 /// Pull `{"hands": [[a,b,c,d], ...]}` out of a sidecar response.
@@ -562,6 +647,34 @@ fn parse_hands(json: &str) -> Option<Vec<World>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Le corps en blocs doit se recoller **à l'identique**. Sans ça, les
+    /// tailles de bloc — écrites en hexadécimal dans le corps — se lisent comme
+    /// des entiers de plus, et `parse_hands` rend « réponse malformée » sur une
+    /// réponse parfaitement valide.
+    #[test]
+    fn a_chunked_body_is_reassembled() {
+        let body = "10\r\n{\"hands\":[[1,2,3\r\n5\r\n,4]]}\r\n0\r\n\r\n";
+        assert_eq!(dechunk(body).as_deref(), Some("{\"hands\":[[1,2,3,4]]}"));
+    }
+
+    /// Et le tout doit traverser `parse_hands` : c'est l'enchaînement qui a
+    /// cassé en production, pas le déchunkage seul.
+    #[test]
+    fn a_chunked_hands_payload_parses() {
+        let body = "10\r\n{\"hands\":[[1,2,3\r\n5\r\n,4]]}\r\n0\r\n\r\n";
+        let joined = dechunk(body).unwrap();
+        assert_eq!(parse_hands(&joined), Some(vec![[1, 2, 3, 4]]));
+        // Le contrôle qui donne son sens au test : sans déchunkage, les « 10 »
+        // et « 8 » entrent dans le compte et le rendent non multiple de 4.
+        assert_eq!(parse_hands(body), None, "le corps brut doit bien être illisible");
+    }
+
+    #[test]
+    fn a_truncated_chunked_body_is_rejected() {
+        assert_eq!(dechunk("20\r\ntrop court\r\n0\r\n\r\n"), None);
+        assert_eq!(dechunk("pas-de-taille\r\n"), None);
+    }
 
     /// A dry source answers `{"hands":[]}`. That is "no worlds here", which the
     /// search handles, and not a malformed response, which it treats as a hard

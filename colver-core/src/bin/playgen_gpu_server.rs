@@ -35,7 +35,18 @@ use colver_core::playgen::infer::{PlaygenModel, PlaygenSampler};
 use colver_core::state::{GameState, Phase};
 
 /// Borne dure sur le batch (VRAM prévisible : ~3 Mo/lane de KV cache).
-const MAX_WORLDS: usize = 512;
+///
+/// **Alignée sur le `lane_budget` par défaut (1024), et c'est le point.** La
+/// route est *plate en n* — 32 mondes coûtent 773 ms, 512 en coûtent 716 : on
+/// paie la séquence de jetons, pas les lanes. Tant que cette constante valait
+/// la moitié du budget de lanes, demander 1024 mondes coûtait **deux requêtes
+/// séquentielles**, donc deux fois la latence, pour un lot que le GPU aurait
+/// pris d'un coup. Mesuré côté client : 1,44 s la décision à 512 mondes contre
+/// 2,83 s à 1024, alors que le calcul, lui, ne double pas.
+///
+/// La VRAM ne bouge pas : `lane_budget` provisionnait déjà 1024 lanes, que
+/// plusieurs requêtes concurrentes pouvaient déjà remplir.
+const MAX_WORLDS: usize = 1024;
 
 #[derive(Deserialize)]
 struct WorldsRequest {

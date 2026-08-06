@@ -1,0 +1,37 @@
+# Annoncer en simulant la donne — la simulation de la page Annonces, en bidder.
+#
+# **Le témoin est `v6_isdd_75M`** : même réseau d'enchère, même joueur de
+# cartes, sans la simulation. Ce h2h-là mesure la simulation et rien d'autre.
+#
+# **Pourquoi 1024 mondes et pas 512.** Le poste dominant en arène est l'appel
+# `/auction_deals`, et sa route est **plate en n** : 1 085 ms pour 512 mondes,
+# 1 134 ms pour 1024 (depuis que `MAX_WORLDS` est aligné sur le `lane_budget`,
+# sinon 1024 coûtait deux requêtes). Doubler les mondes coûte donc ~16 % de mur
+# d'arène, pas 100 %. Ça n'améliore pas la résolution statistique du h2h — seul
+# le nombre de matchs le fait — mais ça resserre chaque décision (erreur type
+# ±9 → ±8 points) pour presque rien.
+[bid]
+strategy = "rollout"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+sims = 1024
+candidates = 5
+candidate_mode = "probe"
+# Déroulement groupé sur GPU : 8× le chemin CPU, et le contrôle d'équivalence
+# avec `DmcNet::evaluate` passe à 3,3e-6. Demande la feature `dmc_train`.
+gpu = true
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true
+
+[worlds]
+source = "sidecar"
+# ⚠️ **Le sidecar sérialise `/auction_deals`** (`run_alone` : ces requêtes ne
+# sont jamais groupées entre elles, contrairement à `/play_worlds`). Avec N
+# matchs concurrents, le N-ième attend N × ~1,1 s — le défaut de 6 s expire dès
+# ~5 matchs en parallèle, et l'arène s'arrête sur « read: Resource temporarily
+# unavailable ». Le délai doit donc couvrir la file, pas la requête.
+timeout_ms = 120000

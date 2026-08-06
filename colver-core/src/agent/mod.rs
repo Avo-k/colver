@@ -46,6 +46,7 @@ use crate::is_dd::WorldCounts;
 use crate::state::GameState;
 
 pub mod bid;
+pub mod bid_rollout;
 pub mod dmc;
 pub mod isdd;
 pub mod ismcts;
@@ -53,6 +54,7 @@ pub mod models;
 pub mod spec;
 
 pub use bid::BidNetPolicy;
+pub use bid_rollout::{RolloutBidConfig, RolloutBidPolicy, RolloutObjective};
 pub use dmc::DmcPlayer;
 pub use isdd::IsDdPlayer;
 pub use spec::{AgentSpec, BidSpec, PlaySpec};

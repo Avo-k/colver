@@ -22,6 +22,10 @@ struct ManualLayerNorm {
 }
 
 impl ManualLayerNorm {
+    fn from_parts(weight: Tensor, bias: Tensor, eps: f64) -> Self {
+        ManualLayerNorm { weight, bias, eps }
+    }
+
     fn new(size: usize, eps: f64, vb: VarBuilder) -> Result<Self> {
         let weight = vb.get_with_hints(size, "weight", candle_nn::Init::Const(1.0))?;
         let bias = vb.get_with_hints(size, "bias", candle_nn::Init::Const(0.0))?;
@@ -88,6 +92,74 @@ impl DuelingQNet {
             trunk_ln,
             value_head,
             advantage_head,
+            obs_dim,
+            residual,
+        })
+    }
+
+    /// Construire le réseau depuis les **poids d'inférence bruts** (`.bin`, f32
+    /// à plat), tels que [`crate::dmc_net::DmcNet::from_floats`] les lit.
+    ///
+    /// C'est ce qui permet de faire tourner DouDou50 en lot sur GPU sans passer
+    /// par un checkpoint d'entraînement : mêmes poids, même arithmétique, une
+    /// passe pour tout un lot au lieu d'une par carte.
+    ///
+    /// ⚠️ **L'orientation des matrices est le piège de cette fonction.** Le
+    /// noyau CPU lit `w[i * in_dim .. (i+1) * in_dim]` pour la sortie `i`, donc
+    /// le fichier est en **(out, in) ligne par ligne** — ce qui est justement la
+    /// convention de `candle_nn::Linear` (`x @ Wᵀ + b`). Les deux coïncident,
+    /// mais se tromper ne planterait pas : le réseau rendrait une carte
+    /// **légale et absurde**, exactement le mode de panne silencieuse que
+    /// `cardset_to_canonical` documente ailleurs. D'où le contrôle obligatoire :
+    /// comparer les Q du GPU à ceux de `DmcNet::evaluate` sur la même
+    /// observation avant de croire quoi que ce soit.
+    pub fn from_raw_weights(
+        floats: &[f32],
+        hidden: usize,
+        obs_dim: usize,
+        residual: bool,
+        device: &Device,
+    ) -> Result<Self> {
+        let in_dims = [obs_dim, hidden, hidden];
+        let mut off = 0usize;
+        let mut take = |n: usize, rows: usize, cols: usize| -> Result<Tensor> {
+            let t = Tensor::from_slice(&floats[off..off + n], (rows, cols), device)?;
+            off += n;
+            t.to_dtype(DType::F32)
+        };
+
+        let mut fc: Vec<Linear> = Vec::with_capacity(3);
+        let mut ln: Vec<ManualLayerNorm> = Vec::with_capacity(3);
+        for &in_dim in &in_dims {
+            let w = take(in_dim * hidden, hidden, in_dim)?;
+            let b = take(hidden, hidden, 1)?.reshape(hidden)?;
+            let gamma = take(hidden, hidden, 1)?.reshape(hidden)?;
+            let beta = take(hidden, hidden, 1)?.reshape(hidden)?;
+            fc.push(Linear::new(w, Some(b)));
+            ln.push(ManualLayerNorm::from_parts(gamma, beta, 1e-5));
+        }
+
+        // Tête de valeur (H→1) puis tête d'avantage (H→32) : l'ordre du fichier.
+        let wv = take(hidden, 1, hidden)?;
+        let bv = take(1, 1, 1)?.reshape(1)?;
+        let wa = take(hidden * NUM_ACTIONS, NUM_ACTIONS, hidden)?;
+        let ba = take(NUM_ACTIONS, NUM_ACTIONS, 1)?.reshape(NUM_ACTIONS)?;
+
+        if off != floats.len() {
+            return Err(candle_core::Error::Msg(format!(
+                "poids DMC : {} flottants lus sur {} (hidden={hidden}, obs_dim={obs_dim})",
+                off,
+                floats.len()
+            )));
+        }
+
+        let trunk_fc: [Linear; 3] = [fc.remove(0), fc.remove(0), fc.remove(0)];
+        let trunk_ln: [ManualLayerNorm; 3] = [ln.remove(0), ln.remove(0), ln.remove(0)];
+        Ok(DuelingQNet {
+            trunk_fc,
+            trunk_ln,
+            value_head: Linear::new(wv, Some(bv)),
+            advantage_head: Linear::new(wa, Some(ba)),
             obs_dim,
             residual,
         })

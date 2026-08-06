@@ -8,3 +8,5 @@ pub mod dmc_eval;
 pub mod dmc_env;
 #[cfg(feature = "dmc_train")]
 pub mod dmc_candle;
+#[cfg(feature = "dmc_train")]
+pub mod gpu_rollout;

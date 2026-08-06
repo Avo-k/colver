@@ -34,6 +34,18 @@ from) and not score-aware, yet within ~1-3 pp of it: 48.2% h2h over 3000 matches
 61.6% vs `nn_v2_dmc50` where v6 scores 65.0%. Bot: `arena/bots/playgen_bid.toml`.
 See [experiments/auction_conditioned_labels.md](experiments/auction_conditioned_labels.md).
 
+**`rollout`** — annoncer en simulant la donne : la simulation de la page Annonces
+(mondes playgen, enchère par v6, jeu par DouDou50) tournée en politique, qui annonce
+la candidate de meilleure espérance d'écart de score. Sans poids propres, donc son
+témoin est **exact** : `v6_isdd_75M`, le même bot moins la simulation. **Résultat :
+négatif — 50,8 % ± 2,1 par donne sur 2 235 donnes** (deux échantillons indépendants,
+2026-08-06), pour ~1 000× le coût d'un appel au réseau. Son **budget de mondes est sa
+condition d'existence** : à 20 mondes, deux tirages de la même décision s'accordent
+2 fois sur 20 pour un hasard à 25 % — il randomise son a priori au lieu de le
+corriger. Implémenté dans
+[agent/bid_rollout.rs](../../colver-core/src/agent/bid_rollout.rs), *pas* dans
+`bid_eval/`. Mesures, contrôles et protocole d'arène : [rollout_bidder.md](rollout_bidder.md).
+
 - [strategies/guide_encheres.md](strategies/guide_encheres.md) — high-level guide to bidding strategies
 - [strategies/bid_v2.md](strategies/bid_v2.md) — Bid a Dede (current production NN bidder, 20M steps DD-only)
 - [strategies/bid_v3_max.md](strategies/bid_v3_max.md) — bid_v3_max_20M (max(DMC,ISDD) reward signal)

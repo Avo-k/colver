@@ -1,0 +1,26 @@
+# Annoncer en simulant la donne — la simulation de la page Annonces, en bidder.
+#
+# **Le témoin est `v6_isdd_75M`** : même réseau d'enchère, même joueur de
+# cartes, sans la simulation. Ce h2h-là mesure la simulation et rien d'autre.
+#
+# Le même à mondes **uniformes** : c'est l'A/B qui chiffre playgen. Un tirage
+# uniforme donne une main au hasard au siège qui vient d'annoncer, donc le monde
+# contredit l'enchère sous laquelle il est tiré.
+[bid]
+strategy = "rollout"
+model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
+hidden = 512
+score_aware = true
+sims = 512
+candidates = 5
+candidate_mode = "probe"
+# parallel = false : en arène les matchs saturent déjà les cœurs. Le web, lui,
+# doit le mettre à true — c'est là que la latence d'un coup se voit.
+
+[play]
+method = "dmc"
+model = "models/play_v2/play_final.bin"
+residual = true
+
+[worlds]
+source = "uniform"
