@@ -492,6 +492,12 @@ function renderLobby(data) {
 // ===== Messages WS — solo =====
 
 function handleGameState(data) {
+    // Le solo n'envoie pas de `seat_names` — il n'a rien à nommer, les trois
+    // autres sièges sont l'IA. Il faut donc *défaire* ceux du salon en arrivant,
+    // sinon Nord garde le pseudo de la personne qui y était assise. `reset()`
+    // le fait à chaque nouvelle donne ; ici on couvre le retour sur une partie
+    // solo déjà à l'écran, qui ne repasse pas par lui.
+    if (inRoom) table.clearSeatLabels();
     inRoom = false;
     table.localEchoBids = true;
     // Le solo n'a pas de pendule : personne n'attend derrière. C'est aussi
@@ -750,6 +756,15 @@ export async function mount(container) {
         label: 'Table', className: 'result-analyse',
         onClick: () => showPanel('salon-lobby'),
     };
+    // La sortie doit être sur le panneau de fin, pas seulement dans le salon :
+    // c'est le dernier écran d'une partie entre joueurs, et c'est là qu'on
+    // cherche comment revenir au reste du site. Le trajet « Table » puis
+    // « Quitter la table » existait, mais il fallait deviner que le premier
+    // bouton menait au second.
+    const leaveButton = {
+        label: 'Quitter la table', className: 'result-analyse',
+        onClick: () => send({ type: 'room_leave' }),
+    };
 
     table = new GameTable({
         // Un seul plateau, deux protocoles : c'est `inRoom` qui tranche, et il
@@ -778,6 +793,10 @@ export async function mount(container) {
                         analyseButton,
                     ];
                 }
+                // Partie finie : c'est le seul moment où quitter ne coupe la
+                // partie de personne (`_leave_current_room` interrompt tout
+                // quand un siège part en cours de jeu), donc le seul où la
+                // sortie peut être un bouton franc.
                 return [
                     {
                         label: 'Revanche', className: 'result-restart',
@@ -785,6 +804,7 @@ export async function mount(container) {
                     },
                     lobbyButton,
                     analyseButton,
+                    leaveButton,
                 ];
             }
             // Solo : tant que la partie n'est pas jouée, le bouton principal

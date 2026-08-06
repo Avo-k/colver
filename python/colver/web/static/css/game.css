@@ -237,6 +237,9 @@
     .result-match-title { font-size: var(--fs-md); margin-bottom: 4px; }
     .result-match-scores { font-size: var(--fs-sm); gap: 10px; }
     .result-buttons { flex-wrap: nowrap; }
+    /* Sauf en fin de partie de salon, où il y en a quatre : sur une seule ligne
+       ils déborderaient de la zone de jeu. Eux seuls repassent en 2×2. */
+    .result-buttons:has(> :nth-child(4)) { flex-wrap: wrap; }
     .result-restart, .result-analyse {
         padding: 9px 12px;
         font-size: var(--fs-sm);

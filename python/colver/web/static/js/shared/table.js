@@ -118,6 +118,14 @@ export const TABLE_TEMPLATE = `
 
 const SEAT_LABEL_ELS = ['seat-label-north', 'seat-label-east', 'seat-label-south', 'seat-label-west'];
 
+// Les étiquettes telles que `TABLE_TEMPLATE` les pose : celles d'une table où
+// les trois autres sièges sont tenus par l'IA. Elles doivent exister ailleurs
+// que dans le gabarit parce qu'une partie de salon les réécrit avec des pseudos
+// et que **le solo n'envoie pas de `seat_names`** — sans remise à zéro, la
+// partie suivante gardait le nom de l'humain qui occupait le siège à la table
+// précédente.
+const DEFAULT_SEAT_LABELS = ['Nord (Partenaire)', 'Est', 'Sud (Vous)', 'Ouest'];
+
 export class GameTable {
     /**
      * opts:
@@ -152,6 +160,12 @@ export class GameTable {
         this.gameId = null;
         this._serverBidHistory = null;
         this._serverCompletedTricks = null;
+        // Qui tient les sièges est une propriété de la *table*, pas de la donne,
+        // mais c'est bien ici qu'il faut l'oublier : une nouvelle donne est le
+        // seul moment où la table peut avoir changé, et un état de salon qui
+        // survit à une partie solo nomme les bots avec le pseudo d'un humain.
+        // Le salon repose ses noms tout de suite après (`setSeatLabels`).
+        this.clearSeatLabels();
         this.closeAuction();
         _prevTrick['trick'] = [];
         if (_animatingTrick === 'trick') setAnimatingTrick(null);
@@ -230,6 +244,24 @@ export class GameTable {
             el.textContent = who.bot
                 ? `${SEAT_NAMES_FR[d]} (${botLabel(who.name)})`
                 : `${who.name} ${suffixes[d]}`.trim();
+        }
+    }
+
+    /**
+     * Rend aux quatre sièges leur étiquette par défaut et oublie qui les tenait
+     * — ce que `playerName` lit pour les puces d'enchères, les colonnes du
+     * rappel, « … réfléchit » et le gagnant d'un pli.
+     *
+     * Écrire `textContent` retire aussi les signes que la page a pu poser sur
+     * l'étiquette (pendule, ⏱, ⚡, 🤖) : ils décrivent la partie qu'on quitte.
+     */
+    clearSeatLabels() {
+        this.seatOccupants = null;
+        for (let d = 0; d < 4; d++) {
+            // Le constructeur appelle `reset()`, éventuellement avant que le
+            // gabarit soit dans le document.
+            const el = document.getElementById(SEAT_LABEL_ELS[d]);
+            if (el) el.textContent = DEFAULT_SEAT_LABELS[d];
         }
     }
 
