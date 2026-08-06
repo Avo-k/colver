@@ -11,6 +11,12 @@ et les pièges qui produiraient des chiffres plausibles et faux.*
 > couche, lire **§9 — `--pool-size` est obligatoire**, sinon le trainer regénère un
 > million de donnes en silence.
 >
+> **La décision sur `.ranks` est prise (2026-08-06) : on assume le biais**, on ne corrige
+> pas. Deux mesures l'ont refermée — **D** (le mécanisme : une fausse enchère rend playgen
+> *confiant et faux*, sa NLL dépassant celle de l'uniforme) et **E** (basculer les cases
+> fer sur des mondes uniformes n'achète rien, `+0,117 ± 0,170` pt DD/décision). Les deux
+> tournent en **CPU pur**, donc à côté de la génération. Détail en §4.
+>
 > **La reprise a été exercée pour de vrai** (arrêt volontaire le 2026-08-05 à 21 h 02,
 > reprise le 2026-08-06 à 01 h 49) : 95 055 étiquettes, 95 055 rangs et 40 414 rejeux
 > relus, 43 donnes perdues — celles d'après le dernier checkpoint. Le débit repart au
@@ -381,6 +387,114 @@ mélange irrécupérable.
    les couleurs *annoncées* ; le budget dégressif descend les rangs de `dd_pts`. Les deux
    coïncident probablement souvent, mais **ce n'est pas mesuré** et il ne faut pas les
    confondre en câblant l'un sur l'autre.
+
+### La décision est prise : on assume le biais (2026-08-06)
+
+**Choix de l'utilisateur, et l'argument tient sans mesure** : ajouter un décalage par rang
+reviendrait à écrire dans la couche des points cartes que personne n'a marqués. Un
+correctif fabriqué posé sur une étiquette mesurée est une fiction, et il ne répare de
+toute façon pas la réserve 1 ci-dessus — le biais de sélection de la case « or » survivrait
+intact à n'importe quel recentrage.
+
+Le fichier `.ranks` **reste écrit** : il ne coûte rien, et sans lui la couche serait un
+mélange irrécupérable si l'on changeait d'avis.
+
+Deux mesures ont été faites *après* cette décision, pour savoir ce qu'on assume au juste.
+Elles ne la remettent pas en cause — elles la referment.
+
+### Mesure D — le mécanisme : ce qu'une fausse enchère fait aux *mondes*, 2026-08-06
+
+*[bench_prefix_worlds.rs](../../colver-core/src/bin/bench_prefix_worlds.rs). 199 donnes,
+5 bras, 4 observateurs, 24 mondes, 49 min de **CPU pur — aucun GPU**.*
+
+B a chiffré l'effet de bout en bout sans regarder pourquoi. L'explication avancée avait
+trois maillons — fausse enchère → playgen place mal la force → IS-DD cherche mal → il joue
+moins bien — et un seul chiffre. D mesure le premier maillon seul, et il est **cent fois
+moins cher que B** : la vérité terrain est connue (le corpus porte les quatre mains), donc
+il n'y a rien à résoudre. On échantillonne des mondes à l'entame et on note où playgen
+place chaque carte cachée.
+
+| bras | exactitude de placement | NLL | gain de NLL sur l'uniforme |
+|---|--:|--:|--:|
+| **or** (enchère réelle) | 43,23 % | 1,0421 | **+0,0565** |
+| *or, autre graine* (témoin) | *43,56 %* | *1,0380* | — |
+| **épluchage** | 42,18 % | 1,0619 | +0,0367 (**65 %** de l'or) |
+| **fer** (construite, t₁) | 37,80 % | 1,1510 | **−0,0524** |
+| *uniforme sous contrainte* (**analytique**) | *33,33 %* | *1,0986* | — |
+
+Écarts appariés contre l'or : fer **−0,109 nat (z = −19,0)** et **−0,101 (z = −19,7)** ;
+épluchage **−0,020 (z = −5,2)**. Le témoin est propre (+0,004 nat, z = +1,3).
+
+**Trois choses, dont deux que B ne pouvait pas voir.**
+
+1. **Le mécanisme existe et il est massif.** L'hypothèse « fausse enchère → playgen place
+   mal la force » est établie, plus seulement plausible.
+2. **Le fer est pire que de ne rien savoir.** Son exactitude (37,8 %) reste au-dessus du
+   hasard (33,3 %) mais sa NLL **dépasse** celle de l'uniforme : playgen sous une enchère
+   fabriquée devient **confiant et faux**. Le repère uniforme n'est pas simulé mais
+   calculé — à l'entame les trois sièges cachés tiennent 8 cartes chacun, donc `p = 1/3`
+   exactement — et le lissage de Laplace est **exactement neutre** à l'uniforme :
+   `(N/3 + 1)/(N + 3) = 1/3` pour tout `N`. La comparaison est donc propre, pas approchée.
+3. **L'argent et le bronze ne se séparent pas ici** : −0,0177 ± 0,0050 contre
+   −0,0212 ± 0,0054, soit un écart de **0,0035 ± 0,0074**, indiscernable de zéro. Or B les
+   séparait nettement en points cartes. **Donc le canal « qualité des mondes » explique
+   l'écart or/fer et *pas* l'écart argent/bronze** — rendre un siège muet coûte ailleurs,
+   vraisemblablement par le contrat lui-même, qui change qui prend et à quelle valeur.
+   Rapporté à la même échelle : en qualité de mondes le bronze est à **80 %** du chemin
+   vers l'or, alors qu'en points cartes B le plaçait à **44 %**. La hiérarchie survit, son
+   espacement non.
+
+⚠️ **Mesuré à l'entame seulement** — la position où l'enchère est la seule preuve
+disponible, donc où son effet est maximal, pas sa moyenne sur les huit plis. Et la métrique
+est **marginale** : un sampler peut avoir de bonnes marginales et une mauvaise structure
+de corrélation entre cartes.
+
+### Mesure E — faut-il basculer les cases « fer » sur des mondes uniformes ? Non
+
+*[bench_fer_world_source.rs](../../colver-core/src/bin/bench_fer_world_source.rs).
+150 donnes, 3 086 décisions, 40 mondes/décision, 1 h 58 de **CPU pur**.*
+
+D pose la question directement : puisque le fer est plus mal calibré que l'uniforme mais
+plus exact, lequel des deux produit la meilleure **étiquette** ? Une note de croyances ne
+peut pas y répondre.
+
+**Ce n'est pas un sixième bras de B**, et le refuser était la bonne décision : au σ apparié
+de 24,4 points cartes il aurait fallu ~670 donnes × 2 bras playgen, soit ~5 h. La vérité
+terrain permet de juger **décision par décision** contre un oracle DD exact — 20,6
+décisions par donne au lieu d'un chiffre — ce qui est plus puissant *et* moins cher.
+
+| bras | coût DD / décision | coup DD-optimal |
+|---|--:|--:|
+| fer + playgen (A) | 2,005 ± 0,176 | 85,67 % |
+| *fer + playgen (B) témoin* | *2,024 ± 0,168* | *85,41 %* |
+| **fer + uniforme** | **1,888 ± 0,174** | **86,73 %** |
+
+Écarts appariés contre le bras A : **témoin −0,020 ± 0,114 (z = −0,2)**, **uniforme
++0,117 ± 0,170 (z = +0,7)**, IC95 `[−0,22 ; +0,45]`.
+
+**Null. On ne bascule pas.** L'uniforme étiquette *légèrement* mieux et c'est indiscernable
+de zéro ; basculer coûterait de regénérer 40,9 % de la couche pour rien.
+
+**Ce que ça éclaire en recollant avec D** : l'avantage d'exactitude de playgen et son
+désavantage de calibration **s'annulent à peu près au niveau de la décision**. C'est une
+lecture cohérente des deux mesures — pas un mécanisme démontré — et elle explique qu'un
+écart massif en croyances (z = −19) ne produise aucun écart en étiquette. Dit plus
+durement : **sous une enchère fabriquée, playgen ne vaut pas mieux qu'un tirage uniforme
+pour décider.**
+
+⚠️ **Trois réserves, dont une qui interdit de citer ce null comme une équivalence.**
+
+1. **L'intervalle est large** : ±0,34 pt/décision à 2 SE. Rapporté à 20,6 décisions par
+   donne, il **ne permet pas d'exclure** un effet de l'ordre de celui que B a mesuré
+   (4,36 points cartes par donne). Ce null dit « pas de raison de basculer », **pas** « les
+   deux sont identiques ».
+2. **La trajectoire appartient au bras conducteur** (`fer + playgen`, graine A) : les trois
+   configurations sont interrogées aux mêmes positions, mais ce sont les positions que
+   *lui* atteint. Les laisser jouer chacune sa donne casserait l'appariement au premier
+   désaccord — même compromis que `bench_belote_ab`.
+3. Deux chiffres de référence sortent au passage, et ils valent d'être retenus : IS-DD à
+   40 mondes sous préfixe fer coûte **2,0 points DD par décision** et trouve le coup
+   DD-optimal **85,7 %** du temps, jugé contre un oracle parfait.
 
 ### Le camp preneur est déterminé, donc `[u8;8]` n'est pas nécessaire
 
