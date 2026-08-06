@@ -821,6 +821,19 @@ def _doudou_new_stats():
         "opp_overbid": 0,                   # deals where E/W bid over South's bid
         "ns_value_sum": 0,                  # for avg NS contract value
         "pts_ns_sum": 0.0, "pts_ew_sum": 0.0, "pts_n": 0,
+        # Somme des carrés de l'écart N-S − E-O : de quoi rendre un écart type,
+        # donc l'intervalle de confiance de la moyenne. Sans lui, l'espérance
+        # s'affiche sans sa précision — et à 160 sims elle vaut ±54 points,
+        # c'est-à-dire plus que l'écart entre deux annonces voisines.
+        "pts_gap_sq_sum": 0.0,
+        # Décomposition de l'écart par issue. **C'est ça, la dispersion** : la
+        # distribution de l'écart n'est pas un nuage autour de sa moyenne mais
+        # quatre paquets (mesuré : 91,2 % de la variance est *entre* ces cases,
+        # l'écart type *dans* une case tombe à 65-125 points contre 310-370 au
+        # total). Un écart type global vaudrait ~340 pour toutes les annonces
+        # et ne distinguerait rien ; ces quatre cases, si.
+        "outcomes": {k: {"n": 0, "sum": 0.0}
+                     for k in ("ns_made", "ns_set", "ew_made", "ew_set")},
         # Issue de la donne, tous contrats confondus (donne passée = nulle).
         # Dénominateur = wins_ns + wins_ew + draws = nombre de sims terminées.
         "deal_wins_ns": 0, "deal_wins_ew": 0, "deal_draws": 0,
@@ -861,6 +874,11 @@ def _doudou_accumulate(cells, stats, dd):
         stats["pts_ns_sum"] += scores[0]
         stats["pts_ew_sum"] += scores[1]
         stats["pts_n"] += 1
+        gap = scores[0] - scores[1]
+        stats["pts_gap_sq_sum"] += gap * gap
+        bucket = stats["outcomes"][f"{key}_{'made' if achieved else 'set'}"]
+        bucket["n"] += 1
+        bucket["sum"] += gap
         if scores[0] > scores[1]:
             stats["deal_wins_ns"] += 1
         elif scores[1] > scores[0]:
@@ -1604,11 +1622,46 @@ async def _run_annonces_doudou(ws: WebSocket, data: dict):
 # référence : il note l'humain et v6 au même barème, et v6 se trompe aussi.
 # D'où la seconde ligne quand son avis diffère.
 
-# Assez pour séparer deux annonces qui diffèrent vraiment, assez peu pour que le
-# bouton réponde en quelques secondes. À ~25 ms la donne jouée, 160 sims ≈ 4 s,
-# et l'intervalle à 95 % sur un taux vaut ±8 points — on ne prétend pas trancher
-# à mieux que ça, et l'écran ne doit pas afficher de décimale.
+# Assez peu pour que le bouton réponde en quelques secondes : à ~25 ms la donne
+# jouée, 160 sims ≈ 4 s. L'intervalle à 95 % sur un **taux** vaut ±8 points —
+# on ne prétend pas trancher à mieux que ça, et l'écran ne doit pas afficher de
+# décimale.
+#
+# ⚠️ **Ce budget ne sépare pas deux annonces sur l'espérance de points**, et le
+# monter n'y changerait pas grand-chose (mesuré le 2026-08-06,
+# `scripts/analysis/quick_bid_spread.py`) :
+#   - l'écart de score a σ ≈ 310-370 points quelle que soit l'annonce, donc
+#     l'intervalle sur la moyenne vaut ±54 points ici, et encore ±27 à 640 sims ;
+#   - les deux lignes du panneau ne partagent pas leurs mondes, ce qui porte
+#     l'intervalle sur *l'écart entre elles* à ±71-82 ;
+#   - les apparier ne vaudrait que 1,25 à 1,38× (ρ = 0,36-0,48 mesuré — forcer
+#     une autre annonce change toute l'enchère, 10 à 18 % des mondes seulement
+#     finissent à l'identique), donc ce n'est pas là qu'est le remède ;
+#   - et l'écart vrai entre deux annonces voisines vaut quelques points
+#     (+22,9 ± 41,4 · +7,1 ± 37,3 · +13,8 ± 32,4 à 400 paires appariées, les
+#     trois compatibles avec zéro) : il n'y a rien à séparer.
+# D'où l'arrondi à la dizaine dans `_quick_bid_readout` : c'est un repère, pas
+# un départage. Le chiffre qui départage sur ce panneau est le taux.
 QUICK_BID_SIMS = int(os.environ.get("COLVER_QUICK_BID_SIMS", "160"))
+
+
+def gap_ci95(stats):
+    """Demi-largeur de l'intervalle à 95 % sur l'espérance d'écart, ou None.
+
+    L'écart N-S − E-O a un écart type de ~340 points quelle que soit l'annonce
+    (mesuré : 310 à 370 sur trois mains) parce que sa distribution est à deux
+    bosses — réussi d'un côté, chuté de l'autre — et que la moyenne tombe dans
+    le creux. Cet écart type ne dit donc rien de l'annonce ; ce qui en dit
+    quelque chose, c'est σ/√n, l'incertitude sur la moyenne elle-même.
+    """
+    n = stats.get("pts_n", 0)
+    if n < 2:
+        return None
+    mean = (stats.get("pts_ns_sum", 0.0) - stats.get("pts_ew_sum", 0.0)) / n
+    var = stats.get("pts_gap_sq_sum", 0.0) / n - mean * mean
+    if var <= 0:
+        return None
+    return 1.96 * (var / n) ** 0.5
 
 
 def _quick_bid_readout(stats):
@@ -1620,16 +1673,25 @@ def _quick_bid_readout(stats):
     surenchères et donnes passées comprises, donc les deux dénominateurs
     diffèrent et c'est voulu : le premier juge le contrat, le second juge la
     décision.
+
+    **L'espérance est arrondie à la dizaine, exprès.** À `QUICK_BID_SIMS`
+    simulations son intervalle à 95 % vaut ±50 points environ : afficher
+    « +83 » à côté de « +69 » invite à trancher sur 14 points de bruit. Le
+    chiffre qui discrimine sur ce panneau est le taux de réussite (±9 points
+    sur une centaine de contrats), pas celui-ci — qui reste un repère d'ordre
+    de grandeur. `ci95` part avec, pour le survol.
     """
     contracts = stats.get("ns_contracts", 0)
     n = stats.get("pts_n", 0)
+    ci = gap_ci95(stats)
+    exp = ((stats.get("pts_ns_sum", 0.0) - stats.get("pts_ew_sum", 0.0)) / n
+           if n else None)
     return {
         "contracts": contracts,
         "made_pct": (round(100 * stats.get("ns_achieved", 0) / contracts)
                      if contracts else None),
-        "expected": (round((stats.get("pts_ns_sum", 0.0)
-                            - stats.get("pts_ew_sum", 0.0)) / n)
-                     if n else None),
+        "expected": None if exp is None else round(exp / 10) * 10,
+        "ci95": None if ci is None else round(ci),
         "taker_pct": round(100 * contracts / n) if n else None,
     }
 

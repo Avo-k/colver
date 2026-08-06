@@ -914,6 +914,18 @@ function doudouCellCounts(cell, filter) {
     return [cell[0] + cell[2], cell[1] + cell[3]];
 }
 
+// Demi-largeur de l'intervalle à 95 % sur l'espérance d'écart. Pendant exact de
+// `server.gap_ci95` : les deux lisent les mêmes sommes, l'une pour Rejouer et
+// l'autre pour cette page. `null` quand la simulation ne porte pas encore les
+// carrés (blob d'avant `BID_SIM_VERSION` 2) ou n'a qu'une donne.
+function gapCi95(stats) {
+    const n = stats.pts_n || 0;
+    if (n < 2 || stats.pts_gap_sq_sum === undefined) return null;
+    const mean = (stats.pts_ns_sum - stats.pts_ew_sum) / n;
+    const varr = stats.pts_gap_sq_sum / n - mean * mean;
+    return varr > 0 ? 1.96 * Math.sqrt(varr / n) : null;
+}
+
 // Chiffre-phare : part des donnes où Nord-Sud marque plus que l'adversaire.
 // Le dénominateur inclut les donnes passées (comptées nulles), sinon le taux
 // serait calculé sur un sous-ensemble différent de celui du reste du panneau.
@@ -932,7 +944,16 @@ function renderDoudouHeadline(stats) {
     // Une seule ligne, rien de plus : le nombre de donnes est déjà sur la barre
     // de progression juste au-dessus, et le taux de donnes passées dans la
     // synthèse juste en dessous.
-    const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)} pts`;
+    //
+    // Le ± est l'incertitude sur **la moyenne** (σ/√n), pas la dispersion des
+    // donnes. σ vaut ~340 points quelle que soit l'annonce — la distribution
+    // est à deux bosses et la moyenne tombe dans le creux — donc l'afficher
+    // ferait passer une estimation correcte pour un chiffre sans valeur. À
+    // 1000 simulations ce ± vaut ±22 points (mesuré), et il dit ce qu'on veut
+    // savoir : à partir de quel écart deux annonces se séparent.
+    const ci = gapCi95(stats);
+    const err = ci === null ? '' : ` ± ${Math.round(ci)}`;
+    const sub = `Espérance ${diff >= 0 ? '+' : '−'}${Math.abs(diff)}${err} pts`;
 
     const forced = currentForced();
     const after = forced !== null
@@ -966,6 +987,37 @@ function renderDoudouSynth(stats, completed) {
     rows.push(['Contrats r\u00e9ussis',
         `Nord-Sud ${pct(stats.ns_achieved, stats.ns_contracts)}% (${stats.ns_achieved}/${stats.ns_contracts})` +
         ` \u00b7 Est-Ouest ${pct(stats.ew_achieved, stats.ew_contracts)}% (${stats.ew_achieved}/${stats.ew_contracts})`]);
+
+    // ── Ce que rapporte chaque issue ──
+    //
+    // La question « et la dispersion ? » se répond ici, et pas par un écart
+    // type. L'écart N-S − E-O n'est pas un nuage autour de sa moyenne : c'est
+    // quatre paquets bien séparés, et **91,2 % de sa variance est entre ces
+    // paquets** (mesuré 2026-08-06 : σ dans une case 65-125 pts, σ total ~340,
+    // `scripts/analysis/quick_bid_spread.py`).
+    // Un « ± 340 » serait le même pour toutes les annonces et ne dirait rien ;
+    // ces quatre lignes disent ce qu'on gagne contre ce qu'on risque, et la
+    // moyenne du chiffre-phare s'en déduit.
+    for (const [team, label] of [['ns', 'Nord-Sud'], ['ew', 'Est-Ouest']]) {
+        const made = stats.outcomes && stats.outcomes[`${team}_made`];
+        const set = stats.outcomes && stats.outcomes[`${team}_set`];
+        if (!made || !set || made.n + set.n === 0) continue;
+        const took = made.n + set.n;
+        // Tout le panneau compte en écart Nord-Sud − Est-Ouest, donc un contrat
+        // adverse réussi est un nombre négatif. Le survol le rappelle plutôt
+        // que d'allonger chaque ligne de « pour Nord-Sud ».
+        const avg = b => {
+            const v = Math.round(b.sum / b.n);
+            return `<strong title="\u00c9cart Nord-Sud \u2212 Est-Ouest, moyenn\u00e9 sur ces ${b.n} donnes">` +
+                `${v >= 0 ? '+' : '\u2212'}${Math.abs(v)} pts</strong>`;
+        };
+        const parts = [];
+        if (made.n) parts.push(`r\u00e9ussi ${pct(made.n, took)}% \u2192 ${avg(made)}`);
+        if (set.n) parts.push(`chut\u00e9 ${pct(set.n, took)}% \u2192 ${avg(set)}`);
+        rows.push([`Quand ${label} prend`,
+            parts.join(' \u00b7 ') +
+            ` <span class="synth-dim">(${pct(took, completed)}% des donnes)</span>`]);
+    }
 
     if (stats.south_bids > 0) {
         const sb = stats.south_bids;

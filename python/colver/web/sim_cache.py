@@ -60,13 +60,19 @@ logger = logging.getLogger(__name__)
 # même chemin, ou budget de simulation retouché. `REVIEW_VERSION` a manqué ce
 # rendez-vous une fois ; le seul garde-fou est de le lire ici avant de toucher
 # à l'un de ces quatre.
-BID_SIM_VERSION = 1
+# v2 : `doudou_stats` porte la somme des carrés de l'écart et sa décomposition
+#      par issue (2026-08-06). Rien dans la clé ne change, et une entrée v1
+#      rendrait un panneau amputé de sa dispersion — donc bump plutôt que
+#      lecture tolérante, sinon l'affichage dépendrait de l'état du cache.
+BID_SIM_VERSION = 2
 # v2 : le blob porte la suite en jeu parfait depuis la position (`line`).
 # v3 : IS-DD départage ses ex æquo par les points cartes (2026-08-06). Le blob
 #      porte l'avis de Dédé, qui change donc sur les décisions plates — ~30 %
 #      d'entre elles, sans que la clé bouge d'un bit.
 CARD_SIM_VERSION = 3
-DOUDOU_SIM_VERSION = 1
+# v2 : même ajout que BID_SIM_VERSION v2. Concerne aussi l'« analyse rapide »
+#      de Rejouer, qui lit le même `doudou_stats` pour en tirer son `ci95`.
+DOUDOU_SIM_VERSION = 2
 
 KIND_BID = "bid_sim"
 KIND_CARD = "card_sim"

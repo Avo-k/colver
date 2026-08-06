@@ -496,15 +496,26 @@ function quickBidHtml(idx, played) {
         // premier chiffre porte sur un sous-ensemble.
         const made = l.made_pct === null || l.made_pct === undefined
             ? '—' : `${l.made_pct} %`;
+        // L'espérance arrive **arrondie à la dizaine** du serveur : son
+        // intervalle à 95 % vaut ±54 points à ce nombre de simulations (mesuré,
+        // `scripts/analysis/quick_bid_spread.py`), donc deux lignes qui diffèrent
+        // de 14 points ne diffèrent pas. C'est un ordre de grandeur, pas un
+        // départage — et le survol le dit.
         const exp = l.expected === null || l.expected === undefined
             ? '—' : (l.expected > 0 ? `+${l.expected}` : `${l.expected}`);
+        const prec = l.ci95 ? ` — précis à ±${l.ci95} pts près sur ces simulations, ` +
+            `donc à lire comme un ordre de grandeur et non comme un départage entre deux annonces` : '';
         html += `<div class="qb-line">` +
             `<span class="qb-label">${l.label}</span>` +
             `<span class="qb-bid">${bidChipHtml(l.action)}</span>` +
+            // « passe » est le mot juste pour un contrat, mais c'est aussi une
+            // annonce : « joué 80♦ passe 73 % » se lit une seconde de trop dans
+            // un panneau qui parle d'enchères. « gagne » ne collisionne avec rien.
             `<span class="qb-made" title="Part des simulations où ce camp a tenu le contrat et l'a réussi — ` +
-            `il garde l'enchère ${l.taker_pct ?? '?'} % du temps">passe ${made}</span>` +
+            `il garde l'enchère ${l.taker_pct ?? '?'} % du temps. C'est le chiffre qui sépare ` +
+            `deux annonces sur ce panneau.">gagne ${made}</span>` +
             `<span class="qb-exp" title="Espérance d'écart de points sur toutes les simulations, ` +
-            `surenchères et donnes passées comprises">${exp} pts</span></div>`;
+            `surenchères et donnes passées comprises${prec}">${exp} pts</span></div>`;
     }
     if (q.state === 'running') {
         html += `<div class="qb-progress">${q.progress || 'simulation…'}</div>`;

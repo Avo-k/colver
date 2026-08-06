@@ -3887,11 +3887,14 @@
 }
 .qb-line { display: flex; align-items: center; gap: 6px; }
 .qb-line + .qb-line { margin-top: 3px; }
-/* Le panneau fait ~300px : sans `nowrap`, « passe 25 % » se coupait entre le
+/* Le panneau fait ~300px : sans `nowrap`, « gagne 25 % » se coupait entre le
    nombre et le signe, et l'espérance passait à la ligne suivante. */
 .qb-label { opacity: 0.7; white-space: nowrap; }
 .qb-made { font-weight: 700; white-space: nowrap; }
-.qb-exp { margin-left: auto; font-family: monospace; white-space: nowrap; }
+/* En retrait, et c'est délibéré : à 160 simulations l'espérance a un intervalle
+   à 95 % de ±54 points, donc elle situe sans départager. Le gras est réservé au
+   taux de réussite, qui lui sépare deux annonces. */
+.qb-exp { margin-left: auto; font-family: monospace; white-space: nowrap; opacity: 0.7; }
 .qb-progress { margin-top: 3px; opacity: 0.55; font-style: italic; }
 .qb-err { color: var(--c-danger); }
 
