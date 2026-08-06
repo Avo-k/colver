@@ -75,6 +75,57 @@ d'exception qui doit prouver son niveau. Figer `tau` bas reviendrait à inscrire
 dans la constante « personne ici n'est fort », ce qui est vrai aujourd'hui et sera
 faux au premier bon joueur qui s'inscrit.
 
+## La marge compte, le binaire ne suffisait pas (2026-08-06)
+
+Gagner 2000-1900 et gagner 2000-200 comptaient pareil. C'est jeter la seule
+information qu'une partie produise en plus de son vainqueur, et elle est
+abondante : l'écart-type des marges signées vaut **1047 points** sur la prod.
+Le score d'une partie est donc `sigma(marge / MARGIN_SCALE)` au lieu de 1/0.
+
+**Mesuré avant d'être écrit**, par leave-one-out apparié sur les 56 parties des
+joueurs à au moins 4 parties — on estime le niveau depuis toutes les *autres*
+parties, puis on prédit l'issue de celle qu'on a tenue à l'écart :
+
+| | log-perte |
+|---|---|
+| pile ou face | 0,6931 |
+| binaire 1/0 | 0,6770 |
+| **marge** | **0,6567** |
+
+Tout le pouvoir prédictif du classement binaire valait 0,016 nat au-dessus du
+hasard ; la marge en ajoute 0,020, donc elle **double** l'information utile.
+Positif aux trois échelles essayées (600, 1047, 1600), donc le résultat ne tient
+pas au réglage exact de la constante. ⚠️ L'IC de ce test est **optimiste** : les
+plis partagent presque toutes leurs données, donc les 56 observations ne sont pas
+indépendantes. Le signe est solide, la taille de l'effet l'est moins.
+
+**Ce que ça n'achète pas, et il ne faut pas le promettre** : l'incertitude
+affichée ne bouge pas (sigma 143 → 141 sur le joueur le plus mesuré). C'est
+structurel — la courbure d'une vraisemblance de Bernoulli ne dépend pas du score
+observé, seulement de la probabilité prédite. La marge déplace le **centre** vers
+le bon endroit ; resserrer l'**intervalle** demanderait une vraie vraisemblance
+sur la marge (gaussienne / Thurstone), qui est un autre objet.
+
+**Un décalage vers le haut, une fois, et il ne faut pas le corriger en réglant
+la constante.** Adoucir un score le tire vers 1/2 ; la population gagne 28 % de
+ses parties, donc son score moyen monte — mesuré, **+2,8 points de pourcentage**,
+soit **+4 à +92 points d'affichage** selon le joueur (moyenne ~+35) au moment de
+la bascule. **L'ordre du classement ne change pas.** La part commune de ce
+décalage est un biais réel au sens « le niveau est défini par une probabilité de
+victoire » ; la part qui *varie* d'un joueur à l'autre est précisément
+l'information qu'on est venu chercher. Choisir `MARGIN_SCALE = 600` annulerait le
+décalage sur la base d'aujourd'hui — et ce serait ajuster une constante sur la
+population, donc rouvrir le couplage que `PRIOR_MEAN` / `PRIOR_SD` figés ont
+fermé. L'échelle reste une propriété du **format** (l'écart-type de ses marges),
+pas de qui joue.
+
+**Le vainqueur reste l'autorité sur l'issue, la marge ne module que l'ampleur.**
+`soft_score` prend le signe de `winner` et la magnitude de `|marge|` : une ligne
+`matches` dont les points contrediraient le vainqueur donnerait une note de
+mauvais signe, et ce serait un renversement silencieux. Corollaire, un **abandon**
+garde 0/1 — le score au moment où l'on quitte la table n'est pas la marge d'une
+partie jouée jusqu'au bout.
+
 ## Deux échelles, et une seule conversion
 
 L'échelle **interne** est celle des mesures : les écarts entre bots viennent de
@@ -136,6 +187,18 @@ RATED_TARGET = 2000
 # — voir l'en-tête : les ré-estimer couple les joueurs entre eux.
 PRIOR_MEAN = 550.0
 PRIOR_SD = 300.0
+
+# Échelle de la marge d'une partie en 2000 points : l'écart-type des marges
+# signées, **mesuré** sur les 58 parties classées non abandonnées de la prod au
+# 2026-08-06 (médiane |marge| 954, p10 410, p90 1627, max 2138). Il valait 962
+# sur 32 parties la veille : c'est une estimation qui bougera, à re-mesurer quand
+# le volume aura triplé.
+#
+# ⚠️ **Cette constante est par format.** Une partie en 1000 points produit
+# mécaniquement des marges plus petites (4,7 donnes en moyenne contre 10,2) :
+# le jour où `RATED_TARGET` s'ouvrira, il faudra une échelle par cible, sans quoi
+# les parties courtes seraient toutes lues comme serrées.
+MARGIN_SCALE = 1047.0
 
 # Note publiée = mu - CONSERVATISM * sigma. 2 plutôt que le 3 de TrueSkill : à
 # 3 sigma un joueur à 12 parties afficherait une note négative sur l'échelle
@@ -211,6 +274,18 @@ def posterior(record):
     w /= w.sum()
     mean = float((_GRID * w).sum())
     return mean, float(math.sqrt(float(((_GRID - mean) ** 2 * w).sum())))
+
+
+def soft_score(winner, points_ns, points_ew):
+    """Score de la partie **pour N-S**, dans ]0, 1[, modulé par la marge.
+
+    Le signe vient de `winner`, jamais des points : ceux-ci ne servent qu'à
+    l'ampleur. Une ligne `matches` incohérente (points d'un camp, victoire de
+    l'autre) donnerait sinon une note de mauvais signe, en silence.
+    """
+    margin = abs(int(points_ns or 0) - int(points_ew or 0))
+    s = 1.0 / (1.0 + 10 ** (-margin / MARGIN_SCALE))
+    return s if winner == 0 else 1.0 - s
 
 
 def note_of(mean, sd):
@@ -359,12 +434,13 @@ async def _rate_match_locked(match_id):
         return False  # already rated
 
     rows = await conn.execute_fetchall(
-        "SELECT target, is_complete, winner, abandoned, user_id FROM matches WHERE id = ?",
+        "SELECT target, is_complete, winner, abandoned, user_id, points_ns, points_ew "
+        "FROM matches WHERE id = ?",
         (match_id,),
     )
     if not rows:
         return False
-    target, is_complete, winner, abandoned, owner_id = rows[0]
+    target, is_complete, winner, abandoned, owner_id, points_ns, points_ew = rows[0]
     if target != RATED_TARGET or not is_complete:
         return False
 
@@ -379,11 +455,13 @@ async def _rate_match_locked(match_id):
         loser = await _losing_team(conn, match_id, owner_id)
         if loser is None:
             return False
+        # Pas de marge exploitable : le score d'une partie quittée n'est pas
+        # celui d'une partie jouée jusqu'au bout.
         score_ns = 0.0 if loser == 0 else 1.0
     else:
         if winner is None:
             return False
-        score_ns = 1.0 if winner == 0 else 0.0
+        score_ns = soft_score(winner, points_ns, points_ew)
 
     seats = await _match_seats(conn, match_id)
     if seats is None:

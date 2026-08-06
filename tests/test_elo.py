@@ -24,8 +24,14 @@ from colver.web import elo
 
 
 async def _match(target=2000, winner=0, deals=1, user_id=1, human_seat=2,
-                 bot="dede", complete=True, abandoned=False):
-    """Une partie terminée : un humain identifié, trois sièges bot."""
+                 bot="dede", complete=True, abandoned=False, margin=1100):
+    """Une partie terminée : un humain identifié, trois sièges bot.
+
+    **Les points suivent le vainqueur**, ce qui n'était pas le cas avant que la
+    marge compte : la fixture posait 2000-900 quel que soit `winner`, donc une
+    « défaite » y était marquée avec 1100 points d'avance. Le score binaire le
+    masquait — il ne lisait que `winner`.
+    """
     match_id = await db.create_match("play", target, user_id=user_id,
                                      human_seat=human_seat)
     agents = {str(s): bot for s in range(4) if s != human_seat}
@@ -35,14 +41,16 @@ async def _match(target=2000, winner=0, deals=1, user_id=1, human_seat=2,
         gid = await db.create_game("play", 0, hands, agents, human_seat=human_seat,
                                    user_id=user_id, match_id=match_id, deal_no=n + 1)
         await db.complete_game(gid, 80, 82, {"value": 80})
+    hi, lo = 2000, 2000 - margin
+    pts = (hi, lo) if winner == 0 else (lo, hi)
     if abandoned:
         # `db.abandon_match` exige `is_complete = 0` : en production on concède
         # une partie **en cours**. La clôturer d'abord en ferait un no-op — et
         # c'est exactement ce qui a fait échouer la première version de ce test.
-        await db.update_match(match_id, 2000, 900, deals, False, None)
+        await db.update_match(match_id, pts[0], pts[1], deals, False, None)
         await db.abandon_match(match_id, user_id)
     else:
-        await db.update_match(match_id, 2000, 900, deals, complete, winner)
+        await db.update_match(match_id, pts[0], pts[1], deals, complete, winner)
     return match_id
 
 
@@ -204,6 +212,78 @@ class TestNotation:
         before = await elo.get_rating("user", 1)
         assert await elo.rate_match(mid) is False, "seconde notation acceptée"
         assert await elo.get_rating("user", 1) == before
+
+
+class TestMarge:
+    """Gagner 2000-1900 et gagner 2000-200 ne comptent plus pareil.
+
+    L'échelle vient d'une mesure (écart-type des marges signées, 1047 points) et
+    le gain aussi (log-perte leave-one-out 0,6770 → 0,6567). Ce qui est épinglé
+    ici est la **forme** : monotonie, orientation, bornes, et le fait qu'un
+    abandon n'a pas de marge.
+    """
+
+    def test_une_marge_plus_large_vaut_un_meilleur_score(self):
+        scores = [elo.soft_score(0, 2000, 2000 - m) for m in (0, 200, 1100, 1800)]
+        assert scores == sorted(scores)
+        assert scores[0] == pytest.approx(0.5), "une partie à égalité de points vaut 1/2"
+
+    def test_le_score_reste_dans_l_intervalle_ouvert(self):
+        """Une vraisemblance de Bernoulli n'accepte pas 0 ni 1 exactement — et
+        aucune marge réelle ne doit y conduire (max observé : 2138)."""
+        for m in (0, 500, 2000, 5000):
+            for w in (0, 1):
+                assert 0.0 < elo.soft_score(w, 2000, 2000 - m) < 1.0
+
+    def test_les_deux_camps_se_partagent_l_unite(self):
+        for m in (0, 300, 1500):
+            assert (elo.soft_score(0, 2000, 2000 - m)
+                    + elo.soft_score(1, 2000 - m, 2000)) == pytest.approx(1.0)
+
+    def test_le_vainqueur_dicte_le_signe_pas_les_points(self):
+        """Une ligne `matches` incohérente ne doit pas renverser la note.
+
+        `winner` est la seule autorité sur l'issue ; les points ne portent que
+        l'ampleur. Sans ça, un score mal écrit inverserait un résultat en
+        silence — et c'est précisément ce que la fixture de ce fichier faisait.
+        """
+        assert elo.soft_score(1, 2000, 900) < 0.5, "E-O gagne : le score N-S est bas"
+        assert elo.soft_score(0, 900, 2000) > 0.5
+
+    async def test_une_large_victoire_note_mieux_qu_une_courte(self, clean_db):
+        await elo.rate_match(await _match(user_id=1, winner=0, margin=1800))
+        await elo.rate_match(await _match(user_id=2, winner=0, margin=100))
+        large = await elo.get_rating("user", 1)
+        courte = await elo.get_rating("user", 2)
+        assert large["level"] > courte["level"]
+
+    async def test_une_defaite_serree_coute_moins_qu_une_deroute(self, clean_db):
+        await elo.rate_match(await _match(user_id=1, winner=1, margin=100))
+        await elo.rate_match(await _match(user_id=2, winner=1, margin=1800))
+        serree = await elo.get_rating("user", 1)
+        deroute = await elo.get_rating("user", 2)
+        assert serree["level"] > deroute["level"]
+
+    async def test_un_abandon_ne_lit_pas_la_marge(self, clean_db):
+        """Le score au moment où l'on quitte la table n'est pas la marge d'une
+        partie jouée : l'abandon reste une défaite pleine, quel qu'en soit
+        l'écart. Deux abandons d'ampleurs opposées doivent donc noter pareil."""
+        await elo.rate_match(await _match(user_id=1, abandoned=True, margin=100))
+        await elo.rate_match(await _match(user_id=2, abandoned=True, margin=1800))
+        a = await elo.get_rating("user", 1)
+        b = await elo.get_rating("user", 2)
+        assert a["level"] == b["level"]
+
+    def test_l_incertitude_ne_se_resserre_pas_pour_autant(self):
+        """La promesse à ne PAS faire. La courbure d'une vraisemblance de
+        Bernoulli ne dépend pas du score observé, seulement de la probabilité
+        prédite : la marge déplace le centre, pas l'intervalle. Mesuré sur le
+        joueur le plus mesuré de la prod, sigma passait de 143 à 141.
+        """
+        binaire = [(1.0, 1000.0, 1000.0)] * 6 + [(0.0, 1000.0, 1000.0)] * 6
+        marge = [(0.85, 1000.0, 1000.0)] * 6 + [(0.15, 1000.0, 1000.0)] * 6
+        assert elo.posterior(marge)[1] == pytest.approx(
+            elo.posterior(binaire)[1], rel=0.1)
 
 
 class TestAbandon:

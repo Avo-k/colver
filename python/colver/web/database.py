@@ -425,6 +425,31 @@ MIGRATIONS = [
         PRIMARY KEY (user_id, exercise, variant)
     );
     """,
+    # v20 — la marge d'une partie entre au classement.
+    #
+    # Gagner 2000-1900 et gagner 2000-200 comptaient pareil. Le score d'une
+    # partie est désormais `sigma(marge / 1047)` au lieu de 1/0 — mesuré avant
+    # d'être écrit (log-perte leave-one-out 0,6770 → 0,6567, soit le double
+    # d'information utile au-dessus du hasard ; détail dans l'en-tête d'`elo`).
+    #
+    # Aucun changement de schéma : `elo_history.score` était déjà un REAL, et le
+    # posterior accepte un score fractionnaire depuis v17. Ce qui change est la
+    # **valeur** de toutes les lignes, donc on les jette et `backfill()` les
+    # reconstruit au démarrage depuis `matches`, la source de vérité. On vide
+    # aussi `elo_ratings` : ses notes dérivent des lignes qu'on efface.
+    #
+    # Ce que ça ne change pas, et qu'il ne faut pas promettre : l'incertitude
+    # affichée. La courbure d'une vraisemblance de Bernoulli ne dépend pas du
+    # score observé, donc sigma reste où il était.
+    #
+    # Effet visible à la bascule, simulé sur la base de prod du 2026-08-06 : les
+    # neuf comptes notés montent de +4 à +92 points d'affichage (adoucir un score
+    # le tire vers 1/2, et la population gagne 28 % de ses parties). **L'ordre du
+    # classement est inchangé.**
+    """
+    DELETE FROM elo_history;
+    DELETE FROM elo_ratings;
+    """,
 ]
 
 
