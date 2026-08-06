@@ -29,28 +29,6 @@ from conftest import await_sync  # noqa: E402
 
 
 @pytest.fixture
-def no_tempo(monkeypatch):
-    """Supprimer les pauses d'affichage — pas le déroulé.
-
-    Une donne dure ~16 s en `rapide` et ~42 s en `standard` : du temps de
-    lecture, entièrement passé dans `pacing`. Le tempo a ses propres tests
-    unitaires (`test_pacing.py`) ; ici il ne ferait qu'allonger la suite. On
-    neutralise donc les délais, pas les transitions : le serveur envoie toujours
-    les mêmes messages dans le même ordre.
-    """
-    from colver.web import pacing
-
-    async def _no_hold(target, elapsed=0.0):
-        return None
-
-    monkeypatch.setattr(pacing, "hold", _no_hold)
-    for name in ("bid_delay", "card_delay", "trick_delay",
-                 "move_delay", "last_trick_delay"):
-        monkeypatch.setattr(pacing, name, lambda *a, **k: 0.0)
-    monkeypatch.setattr(pacing, "DEAL_END_HOLD", 0.0)
-
-
-@pytest.fixture
 def client(clean_db, no_tempo):
     """Un client HTTP+WS sur l'app réelle, sur une base neuve.
 

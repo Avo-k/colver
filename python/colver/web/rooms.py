@@ -371,9 +371,6 @@ class Room:
         await self.broadcast_game_state()
 
     async def _close_deal(self):
-        # Une ligne de journal par donne : la seule granularité à laquelle
-        # une dégradation d'IS-DD se lit encore.
-        self.bots.end_deal()
         """Fin de donne : base, Elo, score de la partie.
 
         Appelée avant la diffusion de l'état terminal (donc avant que le client
@@ -381,6 +378,12 @@ class Room:
         quand la *partie* est jouée : entre deux donnes le salon reste en jeu.
         """
         session = self.session
+        # Une ligne de journal par donne : la seule granularité à laquelle une
+        # dégradation d'IS-DD se lit encore. La table de bots appartient à la
+        # `PlaySession`, pas au salon — `self.bots` levait un AttributeError,
+        # rattrapé par `_drive`, qui interrompait la partie à la fin de chaque
+        # donne. Aucun test ne jouait alors une donne de salon jusqu'au bout.
+        session.bots.end_deal()
         points = list(session.env.get_points())
         # Les points marqués partent en base avec les points cartes : les deux
         # échelles sont distinctes, et `Match.record` consomme déjà celle-ci.
