@@ -1,6 +1,6 @@
 [project]
 name = "colver"
-version = "0.10.0"
+version = "0.10.1"
 description = "Fast Belote Contree game engine with AI agents"
 # Le README par défaut du dépôt est en français (`README.md`) : c'est la langue du
 # site et des joueurs. La fiche PyPI, elle, s'adresse à qui installe le paquet —
