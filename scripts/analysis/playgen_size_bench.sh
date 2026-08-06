@@ -6,9 +6,9 @@
 # donc le levier, et sa taille le paramètre le plus direct. Trois architectures,
 # toutes au format COLVPG02 — seuls `d` et `L` changent :
 #
-#   v3-small  d=256 L=4   3,2 M paramètres
+#   v2-belote-small  d=256 L=4   3,2 M paramètres
 #   v2        d=384 L=6  10,7 M   ← celui de la prod
-#   v3-large  d=512 L=8  25,3 M
+#   v2-belote-large  d=512 L=8  25,3 M
 #
 # ## Trois disciplines, toutes payées d'avance ailleurs
 #
@@ -57,9 +57,9 @@ done
 
 # nom|chemin distant du .bin
 MODELS=(
-  "v3_small|/home/claude/playgen/models-bench/v3_small_120000.bin"
+  "v2belote_small|/home/claude/playgen/models-bench/v2belote_small_120000.bin"
   "v2|/home/claude/playgen/models/playgen_v2_final.bin"
-  "v3_large|/home/claude/playgen/models-bench/v3_large2_80000.bin"
+  "v2belote_large|/home/claude/playgen/models-bench/v2belote_large2_80000.bin"
 )
 SIDECAR_BIN="/home/claude/colver-bench/target/release/playgen_gpu_server"
 URL="http://${GPU_ADDR}:${PORT}"

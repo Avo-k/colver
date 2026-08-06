@@ -4,7 +4,7 @@
 a été implémenté et mesuré entre-temps (`a49d46d`), ce qui transforme deux
 croyances en résultats. Ce qui reste sans mesure est toujours signalé comme tel.*
 
-**L'idée de départ** (utilisateur, 2026-08-04) : `playgen_v3_large2` s'entraîne
+**L'idée de départ** (utilisateur, 2026-08-04) : `playgen_v2belote_large2` s'entraîne
 en d=512 L=8, 2,4× les paramètres de v2. Plutôt que de payer ce modèle plein pot
 sur le sidecar, entraîner un **v3-mini** qui sert de brouillon et faire du
 **décodage spéculatif** — le mini propose K cartes, le large les valide en un
@@ -21,13 +21,13 @@ rendu plus pour moins cher.
 | modèle | config | params | couches | statut |
 |---|---|---|---|---|
 | **v2** | d=384 L=6 H=8 | 10,74 M | 6 | `playgen_v2_final.bin`, servi par le sidecar de prod |
-| **v3-small** | d=256 L=4 H=8 | 3,22 M | 4 | fini (120 k pas) — **brouillon déjà disponible, même tokeniseur** |
-| **v3-large** | d=512 L=8 H=8 | 25,34 M | 8 | `large` 30 k pas, puis `large2` relancé dessus (batch 96, lr 2e-4, 80 k visés) |
+| **v2-belote-small** | d=256 L=4 H=8 | 3,22 M | 4 | fini (120 k pas) — **brouillon déjà disponible, même tokeniseur** |
+| **v2-belote-large** | d=512 L=8 H=8 | 25,34 M | 8 | `large` 30 k pas, puis `large2` relancé dessus (batch 96, lr 2e-4, 80 k visés) |
 
-Point qui compte pour toute la suite : v3-large est **2,4× v2 en paramètres mais
+Point qui compte pour toute la suite : v2-belote-large est **2,4× v2 en paramètres mais
 seulement 1,33× en couches**.
 
-Et v3-small existe déjà, entraîné sur le même corpus au même format : si on
+Et v2-belote-small existe déjà, entraîné sur le même corpus au même format : si on
 voulait tenter le spéculatif, **le brouillon ne coûterait aucun entraînement**.
 C'est l'argument le plus fort en faveur de l'idée.
 
@@ -38,7 +38,7 @@ C'est l'argument le plus fort en faveur de l'idée.
 Le décodage spéculatif achète du **coût de modèle**. Dans notre boucle, le coût
 de modèle est presque nul.
 
-Un `forward_step` sur v3-large à 40 lanes, au crayon :
+Un `forward_step` sur v2-belote-large à 40 lanes, au crayon :
 
 | poste | coût |
 |---|---|
@@ -82,10 +82,10 @@ vraisemblablement antérieur aux optimisations ; il n'a pas été corrigé.
 
 Ce n'est pas une hypothèse, on a le point de mesure :
 
-> v3-small rend **4,32 donnes/s contre 2,62** pour v2, soit **1,65×**
+> v2-belote-small rend **4,32 donnes/s contre 2,62** pour v2, soit **1,65×**
 > ([isdd_games.md](../data_gen/isdd_games.md)).
 
-Or v3-small est **3,3× plus petit en paramètres** mais seulement **1,5× moins
+Or v2-belote-small est **3,3× plus petit en paramètres** mais seulement **1,5× moins
 profond** (4 couches contre 6). Le 1,65 mesuré est du côté du rapport de couches,
 pas du rapport de paramètres — ce qu'on attend si le pas est borné par le nombre
 de lancements de noyaux, lequel est proportionnel à la profondeur.
@@ -94,19 +94,19 @@ de lancements de noyaux, lequel est proportionnel à la profondeur.
 
 ### 3.1 Le brouillon ne serait pas bon marché
 
-Un brouillon v3-small (L=4) face à v3-large (L=8) ne coûte pas 1/8 d'un pas
+Un brouillon v2-belote-small (L=4) face à v2-belote-large (L=8) ne coûte pas 1/8 d'un pas
 cible — il en coûte **~1/2**. Dans les formules de décodage spéculatif, c'est ce
 ratio `c` qui plafonne tout, et il est huit fois plus mauvais que ce que le
 compte de paramètres laisse croire.
 
-### 3.2 v3-large est probablement déjà abordable en prod
+### 3.2 v2-belote-large est probablement déjà abordable en prod
 
-Si le coût suit les couches, v3-large ≈ **1,33× v2 par pas**. La latence de prod
+Si le coût suit les couches, v2-belote-large ≈ **1,33× v2 par pas**. La latence de prod
 est passée à **75 ms par coup** (2026-08-04), puis la fusion ACT+CARD a encore
 retiré ~38 % sur le chemin d'IS-DD, dans un budget de 1200 ms. Même en supposant
 le pire (2,4×, régime arithmétique pur) on resterait loin sous l'échéance.
 
-**On peut vraisemblablement servir v3-large tel quel.** Si c'est vrai, la
+**On peut vraisemblablement servir v2-belote-large tel quel.** Si c'est vrai, la
 prémisse entière de l'idée tombe : il n'y a pas de facture à réduire.
 
 *Toujours non mesuré.* C'est la mesure §7.1, et elle coûte dix minutes.
@@ -119,7 +119,7 @@ Speedup = `(1 − α^(K+1)) / (1 − α) / (K·c + 1)`, avec `c` = coût d'un pa
 brouillon rapporté à un pas cible, `α` = taux d'acceptation, `K` = profondeur de
 spéculation.
 
-À `c = 0,5` (v3-small contre v3-large) :
+À `c = 0,5` (v2-belote-small contre v2-belote-large) :
 
 | α | K=2 | K=3 | K=4 |
 |---|---|---|---|
@@ -134,7 +134,7 @@ au 1,62× qu'a rendu la fusion ACT+CARD, sans second modèle et sans approximati
 ### L'acceptation, elle, serait probablement bonne
 
 C'est le point qui surprend : ce n'est **pas** α qui pose problème.
-`bench_playgen_ppl` donne un écart v3-small / v2 de **+1,7 % à +11,7 % de
+`bench_playgen_ppl` donne un écart v2-belote-small / v2 de **+1,7 % à +11,7 % de
 perplexité par carte** — les deux modèles sont proches token par token. C'est le
 *produit* sur les cartes restantes qui fait les 3,6× de continuations cumulées au
 pli 1, pas un désaccord local. Un α de 0,85-0,90 est plausible.
@@ -259,10 +259,10 @@ La section qui justifie cette page. Statut mis à jour après `a49d46d`.
    **confirmée** par la fusion (1,62× à 40 lanes, 1,33× à 256 — le même
    changement rend moins quand le forward calcule vraiment).
 2. **Que le coût par pas est proportionnel aux couches.** Toujours appuyé par un
-   unique couple (v3-small 1,65× v2, rapport de couches 1,5×). Deux points
+   unique couple (v2-belote-small 1,65× v2, rapport de couches 1,5×). Deux points
    feraient une droite ; on en a un. **C'est la croyance dont tout le reste
    dépend, et c'est celle qui n'a pas bougé.**
-3. **Que v3-large coûtera ~1,33× v2.** Extrapolation de la croyance 2. L'écart
+3. **Que v2-belote-large coûtera ~1,33× v2.** Extrapolation de la croyance 2. L'écart
    plausible va de 1,33× à 2,4×, et 2,4× resterait tenable en prod.
 4. **Que α vaudrait 0,85-0,90.** Inféré d'un écart de perplexité, alors que
    l'acceptation dépend de la distance en variation totale entre les deux
@@ -282,16 +282,16 @@ La section qui justifie cette page. Statut mis à jour après `a49d46d`.
 
 ## 7. Prochaines étapes
 
-### 7.1 Le coût par pas de v3-large et de v3-small (~10 min, GPU)
+### 7.1 Le coût par pas de v2-belote-large et de v2-belote-small (~10 min, GPU)
 
 **La mesure qui tranche toute la fiche**, et elle est plus facile qu'avant :
 `bench_sidecar_ab` (ajouté par `a49d46d`) fait l'A/B de latence alterné entre
-deux sidecars, ce qui se faisait à la main jusqu'ici. Exporter `playgen_v3_large2`
-en `.bin`, le mettre en face de `v3_small_120000.bin`, à 40 **et** à 256 lanes
+deux sidecars, ce qui se faisait à la main jusqu'ici. Exporter `playgen_v2belote_large2`
+en `.bin`, le mettre en face de `v2belote_small_120000.bin`, à 40 **et** à 256 lanes
 (les deux régimes du §4 rendent des réponses différentes).
 
 - Rapport ≈ 2 (couches) → `c ≈ 0,5`, le spéculatif plafonne à 1,5×, **et
-  v3-large est abordable en prod tel quel**. Fiche close côté spéculatif.
+  v2-belote-large est abordable en prod tel quel**. Fiche close côté spéculatif.
 - Rapport ≈ 8 (paramètres) → tout le raisonnement ci-dessus tombe, l'idée
   redevient sérieuse et il faut mesurer α.
 
@@ -311,7 +311,7 @@ Même patron que `bench_belote_ab`.
 
 ### 7.3 Si et seulement si 7.1 dit « rapport 8 » : mesurer α (~1 h, GPU)
 
-Sur des positions du corpus retenu, dérouler v3-large en teacher-forcing et
+Sur des positions du corpus retenu, dérouler v2-belote-large en teacher-forcing et
 calculer `E[min(1, q_large/p_small)]` carte par carte, **ventilé par pli**. C'est
 le seul chiffre qui manquerait alors, et il se mesure sans écrire une ligne de
 décodage spéculatif.

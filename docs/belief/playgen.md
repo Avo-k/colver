@@ -480,12 +480,22 @@ une fois). La longueur est variable, donc `n` est imprimé : la plupart des
 enchères meurent au 1er ou 2e tour, et au-delà du 3e il n'y a plus d'échantillon
 (n = 150 au tour 4, n = 6 au tour 5 — du bruit, pas une mesure).
 
+**`v2-belote-*` sont des COLVPG02, pas des v3.** Trois runs (`small` d=256 L=4,
+`large`/`large2`/`large3` d=512 L=8, reprises successives du même run) entraînés
+avec `--v2` sur `playgen_games_9M.bin`. La seule chose qui les sépare de
+`playgen_v2_final` est **la belote dans le masque des sièges cachés** ; aucun ne
+lit le score de partie. Ils portaient « v3 » pendant leur entraînement, ce qui
+était trompeur : renommés le 2026-08-04, checkpoints compris. Ces courbes
+mesurent donc **la capacité et le budget d'échantillons**, jamais l'apport du
+score — c'est précisément ce qui rend la conclusion ci-dessous utilisable pour
+décider de v3.
+
 Branchement effectif, sièges cachés, 500 donnes retenues × 4 observateurs :
 
 | modèle | params | éch. | tour 1 (n=5997) | tour 2 (n=4533) | tour 3 (n=1461) |
 |---|---|---|---|---|---|
-| v3-small @10K | 3,22M | 2,56M | 5,75 | 1,71 | 1,47 |
-| v3-small @50K | 3,22M | 12,8M | 5,68 | 1,68 | 1,42 |
+| v2-belote-small @10K | 3,22M | 2,56M | 5,75 | 1,71 | 1,47 |
+| v2-belote-small @50K | 3,22M | 12,8M | 5,68 | 1,68 | 1,42 |
 | v2 @60K | 10,74M | 11,5M | 5,69 | 1,68 | 1,42 |
 | v2 @160K | 10,74M | 30,7M | **5,66** | **1,66** | **1,41** |
 | *uniforme sur le masque légal* | | | *31,93* | *17,60* | *9,59* |
@@ -509,25 +519,25 @@ C'est aussi là que le modèle sert le plus : **5,6× à 10,6× sur l'uniforme a
 
 ### Verdict à budget égal : 3,22M params suffisent aux enchères, pas au jeu
 
-v3-small (d=256 L=4, 3,22M) contre v2 (d=384 L=6, 10,74M), **30,72M échantillons
+v2-belote-small (d=256 L=4, 3,22M) contre v2 (d=384 L=6, 10,74M), **30,72M échantillons
 chacun**, même corpus retenu. Pas d'extrapolation : les deux runs sont complets.
 
-**Enchères** — v3-small `5,68 / 1,67 / 1,42`, v2 `5,66 / 1,66 / 1,41`. Écart de
+**Enchères** — v2-belote-small `5,68 / 1,67 / 1,42`, v2 `5,66 / 1,66 / 1,41`. Écart de
 0,4 à 0,7 %, pour 3,3× moins de paramètres. Confirmé sur toute l'échelle : à
-23,04M, v3-small était même *devant* au tour 1 (5,65 contre 5,69).
+23,04M, v2-belote-small était même *devant* au tour 1 (5,65 contre 5,69).
 
 **Jeu** — en continuations cumulées, la seule unité qui dise ce qu'IS-DD gagne,
 parce qu'un écart par carte se **compose** sur toutes les cartes restantes :
 
 | depuis le pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|
-| v3-small | 1,13e12 | 9,96e9 | 1,04e8 | 1,13e6 | 1,56e4 | 337 | 14,2 | 1,525 |
+| v2-belote-small | 1,13e12 | 9,96e9 | 1,04e8 | 1,13e6 | 1,56e4 | 337 | 14,2 | 1,525 |
 | v2 | 3,12e11 | 2,89e9 | 3,23e7 | 4,02e5 | 6,58e3 | 175 | 9,60 | 1,445 |
 | **facteur** | **3,6×** | **3,4×** | **3,2×** | **2,8×** | **2,4×** | **1,9×** | **1,5×** | 1,06× |
 
 Le même écart lu par carte ne fait que +1,7 % à +11,7 % — d'où l'importance de
 l'unité : **c'est le produit sur les cartes restantes qui décide**, pas le rapport
-par carte. Repère qui situe l'ampleur : v3-small à 30,7M échantillons ne rattrape
+par carte. Repère qui situe l'ampleur : v2-belote-small à 30,7M échantillons ne rattrape
 pas v2 à 11,5M au pli 4 (1,13e6 contre 1,49e6, soit à peine mieux pour 2,7× les
 données).
 
@@ -564,7 +574,7 @@ de gagner. La proximité de la cible s'ajoute par-dessus : 1800-600, qui cumule
 écart et proximité, est le pire des huit. La courbe **n'est pas monotone** : à
 1800-1200 playgen prédit *mieux* qu'à 0-0.
 
-**À comparer à l'effet de capacité sur la même tête** : v3-small (3,22M) contre v2
+**À comparer à l'effet de capacité sur la même tête** : v2-belote-small (3,22M) contre v2
 (10,74M) à budget égal donne 1,7370 contre 1,7342, soit **+0,0028**. L'information
 manquante coûte donc **29× ce que vaut le triplement des paramètres**, et encore
 le double à un score de milieu de partie.
@@ -588,7 +598,7 @@ de 1000 points d'écart — non mesuré, et c'est ce qui manque pour convertir c
 | | 0-0 | 1500-300 | pénalité |
 |---|---|---|---|
 | v2 (10,74M) | 1,7160 | 1,7967 | **+0,0807** |
-| v3-small (3,22M) | 1,7194 | 1,7923 | **+0,0729** |
+| v2-belote-small (3,22M) | 1,7194 | 1,7923 | **+0,0729** |
 
 À 0-0 le gros modèle est devant ; à 1500-300 l'ordre s'inverse. Plus de paramètres
 = ajustement plus net à la distribution d'enchères vue à l'entraînement, donc

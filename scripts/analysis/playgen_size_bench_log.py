@@ -3,8 +3,8 @@
 
 Le banc lui-même est `playgen_size_bench.sh` : il alterne les trois modèles et
 écrit un TSV. Ce script en fait une entrée de `docs/measurements/index.jsonl`,
-avec l'empreinte des trois checkpoints — sans elle, « v3-large » ne veut rien
-dire dans six mois (trois répertoires `playgen_v3_large*` portent des poids
+avec l'empreinte des trois checkpoints — sans elle, « v2-belote-large » ne veut rien
+dire dans six mois (trois répertoires `playgen_v2belote_large*` portent des poids
 différents sous des noms voisins).
 
 Usage :
@@ -23,12 +23,12 @@ import runlog  # noqa: E402
 # Les checkpoints tels qu'ils ont été servis, côté local (identiques par sha256
 # à ceux copiés sur l'hôte GPU — vérifié au moment de la copie).
 MODELS = {
-    "v3_small": "models/playgen_v3_small/v3_small_120000.bin",
+    "v2belote_small": "models/playgen_v2belote_small/v2belote_small_120000.bin",
     "v2": "models/playgen/playgen_v2_final.bin",
-    "v3_large": "models/playgen_v3_large2/v3_large2_80000.bin",
+    "v2belote_large": "models/playgen_v2belote_large2/v2belote_large2_80000.bin",
 }
-ARCH = {"v3_small": "d=256 L=4", "v2": "d=384 L=6", "v3_large": "d=512 L=8"}
-PARAMS_M = {"v3_small": 3.22, "v2": 10.74, "v3_large": 25.3}
+ARCH = {"v2belote_small": "d=256 L=4", "v2": "d=384 L=6", "v2belote_large": "d=512 L=8"}
+PARAMS_M = {"v2belote_small": 3.22, "v2": 10.74, "v2belote_large": 25.3}
 
 
 def main():
@@ -73,7 +73,7 @@ def main():
             summary[name]["vs_v2"] = round(summary[name]["deals_s_median"] / base, 3)
 
     print(f"{'modèle':<10} {'arch':<10} {'M par.':>7} {'donnes/s':>9} {'×v2':>6} {'attente GPU':>12}")
-    for name in ("v3_small", "v2", "v3_large"):
+    for name in ("v2belote_small", "v2", "v2belote_large"):
         s = summary.get(name)
         if not s:
             continue

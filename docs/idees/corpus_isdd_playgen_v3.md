@@ -143,7 +143,7 @@ résoudre. Générer avant, c'est risquer de jeter 1 à 3 jours de GPU.
 
 ---
 
-## 5. playgen v3-small n'est pas le raccourci qu'il paraît
+## 5. playgen v2-belote-small n'est pas le raccourci qu'il paraît
 
 Le modèle réduit (d=256 L=4, 3,22M contre 10,74M) rend **4,32 donnes/s contre
 2,62**, soit **1,65×** — le plus gros levier de débit restant. Deux choses le
@@ -159,11 +159,11 @@ cumulées, à budget d'échantillons égal :
 
 | depuis le pli | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|
-| v3-small / v2 | **3,6×** | **3,4×** | **3,2×** | 2,8× | 2,4× | 1,9× | 1,5× | 1,06× |
+| v2-belote-small / v2 | **3,6×** | **3,4×** | **3,2×** | 2,8× | 2,4× | 1,9× | 1,5× | 1,06× |
 
 Or `isdd_dets_by_stage` place tout le regret au-dessus de 0,10 point DD à **8-6
 cartes restantes** — les plis 1 à 3 — et **zéro sous 3 cartes**. Les deux courbes
-se superposent : v3-small dégrade les mondes précisément aux plis qui décident,
+se superposent : v2-belote-small dégrade les mondes précisément aux plis qui décident,
 et rejoint v2 là où plus rien ne se joue. Même leçon que le calendrier de mondes :
 le début de donne est cher *et* c'est là que ça compte.
 
@@ -172,7 +172,7 @@ le début de donne est cher *et* c'est là que ça compte.
 | | mondes/décision | donnes/s |
 |---|---|---|
 | v2 | 20 | 3,93 |
-| v3-small | 40 | ~3,9 |
+| v2-belote-small | 40 | ~3,9 |
 
 **Même prix.** Donc ce n'est pas « moins cher mais moins bon », c'est « deux fois
 plus de mondes de moindre qualité contre moitié moins de mondes fidèles ». Ça,
@@ -193,7 +193,7 @@ On échantillonne les mondes avec playgen *vN* pour produire le corpus qui
 entraîne *vN+1*. **Un vN+1 plus gros est un échantillonneur plus lent pour le
 corpus de vN+2.**
 
-Ce n'est pas théorique : `playgen_v3_large2` s'entraîne en d=512 L=8, **25,3M
+Ce n'est pas théorique : `playgen_v2belote_large2` s'entraîne en d=512 L=8, **25,3M
 paramètres, 2,4× v2**. Son coût par monde se situe entre **1,3× et 2,4×** celui
 de v2 selon que le lot est borné par les lancements de noyaux (~2,1 ms par pas,
 que ce soit 1 lane ou 40) ou par l'arithmétique. L'écart entre ces deux bornes
@@ -223,7 +223,7 @@ l'information nouvelle, et on ne sait pas où ça décroche.
 100 k / 300 k / 1 M et entraîner à budget d'échantillons constant, en lisant la
 perplexité *par pli* (pas seulement au pli 1 — c'est l'erreur du commit `321547a`,
 qui avait conclu « v2 est saturé » sur la seule colonne la moins informative de
-la table). Config v3-small à 60K pas, ~2,5 h par point.
+la table). Config v2-belote-small à 60K pas, ~2,5 h par point.
 
 ⚠️ Risque connu de la manip : un modèle plus petit peut saturer sur moins de
 données que v2, donc la courbe mesurée est une **borne basse** sur le corpus
@@ -239,22 +239,22 @@ Des matchs joués par un bot rapide, histogramme de l'écart à chaque donne. De
 milliers de donnes/s, aucun GPU. **À faire avant de s'engager sur trois jours de
 génération.**
 
-### 7.3 Ce que coûte un monde v3-large (minutes, après export)
+### 7.3 Ce que coûte un monde v2-belote-large (minutes, après export)
 
-Voir §6. Une fois `playgen_v3_large2` exporté en `.bin`, un banc de sidecar donne
+Voir §6. Une fois `playgen_v2belote_large2` exporté en `.bin`, un banc de sidecar donne
 le coût par monde et referme l'incertitude 1,3×–2,4×.
 
 ### 7.4 Le second GPU en tourniquet (~2×, sans changer le joueur)
 
 `worlds.url` accepte déjà une liste séparée par des virgules, répartie sur un
 compteur global au processus. **~2× sans changer d'un iota l'échantillonneur qui
-produit le corpus** — ça domine v3-small sur tous les axes. Jamais mesuré,
+produit le corpus** — ça domine v2-belote-small sur tous les axes. Jamais mesuré,
 uniquement parce que la 4090 était prise. Le contrôle de santé vérifie les deux
 URL au démarrage, donc une carte éteinte échoue au lieu de dégrader en silence.
 
-### 7.5 Si on veut trancher v3-small : l'A/B à coût égal
+### 7.5 Si on veut trancher v2-belote-small : l'A/B à coût égal
 
-v3-small @ 40 mondes contre v2 @ 20 mondes, mêmes positions, juge = DD exact sur
+v2-belote-small @ 40 mondes contre v2 @ 20 mondes, mêmes positions, juge = DD exact sur
 la vraie donne (§5). Pas d'arène.
 
 ---

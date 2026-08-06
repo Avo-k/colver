@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Attend la fin du run v3-large en cours (11,52 M échantillons), puis le
+# Attend la fin du run v2-belote-large en cours (11,52 M échantillons), puis le
 # prolonge jusqu'aux 30,72 M de v2 — le seul budget qui permette un
 # « meilleur contre meilleur » plutôt qu'une comparaison à budget apparié.
 #
@@ -12,12 +12,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
-while pgrep -f "train_playgen.*playgen_v3_large2" >/dev/null; do sleep 30; done
+while pgrep -f "train_playgen.*playgen_v2belote_large2" >/dev/null; do sleep 30; done
 sleep 10   # laisser écrire le checkpoint final
 
 exec env CUDARC_CUDA_VERSION=13010 ./target/release/train_playgen \
   --v2 --games data/training/playgen_games_9M.bin \
   --steps 200000 --batch-size 96 --d-model 512 --layers 8 --heads 8 \
   --lr 2e-4 --warmup 200 --save-freq 20000 \
-  --resume models/playgen_v3_large2/playgen_final.safetensors \
-  --save-dir models/playgen_v3_large3
+  --resume models/playgen_v2belote_large2/playgen_final.safetensors \
+  --save-dir models/playgen_v2belote_large3

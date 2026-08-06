@@ -593,7 +593,7 @@ sidecars d'expérience — ils ne rendent jamais leur VRAM tant qu'ils vivent.
 
 ## Ce qui a été mesuré et **écarté**
 
-### playgen v3-small : 1,65× plus vite, mais ce n'est pas le même joueur
+### playgen v2-belote-small : 1,65× plus vite, mais ce n'est pas le même joueur
 
 Le modèle réduit (d=256 L=4 contre d=384 L=6, 3,3× moins de paramètres) rend
 **4,32 donnes/s contre 2,62**, soit 1,65×. C'est le plus gros levier restant.
@@ -604,7 +604,7 @@ tirages du *même* modèle — la seule référence honnête, deux échantillons
 512 mondes s'écartant toujours de ~0,013 en moyenne. Résultat : **2,09× le
 bruit d'échantillonnage** (écart moyen 0,028, max 0,68 sur une case).
 
-Donc : v3-small ne se substitue pas à v2 sans changer le joueur qui produit le
+Donc : v2-belote-small ne se substitue pas à v2 sans changer le joueur qui produit le
 corpus. C'est un arbitrage — 1,65× de débit contre un sampler différent — et
 pas une optimisation. Il reste à mesurer ce que ce sampler vaut *en force de
 jeu* (`bench_world_cred`, ou un h2h), ce qui n'a pas été fait.

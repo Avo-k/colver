@@ -38,8 +38,8 @@ RUNS = {
     # Ablation du retrait de lanes, MÊME binaire (COLVER_PLAYGEN_NO_RETIRE)
     "retire_on": [2.48, 2.20, 2.29],
     "retire_off": [1.27, 1.95, 1.87],
-    # Modèle réduit v3-small (d=256 L=4) — autre échantillonneur, pas une optim
-    "v3_small": [4.27, 4.36],
+    # Modèle réduit v2-belote-small (d=256 L=4) — autre échantillonneur, pas une optim
+    "v2belote_small": [4.27, 4.36],
     "v2_final": [2.57, 2.68],
     # TF32 : régression franche
     "tf32_on": [0.83, 0.44],
@@ -71,7 +71,7 @@ def main():
             "prefixe_groupe_64t": round(m["prefill_on_64t"] / m["prefill_off_64t"], 3),
             "gpu_total_256t": round(m["gpu_opt_256t"] / m["gpu_orig_256t"], 3),
             "retrait_de_lanes": round(m["retire_on"] / m["retire_off"], 3),
-            "v3_small_vs_v2": round(m["v3_small"] / m["v2_final"], 3),
+            "v2belote_small_vs_v2": round(m["v2belote_small"] / m["v2_final"], 3),
             "tf32": round(m["tf32_on"] / m["tf32_off"], 3),
             "calendrier_montant_a_total_egal": round(
                 m["sched_up_280"] / m["flat40_vs_up"], 3),
@@ -84,7 +84,7 @@ def main():
             "de ~20 % sur cette machine.",
             "Le retrait de lanes est ablaté dans le MÊME binaire "
             "(COLVER_PLAYGEN_NO_RETIRE=1), pas entre deux compilations.",
-            "v3-small n'est pas une optimisation : ses mondes sont à 2,09× le bruit "
+            "v2-belote-small n'est pas une optimisation : ses mondes sont à 2,09× le bruit "
             "d'échantillonnage de ceux de v2 (bench_prefill_eq). C'est un autre joueur.",
             "Le calendrier montant est plus LENT à total de mondes égal : un monde "
             "d'entame demande 24 cartes cachées (48 pas) contre 6 (12 pas) en finale.",
@@ -94,6 +94,8 @@ def main():
     }
     runlog.save(
         script="gen_isdd_bench",
+        # Le tag garde son ancien nom : il identifie l'entrée déjà écrite dans
+        # docs/measurements/index.jsonl. Le modèle, lui, s'appelle v2-belote-small.
         tag="prefill-retire-v3small",
         params={
             "bot": "arena/bots/gen_isdd.toml",
