@@ -15,7 +15,7 @@ import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js'
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
 
 const TEMPLATE = `
-<a id="replay-resume" class="analyse-back analyse-back-go hidden" href="/jouer/humain"></a>
+<a id="replay-resume" class="analyse-back analyse-back-go hidden" href="/jouer"></a>
 <div id="replay-main">
     <div id="replay-history">
         <div class="section-title" id="replay-history-title">Historique</div>
@@ -1338,7 +1338,7 @@ function renderResumeLink(match) {
     }
     const us = (match.human_seat ?? 2) % 2 === 0 ? match.points_ns : match.points_ew;
     const them = (match.human_seat ?? 2) % 2 === 0 ? match.points_ew : match.points_ns;
-    el.setAttribute('href', `/jouer/humain?resume=${encodeURIComponent(match.id)}`);
+    el.setAttribute('href', `/jouer?resume=${encodeURIComponent(match.id)}`);
     el.textContent = `↩ Reprendre la partie — ${us} – ${them}, objectif ${match.target}`;
     el.classList.remove('hidden');
 }

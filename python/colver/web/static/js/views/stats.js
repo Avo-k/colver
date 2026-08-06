@@ -225,7 +225,7 @@ function renderRail(me, st) {
             st.partners.length
                 ? '<p class="st-hint">En salon. En solo, votre partenaire est un bot.</p>'
                 : '<p class="st-hint">Vous n\'avez encore joué qu\'avec des bots. '
-                  + 'En <a href="/jouer/salon">salon</a>, votre partenaire apparaîtra ici.</p>',
+                  + 'En <a href="/jouer">table partagée</a>, votre partenaire apparaîtra ici.</p>',
         ])
         + card("Faits d'armes", [
             arms.length
@@ -442,7 +442,7 @@ async function load() {
     if (!st || !st.deals) {
         main.innerHTML = '<div class="history-empty">'
             + (scope === 'all'
-                ? 'Aucune donne terminée pour l\'instant — <a href="/jouer/humain">jouez-en une !</a>'
+                ? 'Aucune donne terminée pour l\'instant — <a href="/jouer">jouez-en une !</a>'
                 : 'Aucune donne dans ce format. Choisissez « Toutes » pour tout revoir.')
             + '</div>';
         return;

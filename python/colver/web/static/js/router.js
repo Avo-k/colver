@@ -2,9 +2,8 @@
 
 const routes = {
     '/':                  () => import('./views/landing.js'),
-    '/jouer/humain':      () => import('./views/play.js'),
-    '/jouer/salon':       () => import('./views/salon.js'),
-    '/jouer/ia':          () => import('./views/watch.js'),
+    '/jouer':             () => import('./views/jouer.js'),
+    '/analyse/regarder':  () => import('./views/watch.js'),
     '/analyse/rejouer':   () => import('./views/replay.js'),
     '/analyse/partie':    () => import('./views/partie.js'),
     '/analyse/annonces':  () => import('./views/annonces.js'),
@@ -30,21 +29,31 @@ const routes = {
 
 // Legacy hash redirects (old bookmarks still work)
 const legacyHashMap = {
-    '#play':         '/jouer/humain',
-    '#watch':        '/jouer/ia',
+    '#play':         '/jouer',
+    '#watch':        '/analyse/regarder',
     '#replay':       '/analyse/rejouer',
-    '#deal':         '/jouer/ia',
+    '#deal':         '/analyse/regarder',
     '#annonces':     '/analyse/annonces',
     '#prob-annonce': '/problemes/annonce',
     '#prob-jeu':     '/problemes/jeu',
     '#docs':         '/about',
 };
 
+// Anciens chemins, gardés vivants pour les signets et les liens partagés.
+// « Jouer » ne fait plus qu'une page : le solo et le salon n'étaient pas deux
+// destinations, c'était le même geste avec deux façons de remplir les sièges.
+// « IA vs IA » n'est pas une façon de jouer, elle passe sous « Analyser ».
+const legacyPathMap = {
+    '/jouer/humain': '/jouer',
+    '/jouer/salon':  '/jouer',
+    '/jouer/ia':     '/analyse/regarder',
+};
+
 // Le tapis vert n'a de sens que sur les pages qui montrent un plateau. Sur les
 // pages de lecture et d'analyse, il nuisait à la lisibilité du texte et des
 // tableaux : elles passent sur un fond neutre.
 const FELT_ROUTES = new Set([
-    '/', '/jouer/humain', '/jouer/salon', '/jouer/ia',
+    '/', '/jouer', '/analyse/regarder',
     '/analyse/rejouer', '/problemes/annonce', '/problemes/jeu',
     '/problemes/compter',
 ]);
@@ -77,7 +86,14 @@ function parsePath() {
     if (base !== '/' && path.startsWith(base)) {
         path = path.slice(base.length - 1); // keep leading /
     }
-    return path || '/';
+    path = path || '/';
+    if (legacyPathMap[path]) {
+        // La query survit à la réécriture : `/jouer/humain?resume=<id>` est un
+        // lien qu'on a nous-mêmes distribué, et il porte tout son sens dedans.
+        path = legacyPathMap[path];
+        history.replaceState(null, '', base + path.slice(1) + location.search);
+    }
+    return path;
 }
 
 async function navigate() {

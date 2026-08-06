@@ -281,7 +281,7 @@ export async function mount(container) {
         body.innerHTML = `<section class="compte-card"><div class="history-empty">
             Partie introuvable. Seules les parties terminées ont une feuille de
             marque ; une partie en cours se reprend depuis
-            <a href="/jouer/humain">Jouer</a>.</div></section>`;
+            <a href="/jouer">Jouer</a>.</div></section>`;
         return;
     }
 

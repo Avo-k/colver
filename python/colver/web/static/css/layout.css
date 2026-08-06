@@ -300,6 +300,42 @@ nav {
     background: transparent;
 }
 
+/* Le bouton de lancement porte l'intitulé du choix fait (« Jouer », « Créer la
+   table ») : il ferme la séquence de réglages, il ne s'aligne pas dessus.
+   ⚠️ Pas de `margin-top: auto` ici : sans partie en cours, `board.css` bascule
+   `#play-config` en colonne centrée (l'état d'accueil), et la marge automatique
+   projetait le bouton en bas d'un panneau haut de toute la page. */
+.config-start {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-1);
+}
+.config-start .mode-note { max-width: 32ch; text-align: center; }
+
+/* Rejoindre par code : une porte d'entrée, pas un réglage. Elle prend sa propre
+   ligne — un champ de saisie au milieu de boutons segmentés se lirait comme une
+   quatrième option. `width` et non `flex-basis` : le panneau est tantôt une
+   rangée (rouvert par ⚙ en cours de partie), tantôt une colonne (l'accueil), et
+   `flex-basis` désigne la hauteur dans le second cas. */
+.join-code {
+    width: 100%;
+    max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+    padding-top: var(--sp-3);
+    border-top: 1px solid var(--c-border);
+}
+
+/* Le lien d'invitation est l'objet qu'on partage — le code à quatre lettres ne
+   sert plus qu'à le dicter de vive voix. Il vient donc avant les sièges. */
+.salon-invite {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-1);
+}
+
 /* Deux réglages côte à côte (rythme, format) : sans intitulé, deux rangées de
    boutons segmentés identiques se liraient comme un seul choix à six options. */
 .config-group {

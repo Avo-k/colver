@@ -376,7 +376,7 @@ function renderOpenMatches(matches) {
         const row = document.createElement('div');
         row.className = 'history-row';
         row.addEventListener('click', () => {
-            navigateTo(`/jouer/humain?resume=${encodeURIComponent(m.id)}`);
+            navigateTo(`/jouer?resume=${encodeURIComponent(m.id)}`);
         });
 
         const id = document.createElement('span');
@@ -454,7 +454,7 @@ function renderDoneMatches(matches) {
 function renderGames(list, games) {
     list.innerHTML = '';
     if (games.length === 0) {
-        list.innerHTML = '<div class="history-empty">Aucune partie — <a href="/jouer/humain">jouez-en une !</a></div>';
+        list.innerHTML = '<div class="history-empty">Aucune partie — <a href="/jouer">jouez-en une !</a></div>';
         return;
     }
     for (const g of games) {

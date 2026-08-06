@@ -543,17 +543,8 @@
     margin-bottom: 0;
     font-size: var(--fs-lg);
 }
-#play-intro {
-    display: none;
-    margin: 0;
-    text-align: center;
-    color: #b0b0a0;
-    line-height: 1.5;
-    max-width: 420px;
-}
-#app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-intro {
-    display: block;
-}
+/* `#play-intro` a disparu avec la fusion des pages Jouer : la colonne « Qui
+   joue » dit ce que la phrase d'accueil disait, en le rendant cliquable. */
 #app:has(#play-config):not(:has(#play-table:not(.hidden))) #play-config label {
     font-size: var(--fs-lg);
 }

@@ -17,31 +17,24 @@ const TEMPLATE = `
     </div>
 
     <div class="landing-grid">
-        <div class="mode-card" data-route="/jouer/humain">
+        <div class="mode-card" data-route="/jouer">
             <div class="mode-icon">\u2694\uFE0F</div>
             <h3 class="mode-title">Jouer</h3>
-            <p class="mode-desc">Affrontez l'IA en Belote Contr\u00e9e. Choisissez vos adversaires et votre partenaire.</p>
-            <span class="mode-tag">Humain vs IA</span>
-        </div>
-
-        <div class="mode-card" data-route="/jouer/salon">
-            <div class="mode-icon">\uD83C\uDF7B</div>
-            <h3 class="mode-title">Salon</h3>
-            <p class="mode-desc">Cr\u00E9ez un salon et invitez vos amis \u2014 les si\u00E8ges vides sont tenus par l'IA.</p>
-            <span class="mode-tag">Multijoueur</span>
-        </div>
-
-        <div class="mode-card" data-route="/jouer/ia">
-            <div class="mode-icon">\uD83D\uDC41\uFE0F</div>
-            <h3 class="mode-title">Regarder</h3>
-            <p class="mode-desc">Observez des parties IA vs IA avec statistiques en temps r\u00e9el et Q-values.</p>
-            <span class="mode-tag">IA vs IA</span>
+            <p class="mode-desc">Seul contre l'IA, ou \u00E0 plusieurs autour d'une table partag\u00e9e \u2014 les si\u00E8ges vides sont tenus par l'IA.</p>
+            <span class="mode-tag">Une donne ou une partie</span>
         </div>
 
         <div class="mode-card" data-route="/analyse/rejouer">
             <div class="mode-icon">\u23EA</div>
             <h3 class="mode-title">Rejouer</h3>
             <p class="mode-desc">Parcourez l'historique et rejouez vos parties pas \u00e0 pas.</p>
+            <span class="mode-tag">Analyse</span>
+        </div>
+
+        <div class="mode-card" data-route="/analyse/regarder">
+            <div class="mode-icon">\ud83d\udc41\ufe0f</div>
+            <h3 class="mode-title">Regarder</h3>
+            <p class="mode-desc">Observez l'IA jouer, avec ses statistiques de r\u00e9flexion et l'Oracle en direct.</p>
             <span class="mode-tag">Analyse</span>
         </div>
 

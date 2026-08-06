@@ -3548,11 +3548,11 @@
 
 /* ===== SALON (multiplayer rooms) ===== */
 
-#salon-root {
-    height: 100%;
-    overflow-y: auto;
-}
-
+/* Le panneau défile lui-même : il n'a plus de conteneur `#salon-root` à qui
+   déléguer ça, la page Jouer le pose directement dans `#app` — un flex en
+   colonne à `overflow: hidden`, où un enfant trop haut devient inatteignable.
+   `min-height: 0` est indispensable : sans lui un enfant flex refuse de
+   rétrécir sous sa hauteur de contenu et `overflow-y` ne s'applique jamais. */
 .salon-panel {
     max-width: 480px;
     margin: 0 auto;
@@ -3560,6 +3560,8 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .salon-desc {
@@ -3633,18 +3635,22 @@
     min-height: 0.8em;
 }
 
+/* En colonne : le panneau fait 480px au plus, et les deux réglages y tenaient
+   sur une rangée tant que c'étaient deux <select>. Devenus des boutons
+   segmentés — les mêmes que sur l'écran de configuration, exprès — ils
+   s'enroulaient en laissant « 2000 points » seul sur sa ligne. */
 .salon-host-controls {
     display: flex;
-    align-items: center;
-    justify-content: center;
+    flex-direction: column;
+    align-items: stretch;
     gap: 14px;
-    flex-wrap: wrap;
     background: rgba(0, 0, 0, 0.3);
     border-radius: 8px;
-    padding: 10px;
+    padding: 12px;
     color: #aaa;
     font-size: var(--fs-sm);
 }
+.salon-host-controls .mode-btn { flex: 1; }
 .salon-host-controls .compte-submit { margin-top: 0; }
 .salon-host-controls select {
     background: rgba(0, 0, 0, 0.4);

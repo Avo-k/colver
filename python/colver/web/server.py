@@ -12,7 +12,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response)
 
 from colver.web.game_manager import PlaySession, WatchSession, ReplaySession, BidProblemSession, PlayProblemSession, BeliefSession, CountingSession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot, check_legal, IllegalAction
 from colver.web import playgen_gpu as _playgen_gpu
@@ -165,17 +166,12 @@ _ROUTE_META = {
                        "en solo ou en salon entre amis. Entraînez vos annonces et "
                        "analysez vos donnes carte par carte.",
     },
-    "/jouer/humain": {
-        "title": "Jouer contre l'IA — Colver",
-        "description": "Une table de belote contrée en solo : trois sièges tenus "
-                       "par l'IA, parties en une donne, 1000 ou 2000 points.",
+    "/jouer": {
+        "title": "Jouer à la belote contrée — Colver",
+        "description": "Une table de belote contrée : seul contre l'IA, ou "
+                       "partagée avec d'autres joueurs. Une donne, 1000 ou 2000 points.",
     },
-    "/jouer/salon": {
-        "title": "Salon multijoueur — Colver",
-        "description": "Créez un salon de belote contrée et invitez vos amis avec "
-                       "un code à quatre lettres — les sièges vides sont tenus par l'IA.",
-    },
-    "/jouer/ia": {
+    "/analyse/regarder": {
         "title": "Regarder l'IA jouer — Colver",
         "description": "Observez des parties de belote contrée entre IA, avec les "
                        "statistiques du moteur en temps réel.",
@@ -286,8 +282,8 @@ _ROUTE_META = {
 # Pages publiques de contenu : ni /compte (espace personnel), ni /analyse/jeu
 # (vide tant qu'on n'y colle pas une position).
 _SITEMAP_ROUTES = [
-    "/", "/jouer/humain", "/jouer/salon", "/jouer/ia",
-    "/analyse/rejouer", "/analyse/annonces", "/analyse/croyances",
+    "/", "/jouer",
+    "/analyse/rejouer", "/analyse/regarder", "/analyse/annonces", "/analyse/croyances",
     "/problemes/annonce", "/problemes/jeu",
     "/regles", "/regles/choix",
     "/aide", "/annoncer", "/score", "/classement", "/about",
@@ -3465,11 +3461,31 @@ async def sitemap_xml():
     )
 
 
+# Anciennes adresses de « Jouer », gardées vivantes. Une redirection **301**
+# plutôt qu'une réécriture côté client : ces trois pages ont été indexées et
+# partagées, et le routeur ne peut réparer que ce qui a déjà été servi — un
+# moteur, lui, doit apprendre la nouvelle adresse. Le routeur les couvre aussi
+# (`legacyPathMap`), pour la navigation interne qui ne repasse pas par le
+# serveur.
+_MOVED_ROUTES = {
+    "/jouer/humain": "/jouer",
+    "/jouer/salon": "/jouer",
+    "/jouer/ia": "/analyse/regarder",
+}
+
+
 # Catch-all for client-side routes (pushState).
 # Must be registered AFTER all API/WS/static mounts.
 @app.get("/{full_path:path}")
 async def spa_catchall(full_path: str, request: Request):
     path = "/" + full_path
+    if path in _MOVED_ROUTES:
+        # La query suit : `/jouer/humain?resume=<id>` est un lien qu'on a
+        # nous-mêmes distribué, et tout son sens est dedans.
+        target = _MOVED_ROUTES[path]
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(target, status_code=301)
     # Une donne partagée mérite de vraies métadonnées : titre et description
     # composés depuis la donne elle-même quand elle existe et est terminée.
     if path == "/analyse/rejouer" and request.query_params.get("game"):
