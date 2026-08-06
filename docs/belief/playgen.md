@@ -288,6 +288,38 @@ CUDARC_CUDA_VERSION=13010 cargo build --release --bin playgen_gpu_server --featu
 curl -s http://localhost:8003/health
 ```
 
+### Trois choses à savoir avant d'augmenter un budget de mondes (2026-08-06)
+
+**La route est plate en n.** `/auction_deals` rend 32 mondes en 773 ms, 512 en
+716 ms, 1024 en 1 134 ms : on paie la séquence de jetons, pas les lanes. Demander
+plus de mondes est donc **presque gratuit** — tant qu'ils tiennent dans une seule
+requête.
+
+**`MAX_WORLDS` doit rester aligné sur le `lane_budget`** (1024 depuis cette date).
+Tant que la constante valait la moitié du budget de lanes, le serveur **tronquait
+en silence** : on lui demandait 1024 mondes, il en rendait 512, sans erreur ni
+champ qui le dise. Un client qui complétait la différence autrement — mondes
+uniformes, par exemple — se retrouvait avec la moitié d'un échantillon aveugle à
+l'enchère, et rien ne l'en avertissait. Le client redemande désormais jusqu'à
+avoir son compte (`SidecarWorldSource::auction_deals`), et la VRAM ne bouge pas
+puisque `lane_budget` provisionnait déjà 1024 lanes.
+
+**tiny_http change de cadrage HTTP avec la taille de la réponse.** En dessous de
+~32 Ko il envoie un `Content-Length` ; au-dessus il passe en `Transfer-Encoding:
+chunked`. Mesuré : 512 mondes = 21 949 octets annoncés, 1024 mondes = 44 Ko en
+blocs. Le bug que ça produit ne ressemble pas à un problème de transport — les
+tailles de bloc sont écrites **en hexadécimal dans le corps**, donc le scan
+d'entiers de `parse_hands` les comptait en plus et rendait « réponse malformée »
+sur une réponse parfaitement valide. `http_request` déchunke depuis le
+2026-08-06 ; c'était latent, et ça aurait mordu n'importe qui augmentant un
+budget de mondes.
+
+**`/auction_deals` n'est jamais groupé** (`run_alone`), contrairement à
+`/play_worlds` qui a un vrai `generate_worlds_multi`. Un appelant multi-fils
+(une arène) le sérialise donc, avec deux conséquences de réglage détaillées dans
+[../bid/rollout_bidder.md](../bid/rollout_bidder.md) : peu de fils, et un délai
+client qui couvre **la file** et non la requête.
+
 | endpoint | returns | used by |
 |----------|---------|---------|
 | `POST /play_worlds` | remaining hands per seat | **`worlds::SidecarWorldSource`** — the IS-DD agent |
