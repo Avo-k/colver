@@ -136,3 +136,25 @@ class Match:
             "finished": self.finished,
             "winner": self.winner,
         }
+
+
+# ===== Ce qu'un temps de jeu écoulé coûte =====
+#
+# Ici plutôt que dans `rooms`, parce que **deux modules en dépendent** et qu'ils
+# ne peuvent pas s'importer l'un l'autre : le pilote de salon applique les
+# seuils en direct (`SeatClock`), et le classement les relit après coup depuis
+# le journal des donnes. Les dupliquer, c'est se garantir qu'ils divergeront le
+# jour où l'un des deux bougera.
+#
+# Les deux seuils ne mesurent pas la même chose, et l'ordre compte :
+#
+# - **consécutifs** = une absence. Six d'affilée rendent le siège à l'IA, et
+#   c'est une **défaite** pour la personne — sinon partir serait gratuit.
+# - **cumulés** = une délégation : laisser filer la pendule pour voir jouer le
+#   bot à sa place. La partie cesse alors de compter **pour ce joueur-là**,
+#   personne d'autre n'étant lésé.
+#
+# Un siège qui a forfait dépasse forcément les deux : c'est la défaite qui
+# l'emporte, la sanction la plus faible ne doit pas absorber la plus forte.
+MISSES_TO_FORFEIT = 6
+MISSES_TOTAL_UNRATED = 3

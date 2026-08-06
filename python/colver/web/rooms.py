@@ -61,8 +61,11 @@ _CREATE_LIMITER = ratelimit.RateLimiter(limit=6, window=60)
 TURN_SECONDS = 30.0
 TURN_SECONDS_SHORT = 10.0
 MISSES_TO_SHORTEN = 2      # consécutifs : budget resserré
-MISSES_TO_FORFEIT = 6      # consécutifs : le siège passe à l'IA
-MISSES_TOTAL_UNRATED = 3   # cumulés sur la partie : elle ne compte plus
+# Les deux seuils qui portent une sanction vivent dans `match_state` : le
+# classement les relit après coup depuis le journal des donnes, et il ne peut
+# pas importer ce module.
+MISSES_TO_FORFEIT = match_state.MISSES_TO_FORFEIT
+MISSES_TOTAL_UNRATED = match_state.MISSES_TOTAL_UNRATED
 
 
 class SeatClock:

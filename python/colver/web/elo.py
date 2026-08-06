@@ -150,6 +150,7 @@ import math
 import numpy as np
 
 import colver.web.database as db
+import colver.web.match_state as match_state
 
 logger = logging.getLogger(__name__)
 
@@ -322,21 +323,88 @@ def _seat_entities(game, player_rows):
     return seats
 
 
-async def _match_seats(conn, match_id):
-    """Entités des quatre sièges d'une partie, lues sur sa première donne saine."""
+async def _match_deals(conn, match_id):
+    """Les donnes saines d'une partie, dans l'ordre, avec les sièges de chacune.
+
+    Rend `[(entités, donne)]`. Une donne dont les sièges ne sont pas notables
+    est écartée : elle ne peut renseigner ni le prorata ni les compteurs.
+    """
     rows = await conn.execute_fetchall(
         "SELECT id FROM games WHERE match_id = ? AND is_complete = 1 AND invalid = 0 "
-        "ORDER BY deal_no LIMIT 1",
+        "ORDER BY deal_no",
         (match_id,),
     )
-    if not rows:
-        return None
-    game = await db.get_game(rows[0][0])
-    if game is None:
-        return None
-    players = await conn.execute_fetchall(
-        "SELECT seat, user_id FROM game_players WHERE game_id = ?", (rows[0][0],))
-    return _seat_entities(game, [dict(r) for r in players])
+    out = []
+    for (game_id,) in rows:
+        game = await db.get_game(game_id)
+        if game is None:
+            continue
+        players = await conn.execute_fetchall(
+            "SELECT seat, user_id FROM game_players WHERE game_id = ?", (game_id,))
+        seats = _seat_entities(game, [dict(r) for r in players])
+        if seats is not None:
+            out.append((seats, game))
+    return out
+
+
+async def _match_seats(conn, match_id):
+    """Entités des quatre sièges d'une partie, lues sur sa première donne saine."""
+    deals = await _match_deals(conn, match_id)
+    return deals[0][0] if deals else None
+
+
+def _miss_runs(deals):
+    """Reconstruire la pendule de chaque siège depuis le journal des donnes.
+
+    Rend `(plus longue série, cumul)` par siège. **Aucune colonne à ajouter** :
+    le drapeau `auto` d'une action *est* la trace d'un temps écoulé, écrit au
+    moment où il l'a été, et c'est déjà lui que la revue d'analyse lit pour ne
+    pas attribuer le coût d'un coup à quelqu'un qui ne l'a pas choisi. Le solo
+    ne le pose que sur son message d'écho, jamais dans le journal : ici il ne
+    peut donc désigner qu'une table partagée.
+
+    Les coups joués par le bot **après** un forfait ne portent pas ce drapeau —
+    le siège est devenu un siège de bot ordinaire. La plus longue série est donc
+    bien atteinte avant la reprise, et elle y reste.
+    """
+    runs = [0] * 4
+    best = [0] * 4
+    total = [0] * 4
+    for _seats, game in deals:
+        for action in game["actions"]:
+            seat = int(action["player"])
+            if action.get("auto"):
+                runs[seat] += 1
+                total[seat] += 1
+                best[seat] = max(best[seat], runs[seat])
+            else:
+                runs[seat] = 0
+    return best, total
+
+
+async def _seat_levels(conn, deals, levels):
+    """Le niveau de chaque siège, **au prorata des donnes**.
+
+    Un siège peut changer de main en cours de partie : après un forfait, l'IA le
+    reprend jusqu'au bout. Le partenaire de l'absent n'a alors pas joué toute la
+    partie avec la même personne, et les adversaires n'ont pas eu la même tâche
+    — donc ni `partner_elo` ni `opp_elo` ne peuvent être un chiffre unique lu
+    sur la première donne. On pondère par le nombre de donnes.
+
+    `_seat_entities` énonce justement l'hypothèse inverse (« les sièges d'une
+    partie ne changent pas d'une donne à l'autre ») : c'est elle que le forfait
+    casse, et elle ne tenait que faute de mécanisme pour la casser.
+    """
+    seat_levels = [0.0] * 4
+    for seat in range(4):
+        acc = 0.0
+        for seats, _game in deals:
+            ent = seats[seat]
+            if ent not in levels:
+                levels[ent] = await _level_internal(conn, ent)
+            acc += levels[ent]
+        seat_levels[seat] = acc / len(deals)
+    return seat_levels
 
 
 async def _losing_team(conn, match_id, owner_id):
@@ -463,13 +531,17 @@ async def _rate_match_locked(match_id):
             return False
         score_ns = soft_score(winner, points_ns, points_ew)
 
-    seats = await _match_seats(conn, match_id)
-    if seats is None:
+    deals = await _match_deals(conn, match_id)
+    if not deals:
         return False
+    seats = deals[0][0]
 
     levels = {}
-    for ent in set(seats):
-        levels[ent] = await _level_internal(conn, ent)
+    # Les niveaux **par siège**, pondérés par les donnes : après un forfait, le
+    # siège change de main en cours de partie.
+    seat_levels = await _seat_levels(conn, deals, levels)
+    # Ce que le temps de jeu a coûté, relu depuis le journal.
+    best_run, misses = _miss_runs(deals)
 
     # Une entité peut tenir plusieurs sièges (un bot en tient trois en solo). On
     # ne l'inscrit qu'une fois, sur son premier siège : `games` compte des
@@ -481,8 +553,26 @@ async def _rate_match_locked(match_id):
         seen.add(ent)
         team = seat % 2
         score = score_ns if team == 0 else 1.0 - score_ns
-        partner = levels[seats[seat ^ 2]]
-        opp = (levels[seats[(seat + 1) % 4]] + levels[seats[(seat + 3) % 4]]) / 2
+
+        # Les deux sanctions du temps de jeu, et leur ordre. Un siège qui a
+        # forfait dépasse forcément les deux seuils : c'est la **défaite** qui
+        # l'emporte, sinon partir serait gratuit — et ne pas compter la partie
+        # serait précisément le moyen de sortir sans rien payer d'une partie mal
+        # engagée. La sanction faible ne doit pas absorber la forte.
+        if ent[0] == "user" and best_run[seat] >= match_state.MISSES_TO_FORFEIT:
+            score = 0.0
+        elif ent[0] == "user" and misses[seat] >= match_state.MISSES_TOTAL_UNRATED:
+            # Laisser filer la pendule, c'est déléguer ses décisions au bot : la
+            # partie cesse de compter **pour ce joueur-là**. Les trois autres
+            # gardent la leur — leur résultat est légitime, et le posterior de
+            # chaque entité se recalcule depuis son propre bilan, donc en
+            # omettre une ligne ne déséquilibre rien.
+            logger.info("partie %s : siège %s hors classement (%d coups au temps)",
+                        match_id, seat, misses[seat])
+            continue
+
+        partner = seat_levels[seat ^ 2]
+        opp = (seat_levels[(seat + 1) % 4] + seat_levels[(seat + 3) % 4]) / 2
 
         before = await _record(conn, ent)
         note_before = (note_of(*posterior(before)) if ent[0] == "user"

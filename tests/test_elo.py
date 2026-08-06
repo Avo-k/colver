@@ -411,3 +411,98 @@ class TestListeDesDonnes:
         le même chiffre, et laisserait croire que chaque donne l'a gagné."""
         await _match(deals=2)
         assert all("elo_delta" not in r for r in await db.list_games(user_id=1))
+
+
+# ===== Le temps de jeu, relu après coup =====
+
+async def _shared_match(seat_users, deals=2, winner=0, margin=1100,
+                        autos=None, bot_from=None):
+    """Une partie de table partagée, écrite comme le pilote l'écrirait.
+
+    `seat_users` : {siège: user_id} — les autres sièges sont des bots.
+    `autos` : {siège: [nb de coups au temps, par donne]}.
+    `bot_from` : {siège: n° de donne} — le siège passe au bot à partir de là,
+    exactement ce qu'un forfait produit en base.
+    """
+    match_id = await db.create_match("multi", 2000, user_id=1)
+    hands = [list(range(8 * i, 8 * i + 8)) for i in range(4)]
+    for n in range(deals):
+        agents = {}
+        for s in range(4):
+            gone = bot_from is not None and s in bot_from and n + 1 >= bot_from[s]
+            agents[str(s)] = f"joueur{seat_users[s]}" \
+                if (s in seat_users and not gone) else "dede"
+        gid = await db.create_game("multi", 0, hands, agents,
+                                   match_id=match_id, deal_no=n + 1)
+        for s, uid in seat_users.items():
+            if not (bot_from is not None and s in bot_from and n + 1 >= bot_from[s]):
+                await db.add_game_player(gid, s, uid)
+        for seat, per_deal in (autos or {}).items():
+            for _ in range(per_deal[n] if n < len(per_deal) else 0):
+                await db.append_action(gid, {"player": seat, "action": 0,
+                                             "phase": 1, "auto": True})
+        await db.complete_game(gid, 80, 82, {"value": 80})
+    hi, lo = 2000, 2000 - margin
+    pts = (hi, lo) if winner == 0 else (lo, hi)
+    await db.update_match(match_id, pts[0], pts[1], deals, True, winner)
+    return match_id
+
+
+async def _history(conn, match_id):
+    rows = await conn.execute_fetchall(
+        "SELECT kind, ref, score, partner_elo FROM elo_history WHERE match_id = ?",
+        (match_id,))
+    return {(r[0], r[1]): {"score": r[2], "partner": r[3]} for r in rows}
+
+
+class TestTempsDeJeu:
+    """Ce qu'une pendule écoulée coûte au classement — relu depuis le journal.
+
+    Aucune colonne n'a été ajoutée : le drapeau `auto` d'une action *est* la
+    trace d'un temps écoulé, et c'est déjà lui que la revue d'analyse lit pour
+    ne pas attribuer le coût d'un coup à quelqu'un qui ne l'a pas choisi.
+    """
+
+    async def test_trois_coups_au_temps_sortent_le_joueur_du_classement(self, clean_db):
+        """Et **lui seul** : les trois autres gardent leur résultat, qui est
+        légitime. Le posterior de chaque entité se recalcule depuis son propre
+        bilan, donc en omettre une ligne ne déséquilibre rien."""
+        mid = await _shared_match({0: 10, 2: 20}, deals=2,
+                                  autos={0: [2, 1]})   # 3 cumulés, jamais 6 d'affilée
+        assert await elo.rate_match(mid)
+        hist = await _history(clean_db, mid)
+        assert ("user", "10") not in hist, "le joueur qui délègue ne compte pas"
+        assert ("user", "20") in hist, "son partenaire garde sa partie"
+        assert ("bot", "dede") in hist
+
+    async def test_six_coups_d_affilee_valent_defaite_meme_en_gagnant(self, clean_db):
+        """Sinon partir serait gratuit — et ne pas compter la partie serait
+        précisément le moyen de sortir sans rien payer d'une partie mal
+        engagée."""
+        # Sièges 0 et 2 = Nord-Sud, et Nord-Sud gagne.
+        mid = await _shared_match({0: 10, 2: 20}, deals=2, winner=0,
+                                  autos={0: [6, 0]}, bot_from={0: 2})
+        assert await elo.rate_match(mid)
+        hist = await _history(clean_db, mid)
+        assert hist[("user", "10")]["score"] == 0.0, \
+            "un siège qui a forfait perd, quel que soit le résultat"
+        assert hist[("user", "20")]["score"] > 0.5, \
+            "son partenaire a gagné et garde sa victoire"
+
+    async def test_le_niveau_du_siege_suit_les_donnes(self, clean_db):
+        """Après un forfait le siège change de main en cours de partie : le
+        partenaire n'a pas joué toute la partie avec la même personne, donc
+        `partner_elo` ne peut pas être un chiffre unique lu sur la première
+        donne."""
+        # Siège 0 : humain sur la donne 1, bot sur la donne 2.
+        mid = await _shared_match({0: 10, 2: 20}, deals=2,
+                                  autos={0: [6, 0]}, bot_from={0: 2})
+        assert await elo.rate_match(mid)
+        hist = await _history(clean_db, mid)
+        humain = elo.PRIOR_MEAN               # jamais classé : il vaut le prior
+        bot = elo.bot_elo("dede")
+        attendu = (humain + bot) / 2
+        vu = hist[("user", "20")]["partner"]
+        assert abs(vu - attendu) < 1e-6, \
+            f"prorata attendu {attendu}, lu {vu} (humain {humain}, bot {bot})"
+        assert abs(vu - humain) > 1.0, "sans prorata on lirait le niveau de l'humain"
