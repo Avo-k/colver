@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Avo-k/colver/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Avo-k/colver/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white" alt="CI"></a>
   <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?logo=pypi&logoColor=white&label=PyPI&color=blue" alt="PyPI version"></a>
   <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
 </p>
@@ -18,7 +17,6 @@
 <p align="center">
   <a href="https://colver.net/"><img src="https://img.shields.io/badge/play-colver.net-2ea44f?logo=firefoxbrowser&logoColor=white" alt="Play on colver.net"></a>
   <a href="https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20models-Hugging%20Face-FFD21E" alt="Models on Hugging Face"></a>
-  <a href="https://github.com/Avo-k/colver/tree/master/docs"><img src="https://img.shields.io/badge/documentation-docs%2F-8A2BE2" alt="Documentation"></a>
 </p>
 
 # Colver
