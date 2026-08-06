@@ -238,6 +238,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hands", type=int, default=200, help="mains par famille et par régime")
     ap.add_argument("--bid-model", default=bc.BID_MODEL)
+    ap.add_argument("--canonical", action="store_true",
+                    help="réseau entraîné sur l'ordre canonique des couleurs (v7+). Indétectable depuis le fichier — même taille qu'un réseau physique — et l'oublier rend une annonce légale dans la mauvaise couleur, sans erreur.")
     ap.add_argument("--seed", type=int, default=20260802)
     ap.add_argument("--regimes", default="", help="sous-ensemble, p.ex. 'ouverture,soutien'")
     ap.add_argument("--baseline", default="", help="JSON de référence à comparer")
@@ -251,7 +253,7 @@ def main():
 
     t0 = time.monotonic()
     env = colver.Env.deal_with_hands(0, bc.uniform_world(list(range(8)), random.Random(0)))
-    env.load_bid_model(args.bid_model)
+    env.load_bid_model(args.bid_model, None, args.canonical)
 
     result, raw, hard_fail = {}, {}, []
     for reg_name, prior_str in regimes:

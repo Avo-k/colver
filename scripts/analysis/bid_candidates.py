@@ -228,6 +228,8 @@ def main():
     ap.add_argument("--top", type=int, default=4, help="candidates issues du top-Q de v6")
     ap.add_argument("--add", default="", help='candidates forcées en plus, p.ex. "CAPOTD,160D"')
     ap.add_argument("--bid-model", default=BID_MODEL)
+    ap.add_argument("--canonical", action="store_true",
+                    help="réseau entraîné sur l'ordre canonique des couleurs (v7+). Indétectable depuis le fichier — même taille qu'un réseau physique — et l'oublier rend une annonce légale dans la mauvaise couleur, sans erreur.")
     ap.add_argument("--play-model", default=PLAY_MODEL)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--json", action="store_true", help="sortie JSON sur stdout")
@@ -242,7 +244,7 @@ def main():
     dealer = (SEAT - 1 - len(prior)) % 4
 
     env = colver.Env.deal_with_hands(dealer, uniform_world(hand, rng))
-    env.load_bid_model(args.bid_model)
+    env.load_bid_model(args.bid_model, None, args.canonical)
     env.load_dmc_model(args.play_model)
 
     # Position de décision : Q de v6 et actions légales.

@@ -160,13 +160,15 @@ def main():
     ap.add_argument("--auctions", type=int, default=3000)
     ap.add_argument("--pool-deals", type=int, default=5_000_000)
     ap.add_argument("--bid-model", default=BID_MODEL)
+    ap.add_argument("--canonical", action="store_true",
+                    help="réseau entraîné sur l'ordre canonique des couleurs (v7+). Indétectable depuis le fichier — même taille qu'un réseau physique — et l'oublier rend une annonce légale dans la mauvaise couleur, sans erreur.")
     ap.add_argument("--hidden", type=int, default=512)
     ap.add_argument("--seed", type=int, default=2024)
     args = ap.parse_args()
 
     env = colver.Env()
     env.reset()
-    env.load_bid_model(args.bid_model, args.hidden)
+    env.load_bid_model(args.bid_model, args.hidden, args.canonical)
 
     frequency(env, args.auctions, args.seed)
     probes(env, args.seed + 1)

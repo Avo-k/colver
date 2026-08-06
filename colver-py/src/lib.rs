@@ -283,6 +283,14 @@ struct Env {
     dmc_net: Option<DmcNet>,
     // Bid Q-network (loaded lazily)
     bid_net: Option<BidNet>,
+    // The loaded bid net was trained on the **canonical** suit ordering (v7 and later).
+    //
+    // This cannot be auto-detected — a canonical net is byte-for-byte the same size as a
+    // physical one of the same width — so it comes from the caller, exactly as
+    // `canonical = true` does under `[bid]` in a bot TOML. Getting it wrong produces a
+    // perfectly legal bid in the wrong suit and no error whatsoever, which is why every
+    // path that touches `bid_net` reads this flag rather than inferring anything.
+    bid_canonical: bool,
     // Cumulative match score [NS, EW] that score-aware bid nets condition on.
     // Survives `reset` / `redeal_with_hands`: it belongs to the match, not the deal.
     match_scores: [i32; 2],
@@ -305,6 +313,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            bid_canonical: false,
             match_scores: [0, 0],
         }
     }
@@ -471,9 +480,9 @@ impl Env {
             return 0;
         }
         if let Some(ref mut net) = self.bid_net {
-            let obs = build_bid_obs(net, &self.state, &self.bid_history, self.match_scores);
-            let legal = self.state.legal_actions();
-            let (action, _) = net.best_action(&obs, legal);
+            let (action, _) = bid_net_answer(
+                net, self.bid_canonical, &self.state, &self.bid_history, self.match_scores,
+            );
             action
         } else {
             bid_eval::improved_v2_bid(&self.state)
@@ -794,6 +803,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            bid_canonical: false,
             match_scores: [0, 0],
         })
     }
@@ -830,6 +840,7 @@ impl Env {
             bid_history: Vec::new(),
             dmc_net: None,
             bid_net: None,
+            bid_canonical: false,
             match_scores: [0, 0],
         })
     }
@@ -1277,8 +1288,8 @@ impl Env {
 
     /// Load NN bid model weights from a raw binary file.
     /// Call once, then use action_bid_nn() for inference.
-    #[pyo3(signature = (path, hidden=None))]
-    fn load_bid_model(&mut self, path: PathBuf, hidden: Option<usize>) -> PyResult<()> {
+    #[pyo3(signature = (path, hidden=None, canonical=false))]
+    fn load_bid_model(&mut self, path: PathBuf, hidden: Option<usize>, canonical: bool) -> PyResult<()> {
         let path = path_str(&path)?;
         let net = if let Some(h) = hidden {
             BidNet::load_with_hidden(path, h)
@@ -1288,6 +1299,7 @@ impl Env {
             pyo3::exceptions::PyIOError::new_err(format!("Failed to load bid model: {}", e))
         })?;
         self.bid_net = Some(net);
+        self.bid_canonical = canonical;
         Ok(())
     }
 
@@ -1309,9 +1321,9 @@ impl Env {
             pyo3::exceptions::PyRuntimeError::new_err("Call load_bid_model() first")
         })?;
 
-        let obs = build_bid_obs(net, &self.state, &self.bid_history, self.match_scores);
-        let legal = self.state.legal_actions();
-        let (best_action, q_values) = net.best_action(&obs, legal);
+        let (best_action, q_values) = bid_net_answer(
+            net, self.bid_canonical, &self.state, &self.bid_history, self.match_scores,
+        );
 
         let dict = PyDict::new_bound(py);
         dict.set_item("best_action", best_action)?;
@@ -1386,6 +1398,7 @@ impl Env {
             bid_history,
             dmc_net: None,
             bid_net: None,
+            bid_canonical: false,
             match_scores: [0, 0],
         })
     }
@@ -1405,12 +1418,46 @@ impl Env {
 /// At inference time on a single deal (no multi-deal match context on the
 /// web), match scores default to 0/0 which matches the NN's neutral-match
 /// behaviour (what the distillation used).
-fn build_bid_obs(
-    net: &BidNet,
+/// Réponse du réseau d'annonce, **toujours rendue dans l'espace physique**.
+///
+/// Le seul endroit du binding qui sache que l'espace du réseau peut ne pas être celui de
+/// l'appelant. Sous `canonical`, le masque légal entre dans l'espace du réseau avant la
+/// sélection et l'action en ressort — omettre l'un des deux rend quand même une annonce
+/// *légale*, dans la mauvaise couleur, sans erreur. Miroir exact de `BidNetPolicy::decide`
+/// dans `colver-core/src/agent/bid.rs`, qui fait la même chose pour l'arène et le web.
+///
+/// Les Q sont réindexées aussi : `bid_equivariance` et `bid_candidates` les lisent par
+/// action, donc les laisser dans l'espace du réseau produirait des courbes muettes.
+fn bid_net_answer(
+    net: &mut BidNet,
+    canonical: bool,
     state: &colver_core::state::GameState,
     history: &[(u8, u8)],
     match_scores: [i32; 2],
-) -> Vec<f32> {
+) -> (u8, Vec<(u8, f32)>) {
+    use colver_core::suit_perm;
+    let (obs, order) = build_bid_obs(net, canonical, state, history, match_scores);
+    let legal = state.legal_actions();
+    if !canonical {
+        return net.best_action(&obs, legal);
+    }
+    let legal_net = suit_perm::permute_bid_mask_u64(legal, &suit_perm::perm_from_order(&order));
+    let (best_net, q_net) = net.best_action(&obs, legal_net);
+    let q = q_net
+        .into_iter()
+        .map(|(a, v)| (suit_perm::permute_bid_action(a, &order), v))
+        .collect();
+    (suit_perm::permute_bid_action(best_net, &order), q)
+}
+
+/// `(obs, ordre des couleurs)` — l'ordre est l'identité pour un réseau physique.
+fn build_bid_obs(
+    net: &BidNet,
+    canonical: bool,
+    state: &colver_core::state::GameState,
+    history: &[(u8, u8)],
+    match_scores: [i32; 2],
+) -> (Vec<f32>, [u8; 4]) {
     use colver_core::bid_obs;
     let obs_dim = net.obs_dim();
     // The score tail is written from the *speaking seat's* point of view, so it has to
@@ -1418,28 +1465,31 @@ fn build_bid_obs(
     // "their 1500" for the next.
     let my_team = (state.current_player() & 1) as usize;
     let (my_score, opp_score) = (match_scores[my_team], match_scores[1 - my_team]);
-    match obs_dim {
-        bid_obs::BID_OBS_DIM => bid_obs::make_bid_observation(state, history),
-        bid_obs::BID_OBS_DIM_SCORE_AWARE => {
-            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE];
-            bid_obs::write_bid_observation_score_aware(&mut buf, 0, state, history, my_score, opp_score);
-            buf
-        }
-        bid_obs::BID_OBS_DIM_SCORE_AWARE_V2 => {
-            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V2];
-            bid_obs::write_bid_observation_score_aware_v2(&mut buf, 0, state, history, my_score, opp_score);
-            buf
-        }
-        bid_obs::BID_OBS_DIM_SCORE_AWARE_V3 => {
-            let mut buf = vec![0.0f32; bid_obs::BID_OBS_DIM_SCORE_AWARE_V3];
-            bid_obs::write_bid_observation_score_aware_v3(&mut buf, 0, state, history, my_score, opp_score);
-            buf
-        }
-        other => panic!(
-            "Unsupported bid NN obs_dim={} (expected 108/110/113/117)",
-            other
-        ),
+
+    // La garde reste explicite. `write_bid_observation_dim` a un bras attrape-tout qui
+    // écrit l'obs de base 108 pour toute largeur inconnue : sans ce test, un réseau d'une
+    // largeur non prévue recevrait une obs tronquée **sans erreur**, ce qui est
+    // précisément la famille de panne que ce module essaie de fermer.
+    const KNOWN: [usize; 5] = [
+        bid_obs::BID_OBS_DIM,
+        bid_obs::BID_OBS_DIM_SCORE_AWARE,
+        bid_obs::BID_OBS_DIM_SCORE_AWARE_V2,
+        bid_obs::BID_OBS_DIM_SCORE_AWARE_V3,
+        bid_obs::BID_OBS_DIM_V7,
+    ];
+    if !KNOWN.contains(&obs_dim) {
+        panic!("Unsupported bid NN obs_dim={obs_dim} (expected one of {KNOWN:?})");
     }
+
+    let mut buf = vec![0.0f32; obs_dim];
+    if canonical {
+        let order = bid_obs::write_bid_observation_canonical(
+            &mut buf, 0, state, history, my_score, opp_score, obs_dim,
+        );
+        return (buf, order);
+    }
+    bid_obs::write_bid_observation_dim(&mut buf, 0, state, history, my_score, opp_score, obs_dim);
+    (buf, [0, 1, 2, 3])
 }
 
 // ══════════════════════════════════════════════════════════════════════

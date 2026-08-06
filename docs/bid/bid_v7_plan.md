@@ -1157,9 +1157,32 @@ Dans cet ordre, du moins cher au plus cher :
    « Score-aware mode: obs_dim=… » du trainer était **codée en dur sur 110** et l'affichait quel
    que soit le jeu de features — les journaux de v5 et de v6 annoncent donc une largeur qu'ils
    n'ont pas utilisée. Corrigé.
-1. **Contrôle de câblage** *(secondes)* — `bid_equivariance` doit rendre **0,0 %** sur C et V
-   dans les trois régimes. Non nul = mauvais branchement du masque ou de l'action, pas une
-   régression de force. C'est le seul usage licite du taux de bascule ici (§1.10).
+1. **Contrôle de câblage** *(secondes)* — `bid_equivariance --canonical` sur C et V.
+   ⚠️ **Le critère n'est pas « 0,0 % de bascule », et l'écrire ainsi aurait fait passer un
+   succès pour une panne** (mesuré le 2026-08-06 sur un réseau canonique de 40 k pas) :
+
+   - **ce qui doit être exactement nul, c'est l'erreur d'équivariance du vecteur Q**
+     (mesure 3), aux **médiane et p90**. Constaté : `0.0000 / 0.0000`.
+   - **le taux de bascule ne peut pas être nul**, pour la raison que le test
+     `canonical_bid_obs_is_invariant_under_suit_renaming` documente lui-même : quand deux
+     couleurs portent des lanes identiques, le tri les départage par **indice physique**,
+     qu'un renommage change. Les deux positions désignent alors l'autre membre d'une
+     paire que l'obs ne peut pas distinguer — elle est bit-à-bit identique. Ce n'est pas
+     une erreur, c'est le cas où la question n'a pas de réponse.
+   - **La fraction concernée est connue d'avance** : `7,53 %` des mains ont deux couleurs
+     de lane identique (mesuré sur 200 000 mains), à comparer aux **7,5 %** que Burnside
+     donne pour les mains à symétrie de couleur dans `hand_class.rs`. C'est exactement ce
+     qui explique un p90 nul et un p99 non nul.
+   - **Repère de lecture du taux de bascule** : 2,17 % sur le réseau canonique, contre
+     **3,91 % pour `improved_v2` et 1,30 % pour `roro`** — deux règles déterministes qui
+     départagent aussi par indice de couleur. Un canonique dans la fourchette des
+     contrôles est le résultat attendu ; les **24,6 %** de v6 physique sont l'anomalie.
+
+   Un taux de bascule très supérieur aux contrôles reste bien le signe d'un mauvais
+   branchement du masque ou de l'action. Mais **ce n'est plus le seul instrument** :
+   `canonical_roundtrip.py --cross-check` compare `colver.Agent` (colver-core) et
+   `Env.action_bid_nn` (colver-py), deux implémentations écrites séparément de la même
+   permutation, et exige **0 désaccord**. C'est lui qui isole le câblage du départage.
 2. **Sonde stratifiée** *(secondes)* — `bid_probes --baseline docs/measurements/bid_probes_v6.json`
    sur chaque bras. Ne classe pas, mais attrape les régressions grossières et l'assertion dure
    du capot. C'est ce qui dira si §3.3 s'est réveillée toute seule.
@@ -1214,6 +1237,24 @@ demandent — c'est le seul découpage qui rende chaque brique attribuable :
 - **Phase 1** — §3.1 canonicalisation + §3.4 les features. **Aucune donnée neuve** non plus :
   le pool est `(donne, dd_pts)` et l'obs qui change ne le touche pas. Le plan d'entraînement
   et les bras sont en §4bis. ✅ pour le code, la campagne reste à lancer.
+  - ⚠️ **Le code d'entraînement était prêt, les instruments de jugement ne l'étaient pas**
+    (trouvé et corrigé le 2026-08-06, par un test de fumée avant la campagne). `AgentSpec`
+    savait lire un réseau canonique depuis le 2026-08-02, mais **le binding PyO3 ne le
+    savait pas** : `build_bid_obs` dispatchait sur la seule largeur, donc `load_bid_model`
+    /`action_bid_nn` rendaient toujours une obs *physique*. Or c'est le chemin unique de
+    **trois des quatre niveaux de l'échelle ci-dessous** — `bid_equivariance` (niveau 1),
+    `bid_probes` (2) et `bid_candidates` (3, « **la** mesure principale ») — **plus les
+    deux lectures web** : la revue d'enchère de Rejouer (`web/analysis.py`) et les Q de la
+    page Annonces (`web/server.py`). Aucun n'aurait levé d'erreur : obs physique, action
+    relue dans le mauvais repère, annonce parfaitement légale.
+  - **Ce que l'erreur coûte est chiffré** : lire v6 (entraîné, physique) comme canonique
+    change **7,9 % de ses annonces** et **0 illégale** — 59 des 128 désaccords sont un
+    *passe ↔ annonce*, seulement 11 un changement de couleur à valeur égale. La formule
+    « une annonce légale dans la mauvaise couleur » sous-décrit donc le symptôme.
+  - Corrigé par `load_bid_model(path, hidden, canonical)` et `bid_net_answer`, miroir de
+    `BidNetPolicy::decide` ; `--canonical` ajouté aux quatre sondes. Le web reste à
+    brancher — inerte tant que v6 (physique) est le bidder servi, mais **c'est une mine
+    qui explose le jour où v7 est déployé**.
 - **Phase 2** — §3.8, la croyance playgen **en entrée**. Demande un groupage de l'enchère et
   ~36 GPU-h de précalcul, donc une décision à part.
 
