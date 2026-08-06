@@ -51,3 +51,7 @@ results/
 
 # Sauvegardes de la base web (bind mount docker-compose)
 backups/
+
+# Binaire épinglé d'un run de génération long (cf. gen_supervisor.sh) : il doit
+# survivre à un `cargo build` lancé par quelqu'un d'autre dans le dépôt.
+.gen_pin/

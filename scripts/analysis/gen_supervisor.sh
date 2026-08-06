@@ -16,6 +16,17 @@
 # permanente — pool illisible, sidecar définitivement mort, disque plein — produirait
 # une boucle qui remplit les journaux et masque la panne au lieu de la signaler.
 #
+# **Il surveille aussi le préfixe gelé, et c'est la panne la plus coûteuse des deux.**
+# Vécue le 2026-08-06 à 17:53. Une donne dont l'étiquetage échoue est laissée à zéro
+# (`gen_score_layer.rs`, branche `if !ok`), et le fichier n'est écrit que jusqu'à
+# `done.iter().position(|&x| !x)` — donc **une seule** donne ratée gèle le compteur pour
+# tout le reste du processus, pendant que 160 threads continuent de calculer des donnes
+# qui ne seront jamais persistées. Le processus a l'air parfaitement sain : CPU à 1550 %,
+# aucune erreur, le compteur d'« abouties » monte. Seul celui d'« écrites » est figé.
+# Deux mille donnes ont été perdues avant qu'on le voie ; une nuit en aurait coûté dix
+# mille. Le redémarrage est la parade, puisque la reprise repart du préfixe dense et
+# réessaie la donne fautive — un échec de sidecar sous contention est transitoire.
+#
 #   scripts/analysis/gen_supervisor.sh <log-du-generateur> [max-relances]
 #
 set -u
@@ -23,6 +34,35 @@ LOG="${1:?usage: gen_supervisor.sh <log> [max]}"
 MAX="${2:-20}"
 REPO="${COLVER_REPO:-$HOME/code/colver}"
 SUP="${LOG%.log}_supervisor.log"
+
+# Couche surveillée, et délai au-delà duquel un compteur figé n'est plus une lenteur.
+# À 1,0 donne/s un checkpoint de 500 tombe toutes les ~8 min ; 25 min laissent donc trois
+# checkpoints de marge avant de conclure au gel.
+LAYER="${COLVER_GEN_LAYER:-$REPO/data/deals/scores_isdd_v2.sc}"
+STALL_S="${COLVER_GEN_STALL_S:-1500}"
+
+# Le binaire est **épinglé** hors de `target/`. Un `cargo build --release` lancé par
+# quelqu'un d'autre dans ce dépôt remplace `target/release/gen_score_layer` sans rien
+# dire ; le processus en cours n'en souffre pas (Linux garde l'inode), mais la relance
+# suivante prendrait un binaire différent et la couche aurait deux régimes sans qu'aucun
+# octet du fichier ne le signale. Le nom de base doit rester « gen_score_layer » : c'est
+# lui que `pgrep -x` compare.
+BIN="${COLVER_GEN_BIN:-$REPO/.gen_pin/gen_score_layer}"
+[ -x "$BIN" ] || BIN="$REPO/target/release/gen_score_layer"
+
+# Nombre de donnes réellement persistées. L'en-tête COLVSC01 est de longueur variable
+# (magic[8] + name_len:u16 + name + count:u32 + offset:u32), d'où la lecture du nom.
+layer_count() {
+  python3 - "$LAYER" <<'PY' 2>/dev/null || echo -1
+import struct, sys
+try:
+    d = open(sys.argv[1], 'rb').read(64)
+    nl = struct.unpack('<H', d[8:10])[0]
+    print(struct.unpack('<I', d[10 + nl:14 + nl])[0])
+except Exception:
+    print(-1)
+PY
+}
 
 # La commande exacte du run. Gardée ici en toutes lettres plutôt que reconstruite : une
 # relance qui change un paramètre en silence produirait une couche à deux régimes, et
@@ -35,8 +75,10 @@ ARGS=(--pool data/deals/base_5M.bin --offset 0 --count 500000
 
 stamp() { date +'%Y-%m-%d %H:%M:%S'; }
 n=0
+last_count=$(layer_count)
+last_move=$(date +%s)
 
-echo "$(stamp) superviseur armé (max $MAX relances)" >>"$SUP"
+echo "$(stamp) superviseur armé (max $MAX relances, binaire $BIN, gel > ${STALL_S}s)" >>"$SUP"
 while true; do
   # `pgrep -x` compare au nom tronqué à 15 caractères par Linux ; « gen_score_layer »
   # en fait exactement 15, donc il correspond. Un binaire plus long ne correspondrait
@@ -48,11 +90,30 @@ while true; do
     fi
     n=$((n + 1))
     echo "$(stamp) générateur absent — relance n°$n" >>"$SUP"
-    ( cd "$REPO" && setsid nohup ./target/release/gen_score_layer "${ARGS[@]}" \
+    ( cd "$REPO" && setsid nohup "$BIN" "${ARGS[@]}" \
         >>"$LOG" 2>&1 </dev/null & )
     # Laisser le temps du chargement du pool (105 Mo) avant de reconclure à l'absence,
     # et espacer les tentatives si elles échouent coup sur coup.
     sleep $((30 + n * 15))
+    # Le compteur vient de repartir d'un préfixe dense : remettre l'horloge du gel à
+    # zéro, sinon la relance suivante se déclencherait sur le temps de chargement.
+    last_count=$(layer_count)
+    last_move=$(date +%s)
+  else
+    # Générateur vivant : le compteur d'écrites doit avancer. S'il ne bouge plus, la
+    # donne en tête du trou a échoué et **rien de ce qui se calcule ne sera gardé**.
+    c=$(layer_count)
+    if [ "$c" != "$last_count" ]; then
+      last_count=$c
+      last_move=$(date +%s)
+    elif [ "$c" != "-1" ] && [ $(( $(date +%s) - last_move )) -gt "$STALL_S" ]; then
+      echo "$(stamp) préfixe GELÉ à $c depuis ${STALL_S}s — redémarrage (tout ce qui suit le trou est perdu de toute façon)" >>"$SUP"
+      kill $(pgrep -x gen_score_layer) 2>/dev/null
+      # Pas de relance ici : le tour suivant constate l'absence et s'en charge, donc
+      # le plafond `MAX` compte aussi les redémarrages pour gel. Un gel qui se répète
+      # trente fois est une panne permanente, pas une malchance.
+      last_move=$(date +%s)
+    fi
   fi
   sleep 30
 done

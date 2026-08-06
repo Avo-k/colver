@@ -539,34 +539,71 @@ fn main() {
                 let mut row = [0u8; 4];
                 let mut rrow = [0u8; 4];
                 let mut gold: Option<Vec<u8>> = None;
-                let mut ok = true;
-                for (t, (auc, rank)) in pfx.iter().enumerate() {
-                    match label(hands, dealer, auc, &mut players, &mut ctx) {
-                        Ok(Some((v, trace))) => {
-                            row[t] = v;
-                            rrow[t] = *rank;
-                            ranks[*rank as usize].fetch_add(1, Ordering::Relaxed);
-                            // Seule la case « or » entre dans le corpus : son enchère est
-                            // celle que v6 a réellement menée. Les préfixes épluchés sont
-                            // contrefactuels, et le fer est hors distribution sur les cinq
-                            // statistiques de forme (mesure A) — en garder 40 % du corpus
-                            // apprendrait à playgen qu'une enchère non contestée est
-                            // normale, alors qu'elle vaut 11,9 % en réel.
-                            if keep_games && *rank == 0 {
-                                gold = Some(trace);
+
+                // **Une donne ratée gèle le préfixe dense pour tout le reste du
+                // processus**, et c'est de loin la panne la plus chère du binaire.
+                // L'écrivain n'écrit que `scores[..position(|&x| !x)]` : dès qu'une
+                // donne manque, le compteur ne bouge plus, alors que les 159 autres
+                // threads continuent d'en calculer des milliers qui seront **jetées à
+                // la reprise**. Rien ne se voit — CPU à plein, aucune erreur en tête de
+                // log, le compteur d'« abouties » monte. Vécu le 2026-08-06 à 17:53 :
+                // 2 000 donnes perdues avant qu'on le remarque, une nuit en aurait
+                // coûté dix mille.
+                //
+                // La cause était un échec du sidecar sous contention, c'est-à-dire
+                // **transitoire**. On réessaie donc au lieu d'abandonner, avec un recul
+                // progressif : un sidecar saturé a besoin qu'on lâche la pression, pas
+                // qu'on le rappelle aussitôt.
+                const TRIES: u32 = 6;
+                let mut ok = false;
+                for attempt in 0..TRIES {
+                    if attempt > 0 {
+                        std::thread::sleep(
+                            std::time::Duration::from_millis(500 * attempt as u64));
+                    }
+                    gold = None;
+                    ok = true;
+                    for (t, (auc, _rank)) in pfx.iter().enumerate() {
+                        match label(hands, dealer, auc, &mut players, &mut ctx) {
+                            Ok(Some((v, trace))) => {
+                                row[t] = v;
+                                // Seule la case « or » entre dans le corpus : son enchère
+                                // est celle que v6 a réellement menée. Les préfixes
+                                // épluchés sont contrefactuels, et le fer est hors
+                                // distribution sur les cinq statistiques de forme
+                                // (mesure A) — en garder 40 % du corpus apprendrait à
+                                // playgen qu'une enchère non contestée est normale,
+                                // alors qu'elle vaut 11,9 % en réel.
+                                if keep_games && pfx[t].1 == 0 {
+                                    gold = Some(trace);
+                                }
                             }
+                            _ => { ok = false; break }
                         }
-                        _ => { ok = false; break }
+                    }
+                    if ok {
+                        break;
                     }
                 }
                 if !ok {
+                    // **Toutes** les donnes abandonnées sont journalisées, sans seuil.
+                    // L'ancien filtre (`e <= 5 || e % 500 == 0`) a caché la donne qui
+                    // bloquait : cinq échecs voisins étaient visibles, celle qui gelait
+                    // réellement le compteur était l'erreur n°6 et n'a jamais été écrite,
+                    // ce qui a rendu le diagnostic bien plus long qu'il n'aurait dû.
                     let e = errors.fetch_add(1, Ordering::Relaxed) + 1;
-                    if e <= 5 || e % 500 == 0 {
-                        eprintln!("thread {tid} donne {} abandonnée ({e}e)", offset + k);
-                    }
-                    // Pas de jeton rendu : la donne est simplement laissée à 0 et le
-                    // préfixe dense s'arrête avant elle. Une reprise la reprendra.
+                    eprintln!(
+                        "thread {tid} donne {} ABANDONNÉE après {TRIES} tentatives ({e}e) \
+                         — le préfixe dense s'arrête ici jusqu'au prochain redémarrage",
+                        offset + k);
                     continue;
+                }
+                // Les compteurs de rangs ne sont incrémentés qu'une fois la donne
+                // acquise : les compter dans la boucle gonflerait l'histogramme d'une
+                // unité par tentative ratée, et il sert à décrire la couche.
+                for (t, (_auc, rank)) in pfx.iter().enumerate() {
+                    rrow[t] = *rank;
+                    ranks[*rank as usize].fetch_add(1, Ordering::Relaxed);
                 }
                 scores.lock().unwrap()[k] = row;
                 ranks_v.lock().unwrap()[k] = rrow;
