@@ -146,3 +146,54 @@ pub fn is_raise(actions: &[u8], idx: usize) -> bool {
     false
 }
 
+
+/// Répartition empirique de la valeur du contrat, mesurée sur 43 031 enchères réelles
+/// (`bench_taker_position`, 2026-08-04) : 80 → 160, capot écarté (0,04 %) et le reste
+/// renormalisé.
+///
+/// **On tire dedans au lieu de dériver la valeur de la force de main**, parce que la
+/// mesure A a montré que la relation est plate : la valeur annoncée reste entre 112 et
+/// 124 pour tous les scores `evaluate_for_trump` de 1 à 31. Dans une enchère contestée
+/// à 81 %, c'est la pression de l'enchère qui décide, pas la main du preneur. Une
+/// échelle main → palier serait une règle inventée présentée comme mesurée.
+pub const VALUE_CDF: [(f64, u8); 9] = [
+    (0.0223, 8),
+    (0.1109, 9),
+    (0.2415, 10),
+    (0.4701, 11),
+    (0.6977, 12),
+    (0.8933, 13),
+    (0.9740, 14),
+    (0.9952, 15),
+    (1.0000, 16),
+];
+
+/// Un tirage déterministe dans cette répartition, à partir d'une clef de donne.
+///
+/// Déterministe et non aléatoire pour que deux exécutions de la mesure comparent les
+/// **mêmes** préfixes : la valeur du fer ne doit pas être une source de bruit qui
+/// s'ajoute à celle qu'on cherche à isoler.
+pub fn value_for(key: u64) -> u8 {
+    let x = (key.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 11) as f64 / (1u64 << 53) as f64;
+    for &(cum, v) in &VALUE_CDF {
+        if x < cum {
+            return v;
+        }
+    }
+    16
+}
+
+/// L'enchère **construite** du §4 : passes depuis `(dealer+1)%4` jusqu'au siège qui
+/// tient la couleur, une annonce, trois passes.
+///
+/// C'est le rang « fer » — hors distribution sur les cinq statistiques de forme, et le
+/// seul recours pour une couleur que personne n'a annoncée.
+pub fn built_auction(hands: &[u32; 4], dealer: u8, trump: u8, ns_pts: u8, key: u64) -> Vec<u8> {
+    let side = dd_side(ns_pts);
+    let seat = constructed_seat(hands, dealer, trump, side);
+    let pos = speak_pos(seat, dealer);
+    let mut a: Vec<u8> = vec![BID_PASS; pos];
+    a.push(colver_core::bidding::encode_bid(value_for(key), trump));
+    a.extend_from_slice(&[BID_PASS; 3]);
+    a
+}
