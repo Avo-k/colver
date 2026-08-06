@@ -223,6 +223,36 @@ struct Args {
 /// On ne tranche pas ça en pleine nuit sur un run de plusieurs jours. On **enregistre**
 /// de quoi le trancher après : avec le rang de chaque case, la correction se calcule,
 /// s'annule ou se mesure. Sans lui, la couche est un mélange irrécupérable.
+/// Écrit par un fichier temporaire, puis `rename` — qui est **atomique** sur le même
+/// système de fichiers.
+///
+/// **Le défaut que ça ferme, et pourquoi il est difficile à voir.** Les trois écritures
+/// d'un checkpoint passaient par `File::create`, qui **tronque en place**. Entre la
+/// troncature et le `flush`, le fichier sur disque est court — quelques millisecondes
+/// toutes les six minutes, sur un run de plusieurs jours. Un lecteur qui tombe dans
+/// cette fenêtre n'obtient **pas** une erreur :
+///
+/// - côté Python, `check_score_layer.read_layer` construit `count` lignes depuis un
+///   fichier trop court et rend des tuples vides sans lever ;
+/// - côté trainer, `RewardMode::RealOnly` fait `unwrap_or(ns_dd_pts)` — les donnes que
+///   la couche ne couvre plus retombent sur la **valeur DD périmée**, silencieusement.
+///   C'est exactement le défaut que §9 du plan décrit pour la couverture partielle, et
+///   il arriverait ici par accident de lecture plutôt que par omission.
+///
+/// **Ça ne rend pas les trois fichiers cohérents entre eux** : ils sont renommés l'un
+/// après l'autre, donc un lecteur peut voir les rangs d'un checkpoint et la couche du
+/// précédent. C'est voulu — la couche fait foi, `snapshot_score_layer.py` tronque les
+/// rangs à son `count`. Rendre les trois atomiques *ensemble* demanderait un répertoire
+/// versionné, pour un désaccord d'un lot que le consommateur sait déjà absorber.
+fn atomic_write<F>(path: &str, write: F) -> std::io::Result<()>
+where
+    F: FnOnce(&str) -> std::io::Result<()>,
+{
+    let tmp = format!("{path}.tmp");
+    write(&tmp)?;
+    std::fs::rename(&tmp, path)
+}
+
 fn save_ranks(path: &str, ranks: &[[u8; 4]]) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
@@ -420,7 +450,7 @@ fn main() {
                 }
                 let sc = scores.lock().unwrap()[..dense].to_vec();
                 let rk = ranks_v.lock().unwrap()[..dense].to_vec();
-                if let Err(e) = save_ranks(&format!("{out}.ranks"), &rk) {
+                if let Err(e) = atomic_write(&format!("{out}.ranks"), |p| save_ranks(p, &rk)) {
                     eprintln!("  ⚠ écriture des rangs : {e}");
                 }
                 if let Some(ref gp) = games_path {
@@ -431,11 +461,11 @@ fn main() {
                         score_ns: r.score_ns, score_ew: r.score_ew,
                         actions: r.actions.clone(),
                     }).collect();
-                    if let Err(e) = GameReplay::write_all(gp, &owned) {
+                    if let Err(e) = atomic_write(gp, |p| GameReplay::write_all(p, &owned)) {
                         eprintln!("  ⚠ écriture des rejeux : {e}");
                     }
                 }
-                match DealPool::save_scores("isdd_v2", offset, &sc, &out) {
+                match atomic_write(&out, |p| DealPool::save_scores("isdd_v2", offset, &sc, p)) {
                     Ok(()) => {
                         let el = start.elapsed().as_secs_f64();
                         let r: Vec<String> = (0..4)
