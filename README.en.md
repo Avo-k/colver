@@ -23,30 +23,25 @@ Fast Belote Contree game environment for reinforcement learning. Rust core with 
 pip install colver
 ```
 
-**What would you bid?**
-
 ```python
 import colver
 
 env = colver.Env.deal(dealer=3, seed=23)   # reproducible deal; seat 0 speaks first
 # seat 0 holds   ♠ —   ♥ 9   ♦ K Q J 9   ♣ K 8 7
 
+# What would you bid?
 env.load_bid_model(colver.download_bid_model())   # fetched from the Hub on first use
 print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
-# 120D — 120 at diamonds. The jack and the nine are the two strongest cards at
-#        trump and this hand holds both, plus a void in spades to cut with.
-```
+# 120♦
 
-**And what would you lead?**
-
-```python
-while env.phase() == 0:                    # the model bids the auction out, all four seats
+# And what would you lead? The model bids the auction out at all four seats;
+# nobody outbids it, so it plays 120♦ for North-South.
+while env.phase() == 0:
     env.step(env.action_bid_nn()["best_action"])
-# nobody outbids it: the contract is 120♦ for North-South
 
 env.load_dmc_model(colver.download_model())
 print(colver.Env.action_name(env.action_dmc_with_stats()["best_action"], 1))
-# JD — the master trump, in 0.6 ms on CPU
+# J♦ — the master trump, in 0.6 ms on CPU
 ```
 
 Both calls also return `q_values`, the model's full ranking, already restricted to the

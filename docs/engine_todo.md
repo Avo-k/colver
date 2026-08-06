@@ -351,15 +351,18 @@ Trois choses s'y empilent : un dict dont il faut deviner la clé, une méthode
 statique appelée sur la classe alors qu'on tient une instance, et un `0` magique
 qui est la phase.
 
-La preuve que le défaut est dans la bibliothèque et pas dans le README est dans
-[`docs/hf/bid-v6/README.md`](hf/bid-v6/README.md) : pour poser correctement la
-seule question qui intéresse un lecteur — *voilà une main, qu'est-ce que tu
-annonces ?* — la fiche dépense 25 lignes, mélange un paquet à la main et
-**réimplémente `Env.action_name`** sous le nom `nom_annonce`. Elle a deux
-raisons de le faire, toutes deux réparables : `action_name` rend `110D`
-(couleurs en lettres anglaises) là où l'on veut `110♦`, et c'est une statique à
-qui il faut redire la phase. Une fiche de modèle qui réécrit une fonction de la
-bibliothèque qu'elle documente est un rapport de bug sur cette bibliothèque.
+La preuve que le défaut est dans la bibliothèque et pas dans le README était
+dans [`docs/hf/bid-v6/README.md`](hf/bid-v6/README.md) : pour poser correctement
+la seule question qui intéresse un lecteur — *voilà une main, qu'est-ce que tu
+annonces ?* — la fiche dépensait 25 lignes, mélangeait un paquet à la main et
+**réimplémentait `Env.action_name`** sous le nom `nom_annonce`. Une fiche de
+modèle qui réécrit une fonction de la bibliothèque qu'elle documente est un
+rapport de bug sur cette bibliothèque, et les deux raisons qu'elle avait de le
+faire sont tombées : `Env.deal` pour le paquet, et les **couleurs en symboles**
+côté PyO3 pour le reste — `action_name` rendait `120D` là où tout le monde veut
+`120♦`, y compris le web, dont `views/replay.js` contournait déjà le champ pour
+ça. `colver_core::card::card_name` garde son ASCII : il sert des journaux et des
+bancs, pas des lecteurs.
 
 Ce qui manque est une couche mince au-dessus de `Env`, de l'ordre de :
 
@@ -374,9 +377,9 @@ Le détail qui compte, dans les deux cas :
 - **un objet qui porte le modèle**, téléchargement compris, plutôt qu'un
   `load_bid_model` posé sur l'environnement — le modèle n'appartient pas à la
   donne ;
-- **un type d'annonce** qui s'affiche tout seul (`110♦`) et expose `.value` /
-  `.suit` / `.is_pass`, au lieu d'un `int` dont le décodage vit en prose dans la
-  fiche HF et dans CLAUDE.md ;
+- **un type d'annonce** qui expose `.value` / `.suit` / `.is_pass` — il s'affiche
+  déjà correctement (`120♦`), mais c'est toujours un `int` dont le décodage vit
+  en prose dans la fiche HF et dans CLAUDE.md ;
 - **dire ce qui est déjà masqué** — `action_bid_nn` rend un `best_action` et des
   `q_values` **déjà restreints aux actions légales** (41 entrées sur 43 à
   l'ouverture, 8 cartes en jeu), mais rien ne le dit et la fiche HF affirme

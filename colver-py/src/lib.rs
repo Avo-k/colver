@@ -218,6 +218,28 @@ fn make_observation(
     obs
 }
 
+/// Suits as symbols rather than initials, everywhere a name crosses into Python.
+///
+/// `colver_core::card::card_name` keeps its ASCII `"8S"` — it feeds Rust logs, benches
+/// and error strings, where a terminal without the glyphs is a real possibility. But a
+/// name that reaches a reader (a README, a model card, the web's move list) should read
+/// `8♠`: the initials are English (`S`/`H`/`D`/`C`) in a game whose whole vocabulary here
+/// is French, and every consumer was translating them back by hand — `views/replay.js`
+/// already bypassed the field for exactly this reason.
+const SUIT_SYMBOLS: [&str; 4] = ["♠", "♥", "♦", "♣"];
+
+fn card_name_sym(card_idx: u8) -> String {
+    if card_idx >= 32 {
+        return format!("?{}", card_idx);
+    }
+    let rank_names = ["7", "8", "9", "J", "Q", "K", "10", "A"];
+    format!(
+        "{}{}",
+        rank_names[card::card_rank(card_idx) as usize],
+        SUIT_SYMBOLS[card::card_suit_u8(card_idx) as usize]
+    )
+}
+
 fn legal_actions_list(state: &GameState) -> Vec<u8> {
     let mask = state.legal_actions();
     let mut actions = Vec::new();
@@ -701,10 +723,10 @@ impl Env {
         self.state.trick_lead
     }
 
-    /// Get card name from index (e.g. "7S", "JH", "AD").
+    /// Get card name from index (e.g. "7♠", "J♥", "A♦").
     #[staticmethod]
     fn card_name(card_idx: u8) -> String {
-        card::card_name(card_idx)
+        card_name_sym(card_idx)
     }
 
     /// Get action name. Phase 0=bidding, 1=playing.
@@ -718,19 +740,18 @@ impl Env {
                 42 => "Surcoinche".into(),
                 1..=40 => {
                     let (val_enc, suit_idx) = bidding::decode_bid(action);
-                    let suit_names = ["S", "H", "D", "C"];
                     let value = if val_enc == 25 {
                         "Capot".to_string()
                     } else {
                         format!("{}", val_enc as u16 * 10)
                     };
-                    format!("{}{}", value, suit_names[suit_idx as usize])
+                    format!("{}{}", value, SUIT_SYMBOLS[suit_idx as usize])
                 }
                 _ => format!("?{}", action),
             }
         } else {
             // Playing - action is card index
-            card::card_name(action)
+            card_name_sym(action)
         }
     }
 

@@ -23,30 +23,25 @@ Environnement de Belote Contrée rapide pour l'apprentissage par renforcement. M
 pip install colver
 ```
 
-**Qu'est-ce que tu annonces ?**
-
 ```python
 import colver
 
 env = colver.Env.deal(dealer=3, seed=23)   # donne reproductible ; le siège 0 ouvre
-# le siège 0 tient   ♠ —   ♥ 9   ♦ R D V 9   ♣ R 8 7
+# le siège 0 tient   ♠ —   ♥ 9   ♦ K Q J 9   ♣ K 8 7
 
+# Qu'est-ce que tu annonces ?
 env.load_bid_model(colver.download_bid_model())   # récupéré depuis le Hub au premier appel
 print(colver.Env.action_name(env.action_bid_nn()["best_action"], 0))
-# 120D — 120 à carreau. Le valet et le 9 sont les deux plus fortes cartes à
-#        l'atout et la main tient les deux, plus une coupe à pique.
-```
+# 120♦
 
-**Et qu'est-ce que tu entames ?**
-
-```python
-while env.phase() == 0:                    # le modèle déroule l'enchère aux quatre sièges
+# Et qu'est-ce que tu entames ? Le modèle déroule l'enchère aux quatre sièges ;
+# personne ne surenchérit, il joue donc 120♦ pour Nord-Sud.
+while env.phase() == 0:
     env.step(env.action_bid_nn()["best_action"])
-# personne ne surenchérit : le contrat est 120♦ pour Nord-Sud
 
 env.load_dmc_model(colver.download_model())
 print(colver.Env.action_name(env.action_dmc_with_stats()["best_action"], 1))
-# JD — le maître atout, en 0,6 ms sur CPU
+# J♦ — le maître atout, en 0,6 ms sur CPU
 ```
 
 Les deux appels rendent aussi `q_values`, le classement complet du modèle, déjà restreint

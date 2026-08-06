@@ -33,35 +33,25 @@ pip install colver
 ```python
 import colver
 
-COULEURS = "♠♥♦♣"                # une carte = couleur × 8 + rang
-
-def nom_annonce(a):
-    if a == 0:  return "Passe"
-    if a <= 36: return f"{80 + (a - 1) // 4 * 10}{COULEURS[(a - 1) % 4]}"
-    if a <= 40: return f"Capot{COULEURS[a - 37]}"
-    return ("Contre", "Surcontre")[a - 41]
-
 env = colver.Env.deal(dealer=3, seed=23)   # donne reproductible ; le siège 0 ouvre
-
 # le siège 0 tient : ♠ —   ♥ 9   ♦ R D V 9   ♣ R 8 7
 
-poids = colver.download_bid_model()      # Hub → ~/.cache/colver/models/
+poids = colver.download_bid_model()        # Hub → ~/.cache/colver/models/
 env.load_bid_model(poids)
 
 reponse = env.action_bid_nn()
-print(nom_annonce(reponse["best_action"]))     # -> 120♦
+print(colver.Env.action_name(reponse["best_action"], 0))     # -> 120♦
 ```
 
 Le modèle annonce **120 à carreau**. C'est là qu'est la main : quatre cartes dont le
-Valet et le 9, les deux plus fortes à l'atout, avec le Roi et la Dame derrière — et une
-coupe à pique pour couper dès la première fois qu'on y revient.
+Valet et le 9, les deux plus fortes à l'atout, avec le Roi et la Dame derrière.
 
 ## Voir *toutes* ses préférences, pas seulement son choix
 
 ```python
 top = sorted(reponse["q_values"], key=lambda x: -x[1])[:5]
 for action, q in top:
-    print(f"{nom_annonce(action):>6}  {q:.3f}")
+    print(f"{colver.Env.action_name(action, 0):>6}  {q:.3f}")
 ```
 
 ```
@@ -80,7 +70,7 @@ Le modèle est entièrement déterministe : mêmes cartes, mêmes valeurs, à la
 
 ## Lire la réponse
 
-C'est ce que fait `nom_annonce` ci-dessus :
+`Env.action_name(action, 0)` s'en charge, mais le codage tient en quatre lignes :
 
 | Action | Signification |
 |---|---|
