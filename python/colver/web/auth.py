@@ -50,6 +50,55 @@ PUBLIC_URL = os.environ.get("COLVER_PUBLIC_URL", "https://colver.net").rstrip("/
 
 COOKIE_NAME = "colver_session"
 SESSION_DAYS = 30
+
+# ===== Identité d'invité =====
+#
+# Un visiteur sans compte peut s'asseoir à une table partagée, mais seulement
+# pour une **donne isolée** : une partie en 1000/2000 points dure une demi-heure
+# et trois autres personnes en dépendent, donc elle exige un compte — c'est lui
+# qui permet de reconnaître quelqu'un qui revient, et c'est lui qu'on classe.
+#
+# Ce jeton n'est **pas** une session : aucune ligne en base, aucun droit, rien à
+# révoquer. Il ne répond qu'à « est-ce le même visiteur qu'il y a trente
+# secondes ? » — et sans lui un F5 ferait perdre le siège, alors que toute la
+# règle du temps de jeu repose sur le fait qu'un rechargement n'est pas un
+# abandon.
+GUEST_COOKIE = "colver_guest"
+GUEST_DAYS = 30
+_GUEST_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def guest_from_cookies(cookies):
+    """Le jeton d'invité que le navigateur renvoie, ou None."""
+    token = cookies.get(GUEST_COOKIE)
+    return token if token and _GUEST_RE.match(token) else None
+
+
+def new_guest_token():
+    return secrets.token_urlsafe(16)
+
+
+def guest_cookie_header(token, secure):
+    """En-tête `set-cookie` pour la **poignée de main WebSocket**.
+
+    Posé là et nulle part ailleurs, pour trois raisons qui tiennent ensemble :
+    c'est la seule réponse à la fois jamais mise en cache (un `Set-Cookie` sur
+    le HTML servi derrière Cloudflare serait partagé entre visiteurs),
+    antérieure au premier message de salon, et écrite par le serveur — un jeton
+    fabriqué par le client laisserait prendre le siège d'un autre.
+    """
+    parts = [
+        f"{GUEST_COOKIE}={token}",
+        f"Max-Age={GUEST_DAYS * 86400}",
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+    ]
+    if secure:
+        parts.append("Secure")
+    return (b"set-cookie", "; ".join(parts).encode())
+
+
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,20}$")
 MIN_PASSWORD_LEN = 8
 

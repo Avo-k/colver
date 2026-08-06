@@ -32,6 +32,7 @@ import colver.web.match_state as match_state
 import colver.web.ratelimit as ratelimit
 import colver.web.sim_cache as sim_cache
 import colver.web.variation as _variation
+import colver.web.auth as auth
 from colver.web.auth import router as auth_router, user_from_cookies
 
 # Base path for reverse proxy deployment (e.g. ROOT_PATH=/colver/)
@@ -1835,9 +1836,35 @@ async def websocket_endpoint(ws: WebSocket):
         _WS_CAP.release(ip)
 
 
+def _ws_is_secure(ws: WebSocket) -> bool:
+    """La connexion est-elle chiffrée, proxy compris.
+
+    Même lecture que `auth._is_secure` : derrière Cloudflare puis Caddy, le
+    schéma vu ici est `ws`, et seul l'en-tête transmis dit la vérité. Il ne peut
+    que *relever* le verdict, donc le falsifier ne donne rien.
+    """
+    return ws.url.scheme == "wss" or \
+        ws.headers.get("x-forwarded-proto") in ("https", "wss")
+
+
 async def _websocket_session(ws: WebSocket):
-    await ws.accept()
     ws_user = await user_from_cookies(ws.cookies)
+    # Un visiteur sans compte reçoit une identité d'invité — juste de quoi le
+    # reconnaître s'il revient, cf. `auth.guest_cookie_header`. Posée pendant la
+    # poignée de main : c'est la dernière occasion avant le premier message.
+    ws_guest = None
+    accept_headers = []
+    if ws_user is None:
+        ws_guest = auth.guest_from_cookies(ws.cookies)
+        if ws_guest is None:
+            ws_guest = auth.new_guest_token()
+            accept_headers.append(
+                auth.guest_cookie_header(ws_guest, _ws_is_secure(ws)))
+    await ws.accept(headers=accept_headers)
+    # L'identité telle que les salons la voient : un compte ou un invité, sous
+    # une clé unique. `user_id` reste à part — c'est lui, et lui seul, qui part
+    # en base ; un invité n'en a pas.
+    ws_actor = rooms.actor(ws_user, ws_guest)
     play_session = None
     watch_session = None
     replay_session = None
@@ -2252,7 +2279,7 @@ async def _websocket_session(ws: WebSocket):
             msg_type = data["type"]
 
             if msg_type and msg_type.startswith("room_"):
-                await rooms.handle_message(ws_user, ws, data, {
+                await rooms.handle_message(ws_actor, ws, data, {
                     "dmc": DMC_MODEL_PATH if doudou_available else None,
                     "bid": BID_MODEL_PATH,
                     "belief": BELIEF_MODEL_PATH,

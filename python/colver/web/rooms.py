@@ -27,7 +27,37 @@ ROOM_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/i
 MAX_ROOMS = 20
 
 ROOMS = {}        # code -> Room
-USER_ROOM = {}    # user_id -> code
+USER_ROOM = {}    # clé d'acteur -> code
+
+# Sans compte, on peut jouer **une donne** à une table partagée, pas une partie.
+# Une partie en 1000/2000 dure une demi-heure, trois autres personnes en
+# dépendent, et c'est elle qu'on classe : il faut pouvoir reconnaître celui qui
+# revient, et savoir à qui attribuer le résultat.
+GUEST_MATCH_MSG = ("Cette table joue une partie complète : créez un compte "
+                   "pour vous y asseoir. Sans compte, on peut jouer une donne.")
+GUEST_MATCH_HOST_MSG = ("Un invité est à table : une partie en 1000 ou 2000 "
+                        "points demande un compte à chacun.")
+
+
+# ===== Qui est à table =====
+
+def actor(user, guest_token):
+    """L'identité d'un client, du point de vue d'un salon.
+
+    **Deux identifiants et non un**, et les confondre serait un vrai défaut :
+    `id` est la clé d'**appartenance** — un siège, une socket, une place dans
+    `USER_ROOM` — et vaut aussi pour un invité ; `user_id` est ce qui part en
+    **base** (`games.user_id`, `game_players`, `matches.user_id`) et n'existe
+    que pour un compte. Un jeton d'invité dans une colonne d'identifiant de
+    compte serait une clé étrangère inventée.
+    """
+    if user is not None:
+        return {"id": f"u:{user['id']}", "user_id": user["id"],
+                "username": user["username"], "guest": False}
+    if guest_token:
+        return {"id": f"g:{guest_token}", "user_id": None,
+                "username": None, "guest": True}
+    return None
 
 
 # ===== Seat rotation =====
@@ -117,8 +147,9 @@ class Room:
         self.code = code
         self.host_id = host_id
         self.models = models          # dict: dmc, bid, belief model paths
-        self.members = {}             # user_id -> {"username": str, "ws": ws|None}
-        self.seats = [None] * 4       # physical seat -> user_id | None
+        # clé d'acteur -> {"username", "ws", "user_id", "guest"}
+        self.members = {}
+        self.seats = [None] * 4       # siège physique -> clé d'acteur | None
         self.status = "lobby"         # lobby | playing | finished
         # One host-chosen mode bundles the tempo and the bot the empty seats
         # run; see pacing.py.
@@ -163,6 +194,29 @@ class Room:
         m = self.members.get(user_id)
         return m["username"] if m else "?"
 
+    def user_id_of(self, key):
+        """L'identifiant de compte derrière une clé d'acteur — None pour un
+        invité. Tout ce qui écrit en base passe par là."""
+        m = self.members.get(key)
+        return m["user_id"] if m else None
+
+    def has_guest(self):
+        return any(m["guest"] for m in self.members.values())
+
+    def _guest_name(self):
+        """« Invité 1 », « Invité 2 »… — un nom lisible et stable.
+
+        Numéroté par table et non tiré au hasard : deux invités anonymes à la
+        même table doivent se distinguer, et c'est tout ce qu'on leur demande.
+        Le nom est posé à l'arrivée et vit avec le membre, donc une reconnexion
+        le retrouve.
+        """
+        taken = {m["username"] for m in self.members.values()}
+        n = 1
+        while f"Invité {n}" in taken:
+            n += 1
+        return f"Invité {n}"
+
     def connected_members(self):
         return [m for m in self.members.values() if m["ws"] is not None]
 
@@ -195,6 +249,9 @@ class Room:
             "target": self.target,
             "bot_type": self.bot_type,
             "mode_degraded": self._resolved_mode()[2],
+            # L'hôte doit voir *pourquoi* les formats longs lui sont refusés,
+            # plutôt que de découvrir un message d'erreur en cliquant.
+            "has_guest": self.has_guest(),
             "members": [self.username(uid) for uid in self.members],
             "game_id": self.game_id,
             "awaiting_next_deal": self.awaiting_next_deal,
@@ -317,8 +374,8 @@ class Room:
             # DouDou50) — donc ni le tempo ni l'adversaire ne sont comparables
             # d'une partie à l'autre.
             self.match.id = await db.create_match(
-                mode="multi", target=self.target, user_id=self.host_id,
-                pacing=self.mode)
+                mode="multi", target=self.target,
+                user_id=self.user_id_of(self.host_id), pacing=self.mode)
         self.status = "playing"
         self.awaiting_next_deal = False
         self.next_deal_requested.clear()
@@ -361,11 +418,15 @@ class Room:
             dealer=int(self.session.env.get_dealer()),
             hands=self.session.env.get_hands(),
             agents=agents_map,
-            user_id=self.host_id,
+            user_id=self.user_id_of(self.host_id),
             match_id=self.match.id,
             deal_no=self.match.deal_no if self.match.is_match else None,
         )
-        for i, uid in enumerate(self.seats):
+        for i, key in enumerate(self.seats):
+            # Un invité n'a pas de compte auquel rattacher son siège : la donne
+            # reste anonyme de son côté, exactement comme une donne solo jouée
+            # sans être connecté. Rien à écrire, et surtout pas son jeton.
+            uid = self.user_id_of(key) if key is not None else None
             if uid is not None:
                 await db.add_game_player(self.game_id, i, uid)
         await self.broadcast_game_state()
@@ -571,55 +632,67 @@ async def _leave_current_room(user_id):
     await room.broadcast_lobby()
 
 
-async def create_room(user, ws, models):
+def _seat_member(room, act, ws):
+    """Inscrire un acteur dans un salon et l'asseoir au premier siège libre."""
+    room.members[act["id"]] = {
+        "username": act["username"] or room._guest_name(),
+        "ws": ws, "user_id": act["user_id"], "guest": act["guest"],
+    }
+    USER_ROOM[act["id"]] = room.code
+
+
+async def create_room(act, ws, models):
     if len(ROOMS) >= MAX_ROOMS:
         return None, "Trop de salons ouverts, réessayez plus tard"
-    await _leave_current_room(user["id"])
+    await _leave_current_room(act["id"])
     for _ in range(50):
         code = _gen_code()
         if code not in ROOMS:
             break
-    room = Room(code, user["id"], models)
-    room.members[user["id"]] = {"username": user["username"], "ws": ws}
-    room.seats[2] = user["id"]  # host takes South by default
+    room = Room(code, act["id"], models)
     ROOMS[code] = room
-    USER_ROOM[user["id"]] = code
+    _seat_member(room, act, ws)
+    room.seats[2] = act["id"]  # l'hôte prend le Sud par défaut
     await room.broadcast_lobby()
     return room, None
 
 
-async def join_room(user, ws, code):
+async def join_room(act, ws, code):
     room = ROOMS.get(code.strip().lower())
     if room is None:
         return None, "Salon introuvable"
-    if user["id"] in room.members:
+    if act["id"] in room.members:
         # Reconnection: reattach the socket and resend everything.
-        room.members[user["id"]]["ws"] = ws
-        USER_ROOM[user["id"]] = room.code
+        room.members[act["id"]]["ws"] = ws
+        USER_ROOM[act["id"]] = room.code
         await room.broadcast_lobby()
-        await room.send_full_state(user["id"])
+        await room.send_full_state(act["id"])
         return room, None
     if room.status == "playing":
         return None, "La partie a déjà commencé"
-    await _leave_current_room(user["id"])
-    room.members[user["id"]] = {"username": user["username"], "ws": ws}
-    USER_ROOM[user["id"]] = room.code
+    if act["guest"] and room.target != 0:
+        return None, GUEST_MATCH_MSG
+    await _leave_current_room(act["id"])
+    _seat_member(room, act, ws)
     # Auto-seat on the first free seat
     for i in range(4):
         if room.seats[i] is None:
-            room.seats[i] = user["id"]
+            room.seats[i] = act["id"]
             break
     await room.broadcast_lobby()
     return room, None
 
 
-def room_of(user_id):
-    code = USER_ROOM.get(user_id)
+def room_of(actor_key):
+    code = USER_ROOM.get(actor_key)
     return ROOMS.get(code) if code else None
 
 
 async def handle_message(user, ws, data, models):
-    """Route a room_* ws message. Returns True if handled."""
+    """Route a room_* ws message. Returns True if handled.
+
+    `user` est un **acteur** (cf. `actor`) : un compte ou un invité.
+    """
     msg_type = data.get("type", "")
     if not msg_type.startswith("room_"):
         return False
@@ -670,7 +743,16 @@ async def handle_message(user, ws, data, models):
             if data.get("mode") in pacing.MODES:
                 room.mode = data["mode"]
             if "target" in data:
-                room.target = match_state.normalize_target(data.get("target"))
+                target = match_state.normalize_target(data.get("target"))
+                # Passer en partie longue avec un invité à table, c'est changer
+                # les règles sous ses pieds : il n'a pas le droit d'y être, il
+                # serait donc à éjecter. On refuse le réglage, c'est le seul des
+                # deux qui n'ait pas de perdant.
+                if target != 0 and room.has_guest():
+                    await ws.send_json({"type": "room_error",
+                                        "msg": GUEST_MATCH_HOST_MSG})
+                else:
+                    room.target = target
             await room.broadcast_lobby()
     elif msg_type == "room_start":
         if user["id"] != room.host_id:

@@ -30,6 +30,20 @@ from conftest import await_sync  # noqa: E402
 from test_ws_play import _register  # noqa: E402
 
 
+def guest_cookie(ws):
+    """Le `Set-Cookie` posé pendant la poignée de main WebSocket.
+
+    `WebSocketTestSession.extra_headers` porte les en-têtes de l'`accept`, ce
+    qui permet de tester le vrai mécanisme — le serveur mint le jeton, le
+    navigateur le renvoie — plutôt qu'un jeton fabriqué par le test, qui ne
+    prouverait rien puisque c'est précisément ce qu'on interdit au client.
+    """
+    for key, value in (ws.extra_headers or []):
+        if key.lower() == b"set-cookie":
+            return value.decode().split(";")[0]
+    return None
+
+
 @pytest.fixture
 def client(clean_db, no_tempo):
     """Client HTTP+WS sur l'app réelle, salons vidés de part et d'autre.
@@ -249,3 +263,133 @@ class TestUneDonneDeSalon:
             s.leave()
 
         assert await_sync(db.get_game(first))["is_complete"] is True
+
+
+class TestInvites:
+    """Sans compte, on joue **une donne** à une table partagée, pas une partie.
+
+    Une partie en 1000/2000 dure une demi-heure, trois autres personnes en
+    dépendent, et c'est elle qu'on classe : il faut pouvoir reconnaître celui
+    qui revient et savoir à qui attribuer le résultat. Une donne isolée ne
+    demande rien de tout ça — elle ne crée même pas de ligne `matches`.
+    """
+
+    def test_un_invite_recoit_une_identite_a_la_poignee_de_main(self, client):
+        """Et il ne la reçoit qu'une fois : c'est un jeton, pas un compteur."""
+        with client.websocket_connect("/ws") as ws:
+            cookie = guest_cookie(ws)
+        assert cookie and cookie.startswith("colver_guest=")
+
+        with client.websocket_connect("/ws", headers={"cookie": cookie}) as ws:
+            assert guest_cookie(ws) is None, \
+                "le jeton renvoyé par le navigateur doit être accepté tel quel"
+
+    def test_un_compte_n_a_pas_de_jeton_d_invite(self, client):
+        """L'identité d'invité ne se superpose pas à une session : elle la
+        remplace quand il n'y en a pas."""
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            assert guest_cookie(ws) is None
+
+    def test_un_invite_joue_une_donne_a_une_table_partagee(self, client):
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            s.create(target=0)
+            s.start()
+            assert s.play_deal()["state"]["is_terminal"]
+            assert not s.errors, s.errors
+            s.leave()
+
+        row = await_sync(db.get_game(s.game_id))
+        assert row["is_complete"] is True
+        # Rien à rattacher : la donne est anonyme des deux côtés, exactement
+        # comme une donne solo jouée sans être connecté. Surtout pas le jeton
+        # d'invité dans une colonne d'identifiant de compte.
+        assert row["user_id"] is None
+
+    def test_un_invite_ne_peut_pas_rejoindre_une_partie_longue(self, client):
+        """L'hôte a un compte et joue en 1000 points ; l'invité est refusé —
+        avec une phrase qui dit quoi faire, pas « accès refusé »."""
+        _register(client)
+        with client.websocket_connect("/ws") as host_ws:
+            host = Salon(host_ws)
+            code = host.create(target=1000)
+
+            # Se déconnecter vide le bocal à cookies : la socket suivante est
+            # celle d'un visiteur sans compte. L'hôte, lui, garde son identité —
+            # elle a été résolue à *sa* poignée de main.
+            client.post("/api/auth/logout")
+            with client.websocket_connect("/ws") as guest_ws:
+                guest_ws.send_json({"type": "room_join", "code": code})
+                err = Salon(guest_ws).until(
+                    lambda m: m.get("type") == "room_error", limit=20)
+                assert "compte" in err["msg"]
+
+            assert rooms.ROOMS[code].seats.count(None) == 3, \
+                "l'invité ne doit pas s'être assis malgré le refus"
+
+    def test_l_hote_ne_peut_pas_passer_en_partie_longue_avec_un_invite(self, client):
+        """Le refus porte sur le *réglage*, pas sur l'invité : changer les
+        règles sous ses pieds reviendrait à l'éjecter."""
+        _register(client)
+        with client.websocket_connect("/ws") as host_ws:
+            host = Salon(host_ws)
+            code = host.create(target=0)
+            client.post("/api/auth/logout")
+            with client.websocket_connect("/ws") as guest_ws:
+                guest_ws.send_json({"type": "room_join", "code": code})
+                Salon(guest_ws).until(lambda m: m.get("type") == "room_state",
+                                      limit=20)
+                assert rooms.ROOMS[code].has_guest()
+
+                host_ws.send_json({"type": "room_config", "target": 2000})
+                err = host.until(lambda m: m.get("type") == "room_error",
+                                 limit=20)
+                assert "invité" in err["msg"]
+                assert rooms.ROOMS[code].target == 0
+
+    def test_le_siege_d_un_invite_survit_a_un_rechargement(self, client):
+        """La raison d'être du jeton. Sans lui, un F5 coûterait le siège — alors
+        que toute la règle du temps de jeu repose sur le fait qu'un
+        rechargement n'est pas un abandon.
+
+        ⚠️ La partie doit être **lancée** : un salon encore en attente dont plus
+        personne n'est connecté est supprimé (`handle_disconnect` ne garde que
+        les parties en cours, pour qu'on puisse y revenir). C'est le cas qui
+        compte de toute façon — c'est en jeu qu'un siège vaut quelque chose.
+        """
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            code = s.create(target=0)
+            cookie = guest_cookie(ws)
+            s.start()
+            s.until(lambda m: m.get("type") == "room_game_state")
+            seat = rooms.ROOMS[code].seat_of(rooms.ROOMS[code].host_id)
+            # Coupure brutale : on ferme la socket sans rien dire au serveur.
+
+        with client.websocket_connect("/ws", headers={"cookie": cookie}) as ws:
+            s2 = Salon(ws)
+            ws.send_json({"type": "room_status"})
+            state = s2.until(lambda m: m.get("type") == "room_state", limit=20)
+            assert state["code"] == code
+            assert state["you_seat"] == seat
+            assert state["is_host"] is True
+            # …et la donne est toujours là, au coup près.
+            s2.until(lambda m: m.get("type") == "room_game_state", limit=20)
+            s2.leave()
+
+    def test_un_invite_sans_cookie_ne_reprend_pas_le_siege_d_un_autre(self, client):
+        """Le pendant du test précédent : c'est le jeton qui rouvre la porte,
+        pas le simple fait d'être anonyme."""
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            code = s.create(target=0)
+            s.start()
+            s.until(lambda m: m.get("type") == "room_game_state")
+
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "room_status"})
+            assert Salon(ws).until(lambda m: m.get("type") in
+                                   ("room_none", "room_state"), limit=20
+                                   )["type"] == "room_none"
+        assert code in rooms.ROOMS, "la partie en cours doit survivre"

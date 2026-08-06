@@ -29,16 +29,19 @@ const WHO_KEY = 'colver_play_who';
 const MODE_KEY = 'colver_play_mode';
 const TARGET_KEY = 'colver_play_target';
 
-// Qui peut s'asseoir. `login` dit si le choix suppose un compte : un salon lie
-// un siège à un compte, c'est ce qui permet de s'y reconnecter.
+// Qui peut s'asseoir. `shared` marque les tables partagées — celles qui ont un
+// code et un lien. Elles portent la seule règle d'accès du site : **sans compte
+// on y joue une donne, pas une partie**. Une partie dure une demi-heure, trois
+// autres personnes en dépendent, et c'est elle qu'on classe. Le solo, lui,
+// reste ouvert à tous quel que soit le format.
 const WHO = {
     solo: {
         label: 'Seul', hint: 'contre l\'IA, départ immédiat',
-        cta: 'Jouer', login: false,
+        cta: 'Jouer', shared: false,
     },
     amis: {
         label: 'Entre amis', hint: 'un lien à envoyer',
-        cta: 'Créer la table', login: true,
+        cta: 'Créer la table', shared: true,
     },
 };
 
@@ -207,6 +210,21 @@ function paint(containerId, attr, value) {
     }
 }
 
+/** Une partie longue à une table partagée demande un compte — pas une donne, et
+ *  pas le solo. La règle vit ici, et le serveur la refait de son côté. */
+function needsAccount() {
+    return WHO[currentWho].shared && currentTarget !== 0 && !loggedIn;
+}
+
+function refreshWhoNote() {
+    const note = document.getElementById('who-note');
+    note.classList.toggle('hidden', !needsAccount());
+    if (needsAccount()) {
+        note.textContent = 'Sans compte, on peut jouer une donne à plusieurs — '
+            + 'pas une partie en 1000 ou 2000 points.';
+    }
+}
+
 function setWho(who) {
     currentWho = Object.hasOwn(WHO, who) ? who : 'solo';
     localStorage.setItem(WHO_KEY, currentWho);
@@ -215,11 +233,8 @@ function setWho(who) {
     document.getElementById('start-game').textContent = spec.cta;
     // Le code d'invitation ne concerne que les tables partagées ; l'offrir en
     // solo poserait une question à laquelle la colonne choisie répond déjà.
-    document.getElementById('join-code').classList.toggle('hidden', !spec.login);
-    const note = document.getElementById('who-note');
-    const needsLogin = spec.login && !loggedIn;
-    note.classList.toggle('hidden', !needsLogin);
-    if (needsLogin) note.textContent = 'Un compte est nécessaire pour partager une table.';
+    document.getElementById('join-code').classList.toggle('hidden', !spec.shared);
+    refreshWhoNote();
 }
 
 function setMode(mode) {
@@ -233,6 +248,7 @@ function setTarget(target) {
     currentTarget = TARGETS.some(t => t.value === value) ? value : 0;
     localStorage.setItem(TARGET_KEY, String(currentTarget));
     paint('cfg-target-choice', 'target', currentTarget);
+    refreshWhoNote();
 }
 
 // ===== Reprendre (solo) =====
@@ -356,12 +372,19 @@ function renderLobby(data) {
     if (data.is_host) {
         paint('salon-mode-choice', 'mode', data.mode);
         paint('salon-target-choice', 'target', data.target || 0);
+        // Deux choses peuvent être à dire ici, et l'invité passe devant : il
+        // explique un choix *refusé*, alors que le mode dégradé n'annonce
+        // qu'une substitution.
         const note = document.getElementById('salon-mode-note');
-        note.classList.toggle('hidden', !data.mode_degraded);
-        if (data.mode_degraded) {
-            note.textContent = 'DouDou50 est indisponible sur le serveur : '
-                + 'Dédé prend sa place, avec un budget de réflexion réduit.';
-        }
+        const msg = data.has_guest
+            ? 'Un invité est à table : cette table ne peut jouer qu\'une donne. '
+              + 'Une partie en 1000 ou 2000 points demande un compte à chacun.'
+            : (data.mode_degraded
+                ? 'DouDou50 est indisponible sur le serveur : Dédé prend sa '
+                  + 'place, avec un budget de réflexion réduit.'
+                : '');
+        note.classList.toggle('hidden', !msg);
+        note.textContent = msg;
     }
 
     const statusEl = document.getElementById('salon-lobby-status');
@@ -487,11 +510,11 @@ function handleRoomLeft() {
 
 function probe() {
     send({ type: 'play_status', resume: resumeWanted });
-    // `room_status` répond `room_error` à un anonyme : ne le poser que quand il
-    // a une chance d'aboutir, sinon toute arrivée sur la page fait surgir un
-    // message d'erreur qui ne concerne personne.
+    // Tout le monde a une identité de salon depuis les invités — compte ou
+    // jeton posé à la poignée de main — donc `room_status` aboutit toujours et
+    // rend `room_none` quand il n'y a rien à retrouver.
     if (roomWanted) send({ type: 'room_join', code: roomWanted });
-    else if (loggedIn) send({ type: 'room_status' });
+    else send({ type: 'room_status' });
 }
 
 // ===== Cycle de vie =====
@@ -598,8 +621,8 @@ export async function mount(container) {
 
     // ---- lancer ----
     document.getElementById('start-game').addEventListener('click', () => {
-        if (WHO[currentWho].login) {
-            if (!loggedIn) { showPanel('salon-login'); return; }
+        if (WHO[currentWho].shared) {
+            if (needsAccount()) { showPanel('salon-login'); return; }
             // Le salon naît avec les réglages de l'écran : ils sont posés juste
             // après la création, le serveur les rediffusant à la table.
             send({ type: 'room_create' });
@@ -621,10 +644,11 @@ export async function mount(container) {
 
     // ---- salon ----
     document.getElementById('salon-join').addEventListener('click', () => {
+        // Pas de garde de compte ici : une table peut très bien jouer une seule
+        // donne, auquel cas un invité y a sa place. C'est le serveur qui sait
+        // ce que joue *cette* table, et qui le dit s'il refuse.
         const code = document.getElementById('salon-code-input').value.trim().toLowerCase();
-        if (!code) return;
-        if (!loggedIn) { showPanel('salon-login'); return; }
-        send({ type: 'room_join', code });
+        if (code) send({ type: 'room_join', code });
     });
     document.getElementById('salon-code-input').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') document.getElementById('salon-join').click();
@@ -683,10 +707,6 @@ export async function mount(container) {
         loggedIn = !!me.user;
     } catch { /* on continue : la sonde solo marche sans compte */ }
     setWho(currentWho);   // l'avertissement « compte nécessaire » en dépend
-    if (roomWanted && !loggedIn) {
-        roomWanted = null;
-        showPanel('salon-login');
-    }
     onOpen(probe);
     probe();
 }
