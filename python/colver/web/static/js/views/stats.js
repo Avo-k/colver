@@ -39,22 +39,27 @@ const CAT_LABELS = {
 const CAT_ORDER = ['parfait', 'imprecision', 'decisive', 'bon', 'erreur', 'faute'];
 const WEEKDAYS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
 
-// Le filtre de format. « Toutes » est le défaut et le reste : c'est le seul
-// périmètre qui ne demande rien à comprendre. Les trois autres répondent à des
-// questions différentes — on n'annonce pas pareil en tournoi qu'en donne seule,
-// et le score de partie entre dans l'observation du bidder.
+// Le filtre de format. Les quatre périmètres répondent à des questions
+// différentes — on n'annonce pas pareil en tournoi qu'en donne seule, et le
+// score de partie entre dans l'observation du bidder — donc mélanger les
+// quatre dilue chacun d'eux. Le défaut est **la partie en 2000**, le format de
+// référence du jeu ; « Toutes » reste à un clic.
 const SCOPES = [
     { id: 'all', label: 'Toutes' },
     { id: '2000', label: 'Parties 2000' },
     { id: '1000', label: 'Parties 1000' },
     { id: 'deal', label: 'Donnes seules' },
 ];
+// ⚠️ Le défaut de la page et le « tout » du serveur sont deux choses : `qs()`
+// n'omet le paramètre que pour `all`, sinon un défaut à 2000 filtrerait sur
+// rien. Et c'est le défaut, pas `all`, qui vaut URL propre dans `syncUrl`.
+const DEFAULT_SCOPE = '2000';
 
 const TEMPLATE = `
 <div class="st-page">
     <div class="st-filter" id="st-filter" role="radiogroup" aria-label="Format de jeu">
         ${SCOPES.map(s => `<button class="pc-seg-btn" role="radio" data-scope="${s.id}"
-            aria-checked="${s.id === 'all'}">${s.label}</button>`).join('')}
+            aria-checked="${s.id === DEFAULT_SCOPE}">${s.label}</button>`).join('')}
     </div>
     <aside class="st-rail" id="st-rail"></aside>
     <main class="st-main" id="st-main">
@@ -63,14 +68,14 @@ const TEMPLATE = `
 </div>`;
 
 let poller = null;
-let scope = 'all';
+let scope = DEFAULT_SCOPE;
 
 /** Le périmètre vit dans la query string : un rechargement, un signet ou un
  *  lien partagé retombent sur la même vue. Jamais dans un `#fragment` — le
  *  routeur le traite comme une URL héritée et le redirigerait. */
 function syncUrl() {
     const url = new URL(location.href);
-    if (scope === 'all') url.searchParams.delete('f');
+    if (scope === DEFAULT_SCOPE) url.searchParams.delete('f');
     else url.searchParams.set('f', scope);
     history.replaceState(history.state, '', url);
 }
@@ -408,6 +413,18 @@ function stopPolling() {
 
 let cachedMe = null;
 
+/** Changer de périmètre. Point unique : le filtre l'appelle, et l'état vide
+ *  aussi — sinon le bouton « Voir toutes les donnes » laisserait la barre
+ *  cochée sur le format qu'on vient de quitter. */
+function setScope(id) {
+    if (id === scope) return;
+    scope = id;
+    document.getElementById('st-filter')?.querySelectorAll('[data-scope]')
+        .forEach(x => x.setAttribute('aria-checked', String(x.dataset.scope === scope)));
+    syncUrl();
+    load();
+}
+
 /** Charger et rendre pour le périmètre courant. Le filtre, lui, ne bouge pas :
  *  il doit rester atteignable même quand un format ne contient aucune donne,
  *  sinon on s'y enferme. */
@@ -440,11 +457,18 @@ async function load() {
     }
 
     if (!st || !st.deals) {
+        // Le défaut étant un format et non « Toutes », un joueur qui n'a fait
+        // que des donnes seules — le format par défaut de /jouer — atterrit
+        // ici. Le renvoi doit donc être un bouton, pas une consigne.
         main.innerHTML = '<div class="history-empty">'
             + (scope === 'all'
                 ? 'Aucune donne terminée pour l\'instant — <a href="/jouer">jouez-en une !</a>'
-                : 'Aucune donne dans ce format. Choisissez « Toutes » pour tout revoir.')
+                : 'Aucune donne dans ce format. '
+                    + '<button type="button" class="st-empty-link" id="st-see-all">'
+                    + 'Voir toutes les donnes</button>')
             + '</div>';
+        document.getElementById('st-see-all')?.addEventListener(
+            'click', () => setScope('all'));
         return;
     }
 
@@ -460,19 +484,12 @@ export async function mount(container) {
     cachedMe = null;
 
     const wanted = new URL(location.href).searchParams.get('f');
-    scope = SCOPES.some(x => x.id === wanted) ? wanted : 'all';
+    scope = SCOPES.some(x => x.id === wanted) ? wanted : DEFAULT_SCOPE;
 
     const bar = document.getElementById('st-filter');
     bar.querySelectorAll('[data-scope]').forEach(b => {
         b.setAttribute('aria-checked', String(b.dataset.scope === scope));
-        b.addEventListener('click', () => {
-            if (b.dataset.scope === scope) return;
-            scope = b.dataset.scope;
-            bar.querySelectorAll('[data-scope]').forEach(x =>
-                x.setAttribute('aria-checked', String(x.dataset.scope === scope)));
-            syncUrl();
-            load();
-        });
+        b.addEventListener('click', () => setScope(b.dataset.scope));
     });
     syncUrl();
     await load();
