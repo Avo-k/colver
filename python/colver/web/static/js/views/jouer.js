@@ -114,6 +114,9 @@ const TEMPLATE = `
         <ul>
             <li>Les sièges vides sont tenus par l'IA&nbsp;: une table se lance
                 même à un seul joueur.</li>
+            <li><b>Seul contre l'IA, il n'y a pas de pendule</b> — personne
+                n'attend derrière. Tout ce qui suit ne s'applique qu'à partir de
+                <b>deux joueurs</b>, et se fixe au lancement de la partie.</li>
             <li>Vous avez <b>30 secondes</b> pour jouer. Le décompte n'apparaît
                 qu'après 10 secondes.</li>
             <li>Temps écoulé&nbsp;: en enchère on <b>passe</b> pour vous&nbsp;;
@@ -476,9 +479,13 @@ function renderLobby(data) {
     } else if (data.status === 'finished') {
         statusEl.textContent = 'Partie terminée — l\'hôte peut relancer.';
     } else {
-        statusEl.textContent = data.is_host
+        // Dire *avant* le lancement si la pendule tournera : elle se fige à ce
+        // moment-là, et c'est la seule règle du jeu qui dépende de qui est assis.
+        const seuls = data.seats.filter(Boolean).length < 2
+            ? ' Seul contre l\'IA : pas de pendule, prenez votre temps.' : '';
+        statusEl.textContent = (data.is_host
             ? 'Lancez quand vous voulez — les sièges vides seront tenus par l\'IA.'
-            : 'En attente du lancement par l\'hôte…';
+            : 'En attente du lancement par l\'hôte…') + seuls;
     }
 }
 

@@ -250,6 +250,8 @@ class Room:
         # Sièges rendus à l'IA faute d'avoir répondu. Le siège redevient un
         # siège de bot ordinaire ; on garde le nom pour pouvoir le dire.
         self.forfeited = {}
+        # La pendule tourne-t-elle à cette table ? Voir `start()`.
+        self.timed = False
 
     # ----- annonce publique -----
 
@@ -505,6 +507,18 @@ class Room:
     # ----- game driver -----
 
     async def start(self):
+        # **La pendule n'existe que si quelqu'un attend.** Un seul humain à
+        # table, trois bots : personne n'est retenu, rien ne presse, et
+        # sanctionner un joueur qui ne fait attendre que des machines n'a aucun
+        # sens. C'est la même raison qui fait qu'il n'y a pas de pendule en solo.
+        #
+        # **Figée au lancement, et pas recalculée en cours de partie.** Le
+        # nombre d'humains ne peut que baisser (on ne rejoint pas une partie
+        # commencée), donc la recalculer ferait disparaître la pendule au milieu
+        # d'une partie — et surtout, elle donnerait à chacun un intérêt à voir
+        # partir les autres. Une règle qui change en cours de route n'est plus
+        # une règle.
+        self.timed = sum(1 for s in self.seats if s is not None) > 1
         self.match = match_state.Match(self.target)
         if self.match.is_match:
             # `pacing` manquait : la colonne existe depuis la migration v8 et la
@@ -645,10 +659,18 @@ class Room:
                 finally:
                     self.waiting_for = None
                 session.play_action(action)
+            elif not self.timed:
+                # Un seul humain à table : personne n'attend, donc pas de
+                # pendule. On prend le temps qu'on veut, comme en solo.
+                self.waiting_for = p
+                action = await self._await_human_action(p)
+                self.waiting_for = None
+                session.play_action(action)
+                auto = False
             else:
-                # Tour d'un humain — sous échéance. Trois autres personnes
-                # attendent : un siège qui ne répond pas ne peut pas arrêter la
-                # partie. C'est le temps qui juge, jamais l'état de la socket.
+                # Tour d'un humain — sous échéance. D'autres joueurs attendent :
+                # un siège qui ne répond pas ne peut pas arrêter la partie.
+                # C'est le temps qui juge, jamais l'état de la socket.
                 auto = False
                 budget = self.clocks[p].budget()
                 self.waiting_for = p

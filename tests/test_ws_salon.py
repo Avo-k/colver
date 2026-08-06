@@ -16,6 +16,9 @@ deux lectures bloquantes — `TestClient` n'offre pas de réception non bloquant
 donc ce serait un harnais à threads pour aucune couverture supplémentaire ici.
 """
 
+import contextlib
+import time
+
 import pytest
 
 pytest.importorskip("httpx", reason="fastapi.testclient a besoin de httpx")
@@ -42,6 +45,41 @@ def guest_cookie(ws):
         if key.lower() == b"set-cookie":
             return value.decode().split(";")[0]
     return None
+
+
+@contextlib.contextmanager
+def two_humans(client):
+    """Une table à **deux** humains — condition d'existence de la pendule.
+
+    Un compte pour l'hôte, un invité pour le second siège : `TestClient` n'a
+    qu'un bocal à cookies, donc on se déconnecte entre les deux sockets. L'hôte
+    garde son identité, résolue à *sa* poignée de main.
+
+    La socket de l'invité doit rester **ouverte** pendant le test : c'est elle
+    qui tient le siège, et `Room.timed` se fige au lancement.
+    """
+    _register(client)
+    with client.websocket_connect("/ws") as host_ws:
+        host = Salon(host_ws)
+        code = host.create(target=0)
+        client.post("/api/auth/logout")
+        with client.websocket_connect("/ws") as guest_ws:
+            guest = Salon(guest_ws)
+            guest_ws.send_json({"type": "room_join", "code": code})
+            guest.until(lambda m: m.get("type") == "room_state", limit=20)
+            try:
+                yield host, code
+            finally:
+                # Arrêter le pilote **depuis la boucle**, avant que les sockets
+                # ne se ferment. Le filet de la fixture l'annule de l'extérieur,
+                # ce qui suffit d'ordinaire — mais sous une pendule de test à
+                # 50 ms il enchaîne les coups automatiques, chacun construisant
+                # un agent dans un exécuteur et écrivant en base : l'annuler en
+                # plein vol laisse un fil actif, et la fermeture d'aiosqlite
+                # l'attend. Un joueur assis qui part arrête la partie, donc
+                # partir *est* l'arrêt propre.
+                guest_ws.send_json({"type": "room_leave"})
+                guest.until(lambda m: m.get("type") == "room_left", limit=2000)
 
 
 @pytest.fixture
@@ -518,16 +556,12 @@ class TestPendule:
         prise."""
         monkeypatch.setattr(rooms, "TURN_SECONDS", 0.05)
         monkeypatch.setattr(rooms, "TURN_SECONDS_SHORT", 0.05)
-        _register(client)
-        with client.websocket_connect("/ws") as ws:
-            s = Salon(ws)
-            s.create(target=0)
-            s.start()
+        with two_humans(client) as (host, _code):
+            host.start()
             # On ne joue jamais : le serveur finit par jouer à notre place.
-            move = s.until(lambda m: m.get("type") == "room_move"
-                           and m.get("auto"), limit=200)
+            move = host.until(lambda m: m.get("type") == "room_move"
+                              and m.get("auto"), limit=200)
             assert move["auto"] is True
-            s.leave()
 
     def test_en_enchere_le_serveur_passe_toujours(self, client, monkeypatch):
         """La seule action neutre. Faire annoncer un bot à la place de quelqu'un
@@ -535,27 +569,79 @@ class TestPendule:
         coinche — sur une absence de trente secondes."""
         monkeypatch.setattr(rooms, "TURN_SECONDS", 0.05)
         monkeypatch.setattr(rooms, "TURN_SECONDS_SHORT", 0.05)
-        _register(client)
-        with client.websocket_connect("/ws") as ws:
-            s = Salon(ws)
-            s.create(target=0)
-            s.start()
-            move = s.until(lambda m: m.get("type") == "room_move"
-                           and m.get("auto") and m.get("phase") == 0,
-                           limit=200)
+        with two_humans(client) as (host, _code):
+            host.start()
+            move = host.until(lambda m: m.get("type") == "room_move"
+                              and m.get("auto") and m.get("phase") == 0,
+                              limit=200)
             assert move["action"] == 0, "une enchère automatique doit être PASSE"
-            s.leave()
 
     def test_l_echeance_voyage_avec_l_etat(self, client):
         """Une durée et non un instant : l'horloge du client n'est pas la nôtre,
         et un décalage entre les deux se lirait comme un compteur qui ment."""
+        with two_humans(client) as (host, _code):
+            host.start()
+            msg = host.until(lambda m: m.get("type") == "room_game_state"
+                             and m.get("deadline_ms") is not None, limit=200)
+            assert 0 < msg["deadline_ms"] <= rooms.TURN_SECONDS * 1000
+            assert msg["unrated"] is False
+
+
+class TestPenduleSeulContreIA:
+    """Un seul humain à table : personne n'attend, donc pas de pendule.
+
+    C'est la même raison qui fait qu'il n'y en a pas en solo — sanctionner un
+    joueur qui ne fait attendre que des machines n'a aucun sens.
+    """
+
+    def test_un_seul_humain_joue_sans_echeance(self, client, monkeypatch):
+        """Discriminant : avec un budget à 50 ms, une pendule active aurait
+        joué à notre place bien avant qu'on réponde."""
+        monkeypatch.setattr(rooms, "TURN_SECONDS", 0.05)
+        monkeypatch.setattr(rooms, "TURN_SECONDS_SHORT", 0.05)
         _register(client)
         with client.websocket_connect("/ws") as ws:
             s = Salon(ws)
-            s.create(target=0)
+            code = s.create(target=0)
             s.start()
             msg = s.until(lambda m: m.get("type") == "room_game_state"
-                          and m.get("waiting_for") == Salon.MY_SEAT, limit=200)
-            assert 0 < msg["deadline_ms"] <= rooms.TURN_SECONDS * 1000
-            assert msg["unrated"] is False
+                          and m["state"]["current_player"] == Salon.MY_SEAT
+                          and m["state"]["legal_actions"]
+                          and not m["state"]["is_terminal"], limit=200)
+            assert msg["deadline_ms"] is None, "aucune échéance ne doit être annoncée"
+            assert rooms.ROOMS[code].timed is False
+
+            # On prend dix fois le budget avant de répondre.
+            time.sleep(0.5)
+            ws.send_json({"type": "room_play",
+                          "action": msg["state"]["legal_actions"][0]})
+            echo = s.until(lambda m: m.get("type") == "room_move"
+                           and m.get("player") == Salon.MY_SEAT, limit=50)
+            assert not echo.get("auto"), "le serveur ne doit pas avoir joué à notre place"
+            assert all(not m.get("auto") for m in s.seen
+                       if m.get("type") == "room_move")
             s.leave()
+
+    def test_deux_humains_ramenent_la_pendule(self, client):
+        """Et elle se **fige au lancement** : le nombre d'humains ne peut que
+        baisser, donc la recalculer ferait disparaître la pendule au milieu
+        d'une partie — et donnerait à chacun un intérêt à voir partir les
+        autres."""
+        _register(client)
+        with client.websocket_connect("/ws") as host_ws:
+            host = Salon(host_ws)
+            code = host.create(target=0)
+            client.post("/api/auth/logout")
+            with client.websocket_connect("/ws") as guest_ws:
+                guest_ws.send_json({"type": "room_join", "code": code})
+                Salon(guest_ws).until(lambda m: m.get("type") == "room_state",
+                                      limit=20)
+                host.start()
+                msg = host.until(lambda m: m.get("type") == "room_game_state"
+                                 and m.get("deadline_ms") is not None, limit=200)
+                assert msg["deadline_ms"] > 0
+                assert rooms.ROOMS[code].timed is True
+
+                # Le second humain s'en va : la pendule reste, elle est figée.
+                guest_ws.send_json({"type": "room_leave"})
+            assert rooms.ROOMS.get(code) is None or rooms.ROOMS[code].timed is True
