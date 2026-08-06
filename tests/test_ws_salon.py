@@ -393,3 +393,81 @@ class TestInvites:
                                    ("room_none", "room_state"), limit=20
                                    )["type"] == "room_none"
         assert code in rooms.ROOMS, "la partie en cours doit survivre"
+
+
+class TestTablesPubliques:
+    """Une table privée se transmet par son lien ; une table publique s'annonce.
+
+    La liste est **poussée** et non interrogée : elle vit en mémoire, elle ne
+    change que quand un salon change, et un client qui la sonderait en boucle
+    passerait son temps à recevoir la même chose.
+    """
+
+    def _watch(self, ws):
+        ws.send_json({"type": "room_tables", "watch": True})
+        return Salon(ws).until(lambda m: m.get("type") == "tables_list",
+                               limit=20)["tables"]
+
+    def test_une_table_privee_ne_s_annonce_pas(self, client):
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            Salon(ws).create(target=0)
+            assert self._watch(ws) == []
+
+    def test_une_table_publique_apparait_dans_la_liste(self, client):
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            ws.send_json({"type": "room_create", "visibility": "public"})
+            s.until(lambda m: m.get("type") == "room_state")
+            tables = self._watch(ws)
+            assert len(tables) == 1
+            assert tables[0]["host"] == "alice"
+            assert tables[0]["seated"] == 1
+            assert tables[0]["needs_account"] is False
+
+    def test_la_liste_est_poussee_sans_qu_on_la_demande(self, client):
+        """Le point du sujet : c'est `broadcast_lobby` qui la rafraîchit, donc
+        toute mutation d'un salon la met à jour toute seule."""
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            ws.send_json({"type": "room_create", "visibility": "public"})
+            s.until(lambda m: m.get("type") == "room_state")
+            assert self._watch(ws)[0]["target"] == 0
+            # Un changement de format, et la liste arrive d'elle-même.
+            ws.send_json({"type": "room_config", "target": 2000})
+            pushed = s.until(lambda m: m.get("type") == "tables_list", limit=20)
+            assert pushed["tables"][0]["target"] == 2000
+            assert pushed["tables"][0]["needs_account"] is True
+
+    def test_une_partie_commencee_quitte_la_liste(self, client):
+        """L'annoncer promettrait une porte fermée : `join_room` refuse une
+        partie en cours."""
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            ws.send_json({"type": "room_create", "visibility": "public"})
+            s.until(lambda m: m.get("type") == "room_state")
+            assert len(self._watch(ws)) == 1
+            s.start()
+            s.until(lambda m: m.get("type") == "tables_list"
+                    and m["tables"] == [], limit=60)
+            s.play_deal()
+            s.leave()
+
+    def test_on_ne_recoit_la_liste_que_si_on_la_regarde(self, client):
+        """Un client qui n'a pas la liste à l'écran ne doit pas être réveillé à
+        chaque siège pris ailleurs sur le site."""
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            ws.send_json({"type": "room_create", "visibility": "public"})
+            s.until(lambda m: m.get("type") == "room_state")
+            self._watch(ws)
+            ws.send_json({"type": "room_tables", "watch": False})
+            ws.send_json({"type": "room_config", "target": 1000})
+            # La mutation revient en `room_state`, et surtout pas en liste.
+            msg = s.until(lambda m: m.get("type") in ("room_state", "tables_list"),
+                          limit=20)
+            assert msg["type"] == "room_state"

@@ -43,6 +43,10 @@ const WHO = {
         label: 'Entre amis', hint: 'un lien à envoyer',
         cta: 'Créer la table', shared: true,
     },
+    publique: {
+        label: 'Publique', hint: 'ouverte à tous',
+        cta: 'Publier la table', shared: true, public: true,
+    },
 };
 
 // Le mode choisit le tempo **et** le bot : un tempo rapide n'est honnête que
@@ -104,6 +108,10 @@ const TEMPLATE = `
     <div class="config-start">
         <button id="start-game">Jouer</button>
         <p id="who-note" class="mode-note hidden"></p>
+    </div>
+    <div id="public-tables" class="public-tables hidden">
+        <span class="config-group-label">Tables ouvertes</span>
+        <div id="public-list"></div>
     </div>
     <div id="join-code" class="join-code hidden">
         <span class="config-group-label">Un ami vous a envoyé un code&nbsp;?</span>
@@ -234,7 +242,54 @@ function setWho(who) {
     // Le code d'invitation ne concerne que les tables partagées ; l'offrir en
     // solo poserait une question à laquelle la colonne choisie répond déjà.
     document.getElementById('join-code').classList.toggle('hidden', !spec.shared);
+    document.getElementById('public-tables').classList.toggle('hidden', !spec.public);
+    // On ne s'abonne à la liste que quand elle est à l'écran : sinon chaque
+    // siège pris ailleurs sur le site réveillerait tous les clients connectés.
+    send({ type: 'room_tables', watch: !!spec.public });
     refreshWhoNote();
+}
+
+// ===== Tables ouvertes =====
+
+function tableAge(seconds) {
+    if (seconds < 60) return 'à l\'instant';
+    const m = Math.floor(seconds / 60);
+    return m < 60 ? `il y a ${m} min` : `il y a ${Math.floor(m / 60)} h`;
+}
+
+function renderTables(tables) {
+    const el = document.getElementById('public-list');
+    if (!el) return;
+    if (!tables.length) {
+        el.innerHTML = '<p class="public-empty">Aucune table ouverte pour le'
+            + ' moment — publiez la vôtre, elle apparaîtra ici.</p>';
+        return;
+    }
+    el.innerHTML = tables.map(t => {
+        const format = t.target === 0 ? 'une donne' : `${t.target} points`;
+        const mode = MODES[t.mode] ? MODES[t.mode].label.toLowerCase() : t.mode;
+        // Dire d'avance ce qu'un invité découvrirait en cliquant : une partie
+        // longue lui est fermée, et il vaut mieux qu'il le lise que qu'il
+        // l'apprenne par un refus.
+        const lock = t.needs_account && !loggedIn
+            ? ' <span class="public-lock" title="Un compte est nécessaire">🔒</span>' : '';
+        return `
+    <div class="resume-row" data-code="${t.code}">
+        <span class="resume-score">${t.seated}/4${lock}</span>
+        <span class="resume-meta">${t.host} · ${format} · ${mode}
+            · ${tableAge(t.age_s)}</span>
+        <button type="button" class="resume-go">Rejoindre</button>
+    </div>`;
+    }).join('');
+    for (const row of el.querySelectorAll('.resume-row')) {
+        row.querySelector('.resume-go').addEventListener('click', () => {
+            send({ type: 'room_join', code: row.dataset.code });
+        });
+    }
+}
+
+function handleTables(data) {
+    renderTables(data.tables || []);
 }
 
 function setMode(mode) {
@@ -515,6 +570,9 @@ function probe() {
     // rend `room_none` quand il n'y a rien à retrouver.
     if (roomWanted) send({ type: 'room_join', code: roomWanted });
     else send({ type: 'room_status' });
+    // L'abonnement à la liste vit côté serveur, attaché à la socket : une
+    // reconnexion le perd, et `setWho` ne repassera pas par là.
+    if (WHO[currentWho].public) send({ type: 'room_tables', watch: true });
 }
 
 // ===== Cycle de vie =====
@@ -625,7 +683,8 @@ export async function mount(container) {
             if (needsAccount()) { showPanel('salon-login'); return; }
             // Le salon naît avec les réglages de l'écran : ils sont posés juste
             // après la création, le serveur les rediffusant à la table.
-            send({ type: 'room_create' });
+            send({ type: 'room_create',
+                   visibility: WHO[currentWho].public ? 'public' : 'private' });
             send({ type: 'room_config', mode: currentMode, target: currentTarget });
             return;
         }
@@ -687,6 +746,7 @@ export async function mount(container) {
     onMessage('room_move', handleRoomMove);
     onMessage('room_error', handleRoomError);
     onMessage('room_left', handleRoomLeft);
+    onMessage('tables_list', handleTables);
 
     // Les deux paramètres d'URL sont retirés dès qu'ils sont lus : reprendre ou
     // rejoindre une table est une action, pas un état de page, et un F5 ne doit
@@ -723,6 +783,10 @@ export function unmount() {
     offMessage('room_move', handleRoomMove);
     offMessage('room_error', handleRoomError);
     offMessage('room_left', handleRoomLeft);
+    offMessage('tables_list', handleTables);
+    // Quitter la page, c'est cesser de regarder la liste : sans ça le serveur
+    // continuerait de pousser à une socket qui n'affiche plus rien.
+    send({ type: 'room_tables', watch: false });
     offOpen(probe);
     resumeWanted = null;
     roomWanted = null;

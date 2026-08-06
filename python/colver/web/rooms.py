@@ -18,6 +18,7 @@ import time
 import colver.web.database as db
 import colver.web.match_state as match_state
 import colver.web.pacing as pacing
+import colver.web.ratelimit as ratelimit
 from colver.web.game_manager import (
     PlaySession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot)
 
@@ -28,6 +29,21 @@ MAX_ROOMS = 20
 
 ROOMS = {}        # code -> Room
 USER_ROOM = {}    # clé d'acteur -> code
+
+# ===== Tables publiques =====
+#
+# Une table privée se transmet par son lien ; une table publique s'annonce, et
+# n'importe qui peut y prendre un siège. La liste est **poussée** aux clients
+# qui la regardent, pas interrogée en boucle : elle vit déjà en mémoire, et
+# toute mutation d'un salon passe par `broadcast_lobby`.
+TABLE_WATCHERS = set()   # sockets affichant la liste
+MAX_PUBLIC = 12
+# Une table publique laissée vide finit par mentir sur ce qu'elle propose : on
+# la retire de la liste sans la détruire, son hôte peut encore la lancer.
+PUBLIC_STALE_S = 30 * 60
+# Ouvrir une table est bon marché pour l'hôte et coûteux pour la liste : sans
+# frein, un seul client la remplit de tables mortes.
+_CREATE_LIMITER = ratelimit.RateLimiter(limit=6, window=60)
 
 # Sans compte, on peut jouer **une donne** à une table partagée, pas une partie.
 # Une partie en 1000/2000 dure une demi-heure, trois autres personnes en
@@ -167,6 +183,34 @@ class Room:
         # ici plutôt que de rendre la main.
         self.awaiting_next_deal = False
         self.next_deal_requested = asyncio.Event()
+        # Privée (on transmet le lien) ou publique (elle s'annonce).
+        self.visibility = "private"
+        self.created_at = time.monotonic()
+
+    # ----- annonce publique -----
+
+    def listed(self):
+        """Cette table a-t-elle sa place dans la liste publique ?
+
+        Seulement en attente : une partie commencée ne se rejoint pas
+        (`join_room` la refuse), donc l'annoncer promettrait une porte fermée.
+        """
+        return (self.visibility == "public" and self.status == "lobby"
+                and time.monotonic() - self.created_at < PUBLIC_STALE_S
+                and any(s is not None for s in self.seats))
+
+    def listing(self):
+        host = self.members.get(self.host_id)
+        return {
+            "code": self.code,
+            "host": host["username"] if host else "?",
+            "mode": self.mode,
+            "target": self.target,
+            "seated": sum(1 for s in self.seats if s is not None),
+            "age_s": int(time.monotonic() - self.created_at),
+            # Dit d'avance ce qu'un invité découvrirait en cliquant.
+            "needs_account": self.target != 0,
+        }
 
     # ----- mode -----
 
@@ -269,6 +313,12 @@ class Room:
         for uid, m in list(self.members.items()):
             if m["ws"] is not None:
                 await self._send(m["ws"], self._lobby_payload(uid))
+        # Point de passage unique de presque toute mutation d'un salon : y
+        # accrocher la liste publique évite d'avoir à se souvenir de la
+        # rafraîchir à chaque endroit qui touche aux sièges, au format ou au
+        # statut. Les créations et les destructions, elles, ne passent pas par
+        # ici et l'appellent en propre.
+        await notify_tables()
 
     # ----- game state broadcast -----
 
@@ -626,10 +676,34 @@ async def _leave_current_room(user_id):
     if not room.members:
         room.stop()
         del ROOMS[code]
+        await notify_tables()
         return
     if room.host_id == user_id:
         room.host_id = next(iter(room.members))
     await room.broadcast_lobby()
+
+
+def tables_payload():
+    tables = [r.listing() for r in ROOMS.values() if r.listed()]
+    tables.sort(key=lambda t: t["age_s"])
+    return {"type": "tables_list", "tables": tables}
+
+
+async def notify_tables():
+    """Pousser la liste à ceux qui la regardent.
+
+    Poussée et non interrogée : la liste vit en mémoire, elle change quand un
+    salon change, et un client qui la sonderait toutes les deux secondes
+    passerait son temps à recevoir la même chose.
+    """
+    if not TABLE_WATCHERS:
+        return
+    payload = tables_payload()
+    for ws in list(TABLE_WATCHERS):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            TABLE_WATCHERS.discard(ws)
 
 
 def _seat_member(room, act, ws):
@@ -641,15 +715,21 @@ def _seat_member(room, act, ws):
     USER_ROOM[act["id"]] = room.code
 
 
-async def create_room(act, ws, models):
+async def create_room(act, ws, models, visibility="private"):
     if len(ROOMS) >= MAX_ROOMS:
         return None, "Trop de salons ouverts, réessayez plus tard"
+    if not _CREATE_LIMITER.allow(act["id"]):
+        return None, "Vous ouvrez des tables trop vite — patientez un instant"
+    if visibility == "public" and sum(1 for r in ROOMS.values()
+                                      if r.visibility == "public") >= MAX_PUBLIC:
+        return None, "Trop de tables publiques ouvertes, réessayez plus tard"
     await _leave_current_room(act["id"])
     for _ in range(50):
         code = _gen_code()
         if code not in ROOMS:
             break
     room = Room(code, act["id"], models)
+    room.visibility = "public" if visibility == "public" else "private"
     ROOMS[code] = room
     _seat_member(room, act, ws)
     room.seats[2] = act["id"]  # l'hôte prend le Sud par défaut
@@ -707,13 +787,23 @@ async def handle_message(user, ws, data, models):
     if room is not None and user["id"] in room.members:
         room.members[user["id"]]["ws"] = ws
 
-    if msg_type == "room_status":
+    if msg_type == "room_tables":
+        # S'abonner à la liste publique, ou s'en désabonner. Un client qui n'a
+        # pas la liste à l'écran ne doit pas être réveillé à chaque siège pris
+        # ailleurs sur le site.
+        if data.get("watch"):
+            TABLE_WATCHERS.add(ws)
+            await ws.send_json(tables_payload())
+        else:
+            TABLE_WATCHERS.discard(ws)
+    elif msg_type == "room_status":
         if room is None:
             await ws.send_json({"type": "room_none"})
         else:
             await room.send_full_state(user["id"])
     elif msg_type == "room_create":
-        _, err = await create_room(user, ws, models)
+        _, err = await create_room(user, ws, models,
+                                   visibility=data.get("visibility", "private"))
         if err:
             await ws.send_json({"type": "room_error", "msg": err})
     elif msg_type == "room_join":
@@ -788,6 +878,7 @@ async def handle_message(user, ws, data, models):
 
 async def handle_disconnect(ws):
     """Mark any member using this socket as disconnected."""
+    TABLE_WATCHERS.discard(ws)
     for room in list(ROOMS.values()):
         changed = False
         for m in room.members.values():
@@ -803,5 +894,6 @@ async def handle_disconnect(ws):
                     for uid in list(room.members):
                         USER_ROOM.pop(uid, None)
                     del ROOMS[room.code]
+                    await notify_tables()
                     continue
             await room.broadcast_lobby()

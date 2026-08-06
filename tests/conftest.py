@@ -44,15 +44,22 @@ import colver.web.database as db  # noqa: E402
 def fresh_rate_limits():
     """Remettre les compteurs de débit à zéro entre les tests.
 
-    `auth._AUTH_LIMITER` est un objet de module, et tous les tests sortent de la
-    même « IP » (`testclient`) : sans ça, le premier fichier qui teste un échec
+    Ce sont des objets de **module**, et tous les tests sortent de la même
+    « IP » (`testclient`) — et, base neuve oblige, du même compte `alice` avec
+    le même identifiant. Sans ça, le premier fichier qui teste un échec
     d'authentification laisse le budget vide pour tous les suivants, et les
     échecs qui s'ensuivent n'ont rien à voir avec ce qu'ils prétendent tester.
+    Constaté en vrai sur `rooms._CREATE_LIMITER` : quatre tests de tables
+    publiques échouaient sur « vous ouvrez des tables trop vite ».
     """
     import colver.web.auth as _auth
-    _auth._AUTH_LIMITER.reset()
+    import colver.web.rooms as _rooms
+    limiters = (_auth._AUTH_LIMITER, _rooms._CREATE_LIMITER)
+    for limiter in limiters:
+        limiter.reset()
     yield
-    _auth._AUTH_LIMITER.reset()
+    for limiter in limiters:
+        limiter.reset()
 
 
 @pytest.fixture
