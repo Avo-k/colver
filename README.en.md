@@ -3,20 +3,10 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?logo=pypi&logoColor=white&label=PyPI&color=blue" alt="PyPI version"></a>
-  <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
-</p>
-
-<p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021%20edition-000000?logo=rust&logoColor=white" alt="Rust 2021 edition"></a>
-  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+"></a>
-  <a href="https://github.com/Avo-k/colver/tree/master/colver-wasm"><img src="https://img.shields.io/badge/WebAssembly-in--browser%20solver-654FF0?logo=webassembly&logoColor=white" alt="WebAssembly"></a>
-  <a href="https://github.com/Avo-k/colver/blob/master/Dockerfile"><img src="https://img.shields.io/badge/Docker-x86--64%20%2F%20ARM64-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
-</p>
-
-<p align="center">
   <a href="https://colver.net/"><img src="https://img.shields.io/badge/play-colver.net-2ea44f?logo=firefoxbrowser&logoColor=white" alt="Play on colver.net"></a>
+  <a href="https://pypi.org/project/colver/"><img src="https://img.shields.io/pypi/v/colver?logo=pypi&logoColor=white&label=PyPI&color=blue" alt="PyPI version"></a>
   <a href="https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20models-Hugging%20Face-FFD21E" alt="Models on Hugging Face"></a>
+  <a href="https://github.com/Avo-k/colver/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license"></a>
 </p>
 
 # Colver
