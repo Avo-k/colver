@@ -343,22 +343,53 @@ class AgentTable:
         self.agents = {}
         self.errors = {}
         self.window = bool(window)
+        # Retenus pour pouvoir asseoir un bot **après coup** (cf. `seat_bot`) :
+        # un siège humain dont le temps s'est écoulé, ou qu'on remplace.
+        self._spec_args = {
+            "bid_model": bid_model, "play_model": play_model,
+            "belief_model": belief_model, "time_ms": time_ms,
+        }
         # Mondes résolus et temps par décision IS-DD de la donne en cours.
         self._deal_worlds = []
         self._deal_ms = []
         for seat, kind in self.kinds.items():
-            spec = spec_for(
-                kind,
-                bid_model=bid_model,
-                play_model=play_model,
-                belief_model=belief_model,
-                time_ms=time_ms,
-            )
-            try:
-                self.agents[int(seat)] = colver.Agent(spec, int(seat))
-            except Exception as e:  # noqa: BLE001 — a bad model must not kill the session
-                self.errors[int(seat)] = str(e)
-                logger.warning("seat %s (%s) unavailable: %s", seat, kind, e)
+            self._build(seat, kind)
+
+    def _build(self, seat, kind):
+        spec = spec_for(kind, **self._spec_args)
+        try:
+            self.agents[int(seat)] = colver.Agent(spec, int(seat))
+            return True
+        except Exception as e:  # noqa: BLE001 — a bad model must not kill the session
+            self.errors[int(seat)] = str(e)
+            logger.warning("seat %s (%s) unavailable: %s", seat, kind, e)
+            return False
+
+    def seat_bot(self, seat, kind, env, history):
+        """Asseoir un bot à un siège **en cours de donne**.
+
+        Un agent n'est pas une fonction de la position : il tient des croyances
+        et un suivi de coupes construits coup par coup depuis le début de la
+        donne. On ne peut donc pas le brancher sur l'`env` courant — il faut lui
+        rejouer le préfixe visible, exactement comme la reprise d'une donne
+        interrompue le fait en solo.
+
+        `history` est le journal de la donne (`PlaySession.history`) et `env` un
+        moteur **neuf**, remis à la distribution : l'appelant le fabrique, parce
+        que lui seul connaît le donneur et les mains d'origine.
+        """
+        seat = int(seat)
+        if seat in self.agents:
+            return True
+        self.kinds[seat] = kind
+        if not self._build(seat, kind):
+            return False
+        agent = self.agents[seat]
+        agent.init_deal(env)
+        for entry in history:
+            agent.observe(env, int(entry["action"]))
+            env.step(int(entry["action"]))
+        return True
 
     def __bool__(self):
         return bool(self.agents)

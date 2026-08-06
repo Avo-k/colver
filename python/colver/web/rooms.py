@@ -20,7 +20,8 @@ import colver.web.match_state as match_state
 import colver.web.pacing as pacing
 import colver.web.ratelimit as ratelimit
 from colver.web.game_manager import (
-    PlaySession, only_pass_is_legal, in_last_trick, cards_in_trick, trick_snapshot)
+    BID_PASS, PlaySession, only_pass_is_legal, in_last_trick, cards_in_trick,
+    trick_snapshot)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,56 @@ PUBLIC_STALE_S = 30 * 60
 # Ouvrir une table est bon marché pour l'hôte et coûteux pour la liste : sans
 # frein, un seul client la remplit de tables mortes.
 _CREATE_LIMITER = ratelimit.RateLimiter(limit=6, window=60)
+
+# ===== Le temps de jeu =====
+#
+# Une table partagée fait attendre trois autres personnes : un siège qui ne
+# répond pas ne peut pas bloquer la partie. Mais **la socket ne juge rien** —
+# une connexion qui saute n'est pas un abandon, et un onglet ouvert devant
+# lequel il n'y a plus personne en est un. Seul le temps tranche.
+#
+# Deux compteurs, et les confondre serait injuste. Les manques **consécutifs**
+# mesurent une absence : deux d'affilée resserrent le budget, six d'affilée
+# rendent le siège. Les manques **cumulés** mesurent autre chose — laisser
+# filer la pendule pour voir jouer le bot à sa place — et la sanction n'est
+# alors pas de perdre la partie mais de ne pas la faire compter.
+TURN_SECONDS = 30.0
+TURN_SECONDS_SHORT = 10.0
+MISSES_TO_SHORTEN = 2      # consécutifs : budget resserré
+MISSES_TO_FORFEIT = 6      # consécutifs : le siège passe à l'IA
+MISSES_TOTAL_UNRATED = 3   # cumulés sur la partie : elle ne compte plus
+
+
+class SeatClock:
+    """Le temps d'un siège, et ce qu'il en a fait.
+
+    `run` repart à zéro dès que le joueur agit : il est revenu, il redevient un
+    joueur normal. `total` ne repart jamais — c'est ce qui distingue « ma
+    connexion a sauté deux fois » de « je laisse jouer le bot ».
+    """
+
+    def __init__(self):
+        self.run = 0      # manques consécutifs
+        self.total = 0    # manques cumulés sur la partie
+
+    def budget(self):
+        shortened = (self.run >= MISSES_TO_SHORTEN
+                     or self.total >= MISSES_TOTAL_UNRATED)
+        return TURN_SECONDS_SHORT if shortened else TURN_SECONDS
+
+    def played(self):
+        self.run = 0
+
+    def missed(self):
+        self.run += 1
+        self.total += 1
+
+    def forfeited(self):
+        return self.run >= MISSES_TO_FORFEIT
+
+    def unrated(self):
+        return self.total >= MISSES_TOTAL_UNRATED
+
 
 # Sans compte, on peut jouer **une donne** à une table partagée, pas une partie.
 # Une partie en 1000/2000 dure une demi-heure, trois autres personnes en
@@ -186,6 +237,16 @@ class Room:
         # Privée (on transmet le lien) ou publique (elle s'annonce).
         self.visibility = "private"
         self.created_at = time.monotonic()
+        # Le temps de chaque siège, sur toute la partie — pas sur la donne : le
+        # compteur cumulé n'aurait aucun sens s'il repartait à chaque donne.
+        self.clocks = [SeatClock() for _ in range(4)]
+        # Échéance du siège attendu, en temps mur : le client compte à rebours
+        # depuis elle plutôt que depuis sa propre horloge, sinon un client en
+        # retard afficherait « 4 s » alors que le coup est déjà joué.
+        self.deadline = None
+        # Sièges rendus à l'IA faute d'avoir répondu. Le siège redevient un
+        # siège de bot ordinaire ; on garde le nom pour pouvoir le dire.
+        self.forfeited = {}
 
     # ----- annonce publique -----
 
@@ -336,6 +397,17 @@ class Room:
             state["legal_actions"] = []
         return state
 
+    def _deadline_ms(self):
+        """Ce qu'il reste au siège attendu, en millisecondes.
+
+        Une durée et non un instant : l'horloge du client n'est pas la nôtre, et
+        un décalage de quelques secondes entre les deux se lirait comme un
+        compteur qui ment. Renvoyée à chaque état, donc resynchronisée souvent.
+        """
+        if self.deadline is None:
+            return None
+        return max(0, int((self.deadline - time.monotonic()) * 1000))
+
     def _seat_names(self, viewer_seat):
         """Qui tient chaque siège, dans l'ordre d'affichage.
 
@@ -351,9 +423,19 @@ class Room:
             p = _phys_seat(d, viewer_seat)
             uid = self.seats[p]
             if uid is None:
-                seats.append({"name": self.bot_type, "bot": True})
+                # `replaced` distingue un siège que l'IA a **repris** d'un siège
+                # qu'elle tenait depuis le début : ce n'est pas la même chose à
+                # lire, et seul le premier mérite d'être signalé.
+                seats.append({"name": self.bot_type, "bot": True,
+                              "replaced": self.forfeited.get(p)})
             else:
-                seats.append({"name": self.username(uid), "bot": False})
+                seats.append({
+                    "name": self.username(uid), "bot": False,
+                    # La socket ne juge rien — mais elle se dit : les trois
+                    # autres méritent de savoir pourquoi ça n'avance pas.
+                    "connected": self.members.get(uid, {}).get("ws") is not None,
+                    "misses": self.clocks[p].total,
+                })
         return seats
 
     async def broadcast_game_state(self, snapshot=False, extra=None):
@@ -379,6 +461,11 @@ class Room:
             "seat_names": self._seat_names(viewer_seat),
             "waiting_for": disp_seat(self.waiting_for, viewer_seat)
             if self.waiting_for is not None else None,
+            "deadline_ms": self._deadline_ms(),
+            # Cette partie compte-t-elle encore pour ce siège ? Laisser filer la
+            # pendule trois fois, c'est déléguer ses décisions au bot : la
+            # partie cesse alors de compter **pour celui-là**, et pour lui seul.
+            "unrated": self.clocks[viewer_seat].unrated(),
             "game_id": self.game_id,
             # De quoi décider quel bouton proposer en fin de donne : seul l'hôte
             # enchaîne, les autres lisent le résultat en attendant.
@@ -556,15 +643,80 @@ class Room:
                     self.waiting_for = None
                 session.play_action(action)
             else:
-                # Human turn: wait for a valid action from that seat
+                # Tour d'un humain — sous échéance. Trois autres personnes
+                # attendent : un siège qui ne répond pas ne peut pas arrêter la
+                # partie. C'est le temps qui juge, jamais l'état de la socket.
+                auto = False
+                budget = self.clocks[p].budget()
                 self.waiting_for = p
-                action = await self._await_human_action(p)
-                self.waiting_for = None
+                self.deadline = time.monotonic() + budget
+                await self.broadcast_game_state()
+                try:
+                    action = await asyncio.wait_for(
+                        self._await_human_action(p), budget)
+                    self.clocks[p].played()
+                except asyncio.TimeoutError:
+                    action = await self._timeout_action(p)
+                    self.clocks[p].missed()
+                    auto = True
+                finally:
+                    self.waiting_for = None
+                    self.deadline = None
                 session.play_action(action)
+                if auto:
+                    # Le coup est marqué, pour tout le monde et pour toujours :
+                    # sans ça la revue d'analyse attribuerait son coût à une
+                    # décision que personne n'a prise.
+                    session.history[-1]["auto"] = True
+                    await self._after_timeout(p)
             await db.append_action(self.game_id, session.history[-1])
             if session.env.is_terminal():
                 await self._close_deal()
             await self._after_action(p, action)
+
+    async def _timeout_action(self, seat):
+        """Ce que le serveur joue quand le temps est écoulé.
+
+        **En enchère, PASSE, toujours.** C'est la seule action neutre, et elle
+        est toujours légale. Faire annoncer un bot à la place de quelqu'un qui
+        est peut-être en train de revenir déciderait la donne entière — un
+        capot, une coinche — sur une absence de trente secondes.
+
+        **En jeu, le bot de la table.** Il faut bien poser une carte, et une
+        carte au hasard punirait d'abord le *partenaire* de l'absent, qui n'a
+        rien fait ; elle salirait aussi la donne dans Rejouer, où elle
+        s'afficherait comme une faute chiffrée. Que l'absent hérite d'un bon
+        joueur est l'objection évidente : elle se règle par la sanction du
+        siège, pas en jouant mal.
+        """
+        session = self.session
+        if session.env.phase() == 0:
+            return BID_PASS
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, session.seat_bot, seat, self.bot_type)
+        return await loop.run_in_executor(None, session.get_ai_action)
+
+    async def _after_timeout(self, seat):
+        """Ce qu'un temps écoulé déclenche, une fois le coup joué."""
+        clock = self.clocks[seat]
+        if not clock.forfeited() or self.seats[seat] is None:
+            return
+        # Le siège est rendu à l'IA. La partie **continue** : le partenaire n'a
+        # rien fait et peut encore la gagner. Le pilote joue déjà naturellement
+        # un siège vide, et le bot y est assis depuis le premier coup manqué.
+        name = self.username(self.seats[seat])
+        self.forfeited[seat] = name
+        self.seats[seat] = None
+        logger.info("salon %s : siège %s (%s) rendu à l'IA après %d coups manqués",
+                    self.code, seat, name, clock.run)
+        for m in self.connected_members():
+            await self._send(m["ws"], {
+                "type": "room_error",
+                "msg": f"{name} n'a pas joué depuis {clock.run} coups — "
+                       f"l'IA prend le siège, la partie continue.",
+            })
+        await self.broadcast_lobby()
 
     async def _drive(self):
         try:
@@ -607,6 +759,9 @@ class Room:
     async def _after_action(self, actor, action):
         session = self.session
         phase = session.history[-1]["phase"]
+        # Un coup joué par le temps se dit à la table, pas seulement en base :
+        # c'est ce qui distingue une carte choisie d'une carte subie.
+        auto = {"auto": True} if session.history[-1].get("auto") else {}
         belote = {}
         if session._belote_event:
             belote = {"belote_event": session._belote_event}
@@ -622,6 +777,7 @@ class Room:
                 "player": disp_seat(actor, p),
                 "action": int(action),
                 "phase": int(phase),
+                **auto,
                 **belote,
             }
             if belote:

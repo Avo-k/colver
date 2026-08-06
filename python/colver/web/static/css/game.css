@@ -243,3 +243,34 @@
         white-space: nowrap;
     }
 }
+
+/* ===== Les signes de la pendule (tables partagées) =====
+   Un signe = un état, jamais une phrase à l'écran : l'explication est dans
+   l'infobulle. Ils vivent sur l'étiquette du siège, seul endroit déjà lu à
+   chaque tour — et sur téléphone, seul endroit encore visible. */
+.seat-clock {
+    margin-left: var(--sp-2);
+    font-variant-numeric: tabular-nums;
+    color: var(--c-text-dim);
+}
+/* Les dix dernières secondes : la couleur dit ce que le compteur ne dit pas
+   assez vite. */
+.seat-clock-urgent {
+    color: var(--c-danger-txt);
+    font-weight: var(--fw-semi);
+}
+.seat-badge {
+    margin-left: var(--sp-1);
+    font-size: 0.85em;
+    cursor: help;
+}
+/* « hors classement » concerne la partie, pas un siège : il va au bandeau de
+   score, à côté du score de partie. */
+.unrated-note {
+    margin-left: var(--sp-2);
+    font-size: var(--fs-2xs);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--c-text-dim);
+    cursor: help;
+}

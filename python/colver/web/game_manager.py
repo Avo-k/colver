@@ -475,6 +475,22 @@ class PlaySession(TrickTracker):
         self.env.step(action)
         self._finalize_trick_completion()
 
+    def seat_bot(self, seat, kind):
+        """Asseoir un bot à un siège humain, donne déjà commencée.
+
+        Sert quand un joueur laisse filer son temps, et quand son siège est
+        repris pour de bon. Le bot est **complet** — il annonce avec bid v6 et
+        joue avec le bot de la table, ce que `spec_for` monte d'un bloc : un
+        remplaçant qui se contenterait de passer ne serait pas un joueur.
+
+        Le moteur qu'on lui donne est neuf et repart de la distribution
+        d'origine : `self.env` est à la position courante, or un agent a besoin
+        d'avoir *vu* chaque coup pour tenir ses croyances et ses coupes.
+        """
+        replay = colver.Env.deal_with_hands(
+            int(self.env.get_dealer()), [list(h) for h in self.initial_hands])
+        return self.bots.seat_bot(seat, kind, replay, self.history)
+
     def get_ai_action(self):
         player = int(self.env.current_player())
         if only_pass_is_legal(self.env):

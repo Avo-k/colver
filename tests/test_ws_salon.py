@@ -471,3 +471,91 @@ class TestTablesPubliques:
             msg = s.until(lambda m: m.get("type") in ("room_state", "tables_list"),
                           limit=20)
             assert msg["type"] == "room_state"
+
+
+class TestPendule:
+    """Trois autres personnes attendent : un siège qui ne répond pas ne peut
+    pas arrêter la partie.
+
+    Deux compteurs, et les confondre serait injuste. Les manques **consécutifs**
+    mesurent une absence — deux resserrent le budget, six rendent le siège. Les
+    manques **cumulés** mesurent autre chose, laisser filer la pendule pour voir
+    jouer le bot à sa place, et se paient en classement, pas en défaite.
+    """
+
+    def test_les_paliers_du_compteur(self):
+        c = rooms.SeatClock()
+        assert c.budget() == rooms.TURN_SECONDS
+        c.missed()
+        assert c.budget() == rooms.TURN_SECONDS, "un manque isolé ne coûte rien"
+        c.missed()
+        assert c.budget() == rooms.TURN_SECONDS_SHORT
+        # Rejouer, c'est être revenu : le budget aussi.
+        c.played()
+        assert c.budget() == rooms.TURN_SECONDS
+        assert not c.forfeited() and not c.unrated()
+
+    def test_le_cumule_ne_repart_jamais(self):
+        """Trois manques éparpillés sur la partie, chacun suivi d'un coup joué :
+        aucune absence, mais une délégation — et elle, elle compte."""
+        c = rooms.SeatClock()
+        for _ in range(3):
+            c.missed()
+            c.played()
+        assert c.run == 0 and not c.forfeited()
+        assert c.unrated(), "trois manques cumulés déclassent la partie"
+        assert c.budget() == rooms.TURN_SECONDS_SHORT
+
+    def test_six_manques_d_affilee_rendent_le_siege(self):
+        c = rooms.SeatClock()
+        for _ in range(6):
+            c.missed()
+        assert c.forfeited()
+
+    def test_le_temps_ecoule_fait_jouer_le_serveur(self, client, monkeypatch):
+        """Et le coup est **marqué**, pour tout le monde : sans ça la revue
+        d'analyse attribuerait son coût à une décision que personne n'a
+        prise."""
+        monkeypatch.setattr(rooms, "TURN_SECONDS", 0.05)
+        monkeypatch.setattr(rooms, "TURN_SECONDS_SHORT", 0.05)
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            s.create(target=0)
+            s.start()
+            # On ne joue jamais : le serveur finit par jouer à notre place.
+            move = s.until(lambda m: m.get("type") == "room_move"
+                           and m.get("auto"), limit=200)
+            assert move["auto"] is True
+            s.leave()
+
+    def test_en_enchere_le_serveur_passe_toujours(self, client, monkeypatch):
+        """La seule action neutre. Faire annoncer un bot à la place de quelqu'un
+        qui revient peut-être déciderait la donne entière — un capot, une
+        coinche — sur une absence de trente secondes."""
+        monkeypatch.setattr(rooms, "TURN_SECONDS", 0.05)
+        monkeypatch.setattr(rooms, "TURN_SECONDS_SHORT", 0.05)
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            s.create(target=0)
+            s.start()
+            move = s.until(lambda m: m.get("type") == "room_move"
+                           and m.get("auto") and m.get("phase") == 0,
+                           limit=200)
+            assert move["action"] == 0, "une enchère automatique doit être PASSE"
+            s.leave()
+
+    def test_l_echeance_voyage_avec_l_etat(self, client):
+        """Une durée et non un instant : l'horloge du client n'est pas la nôtre,
+        et un décalage entre les deux se lirait comme un compteur qui ment."""
+        _register(client)
+        with client.websocket_connect("/ws") as ws:
+            s = Salon(ws)
+            s.create(target=0)
+            s.start()
+            msg = s.until(lambda m: m.get("type") == "room_game_state"
+                          and m.get("waiting_for") == Salon.MY_SEAT, limit=200)
+            assert 0 < msg["deadline_ms"] <= rooms.TURN_SECONDS * 1000
+            assert msg["unrated"] is False
+            s.leave()

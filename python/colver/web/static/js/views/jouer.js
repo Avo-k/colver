@@ -109,6 +109,27 @@ const TEMPLATE = `
         <button id="start-game">Jouer</button>
         <p id="who-note" class="mode-note hidden"></p>
     </div>
+    <details id="shared-rules" class="shared-rules hidden">
+        <summary>Comment se passe une partie entre joueurs</summary>
+        <ul>
+            <li>Les sièges vides sont tenus par l'IA&nbsp;: une table se lance
+                même à un seul joueur.</li>
+            <li>Vous avez <b>30 secondes</b> pour jouer. Le décompte n'apparaît
+                qu'après 10 secondes.</li>
+            <li>Temps écoulé&nbsp;: en enchère on <b>passe</b> pour vous&nbsp;;
+                en jeu, le bot de la table pose une carte. Le coup est marqué
+                ⏱ pour tout le monde.</li>
+            <li><b>Deux coups d'affilée</b> laissés passer&nbsp;: 10 secondes
+                par coup, jusqu'à ce que vous rejouiez.</li>
+            <li><b>Trois au total</b> dans la partie&nbsp;: 10 secondes jusqu'au
+                bout, et la partie ne compte pas dans votre classement.</li>
+            <li><b>Six d'affilée</b>&nbsp;: votre siège passe à l'IA
+                définitivement — elle annonce et joue vraiment. La partie
+                continue&nbsp;: votre partenaire peut encore la gagner.</li>
+            <li>Une connexion qui saute ne coûte rien en soi. Seul le temps
+                compte.</li>
+        </ul>
+    </details>
     <div id="public-tables" class="public-tables hidden">
         <span class="config-group-label">Tables ouvertes</span>
         <div id="public-list"></div>
@@ -243,6 +264,11 @@ function setWho(who) {
     // solo poserait une question à laquelle la colonne choisie répond déjà.
     document.getElementById('join-code').classList.toggle('hidden', !spec.shared);
     document.getElementById('public-tables').classList.toggle('hidden', !spec.public);
+    // Les règles de temps ne concernent ni le solo ni personne d'autre : les
+    // afficher là où elles ne s'appliquent pas, c'est apprendre à ne pas les
+    // lire. Repliées par défaut — il n'y a pas tant à dire, mais ça se lit une
+    // fois, pas à chaque partie.
+    document.getElementById('shared-rules').classList.toggle('hidden', !spec.shared);
     // On ne s'abonne à la liste que quand elle est à l'écran : sinon chaque
     // siège pris ailleurs sur le site réveillerait tous les clients connectés.
     send({ type: 'room_tables', watch: !!spec.public });
@@ -461,6 +487,9 @@ function renderLobby(data) {
 function handleGameState(data) {
     inRoom = false;
     table.localEchoBids = true;
+    // Le solo n'a pas de pendule : personne n'attend derrière. C'est aussi
+    // pourquoi la règle ne s'explique que sur les tables partagées.
+    clearClock();
     document.getElementById('play-config-toggle').style.display = '';
     if (!gameOnScreen) {
         gameOnScreen = true;
@@ -504,6 +533,122 @@ function handleError(data) {
     if (statusEl) statusEl.textContent = `Erreur : ${data.msg}`;
 }
 
+// ===== Les signes de la pendule =====
+//
+// Un signe = un état, jamais une phrase à l'écran ; la phrase est dans
+// l'infobulle. Cinq choses à dire, et elles ne vivent pas au même endroit : le
+// temps qui reste et la connexion perdue sont **sur le siège**, un siège repris
+// par l'IA change son *nom*, et « hors classement » concerne la partie, donc le
+// bandeau de score.
+
+const SEAT_LABEL_ELS = ['seat-label-north', 'seat-label-east',
+                        'seat-label-south', 'seat-label-west'];
+
+let clockSeat = null;      // siège d'affichage attendu, ou null
+let clockUntil = 0;        // instant local d'échéance (ms)
+let clockTimer = null;
+let clockWarned = false;   // le son des dix dernières secondes est parti
+
+function clockSpan(seat) {
+    const label = document.getElementById(SEAT_LABEL_ELS[seat]);
+    if (!label) return null;
+    let el = label.querySelector('.seat-clock');
+    if (!el) {
+        el = document.createElement('span');
+        el.className = 'seat-clock';
+        label.appendChild(el);
+    }
+    return el;
+}
+
+function clearClock() {
+    for (const id of SEAT_LABEL_ELS) {
+        document.getElementById(id)?.querySelector('.seat-clock')?.remove();
+    }
+    if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+    clockSeat = null;
+    clockWarned = false;
+}
+
+function paintClock() {
+    if (clockSeat === null) return;
+    const left = Math.max(0, Math.ceil((clockUntil - Date.now()) / 1000));
+    const el = clockSpan(clockSeat);
+    if (!el) return;
+    // Rien pendant les dix premières secondes : 95 % des coups se jouent
+    // là-dedans, et une pendule permanente mettrait sous pression un jeu qui ne
+    // l'est pas. Elle apparaît quand elle veut dire quelque chose.
+    const show = left <= CLOCK_SHOW_FROM;
+    el.textContent = show ? `${left}s` : '';
+    el.classList.toggle('seat-clock-urgent', show && left <= CLOCK_URGENT);
+    if (show && left <= CLOCK_URGENT && !clockWarned && clockSeat === MY_SEAT) {
+        // Un son, une seule fois, et seulement pour celui dont c'est le tour :
+        // trois personnes qui reçoivent une alarme pour un problème qui n'est
+        // pas le leur, c'est du bruit qu'on apprend à ignorer.
+        clockWarned = true;
+        import('../sounds.js').then(s => s.yourTurn()).catch(() => {});
+    }
+}
+
+const CLOCK_SHOW_FROM = 20;   // secondes restantes avant que le compteur sorte
+const CLOCK_URGENT = 10;
+
+function setClock(seat, deadlineMs) {
+    if (seat === null || seat === undefined || !deadlineMs) { clearClock(); return; }
+    if (seat !== clockSeat) { clearClock(); clockSeat = seat; }
+    // L'échéance est une **durée** rendue par le serveur : son horloge n'est pas
+    // celle du navigateur, et comparer deux horloges ferait mentir le compteur.
+    clockUntil = Date.now() + deadlineMs;
+    if (!clockTimer) clockTimer = setInterval(paintClock, 250);
+    paintClock();
+}
+
+/** Les états d'un siège qui ne sont pas son nom : connexion, reprise, retards. */
+function paintSeatBadges(seats) {
+    for (let d = 0; d < 4; d++) {
+        const el = document.getElementById(SEAT_LABEL_ELS[d]);
+        const who = seats && seats[d];
+        if (!el) continue;
+        el.querySelector('.seat-badge')?.remove();
+        if (!who) continue;
+        let badge = '', title = '';
+        if (who.bot && who.replaced) {
+            badge = '🤖';
+            title = `${who.replaced} n'a pas joué : l'IA a pris le siège`;
+        } else if (!who.bot && who.connected === false) {
+            badge = '⚡';
+            title = 'Connexion perdue — le siège garde son temps de jeu';
+        } else if (!who.bot && who.misses > 0) {
+            badge = '⏱';
+            title = `${who.misses} coup${who.misses > 1 ? 's' : ''} joué`
+                + `${who.misses > 1 ? 's' : ''} par le temps`;
+        }
+        if (!badge) continue;
+        const span = document.createElement('span');
+        span.className = 'seat-badge';
+        span.textContent = badge;
+        span.title = title;
+        el.appendChild(span);
+    }
+}
+
+function paintUnrated(unrated) {
+    const bar = document.getElementById('match-info');
+    if (!bar) return;
+    let el = document.getElementById('unrated-note');
+    if (!unrated) { el?.remove(); return; }
+    if (!el) {
+        el = document.createElement('span');
+        el.id = 'unrated-note';
+        el.className = 'unrated-note';
+        el.textContent = 'hors classement';
+        el.title = 'Vous avez laissé passer trois coups : cette partie ne '
+            + 'comptera pas dans votre classement.';
+        bar.classList.remove('hidden');
+        bar.appendChild(el);
+    }
+}
+
 // ===== Messages WS — salon =====
 
 function handleRoomState(data) {
@@ -543,6 +688,11 @@ function handleRoomGameState(data) {
     // (par sa position) et un humain (par son pseudo).
     if (data.seat_names) table.setSeatLabels(data.seat_names);
     table.handleGameState(data);
+    // Les signes viennent **après** `setSeatLabels`, qui réécrit les étiquettes
+    // de fond en comble : posés avant, ils seraient effacés à chaque état.
+    if (data.seat_names) paintSeatBadges(data.seat_names);
+    setClock(data.waiting_for, data.deadline_ms);
+    paintUnrated(data.unrated);
 }
 
 function handleRoomMove(data) {
@@ -784,6 +934,7 @@ export function unmount() {
     offMessage('room_error', handleRoomError);
     offMessage('room_left', handleRoomLeft);
     offMessage('tables_list', handleTables);
+    clearClock();
     // Quitter la page, c'est cesser de regarder la liste : sans ça le serveur
     // continuerait de pousser à une socket qui n'affiche plus rien.
     send({ type: 'room_tables', watch: false });
