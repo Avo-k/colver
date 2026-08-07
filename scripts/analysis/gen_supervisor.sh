@@ -41,6 +41,36 @@ SUP="${LOG%.log}_supervisor.log"
 LAYER="${COLVER_GEN_LAYER:-$REPO/data/deals/scores_isdd_v2.sc}"
 STALL_S="${COLVER_GEN_STALL_S:-1500}"
 
+# Second détecteur, **indépendant du débit** : l'écart entre « abouties » et « écrites »
+# du dernier checkpoint. En régime sain il vaut le nombre de donnes en vol chez les 160
+# threads — mesuré entre 38 et 125 sur deux jours. Dès qu'une donne manque, il croît sans
+# borne au rythme de la production. 800 laisse un facteur 6 sur le maximum observé et
+# trahit le trou en ~10 min à 1,3 donne/s, contre 25 pour le délai de gel.
+#
+# Les deux détecteurs sont gardés : celui-ci voit vite mais dépend du format du log,
+# celui du temps est grossier mais ne dépend de rien. Le premier des deux qui parle gagne.
+GAP_MAX="${COLVER_GEN_GAP_MAX:-800}"
+
+# Écart du dernier checkpoint écrit, ou vide si le processus COURANT n'en a pas encore
+# écrit. Deux précautions, chacune pour un piège rencontré :
+#
+# 1. Le grep vise la ligne de checkpoint et non la dernière ligne du log — une ligne
+#    d'erreur arrivée entre deux checkpoints ferait rendre du vide, donc perdrait le
+#    détecteur au moment précis où il sert.
+# 2. **La lecture démarre après la dernière ligne de reprise.** Le log est en mode ajout,
+#    donc juste après un redémarrage la dernière ligne de checkpoint est celle de
+#    l'ANCIEN processus et porte encore son gros écart : sans cette borne, le superviseur
+#    tuerait le processus neuf à la seconde suivante, en boucle, et le run n'avancerait
+#    plus jamais.
+layer_gap() {
+  local start e
+  start=$(grep -n "donnes déjà étiquetées" "$LOG" 2>/dev/null | tail -1 | cut -d: -f1)
+  [ -z "$start" ] && start=1
+  e=$(tail -n +"$start" "$LOG" 2>/dev/null | grep "donnes écrites" | tail -1 \
+        | sed -n 's/.*✔ \([0-9]*\) donnes écrites (\([0-9]*\) abouties.*/\2-\1/p')
+  [ -n "$e" ] && echo $((e))
+}
+
 # Le binaire est **épinglé** hors de `target/`. Un `cargo build --release` lancé par
 # quelqu'un d'autre dans ce dépôt remplace `target/release/gen_score_layer` sans rien
 # dire ; le processus en cours n'en souffre pas (Linux garde l'inode), mais la relance
@@ -103,11 +133,19 @@ while true; do
     # Générateur vivant : le compteur d'écrites doit avancer. S'il ne bouge plus, la
     # donne en tête du trou a échoué et **rien de ce qui se calcule ne sera gardé**.
     c=$(layer_count)
+    g=$(layer_gap)
+    why=""
+    if [ -n "$g" ] && [ "$g" -gt "$GAP_MAX" ]; then
+      why="écart écrites/abouties à $g (> $GAP_MAX)"
+    fi
     if [ "$c" != "$last_count" ]; then
       last_count=$c
       last_move=$(date +%s)
     elif [ "$c" != "-1" ] && [ $(( $(date +%s) - last_move )) -gt "$STALL_S" ]; then
-      echo "$(stamp) préfixe GELÉ à $c depuis ${STALL_S}s — redémarrage (tout ce qui suit le trou est perdu de toute façon)" >>"$SUP"
+      why="compteur figé depuis ${STALL_S}s"
+    fi
+    if [ -n "$why" ]; then
+      echo "$(stamp) préfixe GELÉ à $c — $why — redémarrage (tout ce qui suit le trou est perdu de toute façon)" >>"$SUP"
       kill $(pgrep -x gen_score_layer) 2>/dev/null
       # Pas de relance ici : le tour suivant constate l'absence et s'en charge, donc
       # le plafond `MAX` compte aussi les redémarrages pour gel. Un gel qui se répète
