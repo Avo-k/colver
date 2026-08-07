@@ -62,7 +62,7 @@ vers ses propres fichiers.
 - **Interprétabilité ML** — distillation XGBoost + sondage de couche cachée révèlent le système de scoring implicite du NN, traduit en règles utilisables par un humain (88-94% d'accord)
 - **Modèle de mondes Playgen** — un transformer causal qui prolonge une donne à partir de ce qu'un seul siège voit ; le dérouler révèle les mains cachées, et c'est de là que viennent désormais les mondes échantillonnés par IS-DD
 - **Une seule couche d'agents** — un bot est une spec TOML (`[bid]` / `[play]` / `[worlds]`), construite côté Rust et pilotée à l'identique par l'arène, le web et `colver.Agent`
-- **Interface web** — jouez en solo ou en salon multijoueur, observez, rejouez avec analyse carte par carte, entraînez-vous sur des problèmes (FastAPI + WebSocket)
+- **Un site qui tourne dessus** — [colver.net](https://colver.net) : parties solo et salons multijoueur, analyse carte par carte, problèmes d'entraînement. Le site n'est pas distribué avec le paquet ; c'est le moteur ci-dessus qu'il fait tourner
 - **Bindings Python** via PyO3 — `Env`, `Agent`, `Analyst` et `Beliefs` avec stubs de types complets, installable depuis PyPI
 - Zéro dépendances dans le cœur (seulement `rand` derrière un feature flag)
 
@@ -246,7 +246,7 @@ résultats accumulés restent privés — ce sont nos mesures, pas une API.
 
 ## Architecture
 
-**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (solveur dans le navigateur) + `python/colver/web` (FastAPI/WebSocket)
+**Workspace :** `colver-core` (Rust pur) + `colver-py` (PyO3/NumPy FFI) + `colver-wasm` (solveur dans le navigateur)
 
 ### Représentation des cartes
 
