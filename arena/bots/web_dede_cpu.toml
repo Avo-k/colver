@@ -1,0 +1,45 @@
+# Dédé, mais avec ses mondes calculés sur le CPU.
+#
+# Raison d'être : `web_dede.toml` décrit ce que colver.net assied vraiment, et
+# il exige un sidecar playgen sur GPU (`fallback = "strict"` — il REFUSE de se
+# construire sans, parce qu'un agent qui change de force en silence transforme
+# toute mesure prise pendant en mensonge). Le sidecar n'est pas publié : c'est
+# de l'infrastructure de service, pas du moteur. Ce bot-ci est donc la version
+# qu'un lecteur peut exécuter chez lui sans rien déployer.
+#
+# **Ce n'est pas un autre joueur, c'est le même en plus lent.** Même modèle de
+# mondes (playgen v2, sur le Hub), même échantillonneur — `playgen/infer.rs`,
+# inférence à cache KV en Rust pur — même solveur, même objectif. Seul le
+# matériel change : ~50× plus lent qu'un GPU, donc à budget de temps égal on
+# cherche beaucoup moins de mondes. C'est là qu'est la perte de force, pas dans
+# la nature de l'agent.
+#
+# Le budget est donc compté en mondes et non en millisecondes : `time_ms = 0`
+# bascule en mode compte, sinon un plancher de 64 mondes serait inatteignable
+# sur CPU et le bot refuserait de jouer.
+
+[bid]
+strategy = "nn"
+model = "models/bid_v6_isdd.bin"
+hidden = 512
+
+[play]
+method = "isdd"
+time_ms = 0
+# 40 mondes par décision : le genou mesuré est à ~60, en dessous le regret monte
+# vite. Sur CPU c'est déjà plusieurs secondes par coup — un budget honnête pour
+# un essai, pas pour une partie.
+determinizations = 40
+objective = "deal_score"
+
+[worlds]
+source = "playgen"
+# Obligatoire pour `source = "playgen"` : contrairement au sidecar, qui reçoit
+# l'URL d'un serveur qui tient déjà le modèle, la source locale doit charger les
+# poids elle-même. Sans cette ligne, `build_world_source` rend une erreur de
+# configuration et le bot ne se construit pas.
+model = "models/playgen/playgen_v2_final.bin"
+fallback = "strict"
+
+[belief]
+model = "models/belief_v4_fix_v2.bin"

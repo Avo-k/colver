@@ -162,9 +162,8 @@ cargo run --bin arena --release -- h2h web_dede web_doudou --matches 200
 # Joint bid+play training (GPU, candle)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
 
-# Playgen GPU sidecar — where IS-DD gets its worlds from
-cargo run -p colver-core --bin playgen_gpu_server --features gpu_server --release -- --playgen models/playgen/playgen_v2_final.bin --port 8003
-export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
+# Dede with its worlds computed on the CPU — nothing to deploy
+cargo run --bin arena --release -- h2h web_dede_cpu web_doudou --matches 20
 ```
 
 Without `$COLVER_PLAYGEN_GPU_URL`, IS-DD bots fall back to constraint-uniform worlds (the web says so in the decision's stats; the arena refuses to build the bot unless the spec opts in).
@@ -232,16 +231,17 @@ model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle_dd|heuristic
 time_ms = 1000
 
-[worlds]                           # IS-DD only; defaults to the sidecar
-source = "sidecar"
-url = "http://localhost:8003"
+[worlds]                           # IS-DD only
+source = "playgen"                 # sidecar (default) | playgen (CPU) | uniform
+model = "models/playgen/playgen_v2_final.bin"   # required by the local source
 ```
 
 Testing a new combination means writing a file, not recompiling. `arena/bots/` holds
-three: `web_dede` and `web_doudou` are **exactly** the two bots colver.net plays
-(standard and fast modes), `heuristic_baseline` needs no weights at all. All three depend
-only on models published on the Hub. The full zoo and the accumulated results stay
-private — they are our measurements, not an API.
+four: `web_dede` and `web_doudou` are **exactly** the two bots colver.net plays (standard
+and fast modes), `web_dede_cpu` is the former with its worlds computed on the CPU — the
+one that runs with nothing to deploy — and `heuristic_baseline` needs no weights at all.
+All four depend only on models published on the Hub. The full zoo and the accumulated
+results stay private: they are our measurements, not an API.
 
 ## Architecture
 

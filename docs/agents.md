@@ -127,8 +127,9 @@ cred_alpha = 0.0       # credibility world-weighting (see search/is_dd.rs)
 parallel = true        # fan DD solves across the rayon pool
 
 [worlds]
-source = "sidecar"     # sidecar|playgen|uniform      (default: sidecar)
-url = "http://gpu-host:8003"   # or $COLVER_PLAYGEN_GPU_URL
+source = "playgen"     # sidecar|playgen|uniform      (default: sidecar)
+model = "models/playgen/playgen_v2_final.bin"   # required by `playgen` (local, CPU)
+url = "http://gpu-host:8003"   # `sidecar` only, or $COLVER_PLAYGEN_GPU_URL
 temperature = 0.8
 batch = 128            # worlds per refill under a time budget
 fallback = "strict"    # strict|uniform
@@ -138,6 +139,17 @@ model = "models/belief_v4_fix_v2.bin"
 ```
 
 Only IS-DD methods consume `[worlds]`; the section is ignored elsewhere.
+
+⚠️ **The default is `sidecar`, and the sidecar server is not published.** colver.net
+serves the same playgen model behind a batching HTTP service on a GPU, roughly 50×
+faster than the CPU path — that is deployment infrastructure, not engine, and it stays
+private. Nothing about the *model* is withheld: same weights (on the Hub), same sampler
+(`playgen/infer.rs`, pure Rust, no CUDA), same worlds in distribution. Only the
+throughput differs. So a bot you run yourself wants `source = "playgen"`, and
+`arena/bots/web_dede_cpu.toml` is that bot, ready to run.
+
+The `sidecar` source itself is still here — it is a plain HTTP client — so pointing it at
+a server of your own works.
 
 `strategy = "playgen"` is the odd one out: `model` points at a **playgen v2**
 checkpoint, not a bid net, and the policy (`PlaygenBidPolicy`, in
@@ -180,4 +192,4 @@ to specs lives in `python/colver/web/agents.py`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the rest of the crate
 - `colver-core/src/search/is_dd.rs` — the IS-DD search itself, heavily commented
-- `colver-core/src/playgen/` — the world model, and `src/bin/playgen_gpu_server.rs` its sidecar
+- `colver-core/src/playgen/` — the world model; `infer.rs` runs it on the CPU in pure Rust

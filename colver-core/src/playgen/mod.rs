@@ -26,10 +26,10 @@ pub mod infer;
 #[cfg(feature = "rand")]
 pub mod analysis;
 
-#[cfg(feature = "dmc_train")]
+#[cfg(feature = "playgen_gpu")]
 pub mod model;
 
-#[cfg(feature = "dmc_train")]
+#[cfg(feature = "playgen_gpu")]
 pub mod gpu;
 
 #[cfg(test)]

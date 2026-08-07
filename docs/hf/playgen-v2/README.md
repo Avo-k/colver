@@ -206,26 +206,37 @@ entraînée pour annoncer et qu'elle ne voit pas le score de la partie.
    serrée.
 4. À 43 Mo il ne tient plus en cache L3 : l'inférence CPU est limitée par la mémoire.
 
-## Servir le modèle sur GPU
+## Faire tourner le modèle
 
-Pour un usage intensif, Colver fournit un sidecar HTTP :
-
-```bash
-playgen_gpu_server --playgen playgen_v2_final.bin --port 8003
-```
+L'inférence est en **Rust pur, sur CPU** — cache KV, pas de PyTorch, pas de CUDA,
+aucune dépendance à installer. C'est ce que consomme la recherche IS-DD :
 
 ```toml
 [play]
 method = "isdd"
+time_ms = 0
+determinizations = 40
+
 [worlds]
-source = "sidecar"
-url = "http://localhost:8003"
+source = "playgen"
+model = "models/playgen/playgen_v2_final.bin"
 ```
+
+Bot prêt à l'emploi dans le dépôt : `arena/bots/web_dede_cpu.toml`.
+
+**Compter ~2,3 ms par pas de décodage, et 64 pas par monde** (2 jetons × 32 cartes),
+donc de l'ordre de 150 ms par monde sur un cœur. À 40 mondes par décision, un coup
+coûte plusieurs secondes : c'est utilisable pour analyser une position, pas pour jouer
+une partie au rythme d'une table.
+
+**Le service GPU n'est pas distribué.** colver.net fait tourner ce même modèle derrière
+un sidecar HTTP par lots, ~50× plus rapide — c'est de l'infrastructure de déploiement,
+pas du moteur, et elle reste privée. Ça ne change rien à ce que vous pouvez reproduire :
+mêmes poids, même échantillonneur, mêmes mondes en distribution. Seul le débit diffère.
 
 Détails de tokenisation et d'architecture :
 [`colver-core/src/playgen/`](https://github.com/Avo-k/colver/tree/master/colver-core/src/playgen) —
-`tokens.rs` porte le vocabulaire et les deux formats, `model.rs` le transformer,
-`infer.rs` l'inférence à cache KV en Rust pur.
+`tokens.rs` porte le vocabulaire et les deux formats, `infer.rs` l'inférence à cache KV.
 
 ## Règles
 

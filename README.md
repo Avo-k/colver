@@ -163,9 +163,8 @@ cargo run --bin arena --release -- h2h web_dede web_doudou --matches 200
 # Entraînement conjoint enchère + jeu (GPU, candle)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
 
-# Sidecar GPU playgen — la source de mondes d'IS-DD
-cargo run -p colver-core --bin playgen_gpu_server --features gpu_server --release -- --playgen models/playgen/playgen_v2_final.bin --port 8003
-export COLVER_PLAYGEN_GPU_URL=http://localhost:8003
+# Dédé avec ses mondes calculés sur CPU — aucun service à déployer
+cargo run --bin arena --release -- h2h web_dede_cpu web_doudou --matches 20
 ```
 
 Sans `$COLVER_PLAYGEN_GPU_URL`, les bots IS-DD retombent sur des mondes uniformes sous contraintes (le web l'annonce dans les stats de la décision ; l'arène, elle, refuse de construire le bot si la spec ne le demande pas explicitement).
@@ -233,16 +232,18 @@ model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 method = "isdd"                    # isdd|dmc|dmc_then_isdd|ismcts|smart_ismcts|oracle_dd|heuristic
 time_ms = 1000
 
-[worlds]                           # IS-DD uniquement ; sidecar par défaut
-source = "sidecar"
-url = "http://localhost:8003"
+[worlds]                           # IS-DD uniquement
+source = "playgen"                 # sidecar (défaut) | playgen (CPU) | uniform
+model = "models/playgen/playgen_v2_final.bin"   # requis par la source locale
 ```
 
 Tester une nouvelle combinaison, c'est écrire un fichier, pas recompiler. `arena/bots/`
-en contient trois : `web_dede` et `web_doudou` sont **exactement** les deux bots que
-colver.net fait jouer (modes standard et rapide), `heuristic_baseline` n'a besoin d'aucun
-poids. Les trois ne dépendent que des modèles publiés sur le Hub. Le zoo complet et les
-résultats accumulés restent privés — ce sont nos mesures, pas une API.
+en contient quatre : `web_dede` et `web_doudou` sont **exactement** les deux bots que
+colver.net fait jouer (modes standard et rapide), `web_dede_cpu` est le premier avec ses
+mondes calculés sur CPU — c'est celui qui tourne sans rien déployer — et
+`heuristic_baseline` n'a besoin d'aucun poids. Tous ne dépendent que des modèles publiés
+sur le Hub. Le zoo complet et les résultats accumulés restent privés : ce sont nos
+mesures, pas une API.
 
 ## Architecture
 
