@@ -11,6 +11,7 @@ import { botLabel } from '../shared/agents.js';
 import { BoardRenderer } from '../shared/board.js';
 import { initCfnBox, updateCfnBox } from '../shared/cfn-box.js';
 import { setGameId, setActionIdx, openBugReport } from '../shared/bug-report.js';
+import { renderAuctionTable } from '../shared/panels.js';
 
 const SEAT_INITIALS = ['N', 'E', 'S', 'O'];
 
@@ -736,8 +737,11 @@ function buildMovesList() {
     if (!list || !replayBoard) return;
     list.innerHTML = '';
 
-    const bids = document.createElement('div');
-    bids.className = 'mv-bids';
+    // Les annonces en tableau — une colonne par joueur, comme les plis en
+    // dessous sont des lignes de quatre cartes. `bidIdx` traduit le rang dans
+    // l'enchère en indice d'action, seule chose que la grille ne connaît pas.
+    const auctionBids = [];
+    const bidIdx = [];
     let trickRow = null;
     let cardsInRow = 0;
     let trickNum = 0;
@@ -746,23 +750,8 @@ function buildMovesList() {
         const m = data.move;
         if (!m) return;
         if (m.phase === 0) {
-            const chip = document.createElement('span');
-            chip.className = 'mv-bid ' + (m.player % 2 === 0 ? 'team-ns' : 'team-ew');
-            chip.dataset.idx = i;
-            chip.innerHTML = `${SEAT_INITIALS[m.player]}&nbsp;${bidChipHtml(m.action)}`;
-            chip.title = SEAT_NAMES_FR[m.player];
-            const bid = _bidsByIdx && _bidsByIdx[i];
-            // Le liseré ne signale que le désaccord de Bid V6 : c'est lui le
-            // bidder de référence. Playgen ne parle que dans l'infobulle.
-            if (bid && bid.model_best !== undefined && bid.model_best !== m.action) {
-                chip.classList.add('mv-bid-diff');
-                chip.title += ` — Bid V6 : ${actionName(bid.model_best, 0)}`;
-            }
-            if (bid && bid.playgen_best !== undefined && bid.playgen_best !== m.action) {
-                chip.title += ` — Playgen : ${actionName(bid.playgen_best, 0)}`;
-            }
-            chip.addEventListener('click', () => jumpTo(i));
-            bids.appendChild(chip);
+            auctionBids.push({ player: m.player, action: m.action });
+            bidIdx.push(i);
         } else {
             if (cardsInRow === 0) {
                 trickNum++;
@@ -811,7 +800,32 @@ function buildMovesList() {
         }
     });
 
-    if (bids.children.length) list.prepend(bids);
+    if (auctionBids.length) {
+        const bids = document.createElement('div');
+        bids.className = 'mv-bids';
+        renderAuctionTable(bids, auctionBids, {
+            heads: 'initials',
+            compact: true,
+            decorate: (cell, bid, n) => {
+                const i = bidIdx[n];
+                cell.classList.add('mv-bid');
+                cell.dataset.idx = i;
+                cell.title = SEAT_NAMES_FR[bid.player];
+                const an = _bidsByIdx && _bidsByIdx[i];
+                // Le liseré ne signale que le désaccord de Bid V6 : c'est lui le
+                // bidder de référence. Playgen ne parle que dans l'infobulle.
+                if (an && an.model_best !== undefined && an.model_best !== bid.action) {
+                    cell.classList.add('mv-bid-diff');
+                    cell.title += ` — Bid V6 : ${actionName(an.model_best, 0)}`;
+                }
+                if (an && an.playgen_best !== undefined && an.playgen_best !== bid.action) {
+                    cell.title += ` — Playgen : ${actionName(an.playgen_best, 0)}`;
+                }
+                cell.addEventListener('click', () => jumpTo(i));
+            },
+        });
+        list.prepend(bids);
+    }
     updateMovesHighlight();
 }
 

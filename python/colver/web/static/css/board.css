@@ -264,10 +264,9 @@
     border-radius: 6px;
     padding: 8px 10px;
 }
+/* Grille d'enchères compacte (`.auction-grid--compact`, bidding.css) : la
+   colonne fait 200 à 280px, d'où les en-têtes en initiales. */
 #play-bid-entries {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
     min-height: 20px;
 }
 #play-tricks-list {

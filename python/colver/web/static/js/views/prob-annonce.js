@@ -1,7 +1,8 @@
 // Problèmes d'annonce view — single-bid practice problems
 
 import { send, onMessage, offMessage } from '../ws.js';
-import { SEAT_NAMES_FR, renderHand, renderFaceDownHand, encodeBidAction, bidChipHtml, cardCode } from '../shared/cards.js';
+import { renderHand, renderFaceDownHand, encodeBidAction, bidChipHtml, cardCode } from '../shared/cards.js';
+import { renderAuctionTable } from '../shared/panels.js';
 import { createSuitPicker, suitHtml } from '../shared/suits.js';
 import * as xgbExplain from '../xgb-explain.js';
 
@@ -204,19 +205,10 @@ function handleProblemReady(data) {
     renderFaceDownHand(document.getElementById('pa-hand-east'), 8);
     renderFaceDownHand(document.getElementById('pa-hand-west'), 8);
 
-    // Render bid history in center panel
-    const entries = document.getElementById('pa-bid-history-entries');
-    entries.innerHTML = '';
-    for (const e of data.bid_history) {
-        const sp = document.createElement('span');
-        sp.className = 'bid-entry ' + (e.player % 2 === 0 ? 'team-partner' : 'team-opponent');
-        sp.innerHTML = `<span class="pa-bid-seat">${SEAT_NAMES_FR[e.player]}</span> ${bidChipHtml(e.action)}`;
-        entries.appendChild(sp);
-    }
-    const you = document.createElement('span');
-    you.className = 'bid-entry pa-your-turn';
-    you.textContent = 'Sud ?';
-    entries.appendChild(you);
+    // Render bid history in center panel. C'est à Sud de parler : la case « ? »
+    // de sa colonne remplace le « Sud ? » qu'on accolait à la suite des puces.
+    renderAuctionTable(document.getElementById('pa-bid-history-entries'), data.bid_history,
+                       { mySeat: 2, pending: 2 });
 
     // Render South's hand
     renderHand(document.getElementById('pa-hand-south'), data.south_hand);

@@ -7,7 +7,7 @@ import * as SFX from '../sounds.js';
 import {
     SEAT_NAMES_FR, teamName, teamNameMid, cardToHtml, suitHtml,
     renderHand, renderFaceDownHand, renderTrick, renderLastTrick,
-    actionName, encodeBidAction, bidChipHtml, contractChipHtml,
+    actionName, encodeBidAction, contractChipHtml,
     showBeloteAnnouncement, renderBeloteBadge,
     _prevTrick, _animatingTrick, setAnimatingTrick,
     detectTrickCompletion, animateTrickFlush
@@ -15,7 +15,7 @@ import {
 import { setGameId as setBugReportGameId, openBugReport } from './bug-report.js';
 import { botLabel } from './agents.js';
 import { createSuitPicker } from './suits.js';
-import { renderAuctionTable, renderBidEntries, renderTrickHistory } from './panels.js';
+import { renderAuctionTable, renderTrickHistory } from './panels.js';
 
 export const MY_SEAT = 2; // South, always (server-side rotation guarantees it)
 
@@ -395,12 +395,10 @@ export class GameTable {
     openAuction() {
         const drop = document.getElementById('auction-drop');
         if (!drop) return;
-        renderAuctionTable(
-            document.getElementById('auction-grid'),
-            this._auctionBids(),
-            (s) => this.playerName(s),
-            MY_SEAT,
-        );
+        renderAuctionTable(document.getElementById('auction-grid'), this._auctionBids(), {
+            playerName: (s) => this.playerName(s),
+            mySeat: MY_SEAT,
+        });
         drop.classList.remove('hidden');
         this._auctionOpen = true;
         this._setCaretState();
@@ -525,7 +523,7 @@ export class GameTable {
         const biddingPanel = document.getElementById('bidding-panel');
         if (isBidPhase) {
             biddingPanel.classList.remove('hidden');
-            this.renderBidHistory();
+            this.renderBidHistory(state.is_terminal ? null : state.current_player);
             const bidControls = document.getElementById('bid-controls');
             // Forced pass (our side coinched then partner declined the
             // surcoinche, or partner's capot): the server passes for us, so
@@ -565,16 +563,20 @@ export class GameTable {
         }
     }
 
-    renderBidHistory() {
-        const el = document.getElementById('bid-history');
-        el.innerHTML = '';
-        for (const entry of this.bidHistory) {
-            const span = document.createElement('span');
-            const isPartnerTeam = (entry.player % 2) === (MY_SEAT % 2);
-            span.className = 'bid-entry' + (isPartnerTeam ? ' team-partner' : ' team-opponent');
-            span.innerHTML = `${this.playerName(entry.player)} ${bidChipHtml(entry.action)}`;
-            el.appendChild(span);
-        }
+    /**
+     * L'enchère en cours, dans le panneau du milieu de table. En tableau et non
+     * en puces : quatre annonces au-dessus de quatre annonces, un joueur par
+     * colonne — c'est comme ça qu'on voit qui a soutenu qui, et une enchère
+     * longue tient alors en trois lignes au lieu d'envahir la main de Sud.
+     * `pending` marque le siège attendu, donc la colonne existe déjà avant même
+     * la première annonce.
+     */
+    renderBidHistory(currentPlayer = null) {
+        renderAuctionTable(document.getElementById('bid-history'), this.bidHistory, {
+            playerName: (s) => this.playerName(s),
+            mySeat: MY_SEAT,
+            pending: currentPlayer,
+        });
     }
 
     _sendBid(action, sfx) {
@@ -823,8 +825,12 @@ export class GameTable {
         const reviewEl = document.getElementById('play-review');
         reviewEl.classList.remove('hidden');
 
-        const bids = this._serverBidHistory || this.bidHistory.map(b => ({ player: b.player, action: b.action }));
-        renderBidEntries(document.getElementById('play-bid-entries'), bids, (s) => this.playerName(s));
+        renderAuctionTable(document.getElementById('play-bid-entries'), this._auctionBids(), {
+            playerName: (s) => this.playerName(s),
+            mySeat: MY_SEAT,
+            heads: 'initials',
+            compact: true,
+        });
 
         renderTrickHistory(
             document.getElementById('play-tricks-list'),

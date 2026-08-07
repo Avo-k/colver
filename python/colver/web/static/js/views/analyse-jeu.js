@@ -35,9 +35,10 @@
 import { send, onMessage, offMessage, onOpen, offOpen } from '../ws.js';
 import {
     SEAT_NAMES_FR, cardChipHtml, renderHand, renderHandMini, renderTrick,
-    contractChipHtml, bidChipHtml,
+    contractChipHtml,
 } from '../shared/cards.js';
 import { SEAT_COLOR_VARS } from '../shared/seats.js';
+import { renderAuctionTable } from '../shared/panels.js';
 import { renderBackLink } from '../shared/analyse-back.js';
 
 const docLink = (section) =>
@@ -299,10 +300,11 @@ function renderPosition() {
     renderHand(document.getElementById('aj-hand'), p.hands[p.seat], false, null,
                new Set(p.legal), trump);
 
-    const bh = document.getElementById('aj-bid-history');
-    bh.innerHTML = p.bid_history.map(([seat, action]) =>
-        `<span class="watch-bid-entry ${seat % 2 === 0 ? 'team-ns' : 'team-ew'}">` +
-        `${SEAT_NAMES_FR[seat]} ${bidChipHtml(action)}</span>`).join('');
+    renderAuctionTable(
+        document.getElementById('aj-bid-history'),
+        p.bid_history.map(([player, action]) => ({ player, action })),
+        { heads: 'initials', compact: true },
+    );
 
     document.getElementById('aj-forced').classList.toggle('hidden', !p.forced);
     document.getElementById('aj-table-panel').classList.toggle('hidden', !!p.forced);

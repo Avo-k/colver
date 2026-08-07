@@ -1519,30 +1519,19 @@
     scrollbar-color: #444 transparent;
 }
 
+/* Grille d'enchères (`.auction-grid`, bidding.css) au milieu du panneau : le
+   panneau fait 260 à 420px, les quatre colonnes y tiennent avec leurs noms. */
 #pa-bid-history-entries {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
     min-height: 28px;
-    font-size: var(--fs-lg);
 }
 
-#pa-bid-history-entries .bid-entry {
-    padding: 4px 12px;
-    font-size: var(--fs-lg);
-}
-
-.pa-bid-seat {
-    font-weight: 700;
-    margin-right: 2px;
-}
-
-.pa-your-turn {
-    background: color-mix(in srgb, var(--c-accent) 20%, transparent) !important;
-    border-color: color-mix(in srgb, var(--c-accent) 50%, transparent) !important;
-    color: var(--c-accent) !important;
-    font-weight: 600;
-    font-style: italic;
+/* Ici la case attendue est la question posée, pas un simple repère : elle prend
+   l'accent, comme le « Sud ? » qu'elle remplace. */
+#pa-bid-history-entries .auction-pending {
+    border-color: color-mix(in srgb, var(--c-accent) 60%, transparent);
+    background: color-mix(in srgb, var(--c-accent) 18%, transparent);
+    color: var(--c-accent);
+    opacity: 1;
 }
 
 #pa-bid-selectors {
@@ -1738,6 +1727,12 @@
     flex-wrap: wrap;
     gap: 14px;
     align-items: center;
+}
+/* Grille d'enchères (`.auction-grid`, bidding.css), bornée : la boîte prend
+   toute la page, et quatre annonces étalées sur douze cents pixels ne se lisent
+   plus comme un tableau. */
+#pj-bid-history-entries {
+    max-width: 360px;
 }
 #pj-trick-area {
     display: grid;
@@ -4311,23 +4306,20 @@
     min-height: 0;
 }
 
+/* Les annonces en tableau (`.auction-grid--compact`), comme les plis en dessous
+   sont des lignes de quatre cartes : une colonne par joueur, une ligne par tour
+   de parole. Le liseré d'équipe reste à gauche de la case — c'est lui qui dit
+   quel camp parle sans relire l'en-tête. */
 .mv-bids {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
     padding-bottom: 5px;
     margin-bottom: 3px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .mv-bid {
-    padding: 1px 6px;
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.06);
     cursor: pointer;
-    font-size: var(--fs-2xs);
-    color: #bbb;
-    white-space: nowrap;
 }
 .mv-bid:hover { background: color-mix(in srgb, var(--c-accent) 18%, transparent); }
 .mv-bid.team-ns { border-left: 2px solid var(--c-team-ns); }
@@ -4522,11 +4514,12 @@
 #aj-trick-w { grid-area: w; }
 #aj-trick-e { grid-area: e; }
 
+/* La grille vient de `.auction-grid` (bidding.css) : ne reste ici que sa place
+   dans la colonne. Bornée en largeur — la colonne fait toute la page, et quatre
+   annonces réparties sur neuf cents pixels ne se lisent plus comme un tableau. */
 #aj-bid-history {
-    display: flex;
-    gap: var(--sp-1);
-    flex-wrap: wrap;
     margin-top: var(--sp-3);
+    max-width: 360px;
 }
 
 /* ---------- la table ---------- */

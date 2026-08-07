@@ -18,29 +18,14 @@
     gap: 12px;
 }
 
+/* L'enchère en cours : le tableau (`.auction-grid`, plus bas), pas une suite de
+   puces. Deux raisons, l'une de lecture et l'autre de place — quatre annonces
+   au-dessus de quatre annonces alignent les joueurs en colonnes, et une enchère
+   de dix annonces tient en trois lignes au lieu d'en pousser cinq vers la main
+   de Sud. */
 #bid-history {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
     min-height: 24px;
-    font-size: var(--fs-md);
-}
-
-.bid-entry {
-    padding: 3px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.06);
-    font-weight: 500;
-}
-.bid-entry.team-partner {
-    background: var(--c-team-ns-a15);
-    border-color: var(--c-team-ns-a35);
-    color: var(--c-team-ns);
-}
-.bid-entry.team-opponent {
-    background: var(--c-team-ew-a15);
-    border-color: var(--c-team-ew-a35);
-    color: var(--c-team-ew);
+    min-width: 240px;
 }
 
 /* ===== REVOIR L'ENCHÈRE PENDANT LE JEU =====
@@ -116,10 +101,17 @@
     .contract-caret { transition: none; }
 }
 
-/* Une colonne par joueur dans l'ordre de parole, une ligne par tour : c'est
+/* ===== LE TABLEAU D'ENCHÈRES =====
+   Une colonne par joueur dans l'ordre de parole, une ligne par tour : c'est
    comme ça qu'on relit une enchère, en lisant verticalement ce que chacun a
-   dit tour après tour. */
-#auction-grid {
+   dit tour après tour.
+
+   Classe et non id : c'est le rendu de *toutes* les enchères du site (panneau
+   d'enchère, fin de donne, Regarder, Rejouer, /analyse/jeu, les problèmes), et
+   `renderAuctionTable` pose la classe lui-même — un appelant ne peut donc pas
+   oublier la feuille de style. Les variantes tiennent en deux modificateurs :
+   `--compact` (colonne latérale de 320px) et `--tight` (liste des coups). */
+.auction-grid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 4px 2px;
@@ -164,7 +156,21 @@
     line-height: 1.1;
     overflow-wrap: anywhere;
 }
-.auction-empty { color: #8a8a7a; font-size: var(--fs-sm); text-align: center; }
+/* Le siège dont on attend l'annonce. En pointillé plutôt qu'en plein : la case
+   est une place réservée, pas une annonce. */
+.auction-pending {
+    border: 1px dashed currentColor;
+    border-radius: 4px;
+    opacity: 0.7;
+    font-weight: 700;
+}
+/* Il vit dans la grille : sans ça il n'occuperait qu'une colonne sur quatre. */
+.auction-empty {
+    grid-column: 1 / -1;
+    color: #8a8a7a;
+    font-size: var(--fs-sm);
+    text-align: center;
+}
 .auction-hint {
     margin-top: 10px;
     text-align: center;
@@ -172,12 +178,30 @@
     color: #8a8a7a;
 }
 
+/* Colonne latérale (Regarder, Rejouer, /analyse/jeu, les problèmes) : ~300px
+   pour quatre colonnes, donc les en-têtes sont des initiales et la case perd
+   la hauteur qu'elle avait au milieu de l'écran. */
+.auction-grid--compact {
+    gap: 2px 2px;
+}
+.auction-grid--compact .auction-col-head {
+    letter-spacing: 0.5px;
+    padding-bottom: 2px;
+    margin-bottom: 0;
+}
+.auction-grid--compact .auction-cell {
+    min-height: 20px;
+    font-size: var(--fs-2xs);
+}
+.auction-grid--compact .auction-pass { font-size: var(--fs-2xs); }
+.auction-grid--compact .bid-chip { padding: 0 3px; gap: 2px; font-size: var(--fs-2xs); }
+
 /* Sur les plus petits écrans (320px : quatre colonnes de soixante pixels), la
    pastille d'annonce est ce qu'il y a de plus large dans une case — c'est elle
    qu'on resserre, pas la grille. */
 @media (max-width: 360px) {
     #auction-drop-card { padding: 12px 8px; }
-    #auction-grid { gap: 4px 1px; }
+    .auction-grid { gap: 4px 1px; }
     .auction-col-head { letter-spacing: 0.5px; }
     .auction-cell .bid-chip { padding: 0 3px; gap: 2px; font-size: var(--fs-xs); }
     /* « Surcoinche » en capitales ne tient pas dans soixante-sept pixels, et

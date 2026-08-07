@@ -9,7 +9,7 @@ import {
     animateTrickFlush, TRICK_FLUSH_DURATION
 } from './cards.js';
 import { updateCfnBox } from './cfn-box.js';
-import { renderBidEntries, renderTrickHistory } from './panels.js';
+import { renderAuctionTable, renderTrickHistory } from './panels.js';
 
 // Cadence de la lecture automatique, en ms par coup.
 const AUTOPLAY_DELAY = 1000;
@@ -334,14 +334,9 @@ export class BoardRenderer {
     renderBidHistory(bidHistory, phase) {
         const container = this.el('bid-entries');
         if (!container) return;
-        container.innerHTML = '';
-        if (!bidHistory || bidHistory.length === 0) {
-            this._updateBidOverlay([], phase);
-            return;
-        }
-
-        renderBidEntries(container, bidHistory);
-
+        // Colonne de 320px : les en-têtes sont des initiales de siège, pas des
+        // noms — les colonnes restent égales, ce qui est tout l'intérêt.
+        renderAuctionTable(container, bidHistory, { heads: 'initials', compact: true });
         this._updateBidOverlay(bidHistory, phase);
     }
 
@@ -358,7 +353,7 @@ export class BoardRenderer {
         }
 
         overlay.classList.remove('hidden');
-        renderBidEntries(entries, bidHistory);
+        renderAuctionTable(entries, bidHistory);
     }
 
     renderTricksHistory(tricks) {

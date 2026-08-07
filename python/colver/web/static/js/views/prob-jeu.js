@@ -2,7 +2,8 @@
 
 import { send, onMessage, offMessage } from '../ws.js';
 import * as SFX from '../sounds.js';
-import { SEAT_NAMES_FR, cardToHtml, cardChipHtml, renderHand, renderTrick, contractStr, bidChipHtml } from '../shared/cards.js';
+import { cardToHtml, cardChipHtml, renderHand, renderTrick, contractStr } from '../shared/cards.js';
+import { renderAuctionTable } from '../shared/panels.js';
 
 const TEMPLATE = `
 <div id="pj-config">
@@ -20,7 +21,7 @@ const TEMPLATE = `
         </div>
         <div class="prob-box">
             <div class="section-title">Ench\u00e8res</div>
-            <div id="pj-bid-history-entries" style="display:flex;gap:4px;flex-wrap:wrap;min-height:20px"></div>
+            <div id="pj-bid-history-entries"></div>
         </div>
         <div class="prob-box">
             <div class="section-title">Pli en cours</div>
@@ -107,14 +108,8 @@ function handleProblemReady(data) {
     document.getElementById('pj-tricks-info').textContent = `Pli ${trickNum}/8`;
 
     // Bid history
-    const bh = document.getElementById('pj-bid-history-entries');
-    bh.innerHTML = '';
-    for (const e of data.bid_history) {
-        const sp = document.createElement('span');
-        sp.className = 'watch-bid-entry ' + (e.player % 2 === 0 ? 'team-ns' : 'team-ew');
-        sp.innerHTML = SEAT_NAMES_FR[e.player] + ' ' + bidChipHtml(e.action);
-        bh.appendChild(sp);
-    }
+    renderAuctionTable(document.getElementById('pj-bid-history-entries'), data.bid_history,
+                       { heads: 'initials', compact: true });
 
     renderTrick('pj-trick', data.current_trick, data.trick_lead);
 

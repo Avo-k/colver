@@ -418,12 +418,11 @@
     margin-bottom: 6px;
 }
 
+/* Le tableau d'enchères (`.auction-grid`, bidding.css) au milieu du tapis :
+   il lui faut de quoi tenir quatre colonnes, sinon les noms de siège se
+   réduisent à leur première lettre suivie de points de suspension. */
 #watch-bid-overlay-entries {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
-    min-height: 24px;
-    font-size: var(--fs-md);
+    min-width: 260px;
 }
 
 /* ===== BID & TRICKS HISTORY ===== */
@@ -434,26 +433,9 @@
     padding: 8px 10px;
 }
 
+/* Grille d'enchères compacte (`.auction-grid--compact`, bidding.css). */
 #watch-bid-entries, #replay-bid-entries {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
     min-height: 20px;
-}
-
-.watch-bid-entry {
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: var(--fs-2xs);
-    font-weight: 500;
-}
-.watch-bid-entry.team-ns {
-    background: var(--c-team-ns-a15);
-    color: var(--c-team-ns);
-}
-.watch-bid-entry.team-ew {
-    background: var(--c-team-ew-a15);
-    color: var(--c-team-ew);
 }
 
 #watch-tricks-list, #replay-tricks-list {
