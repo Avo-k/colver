@@ -58,7 +58,7 @@ Samples D determinized worlds (respecting void constraints), runs standard MCTS 
 
 ### Smart IS-MCTS (Belief-Weighted Determinization)
 
-Same ensemble architecture as Naive IS-MCTS, but uses a `CardBeliefs` model to bias determinization. Maintains per-card per-player probability weights updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). See [play/smart_ismcts.md](play/smart_ismcts.md) for detailed design.
+Same ensemble architecture as Naive IS-MCTS, but uses a `CardBeliefs` model to bias determinization. Maintains per-card per-player probability weights updated via hard constraints (voids, trump ceiling) and soft inference (bidding signals, play patterns). The model itself: `colver-core/src/belief/card_beliefs.rs`.
 
 | Config (D x I = total) | Opponent | Time/game | Win% (NS) | Avg score (NS - EW) |
 |---|---|---|---|---|
@@ -121,7 +121,7 @@ inline loop.** `playgen/infer.rs` has its own equivalent, `dot8`.
 5.8×) and 29.7 s → 9.2 s (play, 3.2×), bit-identical to CPU. Decode is ~6 ms
 per step almost independently of batch size, so the GPU is worthless for a
 single world and decisive for pools: 78 worlds/s at B=32, 328 at B=128, 951 at
-B=512. See [belief/playgen.md](belief/playgen.md).
+B=512. The sampler itself: `colver-core/src/playgen/`.
 
 ## Playgen decode + prefill, v2 (2026-08-02)
 
@@ -172,4 +172,5 @@ Ordre de grandeur pour précalculer une feature d'enchère sur un pool
 Lecture : sans batch inter-positions, c'est hors de portée ; avec, c'est lourd
 à 5M et confortable à 1M. Le nombre de déroulements par position ne change
 presque rien tant que le prefill domine — c'est le nombre de *positions* qui
-coûte. Contexte et usage : [bid/bid_v7_plan.md](bid/bid_v7_plan.md) §3.8.
+coûte. Le batch inter-positions est le changement de code que ça implique :
+`KvCacheBatch::from_prefix` ne prend aujourd'hui qu'un seul préfixe par batch.

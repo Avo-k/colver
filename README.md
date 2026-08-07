@@ -68,13 +68,9 @@ vers ses propres fichiers.
 
 ## Interface Web
 
-Jouez contre les agents IA directement dans le navigateur sur **[colver.net](https://colver.net)**, ou lancez-le en local :
+Jouez contre les agents IA directement dans le navigateur sur **[colver.net](https://colver.net)**.
 
-```bash
-uv run python -m colver.web
-# Ou : uv run colver-web
-# Ouvrir http://localhost:8000
-```
+Ce qui est publié — ce dépôt et le paquet `colver` — est le **moteur** : les règles, la recherche, les agents et les liaisons Python. C'est ce qu'il faut pour vérifier qu'une donne n'est pas truquée et que les bots jouent ce qu'ils prétendent, et c'est à ça que sert de le publier. Le site, lui, est le produit : il n'est pas distribué.
 
 Quatre destinations : **Jouer**, **Analyser**, **Apprendre**, **Classement**. Le compte est facultatif — c'est lui qui rattache les parties à un joueur, rend les parties reprenables et les fait classer.
 
@@ -145,7 +141,7 @@ Un Elo par entité classée — un compte humain ou un type de bot — mis à jo
 Nécessite Rust stable (édition 2021) et Python 3.10+.
 
 ```bash
-# Tests (479 tests)
+# Tests du moteur (382 passés, 52 ignorés)
 cargo test -p colver-core
 
 # Benchmark de performance
@@ -161,11 +157,8 @@ cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
 uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
-# Interface web (jouer contre l'IA)
-uv run python -m colver.web
-
-# Bot contre bot, 200 matchs dans chaque sens (les bots sont des TOML dans arena/bots/)
-cargo run --bin arena --release -- h2h v6_isdd_75M_belief v6_isdd_75M --matches 200
+# Bot contre bot, 200 matchs dans chaque sens (un bot est un TOML dans arena/bots/)
+cargo run --bin arena --release -- h2h web_dede web_doudou --matches 200
 
 # Entraînement conjoint enchère + jeu (GPU, candle)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
@@ -181,7 +174,7 @@ Sans `$COLVER_PLAYGEN_GPU_URL`, les bots IS-DD retombent sur des mondes uniforme
 
 ### Oracle — Solveur DD (`solver.rs`)
 
-Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et élagage par équivalence de cartes. Calcule la carte optimale exacte en ~24 ms sur donne complète, ~150 us en mi-partie et ~1,4 us en finale (mesure du 2026-08-03, 1 thread ; le tableau complet, avec son corpus et sa dispersion, vit dans [docs/play/dd_solver.md](docs/play/dd_solver.md#performance)). Utile comme borne supérieure.
+Solveur double-dummy en information parfaite qui voit les 4 mains — il *triche*. Alpha-beta avec tables de transposition, PVS, killer moves et élagage par équivalence de cartes. Calcule la carte optimale exacte en ~24 ms sur donne complète, ~150 us en mi-partie et ~1,4 us en finale (mesure du 2026-08-03, 1 thread, sur un corpus figé ; la dispersion de mesure est de ~9 %, ce qui dit combien de chiffres ont un sens). Utile comme borne supérieure. Le banc qui les produit est dans le dépôt : `cargo build --release --features "parallel solver_stats" --bin bench_dd`.
 
 ### Dédé — IS-DD (`is_dd.rs`)
 
@@ -201,7 +194,7 @@ Un transformer causal (10,7M paramètres) entraîné à prolonger une donne de m
 
 ### Anciens agents de recherche
 
-**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondéré par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Déterminisation par ensemble sans croyances. Les deux sont configurables et documentés dans [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
+**Smart IS-MCTS** (`smart_ismcts.rs`) — [IS-MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) pondéré par croyances heuristiques. **Naive IS-MCTS** (`naive_ismcts.rs`) — Déterminisation par ensemble sans croyances. Les deux sont configurables par le format de bot décrit dans [docs/agents.md](docs/agents.md).
 
 ### Bid V6 IS-DD — Enchérisseur NN (`bid_net.rs`)
 
@@ -213,7 +206,7 @@ Versions précédentes toujours supportées via auto-détection :
 - **Bid à Dédé** (v2) — 108-dim, reward DD oracle
 - **Bid à Doudou** (v1) — 114→256² dueling, self-play DouZero
 
-**Interprétabilité** : distillation XGBoost et sondage linéaire sur la couche cachée révèlent que le scoring implicite du NN diffère nettement de l'évaluation classique (ex. V atout = +11 effectif, 9 = +4, A atout = +1, A latéral = 0 net ; plus une anti-synergie V×9 = −2). Traduit en un arbre de décision à 5 features atteignant 88-94% d'accord avec le NN — voir [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) et [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
+**Interprétabilité** : distillation XGBoost et sondage linéaire sur la couche cachée révèlent que le scoring implicite du NN diffère nettement de l'évaluation classique (ex. V atout = +11 effectif, 9 = +4, A atout = +1, A latéral = 0 net ; plus une anti-synergie V×9 = −2). Traduit en un arbre de décision à 5 features atteignant 88-94% d'accord avec le NN. L'espace des mains est **énumérable** — 472 579 mains distinctes à 8 cartes, indexées bijectivement — ce qui fait de la politique d'ouverture d'un enchérisseur une table finie plutôt qu'une boîte noire : [docs/bid/interpretability/hand_classification.md](docs/bid/interpretability/hand_classification.md).
 
 ## Comparaison des agents
 
@@ -233,7 +226,7 @@ Un bot est un fichier TOML décrivant un enchérisseur, un joueur de cartes et (
 
 ```toml
 [bid]
-strategy = "nn"                    # heuristic|improved|smart|roro|maxi|nn|playgen|…
+strategy = "nn"                    # heuristic|improved|smart|maxi|nn|playgen|…
 model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 
 [play]
@@ -245,7 +238,11 @@ source = "sidecar"
 url = "http://localhost:8003"
 ```
 
-`arena/bots/*.toml` contient les bots de référence ; les résultats en face-à-face et en round-robin s'accumulent dans `arena/results/matches.csv`. Tester une nouvelle combinaison, c'est écrire un fichier, pas recompiler.
+Tester une nouvelle combinaison, c'est écrire un fichier, pas recompiler. `arena/bots/`
+en contient trois : `web_dede` et `web_doudou` sont **exactement** les deux bots que
+colver.net fait jouer (modes standard et rapide), `heuristic_baseline` n'a besoin d'aucun
+poids. Les trois ne dépendent que des modèles publiés sur le Hub. Le zoo complet et les
+résultats accumulés restent privés — ce sont nos mesures, pas une API.
 
 ## Architecture
 
@@ -320,24 +317,6 @@ probs = analyst.marginals(env, n_worlds=50)
 | Partie Smart IS-MCTS (20x50) vs aléatoire | — | 9 ms |
 | Inférence DMC Q-Network | — | <1 ms |
 
-## Docker
-
-L'image Docker permet de déployer l'interface web sur n'importe quelle machine, x86-64 ou ARM64.
-
-```bash
-# Build et lancement
-docker build -t colver .
-docker run -p 8000:8000 colver
-
-# Ou avec Docker Compose
-docker compose up -d
-
-# Cross-build pour ARM64
-docker buildx build --platform linux/arm64 -t colver .
-```
-
-L'image fait ~257 Mo (pas de dépendance PyTorch). Tous les agents tournent en Rust pur et fonctionnent sur toutes les architectures.
-
 ## Règles
 
 Implémente la Belote Contrée avec 4 couleurs (Pique, Cœur, Carreau, Trèfle). Comptage en mode "points faits + points demandés", les multiplicateurs coinche (x2) et surcoinche (x3) ne portant que sur la valeur du contrat. Sur une chute, la défense prend le contrat *et* tous les points cartes, quel que soit le partage réel des plis.
@@ -354,3 +333,11 @@ Les scores sont **exacts — rien n'est arrondi**. La FFB arrondit la marque à 
 ## Remerciements
 
 Merci à **Ronan Guillou**, joueur de coinche aguerri, pour ses conseils avisés sur le jeu et pour avoir été le premier testeur — son bon sens a guidé de nombreux choix d'interface.
+
+## Licence
+
+**MIT** — voir [LICENSE](LICENSE). Ça couvre tout ce dépôt : le moteur, les liaisons Python et WASM, l'arène, les documents publiés.
+
+Les **poids des modèles** ne sont pas dans le dépôt. Ils vivent sur [Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65) sous leur propre licence, et `colver.download_*()` va les y chercher. Un modèle est un artefact d'entraînement, pas du code : le versionner alourdirait le clone de dizaines de mégaoctets pour un fichier qui change à chaque campagne.
+
+Le **site colver.net** n'est pas dans ce dépôt et n'est pas sous cette licence.

@@ -48,8 +48,10 @@ peut écrire en entier. Ce n'est pas une approximation type SHAP, c'est *le mod�
 peut trier par classe, croiser avec le DD, et lire directement où il se trompe.
 
 ⚠️ **Impossible tant que le bidder n'est pas équivariant.** v6 donne jusqu'à 24 réponses
-différentes pour une même classe ([bid_v7_plan §1.1](../bid_v7_plan.md)), donc la table
-n'est pas bien définie. La canonicalisation de l'obs (§3.1 du plan) est la dépendance.
+différentes pour une même classe — mesuré par `scripts/analysis/bid_equivariance.py` —
+donc la table n'est pas bien définie. La canonicalisation de l'observation d'enchère
+(`write_bid_observation_canonical`, dans `colver-core/src/bid/bid_obs.rs`) est la
+dépendance : un réseau entraîné dessus est équivariant par construction.
 
 ### Détail d'implémentation qui vaut d'être connu
 
@@ -137,7 +139,7 @@ et le 9 d'une couleur de côté — ce qui déciderait d'y jouer l'atout — son
 sont les cartes qui pèsent +49 et +19 dès qu'on les regarde comme atout. Ajouter au code
 le descripteur de la deuxième meilleure couleur (longueur + lesquels de J/9/A/10) vaut
 **+1,5 pt à l'ouverture et +22,7 pt en défense** dans une table de correspondance sur la
-politique de v6 — [rule_ceiling.md](rule_ceiling.md) §4. En défense, `trump+2e` (2 647
+politique de v6. En défense, `trump+2e` (2 647
 codes) **bat `full` (5 028 codes) de 9,7 points** : moitié moins de familles, dix points
 de mieux.
 
@@ -213,8 +215,7 @@ C'est la structure adoptée ici — et c'est aussi ce qui reste à faire, cf. §
    et à **localiser** son résidu : « 93 % d'accord » devient une liste de familles où la
    règle tombe, donc un domaine de validité. Ordre de grandeur : **73 familles retrouvent
    87 % des décisions annoncer/passer de v6** à l'ouverture, à 7 points d'un XGBoost qui
-   n'est pas lisible du tout. Les tables : [bid_rules_v6.md](bid_rules_v6.md) ; la
-   métrologie : [rule_ceiling.md](rule_ceiling.md).
+   n'est pas lisible du tout.
 4. **Dédupliquer** : deux donnes tirées au hasard ne sont jamais dans la même classe
    (une sur 830 millions), donc l'augmentation par les 24 permutations de
    [`suit_perm.rs`](../../../colver-core/src/suit_perm.rs) multiplie effectivement le
@@ -229,7 +230,7 @@ C'est la structure adoptée ici — et c'est aussi ce qui reste à faire, cf. §
 ### 6.1 Contre la valeur DD — `tops` sature, et la main ne dit qu'un quart
 
 60 000 mains × **3** répartitions des 24 autres cartes × 4 atouts = 720 000 solves
-([hand_code_dd_variance.py](../../../scripts/analysis/hand_code_dd_variance.py)). Les
+(`scripts/analysis/hand_code_dd_variance.py`, non publié). Les
 répétitions sont ce qui rend la mesure lisible : sans elles on ne peut pas séparer « le
 code est grossier » de « la donne est bruitée ». Variance expliquée, estimée par ANOVA
 (l'ICC, pas un R² brut — un R² monte mécaniquement avec le nombre de groupes) :
@@ -263,8 +264,8 @@ expliquer plus que la main. Deux estimateurs non biaisés qui se croisent à 2 %
 
 ### 6.2 Contre la politique de v6 — et ce n'est pas la même réponse
 
-Précision hors échantillon d'une table `code → une réponse`, niveau par niveau :
-[rule_ceiling.md](rule_ceiling.md) §4. Le classement diffère de celui du §6.1, ce qui est
+Précision hors échantillon d'une table `code → une réponse`, niveau par niveau.
+Le classement diffère de celui du §6.1, ce qui est
 le point : imiter un bidder et prédire une valeur ne sont pas la même cible. En défense,
 `trump+2e` (2 647 codes) **bat `full` (5 028 codes) de 9,7 points** — impossible si les
 deux cibles étaient interchangeables.

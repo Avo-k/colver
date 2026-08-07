@@ -2317,8 +2317,16 @@ mod tests {
         let r = search
             .search_with_source(&state, &cfg, &mut rng, &mut source)
             .expect("pas d'erreur");
+        // Ce que cette borne teste est la **vivacité** — que le repli local ne
+        // parte pas en boucle infinie quand la source ne rend rien — et pas la
+        // vitesse. Elle doit donc être large : 24 mondes de donne complète
+        // résolus en DD, **en debug**, sur une machine partagée, c'est lent et
+        // ça n'a pas à être rapide. À 20 s elle mesurait le processeur du
+        // runner, pas le code : elle a échoué en CI à **20,43 s**, soit 2 %
+        // au-dessus, sur une donne qui s'était bel et bien arrêtée. C'était la
+        // première cause d'échec de la CI (37 % des runs rouges sur 30 jours).
         assert!(
-            t0.elapsed() < Duration::from_secs(20),
+            t0.elapsed() < Duration::from_secs(120),
             "la recherche ne s'est pas arretee ({:?})",
             t0.elapsed()
         );

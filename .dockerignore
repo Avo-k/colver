@@ -1,9 +1,0 @@
-target/
-.venv/
-data/
-logs/
-scripts/
-__pycache__/
-*.pt
-.git/
-# Keep models/dmc_final.bin for Rust inference (exclude .pt torch checkpoints above)

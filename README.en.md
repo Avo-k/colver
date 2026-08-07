@@ -67,13 +67,9 @@ is kept as a fallback); point `COLVER_MODEL_PATH` & co. at your own files to ove
 
 ## Web Interface
 
-Play against AI agents directly in your browser at **[colver.net](https://colver.net)**, or run it locally:
+Play against AI agents directly in your browser at **[colver.net](https://colver.net)**.
 
-```bash
-uv run python -m colver.web
-# Or: uv run colver-web
-# Open http://localhost:8000
-```
+What is published — this repository and the `colver` package — is the **engine**: the rules, the search, the agents and the Python bindings. That is what you need to check that a deal is not rigged and that the bots play what they claim to, and that is what publishing it is for. The site itself is the product, and is not distributed.
 
 Everything is in French, behind four destinations: **Jouer**, **Analyser**, **Apprendre**, **Classement**. An account is optional — it is what links games to you, and what makes matches resumable and rated.
 
@@ -144,7 +140,7 @@ One Elo per rated entity — a human account or a bot type — updated deal by d
 Requires stable Rust (2021 edition) and Python 3.10+.
 
 ```bash
-# Tests (479 tests)
+# Engine tests (382 passing, 52 ignored)
 cargo test -p colver-core
 
 # Performance benchmark
@@ -160,11 +156,8 @@ cargo run -p colver-core --bin smart_ismcts_demo --release -- 100
 uv sync
 uv run python3 -c "import colver; env = colver.Env(); print(env.reset())"
 
-# Web interface (play against AI)
-uv run python -m colver.web
-
-# Bot vs bot, 200 matches each way (bots are TOML files in arena/bots/)
-cargo run --bin arena --release -- h2h v6_isdd_75M_belief v6_isdd_75M --matches 200
+# Bot vs bot, 200 matches each way (a bot is a TOML file in arena/bots/)
+cargo run --bin arena --release -- h2h web_dede web_doudou --matches 200
 
 # Joint bid+play training (GPU, candle)
 cargo run -p colver-core --bin train_joint --features dmc_train --release -- --num-envs 256 --steps 35000000
@@ -180,7 +173,7 @@ Without `$COLVER_PLAYGEN_GPU_URL`, IS-DD bots fall back to constraint-uniform wo
 
 ### Oracle — DD Solver (`solver.rs`)
 
-Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~24 ms from a full deal, ~150 us mid-game and ~1.4 us in the endgame (measured 2026-08-03, 1 thread; the full table, with its corpus and its spread, lives in [docs/play/dd_solver.md](https://github.com/Avo-k/colver/blob/master/docs/play/dd_solver.md#performance)). Useful as an upper bound.
+Perfect-information double-dummy solver that sees all 4 hands — it *cheats*. Alpha-beta with transposition tables, PVS, killer moves, and card equivalence pruning. Computes the exact optimal card in ~24 ms from a full deal, ~150 us mid-game and ~1.4 us in the endgame (measured 2026-08-03, 1 thread, on a frozen corpus; the measurement spread is ~9 %, which is what tells you how many digits mean anything). Useful as an upper bound. The bench that produces those numbers ships with the repo: `cargo build --release --features "parallel solver_stats" --bin bench_dd`.
 
 ### Dede — IS-DD (`is_dd.rs`)
 
@@ -200,7 +193,7 @@ A causal transformer (10.7M params) trained to continue a deal autoregressively 
 
 ### Older search agents
 
-**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable and documented in [docs/play/smart_ismcts.md](docs/play/smart_ismcts.md).
+**Smart IS-MCTS** (`smart_ismcts.rs`) — Belief-weighted [Information Set MCTS](https://doi.org/10.1109/TCIAIG.2012.2200894) with heuristic card beliefs. **Naive IS-MCTS** (`naive_ismcts.rs`) — Ensemble determinization without beliefs. Both are configurable through the bot-spec format described in [docs/agents.md](docs/agents.md).
 
 ### Bid V6 IS-DD — NN Bidder (`bid_net.rs`)
 
@@ -212,7 +205,7 @@ Past versions still supported via auto-detect:
 - **Bid à Dédé** (v2) — 108-dim, DD oracle reward
 - **Bid à Doudou** (v1) — 114→256² dueling, DouZero self-play
 
-**Interpretability**: XGBoost distillation and a hidden-layer linear probe revealed that the NN's implicit scoring differs sharply from the classical hand evaluation (e.g., J atout = +11 effective, 9 = +4, A atout = +1, side A = 0 net; plus an anti-synergy J×9 = −2). Translated into a mnemonic 5-feature decision tree reaching 88-94% NN agreement — see [docs/bid/strategies/bid_v5_human_guide.md](docs/bid/strategies/bid_v5_human_guide.md) and [docs/bid/interpretability/probe_morning_report.md](docs/bid/interpretability/probe_morning_report.md).
+**Interpretability**: XGBoost distillation and a hidden-layer linear probe revealed that the NN's implicit scoring differs sharply from the classical hand evaluation (e.g., J atout = +11 effective, 9 = +4, A atout = +1, side A = 0 net; plus an anti-synergy J×9 = −2). Translated into a mnemonic 5-feature decision tree reaching 88-94% NN agreement. The hand space is **enumerable** — 472,579 distinct 8-card hands, bijectively indexed — which turns a bidder's opening policy into a finite table rather than a black box: [docs/bid/interpretability/hand_classification.md](docs/bid/interpretability/hand_classification.md).
 
 ## Agent Comparison
 
@@ -232,7 +225,7 @@ A bot is a TOML file describing a bidder, a card player and (for IS-DD) a world 
 
 ```toml
 [bid]
-strategy = "nn"                    # heuristic|improved|smart|roro|maxi|nn|playgen|…
+strategy = "nn"                    # heuristic|improved|smart|maxi|nn|playgen|…
 model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 
 [play]
@@ -244,7 +237,11 @@ source = "sidecar"
 url = "http://localhost:8003"
 ```
 
-`arena/bots/*.toml` holds the reference bots; head-to-head and round-robin results accumulate in `arena/results/matches.csv`. Testing a new combination means writing a file, not recompiling.
+Testing a new combination means writing a file, not recompiling. `arena/bots/` holds
+three: `web_dede` and `web_doudou` are **exactly** the two bots colver.net plays
+(standard and fast modes), `heuristic_baseline` needs no weights at all. All three depend
+only on models published on the Hub. The full zoo and the accumulated results stay
+private — they are our measurements, not an API.
 
 ## Architecture
 
@@ -319,24 +316,6 @@ probs = analyst.marginals(env, n_worlds=50)
 | Smart IS-MCTS game (20x50) vs random | — | 9 ms |
 | DMC Q-Network inference | — | <1 ms |
 
-## Docker
-
-The Docker image lets you deploy the web interface on any machine, x86-64 or ARM64.
-
-```bash
-# Build and run
-docker build -t colver .
-docker run -p 8000:8000 colver
-
-# Or with Docker Compose
-docker compose up -d
-
-# Cross-build for ARM64
-docker buildx build --platform linux/arm64 -t colver .
-```
-
-The image is ~257 MB (no PyTorch dependency). All agents run in pure Rust and work on all architectures.
-
 ## Rules
 
 Implements Belote Contree with 4 suits (Spades, Hearts, Diamonds, Clubs). Scoring mode: "points faits + points demandes", with the coinche (x2) and surcoinche (x3) multipliers applying to the contract value only. On a chute the defense takes the contract *and* every card point, whatever the real split of tricks.
@@ -353,3 +332,11 @@ Scores are **exact — nothing is rounded**. The FFB rounds the marque to the ne
 ## Acknowledgments
 
 Thanks to **Ronan Guillou**, seasoned coinche player, for his advice on the game and for being the first tester — his good sense guided many UI decisions.
+
+## License
+
+**MIT** — see [LICENSE](LICENSE). It covers all of this repository: the engine, the Python and WASM bindings, the arena, the published documents.
+
+**Model weights** are not in the repository. They live on [Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65) under their own license, and `colver.download_*()` fetches them from there. A model is a training artifact, not code: versioning it would add tens of megabytes to every clone for a file that changes with every campaign.
+
+The **colver.net site** is not in this repository and is not under this license.

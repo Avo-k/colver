@@ -29,8 +29,15 @@ images/real_hands/
 .env
 *.env
 
-# Private strategy documents
-docs/enchere_cannes_roro.md
+# Atelier : travail de recherche et documents commerciaux, jamais publiés.
+#
+# **Des RÉPERTOIRES, jamais des fichiers.** Une liste d'exclusion nommant des
+# fichiers se périme en silence : le jour où l'un est déplacé, il redevient suivi
+# et personne ne voit rien. Nommer le répertoire fait que tout document nouveau y
+# est privé sans que personne ait à y penser.
+docs/business/
+arena/results/
+scripts/release/
 
 # Playwright MCP
 .playwright-mcp/

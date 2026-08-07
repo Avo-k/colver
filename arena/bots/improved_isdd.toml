@@ -1,8 +1,0 @@
-# No-NN solver: ImprovedV2 bidding + IS-DD play (no belief net)
-[bid]
-strategy = "improved_v2"
-
-[play]
-method = "is_dd"
-time_ms = 20
-determinizations = 20

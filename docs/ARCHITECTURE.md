@@ -1,6 +1,6 @@
 # Architecture Details
 
-Detailed documentation for each subsystem. See [CLAUDE.md](../CLAUDE.md) for overview.
+Detailed documentation for each subsystem. See the [README](../README.md) for an overview.
 
 ## Agents (`agent/`, `worlds.rs`, `game_loop.rs`) — start here
 
@@ -19,7 +19,7 @@ Perfect-information MCTS using UCT (UCB1 for trees). Arena-based tree with `Node
 
 ## Smart IS-MCTS Agent (`smart_ismcts.rs` + `card_beliefs.rs`, feature `rand`)
 
-Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 32]; 4]` weight matrix) updated after every action using hard constraints (voids, trump ceiling, played cards) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. See [play/smart_ismcts.md](play/smart_ismcts.md) for design.
+Belief-weighted Information Set MCTS. Maintains a `CardBeliefs` model (`[[f32; 32]; 4]` weight matrix) updated after every action using hard constraints (voids, trump ceiling, played cards) and soft inference (bidding signals, play patterns). `determinize_weighted()` samples opponent hands biased by beliefs. The search is `colver-core/src/search/smart_ismcts.rs`, the beliefs `src/belief/card_beliefs.rs`.
 
 **API:** `SmartIsMctsSearch::new()`, `init_deal(state, observer, use_soft)`, `record_action(state_before, player, action)`, `search(state, config, rng) -> u8`. Each player needs its own instance; both must observe all actions.
 
@@ -54,7 +54,8 @@ being absent from its token stream.
 **API:** `IsDdSearch::search_with_source(state, config, rng, &mut dyn WorldSource)`
 → `Result<IsDdResult>`, or `search_with_stats(...)` without a source (infallible,
 weaker). Most callers should build an `IsDdPlayer` from an `AgentSpec` instead.
-Full detail: [play/is_dd.md](play/is_dd.md).
+Full detail — including why the objective is converted to a deal score *at aggregation* and
+not inside the solver — is commented in `colver-core/src/search/is_dd.rs` itself.
 
 ## Double-Dummy Solver (`solver.rs`)
 
@@ -66,9 +67,9 @@ Alpha-beta solver for perfect-information Belote. No feature gate — zero exter
 - `solver::solve_best_card(state) -> u8` — optimal card for current player
 - `GameState::setup_dd(dealer, hands, trump)` — creates play-phase state for DD
 
-**Performance:** order of magnitude only — **~32 ms** for a full deal via `solve_with_scores`, falling by ~4 orders of magnitude as the deal empties. **The one table of solver timings lives in [play/dd_solver.md](play/dd_solver.md#performance)**; it carries the per-shape figures, the corpus, and the ~9 % measurement spread that says how many digits mean anything. Do not restate it here — two tables is how they drift apart. Invariant: `ns + ew == 162` (or 252 for capot).
+**Performance:** order of magnitude only — **~32 ms** for a full deal via `solve_with_scores`, falling by ~4 orders of magnitude as the deal empties. **Do not restate per-shape timings anywhere** — two tables is how they drift apart, and this project has had four copies of stale ones. Produce them instead: `cargo build --release --features "parallel solver_stats" --bin bench_dd`, then `bench_dd run` against a fixed corpus. Read the ~9 % measurement spread before deciding how many digits mean anything, and **never compare two sequential runs** — the same binary drifts 20 % here with machine load, which is more than most wins; `bench_dd run --ab` interleaves. Invariant: `ns + ew == 162` (or 252 for capot).
 
-Two consequences that shape design decisions elsewhere: the search is **memory-latency-bound on the TT probe** (~22 ns/node, so per-node micro-optimisation is exhausted), and its cost distribution is **heavily tail-skewed** (worst 10 % of solves carry 40 % of the nodes). Both are why [play/dd_solver_optimization.md](play/dd_solver_optimization.md) exists — read it before optimising anything here, it records five measured dead ends.
+Two consequences that shape design decisions elsewhere: the search is **memory-latency-bound on the TT probe** (~22 ns/node, so per-node micro-optimisation is exhausted), and its cost distribution is **heavily tail-skewed** (worst 10 % of solves carry 40 % of the nodes). Both are why a larger TT, MTD(f), window seeding, a lighter `apply_play` and `-C target-cpu=native` are **five measured dead ends** here, not five untried ideas. Before optimising, reproduce the profile: the ablation harness is `scripts/analysis/dd_ablation.sh` with the `solver_ablation` feature, the move-ordering ceiling is `bench_dd ordering` with `solver_oracle`, and the window ceiling is `bench_dd oracle`. Each answers whether a whole family of ideas is open before any of them is written.
 
 **Techniques:** Alpha-beta fail-soft, TT (256K entries, 2 MB — sweep-confirmed optimal 2026-08-02: 134 MB buys 3 % fewer nodes at 2.4× the time), **epoch-stamped rather than cleared per solve**, PVS, killer moves (2/ply), history heuristic (depth²), card equivalence pruning (lookup table), forced-move optimization. **No `quick_tricks`** — removed 2026-07-23, the bound was unsound and returned wrong values on 25 % of `solve_for_trump` calls; do not re-add it from this list. Move ordering: hash move → killers → history + static score.
 
@@ -84,7 +85,6 @@ Six fixed bidding functions (`BidFunction` enum) plus configurable `parametric_b
 | `Improved` | Tournament-winning balanced | Quality gate, caps 120/120/130, coinches |
 | `Heuristic` | Aggressive score-based | No cap, no quality gate, ~50% take rate |
 | `Smart` | Conservative J/9 conventions | ~10-13% take rate, mostly historical |
-| `Roro` | Expert convention-based | Position-aware, Théorème 3 coinche |
 | `Maxi` | Expert + structured card play | Cases A/B/C/D classification |
 | `BidParams` | Configurable for sweeps | 6 presets: ultra_conservative → very_aggressive |
 
@@ -187,8 +187,8 @@ cargo run -p colver-core --bin belief_eval --release -- \
   Q-network (DMC) does the same job orders of magnitude faster. Removed
   2026-07-24.
 - **BisDd** (`bis_dd.rs`) — a unified DD-based bid+play agent. Its bid-inference
-  heuristic rejected reality 72% of the time against NN bidders
-  ([belief/bis_dd.md](belief/bis_dd.md)); the bid belief net replaced it.
+  heuristic rejected reality 72% of the time against NN bidders; the bid belief
+  net replaced it.
 - **Elephant memory** (`elephant.rs`) — particle filter over past
   determinizations. Off by default everywhere, never won in the arena.
 - **Single-tree IS-MCTS** (`single_tree_ismcts.rs`) — superseded by IS-DD.

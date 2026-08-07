@@ -1,6 +1,0 @@
-# Adversaire de référence pour la mesure du départage. Même enchère que les bots "tb_*".
-[bid]
-strategy = "improved_v2"
-
-[play]
-method = "rule"

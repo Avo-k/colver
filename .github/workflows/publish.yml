@@ -8,9 +8,16 @@ on:
 permissions:
   contents: read
 
+# Ce fichier vit dans les deux dépôts — il part dans le miroir public, qui est
+# celui où la publication PyPI est configurée (trusted publishing lie l'identité
+# OIDC au dépôt `Avo-k/colver`). La garde ci-dessous fait que taguer dans le lab
+# ne déclenche rien : sans elle la publication échouerait de toute façon, mais
+# en rouge et après avoir construit cinq roues pour rien. Toutes les autres
+# tâches dépendent de `check-version`, donc la garde suffit à les neutraliser.
 jobs:
   check-version:
     name: Check tag matches pyproject version
+    if: github.repository == 'Avo-k/colver'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -79,9 +86,67 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  # Le site n'est plus distribué avec le paquet depuis la 0.11.0. Cette tâche
+  # l'assure sur les ARTEFACTS RÉELLEMENT PUBLIÉS et non sur une construction
+  # refaite pour l'occasion : c'est la seule version du contrôle qui ne puisse
+  # pas diverger de ce qui part sur PyPI.
+  #
+  # Elle teste deux choses de nature différente. (1) Aucun fichier `colver/web`
+  # dans la roue ni dans le sdist — le sdist compte autant, il porte les sources
+  # Rust et Python complètes et c'est lui qui distribuait le site jusqu'ici.
+  # (2) Aucune dépendance du site dans les métadonnées : `pip install colver` ne
+  # doit tirer ni fastapi, ni uvicorn, ni bcrypt, ni aiosqlite. Ce second
+  # contrôle est celui qui casse si quelqu'un remet le groupe PEP 735 en extra
+  # `[project.optional-dependencies]`, ce qui ne se voit pas dans la liste des
+  # fichiers.
+  #
+  # Et un TÉMOIN, sans quoi les deux contrôles passeraient sur un artefact vide
+  # ou mal téléchargé — l'échec le plus probable de cette tâche n'est pas une
+  # fuite, c'est un `dist/` qui n'a rien dedans.
+  assert-clean-wheel:
+    name: Assert the wheel ships no web layer
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Inspect artifacts
+        run: |
+          set -euo pipefail
+          ls -la dist
+          whl=$(ls dist/*.whl | head -1)
+          sd=$(ls dist/*.tar.gz | head -1)
+
+          # témoin : les artefacts existent et contiennent le paquet
+          test "$(unzip -l "$whl" | grep -c 'colver/')" -ge 3 \
+            || { echo "::error::roue vide ou illisible — contrôle non concluant"; exit 1; }
+          test "$(tar tzf "$sd" | wc -l)" -ge 50 \
+            || { echo "::error::sdist vide ou illisible — contrôle non concluant"; exit 1; }
+
+          fail=0
+          for f in dist/*.whl; do
+            n=$(unzip -l "$f" | grep -c 'colver/web' || true)
+            echo "$(basename "$f") : $n fichiers colver/web"
+            [ "$n" -eq 0 ] || fail=1
+          done
+          n=$(tar tzf "$sd" | grep -c 'colver/web' || true)
+          echo "$(basename "$sd") : $n fichiers colver/web"
+          [ "$n" -eq 0 ] || fail=1
+
+          meta=$(unzip -p "$whl" '*.dist-info/METADATA')
+          bad=$(echo "$meta" | grep -iE '^Requires-Dist: *(fastapi|uvicorn|bcrypt|aiosqlite|websockets)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::la roue déclare des dépendances du site :"; echo "$bad"; fail=1
+          fi
+          echo "Requires-Dist retenus :"; echo "$meta" | grep -i '^Requires-Dist:' || echo "  (aucun)"
+
+          exit $fail
+
   publish:
     name: Publish to PyPI
-    needs: [build, sdist]
+    needs: [build, sdist, assert-clean-wheel]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

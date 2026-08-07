@@ -1,9 +1,0 @@
-[bid]
-strategy = "nn"
-model = "models/bid_v3_exp/exp_d_blend25/bid_nn_1000000.bin"
-hidden = 512
-
-[play]
-method = "dmc"
-model = "models/play_v2/play_final.bin"
-residual = true

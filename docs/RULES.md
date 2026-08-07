@@ -135,8 +135,9 @@ added 2026-08-03). Because the announcement is compulsory, hearing it places the
 honour at the announcer — and *not* hearing it, when a trump King or Queen falls, proves
 its player does not hold the other one, ever, since a hand only shrinks. The silent case
 is the more frequent of the two (20.5% of play positions against 5.7%). Both are hard
-determinization constraints on the same footing as a revealed void:
-[docs/play/is_dd.md](play/is_dd.md#hard-constraints-vs-soft-beliefs).
+determinization constraints on the same footing as a revealed void — see
+`play::belote_facts` in `colver-core/src/engine/play.rs`, and its three callers in
+`colver-core/src/search/determinize.rs`.
 
 ## Dix de Der (Last Trick Bonus)
 

@@ -1,6 +1,6 @@
 [project]
 name = "colver"
-version = "0.10.1"
+version = "0.11.0"
 description = "Fast Belote Contree game engine with AI agents"
 # Le README par défaut du dépôt est en français (`README.md`) : c'est la langue du
 # site et des joueurs. La fiche PyPI, elle, s'adresse à qui installe le paquet —
@@ -36,18 +36,6 @@ dependencies = [
     "huggingface_hub>=0.30",
 ]
 
-[project.optional-dependencies]
-web = [
-    "fastapi>=0.100.0",
-    "uvicorn[standard]>=0.30.0",
-    "websockets>=12.0",
-    "aiosqlite>=0.20.0",
-    "bcrypt>=4.0",
-]
-
-[project.scripts]
-colver-web = "colver.web:main"
-
 [build-system]
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
@@ -62,8 +50,25 @@ python-source = "python"
 default-groups = ["dev"]
 
 [dependency-groups]
+# Le site est un GROUPE (PEP 735) et non un extra `[project.optional-dependencies]`,
+# et la différence est visible de l'extérieur : un extra descend dans les
+# métadonnées de la roue publiée, donc `pip install colver[web]` l'annonce et
+# promet un module `colver.web`. Un groupe ne sort jamais du dépôt — il ne sert
+# qu'à `uv sync`. Le site n'étant plus destiné à être distribué avec le paquet,
+# la roue ne doit plus en porter la trace.
+#
+# Conséquence pour qui déploie : `--extra web` devient `--group web`, et il faut
+# `--no-default-groups` à la place de `--no-dev` (sans quoi `dev`, qui tire torch,
+# reviendrait par le défaut déclaré ci-dessus). Les deux lignes du `Dockerfile`.
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.30.0",
+    "websockets>=12.0",
+    "aiosqlite>=0.20.0",
+    "bcrypt>=4.0",
+]
 dev = [
-    "colver[web]",
+    {include-group = "web"},
     "torch>=2.0",
     "maturin>=1.0,<2.0",
     "pandas>=2.3.3",
@@ -76,7 +81,7 @@ dev = [
 ]
 # Séparé de `dev` : la CI installe *ce* groupe, pas torch et scikit-learn.
 test = [
-    "colver[web]",
+    {include-group = "web"},
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "httpx>=0.27",       # requis par fastapi.testclient

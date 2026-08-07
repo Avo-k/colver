@@ -223,7 +223,9 @@ url = "http://localhost:8003"
 ```
 
 Détails de tokenisation et d'architecture :
-[docs/belief/playgen.md](https://github.com/Avo-k/colver/blob/master/docs/belief/playgen.md).
+[`colver-core/src/playgen/`](https://github.com/Avo-k/colver/tree/master/colver-core/src/playgen) —
+`tokens.rs` porte le vocabulaire et les deux formats, `model.rs` le transformer,
+`infer.rs` l'inférence à cache KV en Rust pur.
 
 ## Règles
 

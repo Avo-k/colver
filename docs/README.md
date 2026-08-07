@@ -1,56 +1,53 @@
-# Colver Documentation
+# Colver — documentation
 
-Belote Contrée engine + RL training stack.
+Moteur de Belote Contrée : les règles, la recherche, les agents, et de quoi vérifier
+qu'ils font ce qu'ils prétendent.
 
-## Top-level
+## Le moteur
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — workspace layout, key subsystems, observation formats
-- [agents.md](agents.md) — **the `Player` / `WorldSource` layer**: how a bot is built and driven, and the bot-spec format
-- [RULES.md](RULES.md) — game rules summary (**as implemented in Colver**)
-- [rules-survey/](rules-survey/) — **what the rest of the world actually does**: ~594 rulebooks (federations, tournaments, clubs, apps, open source) compared axis by axis. Start at [rules-survey/SYNTHESE.md](rules-survey/SYNTHESE.md)
-- [BENCH.md](BENCH.md) — performance benchmarks
-- [arena_results.md](arena_results.md) — **global arena leaderboard** (the main eval metric)
-- [classement_et_scoring.md](classement_et_scoring.md) — **l'Elo du web et la fonction d'utilité des bots** : pourquoi c'est le même sujet, et pourquoi Dédé optimise des points cartes là où le barème a une marche
-- [engine_todo.md](engine_todo.md) — backlog moteur & modèles (règles, données, entraînement, zoo)
-- [idees/](idees/) — **pistes cadrées mais pas lancées** : ce qu'on ferait, ce que ça coûterait, la mesure qui trancherait. Une fiche d'ici a le droit de ne jamais être faite — c'est ce qui la distingue d'un backlog
-- [deal_bias.md](deal_bias.md) — traditional gather-cut dealing vs competition shuffling (bias study)
-- [Official FFB rules](https://www.ffbelote.org/wp-content/uploads/2015/11/REGLES-DE-LA-BELOTE-CONTREE.pdf) (ffbelote.org) — the reference text. Third-party rulebooks are **not redistributed here**: the raw corpus lives unversioned in `data/rules-corpus/`, retrievable with `docs/rules-survey/_refetch.py`
+- [ARCHITECTURE.md](ARCHITECTURE.md) — organisation du workspace, sous-systèmes, formats
+  d'observation. C'est la porte d'entrée si vous lisez le code.
+- [RULES.md](RULES.md) — les règles **telles qu'implémentées ici**, y compris les endroits où
+  le moteur s'écarte de la FFB, et pourquoi.
+- [agents.md](agents.md) — la couche `Player` / `WorldSource` : comment un bot se construit et
+  se pilote, et le format de spec TOML. Un bot est une spec, pas un chemin de code.
+- [BENCH.md](BENCH.md) — les mesures de performance, avec la commande qui les reproduit.
 
-## Subsystems
+## Ce que fait le reste du monde
 
-- [bid/](bid/) — bidding strategies, bid NN training, reward studies, interpretability
-- [play/](play/) — play methods (DD solver, IS-DD, DMC, IS-MCTS), play NN training
-- [belief/](belief/) — belief models for hidden card inference
-- [data_gen/](data_gen/) — pool generation, enrichment methods, replay formats
-- [training/](training/) — training pipelines and how to invoke them
-- [superpowers/](superpowers/) — agent-driven plans and design specs
+- [rules-survey/](rules-survey/) — ~594 règlements publiés (fédérations, tournois, clubs,
+  applications, logiciels libres) comparés axe par axe. Commencer par
+  [SYNTHESE.md](rules-survey/SYNTHESE.md), et
+  [matrices/](rules-survey/matrices/) pour le détail par question.
+  La méthode est dans [METHODE.md](rules-survey/METHODE.md).
+- Les textes tiers **ne sont pas redistribués ici** : le corpus brut vit hors dépôt, et
+  [`rules-survey/_refetch.py`](rules-survey/_refetch.py) le reconstitue depuis ses sources.
+- [deal_bias.md](deal_bias.md) — la distribution traditionnelle (ramasser, couper, donner par
+  3-2-3) contre un mélange de compétition : ce que le biais vaut réellement, mesuré.
 
-## Web frontend
+## Comment on décide ici
 
-- [web_todo.md](web_todo.md) — backlog web (non implémenté)
-- [web_annonces_next_steps.md](web_annonces_next_steps.md) — Analyse annonce: prochaines étapes
-- [web_analyse_jeu.md](web_analyse_jeu.md) — Analyse du jeu de la carte: design + pièges d'implémentation
-- [web_compter.md](web_compter.md) — Compter les points: page d'entraînement au comptage en cours de donne
+- [measurements/README.md](measurements/README.md) — toute mesure se journalise, avec la
+  provenance et l'empreinte des poids consultés. Une mesure sans son modèle n'est pas
+  interprétable six mois plus tard.
+- [bid/interpretability/hand_classification.md](bid/interpretability/hand_classification.md) —
+  l'espace des mains est **énumérable** : 472 579 mains distinctes à 8 cartes, indexées
+  bijectivement. Donc la politique d'ouverture d'un enchérisseur *est* une table finie, pas
+  une boîte noire — et ce qu'un code de main doit encoder se mesure au lieu de s'opiner.
 
-## Quick links by topic
+## Les modèles
 
-| Topic | Main doc |
-|-------|----------|
-| Latest bid champion | [bid/reward_studies/v3_max_signal_results.md](bid/reward_studies/v3_max_signal_results.md) |
-| Reward signal study | [bid/reward_studies/v3_reward_study.md](bid/reward_studies/v3_reward_study.md) |
-| Distilled bid rules (XGBoost) | [bid/interpretability/bid_rules_xgb.md](bid/interpretability/bid_rules_xgb.md) |
-| Classer les mains (index canonique + code) | [bid/interpretability/hand_classification.md](bid/interpretability/hand_classification.md) |
-| DD solver — timings (**the one table**) | [play/dd_solver.md](play/dd_solver.md#performance) |
-| DD solver — measured dead ends, read before optimising | [play/dd_solver_optimization.md](play/dd_solver_optimization.md) |
-| Triforge joint training | [play/experiments/triforge.md](play/experiments/triforge.md) |
-| Belief net + IS-DD | [belief/README.md](belief/README.md) |
-| Playgen world sampler (transformer) | [belief/playgen.md](belief/playgen.md) |
-| Building / running a bot | [agents.md](agents.md) |
-| Training commands | [training/overview.md](training/overview.md) |
-| Auction-conditioned bid labels (**negative** — read before retrying) | [bid/experiments/auction_conditioned_labels.md](bid/experiments/auction_conditioned_labels.md) |
-| Un pool DD périmé : ce que ça coûte (**ne pas regénérer pour ça**) | [data_gen/pool_staleness.md](data_gen/pool_staleness.md) |
-| Générer des donnes **complètes** jouées par IS-DD (enchère réelle + 32 cartes) | [data_gen/isdd_games.md](data_gen/isdd_games.md) |
-| Regénérer la **couche de scores** du bidder avec des mondes playgen | [data_gen/isdd_score_layer_v2.md](data_gen/isdd_score_layer_v2.md) |
-| Registre des mesures (provenance + agrégats, versionné) | [measurements/README.md](measurements/README.md) |
-| Un corpus de jeu fort pour playgen v3 (**idée cadrée, pas lancée**) | [idees/corpus_isdd_playgen_v3.md](idees/corpus_isdd_playgen_v3.md) |
-| Le coût d'un pas de décodage playgen, et le décodage spéculatif (**cadré ; le levier a été pris, le spéculatif reste en attente d'une mesure**) | [idees/decodage_speculatif_playgen.md](idees/decodage_speculatif_playgen.md) |
+- [hf/](hf/) — les fiches des poids publiés, une par modèle
+  ([DouDou50](hf/doudou50/README.md), [Bid v6](hf/bid-v6/README.md),
+  [Belief v4](hf/belief-v4/README.md), [Playgen v2](hf/playgen-v2/README.md)).
+  Les poids eux-mêmes vivent sur
+  [Hugging Face](https://huggingface.co/collections/Avo-k/colver-belote-contree-6a71df4a723e6734fe623a65) ;
+  `colver.download_*()` va les y chercher.
+
+---
+
+**Ce qui n'est pas ici.** Les notes de recherche — carnets d'entraînement, impasses mesurées,
+études de récompense, plans non lancés — ne sont pas publiées. Elles décrivent un travail en
+cours plutôt qu'un artefact fini, et leur valeur est dans l'incrément, pas dans la
+photographie. Ce qui est publié est ce qui permet de **lire le moteur et de le vérifier** :
+le code, les règles, l'enquête sur les règlements, et la méthode de mesure.

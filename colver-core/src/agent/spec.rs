@@ -9,7 +9,7 @@
 //!
 //! ```toml
 //! [bid]
-//! strategy = "nn"                 # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn|playgen
+//! strategy = "nn"                 # heuristic|improved|improved_v2|improved_v3|smart|maxi|nn|playgen
 //! model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 //!
 //! [play]
@@ -582,9 +582,6 @@ impl AgentSpec {
             "improved_v2" => BidFunction::ImprovedV2,
             "improved_v3" => BidFunction::ImprovedV3,
             "smart" => BidFunction::Smart,
-            "roro" => BidFunction::Roro,
-            "petit_bide" => BidFunction::PetitBide,
-            "moelleux" => BidFunction::Moelleux,
             "maxi" => BidFunction::Maxi,
             other => {
                 return Err(AgentError::Config(format!("unknown bid strategy '{other}'")))

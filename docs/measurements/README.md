@@ -6,7 +6,7 @@ et agrégats seulement ; le brut vit à côté, en local.
 ## Pourquoi
 
 Ouvert le 2026-08-02, après avoir payé ~50 min de GPU pour les trois régimes de
-[§1.7 du plan v7](../bid/bid_v7_plan.md) et **n'avoir rien gardé** : les scripts
+`bid_q_flatness` (324 000 déroulements) et **n'avoir rien gardé** : les scripts
 d'analyse n'écrivaient que sur stdout, et l'affichage tronquait à 25 mains sur 120.
 Reposer la moindre question sur ces données — une médiane au lieu d'une moyenne, un
 intervalle bootstrap, un sous-ensemble par famille de mains — imposait de tout relancer.

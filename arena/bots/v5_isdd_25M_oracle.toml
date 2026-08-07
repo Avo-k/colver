@@ -1,9 +1,0 @@
-# v5 ISDD final + oracle play — for hypothesis testing
-[bid]
-strategy = "nn"
-model = "models/bid_v5_isdd/bid_nn_final.bin"
-hidden = 512
-score_aware = true
-
-[play]
-method = "oracle"

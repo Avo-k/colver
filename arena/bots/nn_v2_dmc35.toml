@@ -1,9 +1,0 @@
-# Bid v2 + DMC play (DouDou35)
-[bid]
-strategy = "nn"
-model = "models/bid_v2/bid_nn_final.bin"
-hidden = 512
-
-[play]
-method = "dmc"
-model = "models/dmc_35.bin"

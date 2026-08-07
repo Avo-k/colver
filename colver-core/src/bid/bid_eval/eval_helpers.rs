@@ -174,6 +174,27 @@ pub(crate) fn count_side_aces(hand: CardSet, trump: Suit) -> u32 {
     count
 }
 
+/// Count aces across all four suits.
+pub(crate) fn count_total_aces(hand: CardSet) -> u32 {
+    let mut count = 0u32;
+    for suit_idx in 0..4u8 {
+        let bits = suit_bits(hand, Suit::from_u8(suit_idx));
+        if bits & (1 << 7) != 0 {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Seat order in the auction: 0 = premier de parole, 3 = quatrième.
+///
+/// Ne vaut que sur le premier tour, avant toute annonce : `consecutive_passes`
+/// compte alors exactement les joueurs qui ont parlé avant nous. Après une
+/// annonce, le compteur repart et ne dit plus la position.
+pub(crate) fn bidding_position(state: &GameState) -> u8 {
+    state.consecutive_passes
+}
+
 /// Quality gate: suit must have at least one of J, 9, A, 10, or 3+ cards.
 pub fn quality_ok(hand: CardSet, suit: Suit) -> bool {
     let bits = suit_bits(hand, suit);

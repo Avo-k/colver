@@ -1,7 +1,0 @@
-# Adversaire de force intermédiaire. Même enchère que les bots "tb_*".
-[bid]
-strategy = "improved_v2"
-
-[play]
-method = "ismcts"
-determinizations = 20

@@ -1,8 +1,10 @@
 use crate::bidding::{self, BID_COINCHE, BID_PASS};
 use crate::card::*;
 use crate::state::*;
-use super::eval_helpers::{evaluate_for_trump, evaluate_suit, count_side_aces, quality_ok, has_lead};
-use super::roro::{count_total_aces, bidding_position};
+use super::eval_helpers::{
+    evaluate_for_trump, evaluate_suit, count_side_aces, quality_ok, has_lead,
+    count_total_aces, bidding_position,
+};
 
 // ---------------------------------------------------------------------------
 // improved_bid: balanced deterministic bidder

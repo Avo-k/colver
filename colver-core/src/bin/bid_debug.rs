@@ -129,9 +129,6 @@ fn main() {
         ("Heuristic", BidFunction::Heuristic),
         ("Improved", BidFunction::Improved),
         ("ImprovedV2", BidFunction::ImprovedV2),
-        ("Roro", BidFunction::Roro),
-        ("PetitBide", BidFunction::PetitBide),
-        ("Moelleux", BidFunction::Moelleux),
     ];
     let n_bidders = bidders.len();
     let mut bid_counts = vec![0u32; n_bidders];   // non-void deals
@@ -245,7 +242,7 @@ fn main() {
 
     // === CROSS-STRATEGY: NS vs EW with different bidders, full deal with Oracle MCTS ===
     println!("\n\n======================================================================");
-    println!("=== CROSS-STRATEGY: Roro vs Improved (Oracle MCTS play) ===\n");
+    println!("=== CROSS-STRATEGY: Smart vs Improved (Oracle MCTS play) ===\n");
 
     let oracle_cfg = MctsConfig {
         iterations: 2000,
@@ -257,10 +254,10 @@ fn main() {
     for deal_idx in 0..num_deals.min(20) {
         let state = GameState::deal_random(deal_idx as u8 % 4, &mut rng2);
 
-        // Direction A: NS=Roro, EW=Improved
-        let (sa, bids_a) = cross_bid(&state, BidFunction::Roro, BidFunction::Improved);
-        // Direction B: NS=Improved, EW=Roro
-        let (sb, bids_b) = cross_bid(&state, BidFunction::Improved, BidFunction::Roro);
+        // Direction A: NS=Smart, EW=Improved
+        let (sa, bids_a) = cross_bid(&state, BidFunction::Smart, BidFunction::Improved);
+        // Direction B: NS=Improved, EW=Smart
+        let (sb, bids_b) = cross_bid(&state, BidFunction::Improved, BidFunction::Smart);
 
         // Only print if the two directions disagree on who takes the contract or the value differs by 20+
         let both_playing = sa.phase == Phase::Playing && sb.phase == Phase::Playing;
@@ -277,17 +274,17 @@ fn main() {
         }
 
         // Print bidding for both directions
-        print_cross_bids("NS=Roro EW=Impr", &sa, &bids_a);
-        print_cross_bids("NS=Impr EW=Roro", &sb, &bids_b);
+        print_cross_bids("NS=Smart EW=Impr", &sa, &bids_a);
+        print_cross_bids("NS=Impr EW=Smart", &sb, &bids_b);
 
         // Play out both with Oracle MCTS
         if sa.phase == Phase::Playing {
-            println!("  --- Play: NS=Roro EW=Impr → {}{}  ---",
+            println!("  --- Play: NS=Smart EW=Impr → {}{}  ---",
                 sa.contract.point_value(), SUIT_NAMES[sa.contract.trump as usize]);
             play_oracle_deal(sa, &oracle_cfg, &mut rng2);
         }
         if sb.phase == Phase::Playing {
-            println!("  --- Play: NS=Impr EW=Roro → {}{}  ---",
+            println!("  --- Play: NS=Impr EW=Smart → {}{}  ---",
                 sb.contract.point_value(), SUIT_NAMES[sb.contract.trump as usize]);
             play_oracle_deal(sb, &oracle_cfg, &mut rng2);
         }

@@ -1,0 +1,72 @@
+name: CI (miroir public)
+
+# La CI du dépôt de référence (`ci.yml`) tourne sur le runner auto-hébergé
+# `moxxi` et lance la suite web (`tests/`). Ni l'un ni l'autre n'existe pour le
+# miroir : le runner n'y est pas déclaré, et `tests/` n'y est pas publié. D'où
+# deux fichiers plutôt qu'un — `export_public.sh` retire `ci.yml` du miroir, et
+# celui-ci ne s'exécute QUE dans le miroir.
+#
+# La garde `github.repository` est ce qui évite de payer deux fois : sans elle,
+# ce fichier tournerait aussi dans le lab, sur des runners GitHub facturés, pour
+# refaire ce que le runner auto-hébergé vient de faire gratuitement.
+#
+# Ce qu'il couvre : le moteur et ses liaisons, c'est-à-dire tout ce que le
+# miroir contient. Les tests du moteur sont en ligne dans `colver-core/src`, ils
+# partent donc avec le code — c'est la suite web, et elle seule, qui reste privée.
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-public-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust — check & tests
+    if: github.repository == 'Avo-k/colver'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace
+      # Sans `--release` : les tests du noyau tiennent en quelques minutes en
+      # debug, et une CI qui compile en LTO fat coûterait dix fois plus cher
+      # pour le même verdict.
+      - run: cargo test -p colver-core
+
+  wheel:
+    name: La roue se construit, et sans le site
+    if: github.repository == 'Avo-k/colver'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist -i python3.12
+      # Même contrôle que `assert-clean-wheel` de `publish.yml`, mais à chaque
+      # push et pas seulement au tag : une régression se voit le jour où elle est
+      # commise, pas le jour de la release. Le témoin est là pour la même raison
+      # que là-bas — un `dist/` vide ferait passer le contrôle.
+      - name: Le site n'est pas dans la roue
+        run: |
+          set -euo pipefail
+          whl=$(ls dist/*.whl | head -1)
+          test "$(unzip -l "$whl" | grep -c 'colver/')" -ge 3 \
+            || { echo "::error::roue vide — contrôle non concluant"; exit 1; }
+          n=$(unzip -l "$whl" | grep -c 'colver/web' || true)
+          echo "fichiers colver/web dans la roue : $n"
+          [ "$n" -eq 0 ]

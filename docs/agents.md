@@ -57,7 +57,7 @@ trait WorldSource   worlds(state, observer, n)      (crate::worlds)
 ## Lifecycle
 
 ```rust
-let spec = AgentSpec::from_toml_file("arena/bots/champion.toml")?;
+let spec = AgentSpec::from_toml_file("arena/bots/web_dede.toml")?;
 let mut players: [Box<dyn Player>; 4] =
     [spec.build(0)?, other.build(1)?, spec.build(2)?, other.build(3)?];
 let mut ctx = MatchContext::new(dealer);
@@ -107,7 +107,7 @@ The same TOML the arena reads, and what the PyO3 `Agent` takes:
 
 ```toml
 [bid]
-strategy = "nn"        # heuristic|improved|improved_v2|improved_v3|smart|roro|maxi|petit_bide|moelleux|nn|playgen
+strategy = "nn"        # heuristic|improved|improved_v2|improved_v3|smart|maxi|nn|playgen
 model = "models/bid_v6_isdd_resume/bid_nn_final.bin"
 hidden = 512
 penalty = 0.0          # discount on high bids (counters DD-trained optimism)
@@ -123,7 +123,7 @@ time_ms = 1000         # per-move budget; 0 = count mode
 determinizations = 240 # used when time_ms = 0
 switch_at = 5          # dmc_then_isdd: trick at which IS-DD takes over
 objective = "deal_score"  # IS-DD: deal_score (default) | card_points
-cred_alpha = 0.0       # credibility world-weighting (see is_dd.md)
+cred_alpha = 0.0       # credibility world-weighting (see search/is_dd.rs)
 parallel = true        # fan DD solves across the rayon pool
 
 [worlds]
@@ -145,7 +145,8 @@ checkpoint, not a bid net, and the policy (`PlaygenBidPolicy`, in
 it tracks the deal through `init_deal` / `observe` like a `WorldSource` does — which
 is why `build_bid` takes the seat. `temperature` works as for `nn`. It falls back to
 `ImprovedV2` when the sampler cannot answer: over-long auction, a non-v2 model, or a
-sampled action that turns out illegal. See [bid/README.md](bid/README.md).
+sampled action that turns out illegal. The strategies themselves live in
+`colver-core/src/bid/bid_eval/`, one file each.
 
 ## Python
 
@@ -177,6 +178,6 @@ to specs lives in `python/colver/web/agents.py`.
 
 ## See also
 
-- [play/is_dd.md](play/is_dd.md) — the IS-DD search itself
-- [belief/playgen.md](belief/playgen.md) — the world model and its sidecar
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the rest of the crate
+- `colver-core/src/search/is_dd.rs` — the IS-DD search itself, heavily commented
+- `colver-core/src/playgen/` — the world model, and `src/bin/playgen_gpu_server.rs` its sidecar

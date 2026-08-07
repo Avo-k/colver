@@ -1,7 +1,0 @@
-# Solid heuristic: ImprovedV2 bidding + Smart IS-MCTS with beliefs
-[bid]
-strategy = "improved_v2"
-
-[play]
-method = "smart_ismcts"
-time_ms = 20

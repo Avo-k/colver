@@ -447,21 +447,6 @@ impl Env {
         bid_eval::improved_bid(&self.state)
     }
 
-    /// Get roro_bid action for current state (only valid during bidding phase).
-    fn bid_roro(&self) -> u8 {
-        bid_eval::roro_bid(&self.state)
-    }
-
-    /// Get petit_bide_bid action for current state (only valid during bidding phase).
-    fn bid_petit_bide(&self) -> u8 {
-        bid_eval::petit_bide_bid(&self.state)
-    }
-
-    /// Get moelleux_bid action for current state (only valid during bidding phase).
-    fn bid_moelleux(&self) -> u8 {
-        bid_eval::moelleux_bid(&self.state)
-    }
-
     /// Get maxi_bid action for current state (only valid during bidding phase).
     fn bid_maxi(&self) -> u8 {
         colver_core::maxi::maxi_bid(&self.state)
